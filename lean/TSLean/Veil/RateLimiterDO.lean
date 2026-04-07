@@ -285,4 +285,31 @@ theorem events_nonempty_after_allow (pre post : State)
     post.events ≠ [] := by
   obtain ⟨_, hev, _, _, _⟩ := h; rw [hev]; simp
 
+-- Initial count is zero
+theorem init_count_zero : initState ⟨[], w, m, 0⟩ → (⟨[], w, m, 0⟩ : State).countInWindow = 0 :=
+  init_count_is_zero
+
+-- Allow requires strict headroom
+theorem allow_strict_headroom (pre post : State) (h : allowRequest pre post) :
+    pre.countInWindow < pre.maxCount :=
+  allow_requires_headroom pre post h
+
+-- Reject means at limit
+theorem reject_means_at_limit (pre post : State) (h : rejectRequest pre post) :
+    pre.countInWindow ≥ pre.maxCount :=
+  reject_at_limit pre post h
+
+-- Time advance is monotone
+theorem time_advances_strictly (delta : Nat) (pre post : State) (h : advanceTime delta pre post) :
+    post.now > pre.now := by
+  obtain ⟨hpos, hnow, _, _, _⟩ := h; omega
+
+-- Configuration is preserved across all transitions
+theorem config_preserved (pre post : State) (h : next pre post) :
+    post.windowMs = pre.windowMs ∧ post.maxCount = pre.maxCount := by
+  rcases h with ha | hr | ⟨d, had⟩
+  · exact ⟨ha.2.2.1, ha.2.2.2.1⟩
+  · exact ⟨hr.2.2.1, hr.2.2.2.1⟩
+  · exact ⟨had.2.2.2.1, had.2.2.2.2⟩
+
 end TSLean.Veil.RateLimiterDO

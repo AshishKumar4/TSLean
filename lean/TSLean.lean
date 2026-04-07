@@ -58,3 +58,16 @@ import TSLean.Generated.FullProject.Backend.ChatRoomDo
 import TSLean.Generated.FullProject.Backend.RateLimiterDo
 import TSLean.Generated.FullProject.Backend.AnalyticsDo
 import TSLean.Generated.FullProject.Backend.Router
+
+-- Veil Transition Systems
+import TSLean.Veil.Core
+import TSLean.Veil.AuthDO
+import TSLean.Veil.ChatRoomDO
+import TSLean.Veil.CounterDO
+import TSLean.Veil.QueueDO
+import TSLean.Veil.RateLimiterDO
+import TSLean.Veil.SessionStoreDO
+
+-- Specification & Tests
+import TSLean.Specification
+import TSLean.Tests

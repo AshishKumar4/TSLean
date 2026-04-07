@@ -266,4 +266,25 @@ theorem no_expired_sessions_returned (state : State) (hr : reachable state)
   have hpos := reachable_fresh_implies_valid state hr tok sess h
   omega
 
+-- Clock starts at zero and advances monotonically
+theorem clock_starts_at_zero (s : State) (hi : initState s) : s.clock = 0 :=
+  initial_clock_zero s hi
+
+-- Store starts empty
+theorem store_starts_empty (s : State) (hi : initState s) :
+    s.store = SessionStore.empty :=
+  initial_store_empty s hi
+
+-- getFresh returns none for empty store
+theorem empty_store_no_sessions (tok : SessionToken) (now : Nat) :
+    SessionStore.empty.getFresh tok now = none := by
+  simp [SessionStore.getFresh, SessionStore.get, SessionStore.empty,
+        TSLean.Stdlib.HashMap.AssocMap.get?_empty]
+
+-- Revoke then get fresh returns none
+theorem revoke_prevents_fresh (pre post : State) (tok : SessionToken)
+    (h : revokeSession tok pre post) :
+    post.store.getFresh tok post.clock = none :=
+  getFresh_none_after_revoke pre post tok h
+
 end TSLean.Veil.SessionStoreDO

@@ -282,7 +282,7 @@ class Gen {
       case 'Sequence': {
         if (e.stmts.length === 0) return '()';
         if (e.stmts.length === 1) return this.genExpr(e.stmts[0], ctx, depth);
-        const needsDo = hasAsync(ctx) || hasState(ctx) || hasExcept(ctx);
+        const needsDo = !isPure(ctx);  // Any non-Pure effect needs do-notation
         if (needsDo) return this.genDoSeq(e.stmts, ctx, depth);
         return e.stmts.map(s => this.genExpr(s, ctx, depth)).join(`\n${indent}`);
       }

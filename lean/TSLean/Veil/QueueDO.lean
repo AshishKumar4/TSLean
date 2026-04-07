@@ -217,4 +217,21 @@ theorem enqueue_fills_queue (payload : String) (now : Nat) (pre post : State)
   rw [hq, hcap, enqueue_total]
   omega
 
+-- After dequeue, the pending list is shorter
+theorem dequeue_shrinks_pending (pre post : State) (h : dequeueMsg pre post) :
+    post.queue.pending.length < pre.queue.pending.length := by
+  obtain ⟨hne, hq, _⟩ := h
+  rw [hq]
+  simp [DurableQueue.deliver]
+  cases hp : pre.queue.pending with
+  | nil => exact absurd hp hne
+  | cons hd tl => simp [hp]
+
+-- The init state has zero total messages
+theorem init_zero_total (s : State) (hi : initState s) : s.queue.total = 0 := by
+  rw [hi.1]; simp [DurableQueue.empty, DurableQueue.total]
+
+-- The init state has positive capacity
+theorem init_positive_capacity (s : State) (hi : initState s) : s.capacity > 0 := hi.2
+
 end TSLean.Veil.QueueDO
