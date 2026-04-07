@@ -356,4 +356,15 @@ theorem transaction_delete_removes :
     (t.commit s).get k = none :=
   commit_delete_removes
 
+-- All six DO transition systems have been formally verified
+theorem all_six_DOs_safe :
+    isInvariant (σ := AuthDO.State) TransitionSystem.safe ∧
+    isInvariant (σ := CounterDO.State) TransitionSystem.safe ∧
+    isInvariant (σ := QueueDO.State) TransitionSystem.safe ∧
+    isInvariant (σ := RateLimiterDO.State) TransitionSystem.safe ∧
+    isInvariant (σ := SessionStoreDO.State) TransitionSystem.safe ∧
+    isInvariant (σ := ChatRoomDO.State) TransitionSystem.safe :=
+  ⟨auth_safety, counter_safety, queue_safety,
+   rateLimiter_safety, sessionStore_safety, chatRoom_safety⟩
+
 end TSLean.Specification
