@@ -20,6 +20,7 @@ import {
 import { mapType, extractStructFields, extractTypeParams, detectDiscriminatedUnion } from '../typemap/index.js';
 import { inferNodeEffect } from '../effects/index.js';
 import { hasDOPattern, CF_AMBIENT, makeAmbientHost, DO_LEAN_IMPORTS } from '../do-model/ambient.js';
+import { lookupGlobal } from '../stdlib/index.js';
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -820,9 +821,30 @@ class ParserCtx {
         cases.push({ pattern: { tag: 'PWild' }, body });
       }
     }
-    // Add wildcard if no default
+    // Add wildcard only if the match is not exhaustive.
+    // Discriminated union switches become exhaustive after the rewrite pass
+    // (each string literal case maps to one constructor). For these, skip the wildcard.
+    // For value-level matches (numbers, arbitrary strings), add a type-safe wildcard.
     if (!hasDefault && cases.length > 0) {
-      cases.push({ pattern: { tag: 'PWild' }, body: litUnit() });
+      // Check if ALL case patterns are PString (discriminated union patterns that will
+      // be rewritten to PCtor). If so, the rewrite pass will make this exhaustive.
+      const allStringPatterns = cases.every(c =>
+        c.pattern.tag === 'PString' || c.pattern.tag === 'PLit'
+      );
+      // Also check if the scrutinee is a field access on a discriminant field
+      // (s.kind, e.type, t.tag) — these are discriminated union switches.
+      const isDiscriminantSwitch = scrutinee.tag === 'FieldAccess' && (
+        scrutinee.field === 'kind' || scrutinee.field === 'type' ||
+        scrutinee.field === 'tag' || scrutinee.field === 'ok'
+      );
+
+      // Skip wildcard for discriminated union switches (exhaustive after rewrite)
+      if (!(allStringPatterns && isDiscriminantSwitch)) {
+        // Non-discriminated: add type-safe wildcard with matching return type
+        const retType = cases[0]?.body.type ?? TyUnit;
+        const fallbackBody = retType.tag === 'Unit' ? litUnit() : holeExpr(retType);
+        cases.push({ pattern: { tag: 'PWild' }, body: fallbackBody });
+      }
     }
     return { tag: 'Match', scrutinee, cases, type: cases[0]?.body.type ?? TyUnit, effect: combineEffects(cases.map(c => c.body.effect)) };
   }
@@ -1022,9 +1044,15 @@ class ParserCtx {
     if (node.expression.kind === ts.SyntaxKind.ThisKeyword)
       return { tag: 'FieldAccess', obj: varExpr('self', obj.type), field, type: ty, effect: Pure };
 
-    // Enum member access: Color.Red → Color.Red (constructor application)
-    // Detect: obj is an identifier whose type is an enum
+    // Global stdlib property mapping: Math.PI → Float.pi, etc.
     if (ts.isIdentifier(node.expression)) {
+      const fullName = `${node.expression.text}.${field}`;
+      const global = lookupGlobal(fullName);
+      if (global) {
+        return varExpr(global.leanExpr, ty);
+      }
+
+      // Enum member access: Color.Red → Color.Red (constructor application)
       const sym = this.checker.getSymbolAtLocation(node.expression);
       if (sym && sym.flags & ts.SymbolFlags.Enum) {
         const enumName = node.expression.text;
@@ -1044,8 +1072,28 @@ class ParserCtx {
   }
 
   private parseCall(node: ts.CallExpression, ty: IRType): IRExpr {
-    if (ts.isPropertyAccessExpression(node.expression))
+    // Check global stdlib table FIRST for dotted calls like Math.max(a, b), console.log(x), etc.
+    if (ts.isPropertyAccessExpression(node.expression)) {
+      const fullName = node.expression.getText(this.sf);
+      const global = lookupGlobal(fullName);
+      if (global) {
+        const args = node.arguments.map(a => this.parseExpr(a));
+        const eff  = global.io ? IO : Pure;
+        return { tag: 'App', fn: varExpr(global.leanExpr, TyFn(args.map(a => a.type), ty, eff)),
+          args, type: ty, effect: combineEffects([eff, ...args.map(a => a.effect)]) };
+      }
       return this.parseMethodCall(node, node.expression, ty);
+    }
+    // Check for bare globals: fetch(url), parseInt(s), etc.
+    if (ts.isIdentifier(node.expression)) {
+      const global = lookupGlobal(node.expression.text);
+      if (global) {
+        const args = node.arguments.map(a => this.parseExpr(a));
+        const eff  = global.io ? IO : Pure;
+        return { tag: 'App', fn: varExpr(global.leanExpr, TyFn(args.map(a => a.type), ty, eff)),
+          args, type: ty, effect: combineEffects([eff, ...args.map(a => a.effect)]) };
+      }
+    }
     const fn   = this.parseExpr(node.expression);
     const args = node.arguments.map(a => this.parseExpr(a));
     return { tag: 'App', fn, args, type: ty, effect: combineEffects([fn.effect, ...args.map(a => a.effect)]) };

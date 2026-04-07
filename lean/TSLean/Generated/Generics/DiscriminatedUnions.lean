@@ -30,26 +30,22 @@ inductive Either {L : Type} {R : Type} where
 
 def areaShape (s : Shape) : Float :=
   match s with
-    | .Circle radius => (Math.PI * radius) * radius
+    | .Circle radius => (Float.pi * radius) * radius
     | .Rectangle width height => width * height
     | .Triangle base height => ((0.5) * base) * height
-    | _ => ()
 
 def perimeter (s : Shape) : Float :=
   match s with
-    | .Circle radius => (2 * Math.PI) * radius
+    | .Circle radius => (2 * Float.pi) * radius
     | .Rectangle width height => 2 * (width + height)
     | .Triangle base height => base * 3
-    | _ => ()
 
 partial def treeDepth {T : Type} (t : Tree) : Float :=
   match t with
     | .Leaf value => 1
-    | .Node left right value => 1 + (Math.max (treeDepth left) (treeDepth right))
-    | _ => ()
+    | .Node left right value => 1 + (max (treeDepth left) (treeDepth right))
 
 def mapEither {L : Type} {R : Type} {S : Type} (e : Either) (f : R → S) : Either :=
   match e with
     | .Left value => { type := "left", value := value }
     | .Right value => { type := "right", value := f value }
-    | _ => ()
