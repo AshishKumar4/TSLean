@@ -485,6 +485,63 @@ class ParserCtx {
       }
     }
 
+    // Tuple types: [A, B, C] → already handled by mapType as Tuple
+    // Conditional types: T extends U ? A : B → approximated by the resolved type
+    // Template literal types: `prefix${string}` → String (with a comment about the constraint)
+    // Mapped types: { [K in keyof T]: V } → resolved by TypeChecker to a concrete type
+    // keyof T → String (type-level list of keys)
+
+    // Check if the type alias node has special syntax we want to annotate
+    const typeNode = node.type;
+    if (typeNode) {
+      // Conditional type node: emit as comment
+      if (ts.isConditionalTypeNode(typeNode)) {
+        const resolved = mapType(ty, this.checker);
+        return {
+          tag: 'TypeAlias', name, typeParams: tps, body: resolved,
+          comment: `-- conditional type: ${typeNode.getText(this.sf)}`,
+        };
+      }
+      // Mapped type node: emit as AssocMap or resolved struct
+      if (ts.isMappedTypeNode(typeNode)) {
+        const resolved = mapType(ty, this.checker);
+        return {
+          tag: 'TypeAlias', name, typeParams: tps, body: resolved,
+          comment: `-- mapped type: ${typeNode.getText(this.sf).substring(0, 80)}`,
+        };
+      }
+      // Template literal type
+      if (ts.isTemplateLiteralTypeNode(typeNode)) {
+        return {
+          tag: 'TypeAlias', name, typeParams: tps, body: TyString,
+          comment: `-- template literal type: ${typeNode.getText(this.sf)}`,
+        };
+      }
+      // Tuple type: [A, B, C]
+      if (ts.isTupleTypeNode(typeNode)) {
+        const elems = typeNode.elements.map(e => {
+          const elemType = this.checker.getTypeAtLocation(e);
+          return mapType(elemType, this.checker);
+        });
+        return {
+          tag: 'TypeAlias', name, typeParams: tps, body: TyTuple(elems),
+          comment: leadingComment(node, this.sf),
+        };
+      }
+      // typeof in type position: typeof x → inferred type
+      if (ts.isTypeQueryNode(typeNode)) {
+        const resolved = mapType(ty, this.checker);
+        return {
+          tag: 'TypeAlias', name, typeParams: tps, body: resolved,
+          comment: `-- typeof type: ${typeNode.getText(this.sf)}`,
+        };
+      }
+      // keyof T → String (approximation)
+      if (ts.isTypeOperatorNode(typeNode) && typeNode.operator === ts.SyntaxKind.KeyOfKeyword) {
+        return { tag: 'TypeAlias', name, typeParams: tps, body: TyString, comment: '-- keyof type' };
+      }
+    }
+
     return { tag: 'TypeAlias', name, typeParams: tps, body: mapType(ty, this.checker), comment: leadingComment(node, this.sf) };
   }
 
@@ -965,8 +1022,17 @@ class ParserCtx {
     if (node.expression.kind === ts.SyntaxKind.ThisKeyword)
       return { tag: 'FieldAccess', obj: varExpr('self', obj.type), field, type: ty, effect: Pure };
 
+    // Enum member access: Color.Red → Color.Red (constructor application)
+    // Detect: obj is an identifier whose type is an enum
+    if (ts.isIdentifier(node.expression)) {
+      const sym = this.checker.getSymbolAtLocation(node.expression);
+      if (sym && sym.flags & ts.SymbolFlags.Enum) {
+        const enumName = node.expression.text;
+        return { tag: 'CtorApp', ctor: `${enumName}.${field}`, args: [], type: ty, effect: Pure };
+      }
+    }
+
     // Optional chaining: obj?.field  →  Option.map (·.field) obj
-    // When obj is already an Option we chain: Option.bind obj (fun o => some o.field)
     if (node.questionDotToken) {
       const accessor: IRExpr = { tag: 'Lambda', params: [{ name: '_oc', type: obj.type }],
         body: { tag: 'FieldAccess', obj: varExpr('_oc', obj.type), field, type: ty, effect: Pure },
@@ -1077,12 +1143,35 @@ class ParserCtx {
 
     for (const prop of node.properties) {
       if (ts.isPropertyAssignment(prop)) {
-        const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
-        namedFields.push({ name, value: this.parseExpr(prop.initializer) });
+        // Computed property names: { [key]: val } → AssocMap.insert pattern
+        if (ts.isComputedPropertyName(prop.name)) {
+          const keyExpr = this.parseExpr(prop.name.expression);
+          const valExpr = this.parseExpr(prop.initializer);
+          // Emit as a special field that codegen handles via AssocMap.insert
+          namedFields.push({ name: `_computed_${prop.pos}`, value: {
+            tag: 'App', fn: varExpr('AssocMap.insert'), args: [keyExpr, valExpr],
+            type: ty, effect: combineEffects([keyExpr.effect, valExpr.effect]),
+          }});
+        } else {
+          const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
+          namedFields.push({ name, value: this.parseExpr(prop.initializer) });
+        }
       } else if (ts.isShorthandPropertyAssignment(prop)) {
-        namedFields.push({ name: prop.name.text, value: varExpr(prop.name.text) });
+        // Property shorthand: { name } → { name := name }
+        const propName = prop.name.text;
+        const propTy = mapType(this.checker.getTypeAtLocation(prop.name), this.checker);
+        namedFields.push({ name: propName, value: varExpr(propName, propTy) });
       } else if (ts.isSpreadAssignment(prop)) {
         spreadExprs.push(this.parseExpr(prop.expression));
+      } else if (ts.isMethodDeclaration(prop)) {
+        // Method in object literal: { foo() {} }
+        const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
+        const body = prop.body ? this.parseBlock(prop.body, Pure) : holeExpr(TyUnit);
+        const params = this.parseParams(prop.parameters);
+        namedFields.push({ name, value: {
+          tag: 'Lambda', params, body,
+          type: TyFn(params.map(p => p.type), body.type), effect: body.effect,
+        }});
       }
     }
 
