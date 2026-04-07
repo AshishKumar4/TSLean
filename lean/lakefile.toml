@@ -1,0 +1,13 @@
+name = "TSLean"
+version = "0.1.0"
+defaultTargets = ["TSLean"]
+
+[[lean_lib]]
+name = "TSLean"
+roots = ["TSLean"]
+
+# Note: Veil (verse-lab/veil) requires Lean v4.24.0 + Mathlib + lean-smt.
+# Our runtime targets Lean v4.29.0 (no external deps).
+# We implement the Veil transition-system core natively in TSLean/Veil/
+# so that structural type-checking works without SMT solvers or Mathlib.
+# To use full Veil with SMT automation, build against v4.24.0 separately.

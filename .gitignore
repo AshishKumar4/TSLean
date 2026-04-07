@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.js
+*.d.ts
+*.js.map
+!vitest.config.ts
+!tsconfig.json
+lean/.lake/
+lean/lake-packages/
+lean/build/
+.DS_Store
+/tmp/
