@@ -416,7 +416,8 @@ class ParserCtx {
       };
     }
 
-    const self: IRParam = { name: 'self', type: TyRef(className) };
+    // Non-DO class: self type is the state struct, not the class name
+    const self: IRParam = { name: 'self', type: TyRef(stateType) };
     const body = node.body ? this.parseBlock(node.body, eff) : holeExpr(TyUnit);
     return {
       tag: 'FuncDef', name: `${className}.init`, typeParams: [],

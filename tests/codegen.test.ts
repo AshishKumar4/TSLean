@@ -107,7 +107,7 @@ describe('generateLean – inductives', () => {
       tag: 'InductiveDef', name: 'Maybe', typeParams: ['T'],
       ctors: [{ name: 'Nothing', fields: [] }, { name: 'Just', fields: [{ type: TyRef('T') }] }],
     }]));
-    expect(code).toContain('inductive Maybe {T : Type}');  // inductives use implicit params (autobound)
+    expect(code).toContain('inductive Maybe (T : Type)');  // inductives use explicit params for proper lake build
   });
 });
 

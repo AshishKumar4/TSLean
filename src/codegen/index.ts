@@ -220,16 +220,24 @@ class Gen {
 
   private emitInductive(d: Extract<IRDecl, { tag: 'InductiveDef' }>): void {
     if (d.comment) this.emitComment(d.comment);
-    // For inductives, keep implicit {T : Type} — Lean 4's autobound mechanism
-    // handles recursive references correctly with implicit params (bare `Tree`
-    // works), but explicit params require `Tree T` in constructor fields.
-    const tp = fmtTPs(d.typeParams);
+    // Use explicit (T : Type) for inductives.
+    // In constructor fields, recursive references must be fully applied: `Tree T` not bare `Tree`.
+    const tp = fmtExplicitTPs(d.typeParams);
+    const tpArgs = d.typeParams.join(' ');  // e.g. "T" or "L R"
     this.emit(`inductive ${d.name}${tp} where`);
     for (const c of d.ctors) {
       if (c.fields.length === 0) {
         this.emit(`  | ${c.name}`);
       } else {
-        const fs = c.fields.map(f => f.name ? `(${f.name} : ${irTypeToLean(f.type)})` : `(${irTypeToLean(f.type)})`).join(' ');
+        const fs = c.fields.map(f => {
+          let tyStr = f.name ? irTypeToLean(f.type) : irTypeToLean(f.type);
+          // Fix recursive self-references: if field type is a bare TypeRef matching
+          // the inductive name, apply all type params (e.g. Tree → Tree T)
+          if (f.type && f.type.tag === 'TypeRef' && f.type.name === d.name && f.type.args.length === 0 && tpArgs) {
+            tyStr = `${d.name} ${tpArgs}`;
+          }
+          return f.name ? `(${f.name} : ${tyStr})` : `(${tyStr})`;
+        }).join(' ');
         this.emit(`  | ${c.name} ${fs}`);
       }
     }

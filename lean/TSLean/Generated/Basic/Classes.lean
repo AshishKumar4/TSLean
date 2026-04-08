@@ -15,7 +15,7 @@ structure CounterState where
   step : Float
   deriving Repr, BEq
 
-def Counter.init (self : Counter) (step : Float := 1) : StateT Counter IO Unit :=
+def Counter.init (self : CounterState) (step : Float := 1) : StateT CounterState IO Unit :=
   modify (fun s => { s with step := step })
 
 def increment (self : CounterState) : StateT CounterState IO Unit :=
@@ -58,7 +58,7 @@ structure BankAccountState where
   owner : String
   deriving Repr, BEq
 
-def BankAccount.init (self : BankAccount) (owner : String) (initial : Float := 0) : StateT BankAccount IO Unit :=
+def BankAccount.init (self : BankAccountState) (owner : String) (initial : Float := 0) : StateT BankAccountState IO Unit :=
   do
     do
       modify (fun s => { s with owner := owner })

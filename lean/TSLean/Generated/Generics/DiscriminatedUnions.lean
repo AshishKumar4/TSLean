@@ -21,12 +21,12 @@ inductive Color where
   | Yellow
   deriving Repr, BEq
 
-inductive Tree {T : Type} where
+inductive Tree (T : Type) where
   | Leaf (value : T)
-  | Node (left : Tree) (right : Tree) (value : T)
+  | Node (left : Tree T) (right : Tree T) (value : T)
   deriving Repr, BEq
 
-inductive Either {L : Type} {R : Type} where
+inductive Either (L : Type) (R : Type) where
   | Left (value : L)
   | Right (value : R)
   deriving Repr, BEq
