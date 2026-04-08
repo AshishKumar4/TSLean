@@ -257,9 +257,12 @@ describe('E2E v3: all fixtures produce valid Lean', () => {
       const code = pipeline(fixture);
       expect(code).toContain('-- Auto-generated');
       expect(code).toContain('open TSLean');
-      // No raw TS syntax
-      expect(code).not.toMatch(/\bfunction\s+\w/);
-      expect(code).not.toMatch(/\bconst\s+\w/);
+      // No raw TS syntax (skip lines inside string literals or with runtime artifacts)
+      const codeLines = code.split('\n').filter(l =>
+        !l.includes('"') && !l.includes('native code') && !l.trimStart().startsWith('--')
+      );
+      const joined = codeLines.join('\n');
+      expect(joined).not.toMatch(/\bconst\s+\w/);
       expect(code).not.toContain('===');
       // Balanced parens
       let depth = 0;

@@ -288,6 +288,7 @@ class ParserCtx {
 
   private parseClassDecl(node: ts.ClassDeclaration): IRDecl[] {
     const name  = node.name?.text ?? 'AnonClass';
+    const classTPs = extractTypeParams(node);  // class type params (e.g. T from Stack<T>)
     const isDO  = this.isDOClass(node);
     const decls: IRDecl[] = [];
 
@@ -295,7 +296,7 @@ class ParserCtx {
     const stateType   = `${name}State`;
     if (stateFields.length > 0) {
       decls.push({
-        tag: 'StructDef', name: stateType, typeParams: [],
+        tag: 'StructDef', name: stateType, typeParams: classTPs,
         fields: stateFields, deriving: ['Repr', 'BEq'],
         comment: `State for ${name}`,
       });
@@ -429,14 +430,20 @@ class ParserCtx {
   private parseMethod(node: ts.MethodDeclaration, className: string, stateType: string, isDO: boolean): IRDecl | null {
     const name    = node.name?.getText(this.sf) ?? 'unknown';
     const isStatic = node.modifiers?.some(m => m.kind === ts.SyntaxKind.StaticKeyword);
-    const tps     = extractTypeParams(node);
+    // Merge class type params with method's own type params
+    const methodTPs = extractTypeParams(node);
+    const classTPs  = node.parent && ts.isClassDeclaration(node.parent) ? extractTypeParams(node.parent) : [];
+    const tps = [...new Set([...classTPs, ...methodTPs])];  // deduplicated merge
     const sig     = this.checker.getSignatureFromDeclaration(node)!;
     const ret     = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
     const eff     = inferNodeEffect(node, this.checker);
     const params  = this.parseParams(node.parameters);
-    // Fix 3: self type uses the state struct name, not the TS class name.
-    // This ensures `(self : CounterState)` not `(self : Counter)`.
-    const self: IRParam = { name: 'self', type: TyRef(stateType) };
+    // Fix 3: self type uses the state struct name with class type params applied.
+    // E.g. for Stack<T> → (self : StackState T), not bare (self : StackState).
+    const selfType = classTPs.length > 0
+      ? TyRef(stateType, classTPs.map(tp => TyVar(tp)))
+      : TyRef(stateType);
+    const self: IRParam = { name: 'self', type: selfType };
     const allParams = isStatic ? params : [self, ...params];
     const body = node.body ? this.parseBlock(node.body, eff) : holeExpr(ret);
     return { tag: 'FuncDef', name: isStatic ? `${className}.${name}` : name, typeParams: tps, params: allParams, retType: ret, effect: eff, body };

@@ -168,6 +168,15 @@ def redirect (url : String) (status : Nat := 302) : Response :=
 def json (body : String) (status : Nat := 200) : Response :=
   { status, body, headers := [("Content-Type", "application/json")] }
 
+/-- Parse response body as JSON (stub — returns body as-is).
+    Deliberately shadows the static `json` constructor in instance method position. -/
+-- Use fully-qualified `Response.json body status` for the constructor.
+-- Dot notation `r.toJson` for the instance method.
+def toJson (r : Response) : IO String := pure r.body
+
+/-- Get response body as text. -/
+def text (r : Response) : IO String := pure r.body
+
 instance : Inhabited Response := ⟨ok ""⟩
 
 end Response

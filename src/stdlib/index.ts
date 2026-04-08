@@ -130,7 +130,7 @@ const GLOBALS: Record<string, GlobalTx> = {
   'structuredClone':{ leanExpr: 'id' },
   'encodeURIComponent': { leanExpr: 'TSLean.encodeURI' },
   'decodeURIComponent': { leanExpr: 'TSLean.decodeURI' },
-  'fetch':          { leanExpr: 'TSLean.fetch',          io: true },
+  'fetch':          { leanExpr: 'WebAPI.fetch',           io: true },
 };
 
 export function lookupGlobal(name: string): GlobalTx | undefined { return GLOBALS[name]; }

@@ -120,9 +120,16 @@ function mapUnion(t: ts.UnionType, checker: ts.TypeChecker, depth: number): IRTy
   if (types.length === 2 && types.every(x => x.flags & ts.TypeFlags.BooleanLiteral))
     return TyBool;
 
-  // Named alias (e.g. `type Status = "active" | "inactive"`)
+  // Named alias (e.g. `type Status = "active" | "inactive"`, `Tree<T>`)
   const alias = getAliasName(t);
-  if (alias) return TyRef(alias);
+  if (alias) {
+    // Propagate alias type arguments (e.g. Tree<T> → TyRef('Tree', [TyVar('T')]))
+    const aliasArgs = (t as any).aliasTypeArguments as ts.Type[] | undefined;
+    if (aliasArgs && aliasArgs.length > 0) {
+      return TyRef(alias, aliasArgs.map(a => mapType(a, checker, depth + 1)));
+    }
+    return TyRef(alias);
+  }
 
   return withoutNil.length > 0 ? mapType(withoutNil[0], checker, depth + 1) : TyRef('Any');
 }
@@ -224,7 +231,12 @@ function typeStr(t: IRType): string {
     case 'Function':  return `${t.params.map(p => irTypeToLean(p, true)).join(' → ')} → ${typeStr(t.ret)}`;
     case 'Map':       return `AssocMap ${irTypeToLean(t.key, true)} ${irTypeToLean(t.value, true)}`;
     case 'Set':       return `AssocSet ${irTypeToLean(t.elem, true)}`;
-    case 'Promise':   return `IO ${irTypeToLean(t.inner, true)}`;
+    case 'Promise': {
+      // Flatten nested IO: Promise<Promise<T>> → IO T (not IO (IO T))
+      const inner = t.inner;
+      if (inner.tag === 'Promise') return `IO ${irTypeToLean(inner.inner, true)}`;
+      return `IO ${irTypeToLean(inner, true)}`;
+    }
     case 'Result':    return `Except ${irTypeToLean(t.err, true)} ${irTypeToLean(t.ok, true)}`;
     case 'TypeRef':   return t.args.length === 0 ? t.name : `${t.name} ${t.args.map(a => irTypeToLean(a, true)).join(' ')}`;
     case 'TypeVar':   return t.name;

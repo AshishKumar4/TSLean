@@ -152,8 +152,8 @@ class Gen {
     if (e.tag === 'Var' && e.name.startsWith('Storage.')) needs.add('TSLean.DurableObjects.Storage');
     if (e.tag === 'Var' && e.name.startsWith('AssocMap.')) needs.add('TSLean.Stdlib.HashMap');
     if (e.tag === 'Var' && e.name.startsWith('AssocSet.')) needs.add('TSLean.Stdlib.HashMap');
-    if (e.tag === 'Var' && e.name === 'mkResponse') needs.add('TSLean.Runtime.WebAPI');
-    if (e.tag === 'Var' && e.name === 'TSLean.fetch') needs.add('TSLean.Runtime.WebAPI');
+    if (e.tag === 'Var' && (e.name === 'mkResponse' || e.name.startsWith('WebAPI.') || e.name === 'TSLean.fetch'))
+      needs.add('TSLean.Runtime.WebAPI');
     // Recurse into subexpressions (simplified — just check key nodes)
     if (e.tag === 'App') {
       this.collectExprImportNeeds(e.fn, needs);
@@ -172,6 +172,17 @@ class Gen {
       this.collectExprImportNeeds(e.else_, needs);
     }
     if (e.tag === 'Sequence') for (const s of e.stmts) this.collectExprImportNeeds(s, needs);
+    if (e.tag === 'Await')    this.collectExprImportNeeds(e.expr, needs);
+    if (e.tag === 'Return')   this.collectExprImportNeeds(e.value, needs);
+    if (e.tag === 'Throw')    this.collectExprImportNeeds(e.error, needs);
+    if (e.tag === 'Assign')   { this.collectExprImportNeeds(e.target, needs); this.collectExprImportNeeds(e.value, needs); }
+    if (e.tag === 'TryCatch') { this.collectExprImportNeeds(e.body, needs); this.collectExprImportNeeds(e.handler, needs); }
+    if (e.tag === 'Match')    { this.collectExprImportNeeds(e.scrutinee, needs); for (const c of e.cases) this.collectExprImportNeeds(c.body, needs); }
+    if (e.tag === 'Lambda')   this.collectExprImportNeeds(e.body, needs);
+    if (e.tag === 'FieldAccess') this.collectExprImportNeeds(e.obj, needs);
+    if (e.tag === 'StructUpdate') { this.collectExprImportNeeds(e.base, needs); for (const f of e.fields) this.collectExprImportNeeds(f.value, needs); }
+    if (e.tag === 'StructLit') for (const f of e.fields) this.collectExprImportNeeds(f.value, needs);
+    if (e.tag === 'ArrayLit') for (const x of e.elems) this.collectExprImportNeeds(x, needs);
   }
 
   // ─── Declarations ───────────────────────────────────────────────────────────
@@ -278,7 +289,15 @@ class Gen {
       this.emit(this.genExpr(d.body, d.effect));
       this.ind--;
     } else {
-      this.emit(this.genExpr(d.body, d.effect));
+      // When function returns Unit but body may return a non-Unit value
+      // (e.g. Array.push returns Array, but TS void method), discard with `let _ :=`
+      const bodyStr = this.genExpr(d.body, d.effect);
+      if (d.retType.tag === 'Unit' && !['()', 'sorry', 'pure ()'].includes(bodyStr.trim()) &&
+          !bodyStr.includes('modify') && !bodyStr.includes('let ') && !bodyStr.includes('if ')) {
+        this.emit(`let _ := ${bodyStr}; ()`);
+      } else {
+        this.emit(bodyStr);
+      }
     }
     this.ind--;
     // Emit where clauses (local helper definitions)
@@ -292,10 +311,12 @@ class Gen {
 
   private retSig(eff: Effect, retLean: string): string {
     const w = (s: string) => s.includes(' ') && !s.startsWith('(') ? `(${s})` : s;
+    // Flatten: if return type already starts with IO, don't wrap again
+    const alreadyIO = retLean.startsWith('IO ') || retLean === 'IO';
     switch (eff.tag) {
       case 'Pure':   return retLean;
-      case 'IO':     return `IO ${w(retLean)}`;
-      case 'Async':  return `IO ${w(retLean)}`;
+      case 'IO':     return alreadyIO ? retLean : `IO ${w(retLean)}`;
+      case 'Async':  return alreadyIO ? retLean : `IO ${w(retLean)}`;
       case 'State':  return `StateT ${w(irTypeToLean(eff.stateType))} IO ${w(retLean)}`;
       case 'Except': return `ExceptT ${w(irTypeToLean(eff.errorType))} IO ${w(retLean)}`;
       case 'Combined': return `${monadString(eff)} ${w(retLean)}`;
@@ -387,7 +408,25 @@ class Gen {
       case 'Hole':      return 'sorry';
       case 'Var':       return sanitize(e.name);
 
-      case 'FieldAccess': return `${this.genExpr(e.obj, ctx, depth)}.${e.field}`;
+      case 'FieldAccess': {
+        const obj = this.genExpr(e.obj, ctx, depth);
+        // Map JS field/method names to Lean equivalents
+        const fieldMap: Record<string, string> = {
+          'json': 'toJson',         // Response.json → Response.toJson
+          'text': 'text',           // Response.text → Response.text
+          'includes': 'containsSubstr',
+          'toLowerCase': 'toLower',
+          'toUpperCase': 'toUpper',
+          'length': 'size',         // Array.length → Array.size (Lean 4)
+          'trim': 'trim',
+          'startsWith': 'startsWith',
+          'endsWith': 'endsWith',
+          'pop': 'back?',           // Array.pop → Array.back? (returns Option)
+          'push': 'push',           // Array.push exists in Lean 4
+        };
+        const mappedField = fieldMap[e.field] ?? e.field;
+        return `${obj}.${mappedField}`;
+      }
 
       case 'IndexAccess': return `${this.genExpr(e.obj, ctx, depth)}[${this.genExpr(e.index, ctx, depth)}]!`;
 
@@ -425,6 +464,12 @@ class Gen {
       }
 
       case 'IfThenElse': {
+        // Detect Option null-check pattern: if x.isNone then none else expr(x)
+        // Convert to: match x with | none => none | some _v => expr(_v)
+        // This avoids BEq constraint issues and handles Option narrowing correctly.
+        const optMatch = this.tryOptionMatch(e, ctx, depth, indent);
+        if (optMatch) return optMatch;
+
         const cond  = this.genExpr(e.cond, ctx, depth);
         const inner = '  '.repeat(this.ind + depth + 1);
         const then_ = this.genExpr(e.then, ctx, depth + 1);
@@ -686,6 +731,67 @@ class Gen {
       return `{${this.genExpr(p, ctx, depth)}}`;
     }).join('');
     return `s!"${inner}"`;
+  }
+
+  /**
+   * Detect `if opt.isNone then none else f(opt)` patterns and convert them to
+   * `match opt with | none => none | some _v => f _v`.
+   * This is necessary because Option T has no BEq instance for generic T,
+   * and the `else` branch needs the unwrapped value (T, not Option T).
+   */
+  private tryOptionMatch(
+    e: Extract<IRExpr, { tag: 'IfThenElse' }>,
+    ctx: Effect, depth: number, indent: string
+  ): string | null {
+    // Pattern: cond is `BinOp Eq left LitNull` or the genExpr would produce `x.isNone`
+    const cond = e.cond;
+    let optVar: string | null = null;
+    let optVarExpr: IRExpr | null = null;
+
+    // Check: cond is BinOp(Eq, someVar, LitNull) or BinOp(Eq, someVar, Var("none"))
+    if (cond.tag === 'BinOp' && cond.op === 'Eq' &&
+        (cond.right.tag === 'LitNull' || (cond.right.tag === 'Var' && cond.right.name === 'none'))) {
+      if (cond.left.tag === 'Var') {
+        optVar = cond.left.name;
+        optVarExpr = cond.left;
+      }
+    }
+    // Also check if cond is the inverted form (Ne → swap then/else)
+    if (!optVar && cond.tag === 'BinOp' && cond.op === 'Ne' &&
+        (cond.right.tag === 'LitNull' || (cond.right.tag === 'Var' && cond.right.name === 'none'))) {
+      if (cond.left.tag === 'Var') {
+        optVar = cond.left.name;
+        optVarExpr = cond.left;
+        // Swap branches for Ne (if x != none then expr else none → match x with some → expr | none → none)
+        const inner = '  '.repeat(this.ind + depth + 1);
+        const someBody = this.genExprWithVarSubst(e.then, ctx, depth + 1, optVar, '_v');
+        const noneBody = this.genExpr(e.else_, ctx, depth + 1);
+        return `match ${optVar} with\n${inner}| none => ${noneBody}\n${inner}| some _v => ${someBody}`;
+      }
+    }
+
+    if (!optVar) return null;
+
+    // then branch should be `none` or `LitNull` (the null/undefined return)
+    const thenIsNone = e.then.tag === 'LitNull' || e.then.tag === 'LitUnit' ||
+      (e.then.tag === 'Var' && e.then.name === 'none') ||
+      (e.then.tag === 'Return' && (e.then.value.tag === 'LitNull' || (e.then.value.tag === 'Var' && e.then.value.name === 'none')));
+
+    if (!thenIsNone) return null;
+
+    // else branch uses optVar — substitute with the unwrapped `_v`
+    const inner = '  '.repeat(this.ind + depth + 1);
+    const someBody = this.genExprWithVarSubst(e.else_, ctx, depth + 1, optVar, '_v');
+    return `match ${optVar} with\n${inner}| none => none\n${inner}| some _v => ${someBody}`;
+  }
+
+  /** Generate an expression but substitute one variable name with another. */
+  private genExprWithVarSubst(e: IRExpr, ctx: Effect, depth: number, from: string, to: string): string {
+    // Simple textual substitution: generate normally then replace the variable.
+    // This works for simple cases where the variable appears as a standalone token.
+    const result = this.genExpr(e, ctx, depth);
+    // Use word-boundary replacement to avoid partial matches
+    return result.replace(new RegExp(`\\b${from}\\b`, 'g'), to);
   }
 
   private emitComment(c: string): void {

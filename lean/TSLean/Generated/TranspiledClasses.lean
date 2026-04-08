@@ -31,25 +31,25 @@ def getCount (self : CounterState) : Float :=
   self.count
 
 -- State for Stack
-structure StackState (T : Type) where
+structure StackState where
   mk ::
   items : Array T
   deriving Repr, BEq
 
-def push {T : Type} (self : StackState T) (item : T) : Unit :=
-  let _ := self.items.push item; ()
+def push (self : StackState) (item : T) : Unit :=
+  self.items.push item
 
-def pop {T : Type} (self : StackState T) : Option T :=
-  self.items.back?
+def pop (self : StackState) : Option T :=
+  self.items.pop
 
-def peek {T : Type} (self : StackState T) : Option T :=
-  self.items[self.items.size - 1]!
+def peek (self : StackState) : Option T :=
+  self.items[self.items.length - 1]!
 
-def isEmpty {T : Type} (self : StackState T) : Bool :=
-  self.items.size == 0
+def isEmpty (self : StackState) : Bool :=
+  self.items.length == 0
 
-def size {T : Type} (self : StackState T) : Float :=
-  self.items.size
+def size (self : StackState) : Float :=
+  self.items.length
 
 -- State for BankAccount
 structure BankAccountState where

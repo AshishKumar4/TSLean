@@ -118,6 +118,9 @@ class RewriteCtx {
   private rewrite(e: IRExpr): IRExpr {
     switch (e.tag) {
       case 'Match':       return this.rewriteMatch(e);
+      // Rewrite struct literals that are discriminated union constructor calls.
+      // e.g. { type: "left", value: v } → CtorApp("Either.Left", [v])
+      case 'StructLit':   return this.rewriteStructLit(e) ?? this.rewriteFields(e);
       case 'IfThenElse':  return { ...e, cond: this.rewrite(e.cond), then: this.rewrite(e.then), else_: this.rewrite(e.else_) };
       case 'Let':         return { ...e, value: this.rewrite(e.value), body: this.rewrite(e.body) };
       case 'Bind':        return { ...e, monad: this.rewrite(e.monad), body: this.rewrite(e.body) };
@@ -231,6 +234,45 @@ class RewriteCtx {
 
   private rewriteCase(c: IRCase): IRCase {
     return { ...c, guard: c.guard ? this.rewrite(c.guard) : undefined, body: this.rewrite(c.body) };
+  }
+
+  /**
+   * Detect struct literals that match a union discriminant pattern and convert
+   * them to constructor applications.
+   * e.g. `{ type: "left", value: v }` → `CtorApp("Either.Left", [v])`
+   */
+  private rewriteStructLit(e: Extract<IRExpr, { tag: 'StructLit' }>): IRExpr | null {
+    // Look for a field whose value is a string literal matching a known discriminant
+    for (const f of e.fields) {
+      if (!DISCRIMINANT_FIELDS.has(f.name)) continue;
+      if (f.value.tag !== 'LitString') continue;
+      const literal = f.value.value;
+
+      // Search all unions for a variant matching this literal
+      for (const union of this.unions.values()) {
+        const variant = union.variants.get(literal);
+        if (!variant) continue;
+
+        // Found a match! Build a CtorApp with the non-discriminant fields as args.
+        const args = e.fields
+          .filter(field => field.name !== f.name)
+          .map(field => this.rewrite(field.value));
+
+        return {
+          tag: 'CtorApp',
+          ctor: variant.ctorName,
+          args,
+          type: e.type,
+          effect: e.effect,
+        };
+      }
+    }
+    return null;
+  }
+
+  /** Rewrite fields of a struct literal (when it's not a union constructor). */
+  private rewriteFields(e: Extract<IRExpr, { tag: 'StructLit' }>): IRExpr {
+    return { ...e, fields: e.fields.map(f => ({ ...f, value: this.rewrite(f.value) })) };
   }
 }
 

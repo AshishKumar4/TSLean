@@ -3,20 +3,19 @@
 
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Monad
-import TSLean.Runtime.WebAPI
 
-open TSLean TSLean.WebAPI
+open TSLean
 
 namespace TSLean.Generated.Async
 
 -- // Async/await → IO monad
 def fetchUser (id : String) : IO (IO AnonStruct) :=
   do
-    let response ← WebAPI.fetch (s!"https://api.example.com/users/{id}")
-    let data ← response.toJson
+    let response ← TSLean.fetch (s!"https://api.example.com/users/{id}")
+    let data ← response.json
     return data
 
-def fetchAndProcess (ids : Array String) : IO (Array String) :=
+def fetchAndProcess (ids : Array String) : IO (IO (Array String)) :=
   do
     let results : Array String := #[]
     do
