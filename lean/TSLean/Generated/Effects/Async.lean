@@ -2,17 +2,18 @@
 -- Source: tests/fixtures/effects/async.ts
 -- Async/await → IO monad
 
+import TSLean.Runtime.Basic
+import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
-
-namespace TSLean.Generated.Effects.Async
 
 open TSLean.WebAPI
 
--- fetchUser: models an async API call returning structured data
+namespace TSLean.Generated.Async
+
+-- fetchUser: models an async API call
 def fetchUser (id : String) : IO (Option String) := do
-  -- In verification mode, fetch is opaque; we model the data flow
-  let _response ← fetch (s!"https://api.example.com/users/{id}")
-  return some _response.body
+  let response ← fetch (s!"https://api.example.com/users/{id}")
+  return some response.body
 
 -- fetchAndProcess: sequential processing of multiple IDs
 def fetchAndProcess (ids : Array String) : IO (Array String) := do
@@ -22,9 +23,8 @@ def fetchAndProcess (ids : Array String) : IO (Array String) := do
     results := results.push (user.getD "unknown")
   return results
 
--- delay: wraps a sleep/setTimeout concept
-def delay (_ms : Float) : IO Unit :=
-  pure ()  -- no-op in verification mode
+-- delay: wraps a sleep/setTimeout concept (no-op in verification)
+def delay (_ms : Float) : IO Unit := pure ()
 
 -- withRetry: retry an operation up to maxRetries times
 partial def withRetry (op : IO α) (maxRetries : Nat) : IO (Except String α) := do
@@ -38,4 +38,4 @@ partial def withRetry (op : IO α) (maxRetries : Nat) : IO (Except String α) :=
     | Except.error e => lastError := e
   return Except.error lastError
 
-end TSLean.Generated.Effects.Async
+end TSLean.Generated.Async

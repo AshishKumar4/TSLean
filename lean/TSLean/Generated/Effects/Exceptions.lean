@@ -2,7 +2,10 @@
 -- Source: tests/fixtures/effects/exceptions.ts
 -- Exception handling → Except monad
 
-namespace TSLean.Generated.Effects.Exceptions
+import TSLean.Runtime.Basic
+import TSLean.Runtime.Monad
+
+namespace TSLean.Generated.Exceptions
 
 -- Validation error: structured error type
 structure ValidationError where
@@ -39,4 +42,4 @@ def validateEmail (email : String) : Except String String :=
   else if email.length < 5 then .error "email too short"
   else .ok email
 
-end TSLean.Generated.Effects.Exceptions
+end TSLean.Generated.Exceptions
