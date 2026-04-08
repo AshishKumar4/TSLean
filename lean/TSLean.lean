@@ -6,6 +6,8 @@ import TSLean.Runtime.Monad
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.BrandedTypes
 import TSLean.Runtime.Validation
+import TSLean.Runtime.WebAPI
+import TSLean.Runtime.Inhabited
 
 -- Stdlib
 import TSLean.Stdlib.Array
@@ -42,7 +44,7 @@ import TSLean.Verification.ProofObligation
 import TSLean.Verification.Invariants
 import TSLean.Verification.Tactics
 
--- Generated
+-- Generated (hand-written)
 import TSLean.Generated.Hello
 import TSLean.Generated.Interfaces
 import TSLean.Generated.Classes
@@ -58,6 +60,16 @@ import TSLean.Generated.FullProject.Backend.ChatRoomDo
 import TSLean.Generated.FullProject.Backend.RateLimiterDo
 import TSLean.Generated.FullProject.Backend.AnalyticsDo
 import TSLean.Generated.FullProject.Backend.Router
+
+-- Generated (transpiler output, fixed)
+import TSLean.Generated.Basic.Hello
+import TSLean.Generated.Basic.Interfaces
+import TSLean.Generated.Basic.Classes
+import TSLean.Generated.Generics.BrandedTypes
+import TSLean.Generated.Generics.DiscriminatedUnions
+import TSLean.Generated.Generics.Generics
+import TSLean.Generated.Effects.Async
+import TSLean.Generated.Effects.Exceptions
 
 -- Veil Transition Systems
 import TSLean.Veil.Core
