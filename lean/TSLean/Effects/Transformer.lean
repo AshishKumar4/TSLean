@@ -34,4 +34,23 @@ theorem combine_idempotent_mem (s : EffectSet) (e : EffectKind) (h : mem e s) :
 
 theorem empty_subset_all (s : EffectSet) : subset empty s = true := pure_le s
 
+/-! ## ExceptT / DO monad integration -/
+
+/-- Run an ExceptT action, converting the error to TSError if it fails. -/
+def runExceptT_asTSError [Monad m] (action : ExceptT String m α) : ExceptT TSError m α :=
+  ExceptT.mk do
+    match ← action.run with
+    | .ok a    => pure (.ok a)
+    | .error s => pure (.error (TSError.typeError s))
+
+/-- Lift an Except into ExceptT. -/
+def liftExcept [Monad m] (e : Except ε α) : ExceptT ε m α :=
+  ExceptT.mk (pure e)
+
+/-- Run an IO action inside a StateT+ExceptT stack, discarding state. -/
+def runDO [Inhabited σ] (action : StateT σ (ExceptT TSError IO) α) : IO (Except TSError α) := do
+  match ← (action.run default).run with
+  | .ok (a, _) => pure (.ok a)
+  | .error e   => pure (.error e)
+
 end TSLean.Effects

@@ -82,4 +82,46 @@ theorem TSResult.pure_bind {α β : Type} (a : α) (f : α → TSResult β) :
 theorem TSResult.bind_pure {α : Type} (r : TSResult α) :
     r >>= (pure : α → TSResult α) = r := by cases r <;> simp [bind, Except.bind, pure, Except.pure]
 
+/-! ## Serialization -/
+
+/-- Serialize any value with a ToString instance to a String (models JSON.stringify). -/
+def serialize [ToString α] (x : α) : String := toString x
+
+/-- Deserialize a String. The default implementation is the identity (lossless for strings).
+    Specific types can override via the Serializable class. -/
+def deserialize (s : String) : Option String := some s
+
+/-- Try to deserialize to a Nat. -/
+def deserializeNat (s : String) : Option Nat := s.toNat?
+
+/-- Try to deserialize to an Int. -/
+def deserializeInt (s : String) : Option Int := s.toInt?
+
+/-! ## Float comparison -/
+
+instance : Ord Float where
+  compare a b :=
+    if a < b then .lt
+    else if a > b then .gt
+    else .eq
+
+def Float.blt (a b : Float) : Bool := a < b
+def Float.ble (a b : Float) : Bool := a <= b
+def Float.bge (a b : Float) : Bool := a >= b
+def Float.bgt (a b : Float) : Bool := a > b
+
+/-- Clamp a Float to a range. -/
+def Float.clamp (x lo hi : Float) : Float :=
+  if x < lo then lo else if x > hi then hi else x
+
+/-! ## ExceptT / error handling helpers -/
+
+/-- Convenience: construct a TSError and throw it. -/
+def throwError [MonadExcept TSError m] (msg : String) : m α :=
+  throw (TSError.typeError msg)
+
+/-- Convenience: try an action, catch TSError, return default. -/
+def tryCatchDefault [Monad m] [MonadExcept TSError m] (action : m α) (default : α) : m α :=
+  tryCatch action (fun _ => pure default)
+
 end TSLean
