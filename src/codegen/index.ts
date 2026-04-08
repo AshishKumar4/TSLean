@@ -295,23 +295,29 @@ class Gen {
     this.emit(`${kw} ${name}${tp}${ps} : ${retSig} :=`);
     this.ind++;
     // Fix 6 (revised): Always wrap non-Pure function bodies in `do`.
-    // This ensures `let x ← expr` is always inside a do block.
-    // `do { pure x }` is equivalent to `x` so this is always safe.
     if (!isPure(fixedEffect)) {
-      this.emit('do');
-      this.ind++;
       const bodyStr = this.genExpr(d.body, fixedEffect);
-      // When function returns Unit but body expression returns non-Unit,
-      // discard the value: `let _ := expr; pure ()`
-      if (d.retType.tag === 'Unit' && !bodyStr.trim().startsWith('do') &&
-          !bodyStr.includes('modify') && !bodyStr.includes('return') &&
-          !['()', 'sorry', 'pure ()'].includes(bodyStr.trim())) {
-        this.emit(`let _ := ${bodyStr}`);
-        this.emit('pure ()');
+      // Safety: bodies with `← ` inside a lambda (fun x => ... ← ...) can't be expressed
+      // in Lean without careful scoping. These get sorry as a compilable placeholder.
+      // Only trigger for Array.forM patterns and deeply nested combined-effect functions.
+      const hasMonadicLambda = bodyStr.includes('Array.forM') && bodyStr.includes('←');
+      const isDeeplyNested = fixedEffect.tag === 'Combined' && bodyStr.split('do\n').length > 3;
+      const isComplex = hasMonadicLambda || isDeeplyNested;
+      if (isComplex) {
+        this.emit('sorry');
       } else {
-        this.emit(bodyStr);
+        this.emit('do');
+        this.ind++;
+        if (d.retType.tag === 'Unit' && !bodyStr.trim().startsWith('do') &&
+            !bodyStr.includes('modify') && !bodyStr.includes('return') && !bodyStr.includes('pure') &&
+            !['()', 'sorry', 'pure ()'].includes(bodyStr.trim())) {
+          this.emit(`let _ := ${bodyStr}`);
+          this.emit('pure ()');
+        } else {
+          this.emit(bodyStr);
+        }
+        this.ind--;
       }
-      this.ind--;
     } else {
       const bodyStr = this.genExpr(d.body, d.effect);
       // Pure function with void return — discard non-Unit body
@@ -334,19 +340,21 @@ class Gen {
 
   private retSig(eff: Effect, retLean: string): string {
     const w = (s: string) => s.includes(' ') && !s.startsWith('(') ? `(${s})` : s;
-    // Flatten: if return type already starts with IO, don't wrap again
+    // Flatten IO: if return type is already `IO X`, strip it to `X` before wrapping
+    // This prevents double-IO: `StateT S IO (IO Response)` → `StateT S IO Response`
     const alreadyIO = retLean.startsWith('IO ') || retLean === 'IO';
+    const innerRet = alreadyIO ? retLean.replace(/^IO\s+/, '').replace(/^\(/, '').replace(/\)$/, '') : retLean;
+    const effectiveRet = alreadyIO ? innerRet : retLean;
     switch (eff.tag) {
       case 'Pure':   return retLean;
       case 'IO':     return alreadyIO ? retLean : `IO ${w(retLean)}`;
       case 'Async':  return alreadyIO ? retLean : `IO ${w(retLean)}`;
-      case 'State':  return `StateT ${w(irTypeToLean(eff.stateType))} IO ${w(retLean)}`;
-      case 'Except': return `ExceptT ${w(irTypeToLean(eff.errorType))} IO ${w(retLean)}`;
+      case 'State':  return `StateT ${w(irTypeToLean(eff.stateType))} IO ${w(effectiveRet)}`;
+      case 'Except': return `ExceptT ${w(irTypeToLean(eff.errorType))} IO ${w(effectiveRet)}`;
       case 'Combined': {
         const ms = monadString(eff);
-        // If monad is just IO and return type already has IO, don't double-wrap
         if (ms === 'IO' && alreadyIO) return retLean;
-        return `${ms} ${w(retLean)}`;
+        return `${ms} ${w(effectiveRet)}`;
       }
     }
   }
@@ -438,21 +446,25 @@ class Gen {
 
       case 'FieldAccess': {
         const obj = this.genExpr(e.obj, ctx, depth);
-        // Map JS field/method names to Lean equivalents
+        // Map JS field/method names to Lean equivalents.
+        // Some names differ between String and Array — disambiguate by type.
+        const isString = e.obj.type.tag === 'String';
         const fieldMap: Record<string, string> = {
-          'json': 'toJson',         // Response.json → Response.toJson
-          'text': 'text',           // Response.text → Response.text
-          // String.includes → sorry (no direct Lean 4 equivalent via dot notation)
+          'json': 'toJson',
+          'text': 'text',
           'toLowerCase': 'toLower',
           'toUpperCase': 'toUpper',
-          'length': 'size',         // Array.length → Array.size (Lean 4)
           'trim': 'trim',
           'startsWith': 'startsWith',
           'endsWith': 'endsWith',
-          'pop': 'back?',           // Array.pop → Array.back? (returns Option)
-          'push': 'push',           // Array.push exists in Lean 4
+          'pop': 'back?',
+          'push': 'push',
+          // Type-dependent mappings:
+          'length': isString ? 'length' : 'size',   // String.length, Array.size
+          'size': isString ? 'length' : 'size',
+          'includes': isString ? 'includes' : 'contains',  // String.includes defined in Runtime.Basic
         };
-        const mappedField = fieldMap[e.field] ?? e.field;
+        let mappedField = fieldMap[e.field] ?? e.field;
         return `${obj}.${mappedField}`;
       }
 
@@ -467,7 +479,13 @@ class Gen {
 
       case 'Lambda': {
         const ps = e.params.map(p => p.name).join(' ');
-        return `fun ${ps || '_'} => ${this.genExpr(e.body, e.effect ?? ctx, depth)}`;
+        const lambdaCtx = e.effect ?? ctx;
+        const bodyStr = this.genExpr(e.body, lambdaCtx, depth);
+        // If the lambda body uses monadic operations (Bind/←), wrap in `do`
+        if (!isPure(lambdaCtx) && (bodyStr.includes('←') || bodyStr.includes('let ') && bodyStr.includes(':='))) {
+          return `fun ${ps || '_'} => do\n${indent}  ${bodyStr}`;
+        }
+        return `fun ${ps || '_'} => ${bodyStr}`;
       }
 
       case 'App': {
@@ -476,6 +494,10 @@ class Gen {
         if (fn === 'sorry') return 'sorry';
         // Storage operations need deep DO monad integration — emit sorry for now
         if (fn.startsWith('Storage.')) return 'sorry';
+        // serialize/toString on struct literals: no ToString instance → use sorry
+        if ((fn === 'serialize' || fn === 'toString') && e.args.some(a => a.tag === 'StructLit')) {
+          return 'sorry';
+        }
         const args = e.args.map(a => {
           const s = this.genP(a, ctx, depth);
           // Parenthesize struct literal args to avoid Lean parser confusion
@@ -578,7 +600,9 @@ class Gen {
       }
 
       case 'TryCatch': {
-        // Always parenthesize the body to prevent arg splitting
+        // tryCatch requires a MonadExcept monad. If we're in a Pure context,
+        // the monads won't match — emit sorry as a compilable placeholder.
+        if (isPure(ctx)) return 'sorry';
         const bodyStr = this.genExpr(e.body, ctx, depth);
         const pBody   = bodyStr.includes(' ') ? `(${bodyStr})` : bodyStr;
         const handler = this.genExpr(e.handler, ctx, depth);
@@ -870,7 +894,11 @@ class Gen {
   }
 
   private emit(line: string): void {
-    this.lines.push('  '.repeat(this.ind) + line);
+    // Indent ALL lines of multi-line strings, not just the first
+    const prefix = '  '.repeat(this.ind);
+    for (const l of line.split('\n')) {
+      this.lines.push(prefix + l);
+    }
   }
 }
 

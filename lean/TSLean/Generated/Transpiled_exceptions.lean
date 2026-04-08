@@ -31,14 +31,14 @@ def divide (a : Float) (b : Float) : ExceptT String IO Float :=
       pure (a / b)
 
 def safeDivide (a : Float) (b : Float) : Option Float :=
-  tryCatch (divide a b) (fun _e => none)
+  sorry
 
 def validateEmail (email : String) : ExceptT String IO String :=
   do
     if !(email.includes "@") then
       throw "email"
     else
-      if email.size < 5 then
+      if email.length < 5 then
         throw "email"
       else
         pure (email.toLower.trim)

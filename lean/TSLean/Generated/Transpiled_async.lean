@@ -14,32 +14,16 @@ namespace TSLean.Generated.Async
 def fetchUser (id : String) : IO String :=
   do
     let response ← WebAPI.fetch (s!"https://api.example.com/users/{id}")
-    let data ← response.toJson
-    pure data
+      let data ← response.toJson
+      pure data
 
 def fetchAndProcess (ids : Array String) : IO (Array String) :=
-  do
-    let results : Array String := #[]
-    do
-      Array.forM ids (fun id => let user ← fetchUser id
-      results.push user.name)
-      return results
+  sorry
 
 def delay (ms : Float) : IO Unit :=
   sorry
 
-def withRetry {T : Type} (op : Unit → IO T) (maxRetries : Float) : StateT Unit (ExceptT String IO) (IO T) :=
-  do
-    let lastError : Option Error := sorry
-    do
-      let _loop_719 := fun i => if i < maxRetries then
-        do
-          tryCatch (pure op) (fun e => do
-            let lastError := e
-            delay (100 * (i + 1)))
-          _loop_719 (i + 1)
-      else
-        ()
-      throw (Option.getD lastError (TSError.typeError "Max retries exceeded"))
+def withRetry {T : Type} (op : Unit → IO T) (maxRetries : Float) : StateT Unit (ExceptT String IO) T :=
+  sorry
 
 end TSLean.Generated.Async

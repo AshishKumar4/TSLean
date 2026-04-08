@@ -176,7 +176,11 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
 
   // Anonymous object types (e.g. { name: string }) can't be directly expressed in Lean.
   // Map them to String (serialised) as a compilable approximation.
-  return TyRef(sym.name === TS_ANON_TYPE ? 'String' : sym.name);
+  // Map well-known JS types to Lean equivalents
+  const name = sym.name;
+  if (name === TS_ANON_TYPE) return TyRef('String');
+  if (name === 'Error' || name.endsWith('Error')) return TyString;  // JS Error → String for Lean
+  return TyRef(name);
 }
 
 // ─── Generic type references ────────────────────────────────────────────────────

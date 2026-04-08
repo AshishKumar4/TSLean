@@ -25,7 +25,7 @@ namespace CounterDO
 def CounterDO.init : CounterDOState :=
   { count := sorry }
 
-def fetch (self : CounterDOState) (request : Request) : StateT CounterDOState IO (IO Response) :=
+def fetch (self : CounterDOState) (request : Request) : StateT CounterDOState IO Response :=
   do
     let url : URL := URL.parse request.url
     if (url.pathname == "/increment") && (request.method == "POST") then
@@ -33,24 +33,24 @@ def fetch (self : CounterDOState) (request : Request) : StateT CounterDOState IO
         modify (fun s => { s with count := self.count + 1 })
         do
           sorry
-          return mkResponse (serialize ({ count := self.count })) ({ headers := sorry })
+          return mkResponse (sorry) ({ headers := sorry })
     else
       if (url.pathname == "/decrement") && (request.method == "POST") then
         do
           modify (fun s => { s with count := max 0 (self.count - 1) })
           do
             sorry
-            return mkResponse (serialize ({ count := self.count })) ({ headers := sorry })
+            return mkResponse (sorry) ({ headers := sorry })
       else
         if (url.pathname == "/reset") && (request.method == "POST") then
           do
             modify (fun s => { s with count := 0 })
             do
               sorry
-              return mkResponse (serialize ({ count := 0 })) ({ headers := sorry })
+              return mkResponse (sorry) ({ headers := sorry })
         else
           if (url.pathname == "/value") && (request.method == "GET") then
-            pure (mkResponse (serialize ({ count := self.count })) ({ headers := sorry }))
+            pure (mkResponse (sorry) ({ headers := sorry }))
           else
             pure (mkResponse "Not Found" ({ status := 404 }))
 

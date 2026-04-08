@@ -124,4 +124,7 @@ def throwError [MonadExcept TSError m] (msg : String) : m α :=
 def tryCatchDefault [Monad m] [MonadExcept TSError m] (action : m α) (default : α) : m α :=
   tryCatch action (fun _ => pure default)
 
+-- String helpers matching JS APIs (for transpiler codegen)
+def String.includes (s sub : String) : Bool := (s.splitOn sub).length > 1
+
 end TSLean
