@@ -14,9 +14,9 @@ function inline(src: string): string {
 // ─── Bug 1: Math.*/console.*/JSON.* → Lean stdlib ────────────────────────────
 
 describe('Stdlib mapping: Math property access', () => {
-  it('Math.PI → Float.pi', () => {
+  it('Math.PI → 3.14159265358979', () => {
     const code = inline('const pi = Math.PI;');
-    expect(code).toContain('Float.pi');
+    expect(code).toContain('3.14159265358979');
     expect(code).not.toContain('Math.PI');
   });
 
@@ -132,7 +132,7 @@ describe('Stdlib mapping: bare globals', () => {
 });
 
 describe('Stdlib mapping: combined usage', () => {
-  it('areaShape with Math.PI uses Float.pi', () => {
+  it('areaShape with Math.PI uses 3.14159265358979', () => {
     const code = inline(`
       type Shape = { kind: 'circle'; r: number } | { kind: 'rect'; w: number; h: number };
       function area(s: Shape): number {
@@ -142,7 +142,7 @@ describe('Stdlib mapping: combined usage', () => {
         }
       }
     `);
-    expect(code).toContain('Float.pi');
+    expect(code).toContain('3.14159265358979');
     expect(code).not.toContain('Math.PI');
   });
 });
@@ -254,7 +254,7 @@ describe('Non-exhaustive match: wildcard preserved', () => {
 // ─── Cross-cutting: regen discriminated-unions fixture ────────────────────────
 
 describe('Regenerated fixture: discriminated-unions', () => {
-  it('areaShape has Float.pi not Math.PI and no wildcard', () => {
+  it('areaShape has 3.14159265358979 not Math.PI and no wildcard', () => {
     const code = inline(`
       type Shape =
         | { kind: "circle"; radius: number }
@@ -269,7 +269,7 @@ describe('Regenerated fixture: discriminated-unions', () => {
       }
     `);
     // Math.PI mapped
-    expect(code).toContain('Float.pi');
+    expect(code).toContain('3.14159265358979');
     expect(code).not.toContain('Math.PI');
     // No wildcard on exhaustive 3-arm match
     const matchSection = code.slice(code.indexOf('match'));

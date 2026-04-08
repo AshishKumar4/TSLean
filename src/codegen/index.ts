@@ -91,8 +91,11 @@ class Gen {
     for (const imp of sorted) this.emit(`import ${imp}`);
 
     this.emit('');
-    // Open specific namespaces instead of `open TSLean`
-    this.emit('open TSLean TSLean.WebAPI');
+    // Open only the namespaces we actually imported
+    const opens = ['TSLean'];
+    if (needed.has('TSLean.Runtime.WebAPI')) opens.push('TSLean.WebAPI');
+    if (needed.has('TSLean.Stdlib.HashMap')) opens.push('TSLean.Stdlib.HashMap');
+    this.emit(`open ${opens.join(' ')}`);
   }
 
   /** Walk an IR declaration tree to determine required imports. */
@@ -125,9 +128,9 @@ class Gen {
         // Web API types
         if (['Request', 'Response', 'URL', 'Headers', 'WebSocket'].includes(t.name))
           needs.add('TSLean.Runtime.WebAPI');
-        // Branded types from the runtime
-        if (['UserId', 'RoomId', 'MessageId', 'SessionToken', 'EmailAddress'].includes(t.name))
-          needs.add('TSLean.Runtime.BrandedTypes');
+        // Note: Don't auto-import TSLean.Runtime.BrandedTypes — the generated file
+        // may define its own branded types that would clash with the runtime's.
+        // Branded types are self-contained (just a struct with val : String).
         // DO types
         if (['DurableObjectState', 'DurableObjectId', 'DurableObjectNamespace', 'DurableObjectStub'].includes(t.name))
           needs.add('TSLean.DurableObjects.State');
@@ -217,8 +220,10 @@ class Gen {
 
   private emitInductive(d: Extract<IRDecl, { tag: 'InductiveDef' }>): void {
     if (d.comment) this.emitComment(d.comment);
-    // Fix 2: Use explicit (T : Type) for inductives
-    const tp = fmtExplicitTPs(d.typeParams);
+    // For inductives, keep implicit {T : Type} — Lean 4's autobound mechanism
+    // handles recursive references correctly with implicit params (bare `Tree`
+    // works), but explicit params require `Tree T` in constructor fields.
+    const tp = fmtTPs(d.typeParams);
     this.emit(`inductive ${d.name}${tp} where`);
     for (const c of d.ctors) {
       if (c.fields.length === 0) {
@@ -247,7 +252,11 @@ class Gen {
     const tp      = d.typeParams.length > 0 ? ` {${d.typeParams.map(t => `${t} : Type`).join('} {')}}` : '';
     const params  = d.params.map(p => this.fmtParam(p, d.effect)).join(' ');
     const retLean = irTypeToLean(d.retType);
-    const retSig  = this.retSig(d.effect, retLean);
+    // Fix 3: When effect is StateT Unit but we have a self param, use self's type as state type.
+    // The parser emits stateEffect(TyUnit) for mutations because it doesn't know the state type
+    // at assignment sites. We recover it here from the first parameter named `self`.
+    const fixedEffect = fixStateEffect(d.effect, d.params);
+    const retSig  = this.retSig(fixedEffect, retLean);
     const ps = params ? ` ${params}` : '';
     // Detect self-recursive functions for `partial def` (avoids termination checker rejection)
     const isRecursive = d.isPartial ?? bodyContainsVarRef(d.body, d.name);
@@ -255,7 +264,7 @@ class Gen {
     this.emit(`${kw} ${name}${tp}${ps} : ${retSig} :=`);
     this.ind++;
     // Fix 6: Wrap effectful bodies in `do` — monadic bind (←) is only valid inside do
-    if (!isPure(d.effect) && needsDoWrapping(d.body)) {
+    if (!isPure(fixedEffect) && needsDoWrapping(d.body)) {
       this.emit('do');
       this.ind++;
       this.emit(this.genExpr(d.body, d.effect));
@@ -480,7 +489,22 @@ class Gen {
         return `${op}${this.genP(e.operand, ctx, depth)}`;
       }
 
-      case 'Cast':   return this.genExpr(e.expr, ctx, depth);
+      case 'Cast': {
+        // When casting to a branded/newtype struct, emit the constructor.
+        // `raw as UserId` → `UserId.mk raw`; `id as string` → `id.val`
+        const inner = this.genExpr(e.expr, ctx, depth);
+        const from = e.expr.type;
+        const to   = e.targetType;
+        // Casting TO a branded struct (has a single `val` field): wrap in constructor
+        if (to.tag === 'TypeRef' && from.tag === 'String') {
+          return `${to.name}.mk ${inner}`;
+        }
+        // Casting FROM a branded struct to String: extract val field
+        if (from.tag === 'TypeRef' && to.tag === 'String') {
+          return `${inner}.val`;
+        }
+        return inner;
+      }
       case 'IsType': {
         // instanceof / type guard — approximated with a decidable check.
         // In Lean 4 there is no runtime type inspection for opaque types, so we emit a sorry
@@ -615,6 +639,16 @@ class Gen {
       const r = this.genP(e.right, ctx, depth);
       return `Option.getD ${l} ${r}`;
     }
+    // Equality with none/null: use Option.isNone/isSome instead of ==
+    // This avoids requiring BEq instances on generic Option types.
+    if (e.op === 'Eq' && (e.right.tag === 'LitNull' || (e.right.tag === 'Var' && e.right.name === 'none'))) {
+      const l = this.genP(e.left, ctx, depth);
+      return `${l}.isNone`;
+    }
+    if (e.op === 'Ne' && (e.right.tag === 'LitNull' || (e.right.tag === 'Var' && e.right.name === 'none'))) {
+      const l = this.genP(e.left, ctx, depth);
+      return `${l}.isSome`;
+    }
     // Try to emit s!"..." interpolation for Concat chains (template literals)
     if (e.op === 'Concat' || (e.op === 'Add' && e.left.type.tag === 'String')) {
       const interp = this.trySInterp(e, ctx, depth);
@@ -709,6 +743,30 @@ function needsParens(e: IRExpr): boolean {
          e.tag === 'IfThenElse' || e.tag === 'Lambda' || e.tag === 'Let' ||
          e.tag === 'Bind' || e.tag === 'TryCatch' || e.tag === 'Match' ||
          e.tag === 'LitFloat';
+}
+
+// ─── State effect recovery ────────────────────────────────────────────────────
+// When the parser emits stateEffect(TyUnit) for assignments, we recover the real
+// state type from the `self` parameter at codegen time.
+
+function fixStateEffect(eff: Effect, params: IRParam[]): Effect {
+  const selfParam = params.find(p => p.name === 'self');
+  if (!selfParam) return eff;
+
+  if (eff.tag === 'State' && eff.stateType.tag === 'Unit') {
+    return { tag: 'State', stateType: selfParam.type };
+  }
+  if (eff.tag === 'Combined') {
+    return {
+      tag: 'Combined',
+      effects: eff.effects.map(e =>
+        e.tag === 'State' && e.stateType.tag === 'Unit'
+          ? { tag: 'State' as const, stateType: selfParam.type }
+          : e
+      ),
+    };
+  }
+  return eff;
 }
 
 // ─── Partial def detection ────────────────────────────────────────────────────

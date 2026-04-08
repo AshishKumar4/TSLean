@@ -5,7 +5,7 @@ import TSLean.Runtime.Basic
 
 open TSLean
 
-namespace TSLean.Generated.Basic.Hello
+namespace TSLean.Generated.Hello
 
 -- // Basic: functions, variables, primitives
 def greet (name : String) : String :=
@@ -27,4 +27,4 @@ def PI : Float := 3.14159
 
 def greeting : String := greet "World"
 
-end TSLean.Generated.Basic.Hello
+end TSLean.Generated.Hello

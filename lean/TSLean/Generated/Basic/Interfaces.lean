@@ -5,7 +5,7 @@ import TSLean.Runtime.Basic
 
 open TSLean
 
-namespace TSLean.Generated.Basic.Interfaces
+namespace TSLean.Generated.Interfaces
 
 -- // Interfaces → Lean structures
 structure Point where
@@ -37,4 +37,4 @@ def area (r : Rectangle) : Float :=
 def makePoint (x : Float) (y : Float) : Point :=
   { x := x, y := y }
 
-end TSLean.Generated.Basic.Interfaces
+end TSLean.Generated.Interfaces

@@ -433,7 +433,9 @@ class ParserCtx {
     const ret     = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
     const eff     = inferNodeEffect(node, this.checker);
     const params  = this.parseParams(node.parameters);
-    const self: IRParam = { name: 'self', type: TyRef(isDO ? stateType : className) };
+    // Fix 3: self type uses the state struct name, not the TS class name.
+    // This ensures `(self : CounterState)` not `(self : Counter)`.
+    const self: IRParam = { name: 'self', type: TyRef(stateType) };
     const allParams = isStatic ? params : [self, ...params];
     const body = node.body ? this.parseBlock(node.body, eff) : holeExpr(ret);
     return { tag: 'FuncDef', name: isStatic ? `${className}.${name}` : name, typeParams: tps, params: allParams, retType: ret, effect: eff, body };

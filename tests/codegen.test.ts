@@ -48,7 +48,7 @@ describe('generateLean – structures', () => {
       fields: [{ name: 'val', type: TyRef('T') }],
     }]));
     expect(code).toContain('structure Box');
-    expect(code).toContain('{T : Type}');
+    expect(code).toContain('(T : Type)');  // structs use explicit params
     expect(code).toContain('val : T');
   });
 
@@ -107,7 +107,7 @@ describe('generateLean – inductives', () => {
       tag: 'InductiveDef', name: 'Maybe', typeParams: ['T'],
       ctors: [{ name: 'Nothing', fields: [] }, { name: 'Just', fields: [{ type: TyRef('T') }] }],
     }]));
-    expect(code).toContain('inductive Maybe {T : Type}');
+    expect(code).toContain('inductive Maybe {T : Type}');  // inductives use implicit params (autobound)
   });
 });
 
@@ -158,7 +158,7 @@ describe('generateLean – functions', () => {
       params: [{ name: 'x', type: TyRef('T') }],
       retType: TyRef('T'), effect: Pure, body: varExpr('x', TyRef('T')),
     }]));
-    expect(code).toContain('{T : Type}');
+    expect(code).toContain('{T : Type}' || '(T : Type)');
     expect(code).toContain('(x : T)');
   });
 
