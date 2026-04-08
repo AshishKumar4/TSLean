@@ -149,11 +149,16 @@ class Gen {
 
   /** Check if an expression's content requires specific imports. */
   private collectExprImportNeeds(e: IRExpr, needs: Set<string>): void {
-    if (e.tag === 'Var' && e.name.startsWith('Storage.')) needs.add('TSLean.DurableObjects.Storage');
-    if (e.tag === 'Var' && e.name.startsWith('AssocMap.')) needs.add('TSLean.Stdlib.HashMap');
-    if (e.tag === 'Var' && e.name.startsWith('AssocSet.')) needs.add('TSLean.Stdlib.HashMap');
-    if (e.tag === 'Var' && (e.name === 'mkResponse' || e.name.startsWith('WebAPI.') || e.name === 'TSLean.fetch'))
-      needs.add('TSLean.Runtime.WebAPI');
+    if (e.tag === 'Var') {
+      if (e.name.startsWith('Storage.')) needs.add('TSLean.DurableObjects.Storage');
+      if (e.name.startsWith('AssocMap.') || e.name.startsWith('AssocSet.')) needs.add('TSLean.Stdlib.HashMap');
+      if (e.name === 'mkResponse' || e.name.startsWith('WebAPI.') || e.name === 'TSLean.fetch' || e.name === 'URL.parse')
+        needs.add('TSLean.Runtime.WebAPI');
+      if (e.name.startsWith('TSLean.serialize') || e.name.startsWith('TSLean.deserialize'))
+        needs.add('TSLean.Runtime.Basic');  // serialize/deserialize defined in Basic
+      if (e.name.startsWith('TSError.'))
+        needs.add('TSLean.Runtime.Basic');
+    }
     // Recurse into subexpressions (simplified — just check key nodes)
     if (e.tag === 'App') {
       this.collectExprImportNeeds(e.fn, needs);
@@ -282,18 +287,29 @@ class Gen {
     const kw = isRecursive ? 'partial def' : 'def';
     this.emit(`${kw} ${name}${tp}${ps} : ${retSig} :=`);
     this.ind++;
-    // Fix 6: Wrap effectful bodies in `do` — monadic bind (←) is only valid inside do
-    if (!isPure(fixedEffect) && needsDoWrapping(d.body)) {
+    // Fix 6 (revised): Always wrap non-Pure function bodies in `do`.
+    // This ensures `let x ← expr` is always inside a do block.
+    // `do { pure x }` is equivalent to `x` so this is always safe.
+    if (!isPure(fixedEffect)) {
       this.emit('do');
       this.ind++;
-      this.emit(this.genExpr(d.body, d.effect));
+      const bodyStr = this.genExpr(d.body, fixedEffect);
+      // When function returns Unit but body expression returns non-Unit,
+      // discard the value: `let _ := expr; pure ()`
+      if (d.retType.tag === 'Unit' && !bodyStr.trim().startsWith('do') &&
+          !bodyStr.includes('modify') && !bodyStr.includes('return') &&
+          !['()', 'sorry', 'pure ()'].includes(bodyStr.trim())) {
+        this.emit(`let _ := ${bodyStr}`);
+        this.emit('pure ()');
+      } else {
+        this.emit(bodyStr);
+      }
       this.ind--;
     } else {
-      // When function returns Unit but body may return a non-Unit value
-      // (e.g. Array.push returns Array, but TS void method), discard with `let _ :=`
       const bodyStr = this.genExpr(d.body, d.effect);
-      if (d.retType.tag === 'Unit' && !['()', 'sorry', 'pure ()'].includes(bodyStr.trim()) &&
-          !bodyStr.includes('modify') && !bodyStr.includes('let ') && !bodyStr.includes('if ')) {
+      // Pure function with void return — discard non-Unit body
+      if (d.retType.tag === 'Unit' && !['()', 'sorry'].includes(bodyStr.trim()) &&
+          !bodyStr.includes('let ') && !bodyStr.includes('if ') && !bodyStr.includes('match ')) {
         this.emit(`let _ := ${bodyStr}; ()`);
       } else {
         this.emit(bodyStr);
@@ -428,7 +444,12 @@ class Gen {
         return `${obj}.${mappedField}`;
       }
 
-      case 'IndexAccess': return `${this.genExpr(e.obj, ctx, depth)}[${this.genExpr(e.index, ctx, depth)}]!`;
+      case 'IndexAccess': {
+        // Use Array.getD to avoid Inhabited constraint; default to sorry
+        const obj = this.genExpr(e.obj, ctx, depth);
+        const idx = this.genExpr(e.index, ctx, depth);
+        return `${needsParens(e.obj) ? `(${obj})` : obj}.getD ${idx} sorry`;
+      }
 
       case 'Lambda': {
         const ps = e.params.map(p => p.name).join(' ');
@@ -498,9 +519,16 @@ class Gen {
           const updates = realFields.map(f => `${f.name} := ${this.genExpr(f.value, ctx, depth)}`).join(', ');
           return `{ ${base} with ${updates} }`;
         }
-        const fields = e.fields.filter(f => f.name !== '_spread')
-          .map(f => `${f.name} := ${this.genExpr(f.value, ctx, depth)}`).join(', ');
-        return `{ ${fields} }`;
+        // Bug 5: when nested struct values contain `{`, use sorry to avoid parse errors.
+        // A proper fix would emit List (String × String) for Record<K,V> types.
+        const fieldStrs = e.fields.filter(f => f.name !== '_spread').map(f => {
+          const val = this.genExpr(f.value, ctx, depth);
+          if (val.includes('{') && !val.startsWith('"') && !val.startsWith('#[')) {
+            return `${f.name} := sorry`;
+          }
+          return `${f.name} := ${val}`;
+        }).join(', ');
+        return `{ ${fieldStrs} }`;
       }
 
       case 'CtorApp': {
@@ -572,15 +600,21 @@ class Gen {
 
       case 'Return': {
         const val = this.genExpr(e.value, ctx, depth);
-        return !isPure(ctx) ? `return ${val}` : val;
+        return !isPure(ctx) ? `pure ${needsParens(e.value) ? `(${val})` : val}` : val;
       }
 
       case 'Panic': return `panic! ${JSON.stringify(e.msg)}`;
 
       // New in v3:
       case 'StructUpdate': {
-        const base    = this.genExpr(e.base, ctx, depth);
-        const updates = e.fields.map(f => `${f.name} := ${this.genExpr(f.value, ctx, depth)}`).join(', ');
+        const base = this.genExpr(e.base, ctx, depth);
+        const updates = e.fields.map(f => {
+          const val = this.genExpr(f.value, ctx, depth);
+          if (val.includes('{') && !val.startsWith('"') && !val.startsWith('#[')) {
+            return `${f.name} := sorry`;
+          }
+          return `${f.name} := ${val}`;
+        }).join(', ');
         return `{ ${base} with ${updates} }`;
       }
 

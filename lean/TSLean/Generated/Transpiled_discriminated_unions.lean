@@ -43,14 +43,14 @@ def perimeter (s : Shape) : Float :=
     | .Rectangle width height => 2 * (width + height)
     | .Triangle base height => base * 3
 
-partial def treeDepth {T : Type} (t : Tree) : Float :=
+partial def treeDepth {T : Type} (t : Tree T) : Float :=
   match t with
     | .Leaf value => 1
     | .Node left right value => 1 + (max (treeDepth left) (treeDepth right))
 
-def mapEither {L : Type} {R : Type} {S : Type} (e : Either) (f : R → S) : Either :=
+def mapEither {L : Type} {R : Type} {S : Type} (e : Either L R) (f : R → S) : Either L S :=
   match e with
-    | .Left value => { type := "left", value := value }
-    | .Right value => { type := "right", value := f value }
+    | .Left value => Either.Left value
+    | .Right value => Either.Right (f value)
 
 end TSLean.Generated.DiscriminatedUnions

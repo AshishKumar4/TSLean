@@ -1122,7 +1122,8 @@ class ParserCtx {
       const fullName = node.expression.getText(this.sf);
       const global = lookupGlobal(fullName);
       if (global) {
-        const args = node.arguments.map(a => this.parseExpr(a));
+        let args = node.arguments.map(a => this.parseExpr(a));
+        if (global.maxArgs !== undefined) args = args.slice(0, global.maxArgs);
         const eff  = global.io ? IO : Pure;
         return { tag: 'App', fn: varExpr(global.leanExpr, TyFn(args.map(a => a.type), ty, eff)),
           args, type: ty, effect: combineEffects([eff, ...args.map(a => a.effect)]) };
@@ -1133,7 +1134,8 @@ class ParserCtx {
     if (ts.isIdentifier(node.expression)) {
       const global = lookupGlobal(node.expression.text);
       if (global) {
-        const args = node.arguments.map(a => this.parseExpr(a));
+        let args = node.arguments.map(a => this.parseExpr(a));
+        if (global.maxArgs !== undefined) args = args.slice(0, global.maxArgs);
         const eff  = global.io ? IO : Pure;
         return { tag: 'App', fn: varExpr(global.leanExpr, TyFn(args.map(a => a.type), ty, eff)),
           args, type: ty, effect: combineEffects([eff, ...args.map(a => a.effect)]) };
@@ -1174,9 +1176,14 @@ class ParserCtx {
     if (name === 'Set')      return varExpr('AssocSet.empty', ty);
     if (name === 'Array')    return { tag: 'ArrayLit', elems: [], type: ty, effect: Pure };
     if (name === 'Error' || name.endsWith('Error'))
-      return { tag: 'App', fn: varExpr('TSError.mk'), args, type: ty, effect: Pure };
+      // TSError constructors: typeError, rangeError, networkError, customError
+      return { tag: 'App', fn: varExpr('TSError.typeError'), args: args.length > 0 ? [args[0]] : [litStr('error')], type: ty, effect: Pure };
     if (name === 'Response')
       return { tag: 'App', fn: varExpr('mkResponse'), args, type: ty, effect: Pure };
+    if (name === 'Promise')
+      return holeExpr(ty);  // new Promise(...) can't be directly expressed in Lean
+    if (name === 'URL')
+      return { tag: 'App', fn: varExpr('URL.parse'), args, type: ty, effect: Pure };
     return { tag: 'CtorApp', ctor: name, args, type: ty, effect: combineEffects(args.map(a => a.effect)) };
   }
 

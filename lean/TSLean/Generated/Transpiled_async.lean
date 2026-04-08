@@ -3,19 +3,20 @@
 
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Monad
+import TSLean.Runtime.WebAPI
 
-open TSLean
+open TSLean TSLean.WebAPI
 
 namespace TSLean.Generated.Async
 
 -- // Async/await → IO monad
 def fetchUser (id : String) : IO (IO AnonStruct) :=
   do
-    let response ← TSLean.fetch (s!"https://api.example.com/users/{id}")
-    let data ← response.json
-    return data
+    let response ← WebAPI.fetch (s!"https://api.example.com/users/{id}")
+    let data ← response.toJson
+    pure data
 
-def fetchAndProcess (ids : Array String) : IO (IO (Array String)) :=
+def fetchAndProcess (ids : Array String) : IO (Array String) :=
   do
     let results : Array String := #[]
     do
@@ -24,7 +25,7 @@ def fetchAndProcess (ids : Array String) : IO (IO (Array String)) :=
       return results
 
 def delay (ms : Float) : IO Unit :=
-  Promise (fun resolve => IO.sleep resolve ms)
+  sorry
 
 def withRetry {T : Type} (op :  → IO T) (maxRetries : Float) : StateT Unit (ExceptT String IO) (IO T) :=
   do
@@ -32,12 +33,12 @@ def withRetry {T : Type} (op :  → IO T) (maxRetries : Float) : StateT Unit (Ex
     do
       let _loop_719 := fun i => if i < maxRetries then
         do
-          tryCatch return op (fun e => do
+          tryCatch pure op (fun e => do
             let lastError := e
             delay (100 * (i + 1)))
           _loop_719 (i + 1)
       else
         ()
-      throw (Option.getD lastError (TSError.mk "Max retries exceeded"))
+      throw (Option.getD lastError (TSError.typeError "Max retries exceeded"))
 
 end TSLean.Generated.Async

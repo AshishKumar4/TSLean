@@ -26,32 +26,32 @@ def CounterDO.init : CounterDOState :=
 
 def fetch (self : CounterDOState) (request : Request) : StateT CounterDOState IO (IO Response) :=
   do
-    let url : URL := URL request.url
+    let url : URL := URL.parse request.url
     if (url.pathname == "/increment") && (request.method == "POST") then
       do
         modify (fun s => { s with count := self.count + 1 })
         do
           Storage.put self.state.storage "count" self.count
-          return mkResponse (TSLean.serialize { count := self.count }) { headers := { "Content-Type" := "application/json" } }
+          return mkResponse (TSLean.serialize { count := self.count }) { headers := sorry }
     else
       if (url.pathname == "/decrement") && (request.method == "POST") then
         do
           modify (fun s => { s with count := max 0 (self.count - 1) })
           do
             Storage.put self.state.storage "count" self.count
-            return mkResponse (TSLean.serialize { count := self.count }) { headers := { "Content-Type" := "application/json" } }
+            return mkResponse (TSLean.serialize { count := self.count }) { headers := sorry }
       else
         if (url.pathname == "/reset") && (request.method == "POST") then
           do
             modify (fun s => { s with count := 0 })
             do
               Storage.put self.state.storage "count" 0
-              return mkResponse (TSLean.serialize { count := 0 }) { headers := { "Content-Type" := "application/json" } }
+              return mkResponse (TSLean.serialize { count := 0 }) { headers := sorry }
         else
           if (url.pathname == "/value") && (request.method == "GET") then
-            return mkResponse (TSLean.serialize { count := self.count }) { headers := { "Content-Type" := "application/json" } }
+            pure (mkResponse (TSLean.serialize { count := self.count }) { headers := sorry })
           else
-            return mkResponse "Not Found" { status := 404 }
+            pure (mkResponse "Not Found" { status := 404 })
 
 end CounterDO
 

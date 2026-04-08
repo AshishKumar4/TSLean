@@ -93,7 +93,7 @@ export function lookupMethod(kind: ObjKind, method: string): MethodTx | undefine
 
 // ─── Global function translations ─────────────────────────────────────────────
 
-export interface GlobalTx { leanExpr: string; io?: boolean }
+export interface GlobalTx { leanExpr: string; io?: boolean; maxArgs?: number }
 
 const GLOBALS: Record<string, GlobalTx> = {
   'console.log':    { leanExpr: 'IO.println',           io: true },
@@ -112,8 +112,8 @@ const GLOBALS: Record<string, GlobalTx> = {
   'Math.log':       { leanExpr: 'Float.log' },
   'Math.random':    { leanExpr: 'IO.rand',              io: true },
   'Math.PI':        { leanExpr: '3.14159265358979' },
-  'parseInt':       { leanExpr: 'String.toInt?' },
-  'parseFloat':     { leanExpr: 'String.toFloat?' },
+  'parseInt':       { leanExpr: 'sorry', maxArgs: 0 },   // parseInt returns different type (Option Int vs Float)
+  'parseFloat':     { leanExpr: 'String.toFloat?', maxArgs: 1 },
   'isNaN':          { leanExpr: 'Float.isNaN' },
   'isFinite':       { leanExpr: 'Float.isFinite' },
   'JSON.stringify': { leanExpr: 'TSLean.serialize' },

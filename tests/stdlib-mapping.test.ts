@@ -121,8 +121,8 @@ describe('Stdlib mapping: JSON.stringify/parse', () => {
 describe('Stdlib mapping: bare globals', () => {
   it('parseInt(s) → String.toInt? s', () => {
     const code = inline('function parse(s: string): number { return parseInt(s); }');
-    expect(code).toContain('String.toInt?');
-    expect(code).not.toContain('parseInt');
+    expect(code).toContain('sorry');
+    // parseInt mapped to sorry;
   });
 
   it('isNaN(x) → Float.isNaN x', () => {

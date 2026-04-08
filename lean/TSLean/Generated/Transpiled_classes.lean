@@ -16,40 +16,44 @@ structure CounterState where
   deriving Repr, BEq
 
 def Counter.init (self : CounterState) (step : Float := 1) : StateT CounterState IO Unit :=
-  modify (fun s => { s with step := step })
+  do
+    modify (fun s => { s with step := step })
 
 def increment (self : CounterState) : StateT CounterState IO Unit :=
-  modify (fun s => { s with count := self.count + self.step })
+  do
+    modify (fun s => { s with count := self.count + self.step })
 
 def decrement (self : CounterState) : StateT CounterState IO Unit :=
-  modify (fun s => { s with count := self.count - self.step })
+  do
+    modify (fun s => { s with count := self.count - self.step })
 
 def reset (self : CounterState) : StateT CounterState IO Unit :=
-  modify (fun s => { s with count := 0 })
+  do
+    modify (fun s => { s with count := 0 })
 
 def getCount (self : CounterState) : Float :=
   self.count
 
 -- State for Stack
-structure StackState where
+structure StackState (T : Type) where
   mk ::
   items : Array T
   deriving Repr, BEq
 
-def push (self : StackState) (item : T) : Unit :=
-  self.items.push item
+def push {T : Type} (self : StackState T) (item : T) : Unit :=
+  let _ := self.items.push item; ()
 
-def pop (self : StackState) : Option T :=
-  self.items.pop
+def pop {T : Type} (self : StackState T) : Option T :=
+  self.items.back?
 
-def peek (self : StackState) : Option T :=
-  self.items[self.items.length - 1]!
+def peek {T : Type} (self : StackState T) : Option T :=
+  self.items.getD self.items.size - 1 sorry
 
-def isEmpty (self : StackState) : Bool :=
-  self.items.length == 0
+def isEmpty {T : Type} (self : StackState T) : Bool :=
+  self.items.size == 0
 
-def size (self : StackState) : Float :=
-  self.items.length
+def size {T : Type} (self : StackState T) : Float :=
+  self.items.size
 
 -- State for BankAccount
 structure BankAccountState where
@@ -65,15 +69,16 @@ def BankAccount.init (self : BankAccountState) (owner : String) (initial : Float
       modify (fun s => { s with balance := initial })
 
 def deposit (self : BankAccountState) (amount : Float) : StateT BankAccountState (ExceptT String IO) Unit :=
-  if amount <= 0 then
-    throw (TSError.mk "must be positive")
-  else
-    modify (fun s => { s with balance := self.balance + amount })
+  do
+    if amount <= 0 then
+      throw (TSError.typeError "must be positive")
+    else
+      modify (fun s => { s with balance := self.balance + amount })
 
 def withdraw (self : BankAccountState) (amount : Float) : StateT BankAccountState IO Bool :=
   do
     if amount > self.balance then
-      return false
+      pure false
     else
       do
         modify (fun s => { s with balance := self.balance - amount })

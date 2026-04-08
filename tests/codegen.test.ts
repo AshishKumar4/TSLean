@@ -276,8 +276,8 @@ describe('generateLean – expressions', () => {
   it('Throw → throw', () =>
     expect(expr({ tag: 'Throw', error: litStr('err'), type: TyUnit, effect: exceptEffect(TyString) }, exceptEffect(TyString))).toContain('throw'));
 
-  it('Return in IO context → return val', () =>
-    expect(expr({ tag: 'Return', value: litNat(42), type: TyNat, effect: Pure }, Async)).toContain('return 42'));
+  it('Return in IO context → pure val', () =>
+    expect(expr({ tag: 'Return', value: litNat(42), type: TyNat, effect: Pure }, Async)).toContain('pure 42'));
 
   it('Assign self.field → modify', () => {
     const code = expr({
