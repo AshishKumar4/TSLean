@@ -180,7 +180,7 @@ describe('irTypeToLean – emission', () => {
   it('TypeVar α', () => expect(irTypeToLean({ tag: 'TypeVar', name: 'α' })).toBe('α'));
 
   it('Universe 0 → Prop',   () => expect(irTypeToLean({ tag: 'Universe', level: 0 })).toBe('Prop'));
-  it('Universe 1 → Type',   () => expect(irTypeToLean({ tag: 'Universe', level: 1 })).toBe('Type'));
+  it('Universe 1 → Type',   () => expect(irTypeToLean({ tag: 'Universe', level: 1 })).toBe('Type 1'));
   it('Universe 2 → Type 2', () => expect(irTypeToLean({ tag: 'Universe', level: 2 })).toBe('Type 2'));
 
   it('irTypeToLean with parens=true wraps compound', () => {

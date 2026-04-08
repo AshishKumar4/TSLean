@@ -1,10 +1,26 @@
-// Parser: TypeScript compiler API → IR.
-// Uses ts.createProgram + TypeChecker for fully-resolved types.
-// Key transformations:
-//   early-return CPS  :  if (cond) return x; rest  →  if cond then x else rest
-//   switch            →  match
-//   this              →  self
-//   DO ambient inject :  when DurableObjectState detected
+/**
+ * @module parser
+ *
+ * Parser: TypeScript source → fully-typed IR.
+ *
+ * Uses `ts.createProgram` + `TypeChecker` for fully-resolved types, generics,
+ * and type narrowing.  The parser performs several key transformations:
+ *
+ * - **Early-return CPS**: `if (cond) return x; rest` → `if cond then x else rest`.
+ *   This is the continuation-passing transform that converts imperative early
+ *   returns into functional if-then-else chains.
+ *
+ * - **Switch → Match**: TypeScript switch statements become Lean match expressions.
+ *
+ * - **this → self**: The `this` keyword is translated to a `self` parameter.
+ *
+ * - **DO ambient injection**: When `DurableObjectState` is detected in the source,
+ *   Cloudflare Workers type declarations are injected as ambient types.
+ *
+ * - **For/while → tail-recursive helpers**: Loops become `let rec loop i := ...`.
+ *
+ * Pipeline position:  **TS Source** → Parser → IR → Rewrite → Codegen → Lean 4
+ */
 
 import * as ts from 'typescript';
 import * as path from 'path';
@@ -24,12 +40,31 @@ import { lookupGlobal } from '../stdlib/index.js';
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+/** Options for parsing a single TypeScript file into IR. */
 export interface ParseOptions {
+  /** Path to the TypeScript source file. */
   fileName: string;
+  /** Override source text (avoids reading from disk). */
   sourceText?: string;
+  /** Additional virtual files available during type checking. */
   extraFiles?: Map<string, string>;
 }
 
+/**
+ * Parse a TypeScript source file into a fully-typed IR module.
+ *
+ * Creates a `ts.Program` with type checking, resolves all types and effects,
+ * and produces an `IRModule` ready for the rewrite and codegen passes.
+ *
+ * @param opts - Parsing options (file path, optional source text).
+ * @returns A fully-typed IR module with all declarations and imports.
+ *
+ * @example
+ * ```ts
+ * const mod = parseFile({ fileName: 'src/counter.ts' });
+ * const lean = generateLean(rewriteModule(mod));
+ * ```
+ */
 export function parseFile(opts: ParseOptions): IRModule {
   const { fileName } = opts;
   const sourceText = opts.sourceText ?? ts.sys.readFile(fileName) ?? '';

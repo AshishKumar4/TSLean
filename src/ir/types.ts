@@ -1,27 +1,64 @@
-// Core IR for the TS→Lean 4 transpiler.
-// System Fω with algebraic effect annotations.
-// Every expression node carries a resolved type and effect signature.
+/**
+ * @module ir/types
+ *
+ * Core Intermediate Representation for the TS → Lean 4 transpiler.
+ *
+ * The IR is a System Fω with algebraic effect annotations.  Every expression
+ * node carries both a resolved **type** and an **effect** signature, enabling
+ * downstream passes (codegen, verification) to emit correct monad stacks
+ * without re-analysing the AST.
+ *
+ * Pipeline position:  TS Source → Parser → **IR** → Rewrite → Codegen → Lean 4
+ */
 
-// ─── Effects ────────────────────────────────────────────────────────────────
+// ─── Effects ────────────────────────────────────────────────────────────────────
+//
+// Effects form a join-semilattice:  Pure ⊑ {IO, Async, State, Except} ⊑ Combined.
+// `combineEffects` computes the join.  The codegen maps each effect to a Lean 4
+// monad transformer stack (StateT / ExceptT / IO).
 
+/**
+ * Algebraic effect annotation carried by every IR expression.
+ *
+ * - `Pure`     — no side effects; maps to a plain Lean function.
+ * - `State`    — reads/writes mutable state; maps to `StateT σ`.
+ * - `IO`       — arbitrary IO (console, filesystem, Date.now); maps to `IO`.
+ * - `Async`    — async/await; also maps to `IO` in Lean.
+ * - `Except`   — can throw; maps to `ExceptT ε`.
+ * - `Combined` — multiple effects; maps to a transformer stack.
+ */
 export type Effect =
   | { tag: 'Pure' }
-  | { tag: 'State';  stateType: IRType }
+  | { tag: 'State';    stateType: IRType }
   | { tag: 'IO' }
   | { tag: 'Async' }
-  | { tag: 'Except'; errorType: IRType }
+  | { tag: 'Except';   errorType: IRType }
   | { tag: 'Combined'; effects: Effect[] };
 
+/** The identity effect — no side effects. */
 export const Pure:  Effect = { tag: 'Pure' };
+/** Arbitrary IO effect. */
 export const IO:    Effect = { tag: 'IO' };
+/** Async/await effect (maps to IO in Lean). */
 export const Async: Effect = { tag: 'Async' };
 
+/** Construct a State effect over the given state type. */
 export function stateEffect(stateType: IRType): Effect {
   return { tag: 'State', stateType };
 }
+
+/** Construct an Except effect over the given error type. */
 export function exceptEffect(errorType: IRType): Effect {
   return { tag: 'Except', errorType };
 }
+
+/**
+ * Compute the join of multiple effects in the effect lattice.
+ *
+ * Flattens nested `Combined`, removes `Pure`, and deduplicates structurally.
+ * Returns `Pure` if all inputs are pure, a single effect if only one remains,
+ * or `Combined` otherwise.
+ */
 export function combineEffects(effects: Effect[]): Effect {
   const flat = effects.flatMap(e => e.tag === 'Combined' ? e.effects : [e]);
   const noPure = flat.filter(e => e.tag !== 'Pure');
@@ -30,6 +67,8 @@ export function combineEffects(effects: Effect[]): Effect {
   if (deduped.length === 1) return deduped[0];
   return { tag: 'Combined', effects: deduped };
 }
+
+/** Structural deduplication of effects using serialized keys. */
 function dedup(effects: Effect[]): Effect[] {
   const seen = new Set<string>();
   return effects.filter(e => {
@@ -40,14 +79,33 @@ function dedup(effects: Effect[]): Effect[] {
   });
 }
 
+// ─── Effect predicates ──────────────────────────────────────────────────────────
+
+/** True when the effect is strictly `Pure`. */
 export function isPure(e: Effect): boolean   { return e.tag === 'Pure'; }
+/** True when the effect tree contains `Async` (recursively). */
 export function hasAsync(e: Effect): boolean  { return e.tag === 'Async'  || (e.tag === 'Combined' && e.effects.some(hasAsync)); }
+/** True when the effect tree contains `State` (recursively). */
 export function hasState(e: Effect): boolean  { return e.tag === 'State'  || (e.tag === 'Combined' && e.effects.some(hasState)); }
+/** True when the effect tree contains `Except` (recursively). */
 export function hasExcept(e: Effect): boolean { return e.tag === 'Except' || (e.tag === 'Combined' && e.effects.some(hasExcept)); }
+/** True when the effect tree contains `IO` (recursively). */
 export function hasIO(e: Effect): boolean     { return e.tag === 'IO'     || (e.tag === 'Combined' && e.effects.some(hasIO)); }
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ──────────────────────────────────────────────────────────────────────
+//
+// IRType is the type universe of the IR.  Primitive types map 1:1 to Lean 4 types.
+// Compound types (Option, Array, Map, …) map to their Lean equivalents.
+// `TypeRef` is the escape hatch for user-defined or unresolved types.
 
+/**
+ * IR type — the type universe of the intermediate representation.
+ *
+ * Primitives: `Nat`, `Int`, `Float`, `String`, `Bool`, `Unit`, `Never`.
+ * Containers: `Option`, `Array`, `Tuple`, `Map`, `Set`, `Promise`, `Result`.
+ * Named:      `Structure`, `Inductive`, `TypeRef`, `TypeVar`.
+ * Advanced:   `Function`, `Dependent`, `Subtype`, `Universe`.
+ */
 export type IRType =
   | { tag: 'Nat' }
   | { tag: 'Int' }
@@ -72,7 +130,8 @@ export type IRType =
   | { tag: 'Subtype';   base: IRType; refinement: string }
   | { tag: 'Universe';  level: number };
 
-// Primitive singletons
+// ─── Primitive type singletons ──────────────────────────────────────────────────
+
 export const TyNat:    IRType = { tag: 'Nat' };
 export const TyInt:    IRType = { tag: 'Int' };
 export const TyFloat:  IRType = { tag: 'Float' };
@@ -81,26 +140,52 @@ export const TyBool:   IRType = { tag: 'Bool' };
 export const TyUnit:   IRType = { tag: 'Unit' };
 export const TyNever:  IRType = { tag: 'Never' };
 
-// Type constructors
+// ─── Type constructors ──────────────────────────────────────────────────────────
+
+/** `T | undefined` → `Option T` */
 export const TyOption  = (inner: IRType): IRType => ({ tag: 'Option', inner });
+/** `T[]` → `Array T` */
 export const TyArray   = (elem: IRType):  IRType => ({ tag: 'Array',  elem });
+/** `[A, B, C]` → `A × B × C` */
 export const TyTuple   = (elems: IRType[]): IRType => ({ tag: 'Tuple', elems });
+/** `Map<K, V>` → `AssocMap K V` */
 export const TyMap     = (key: IRType, value: IRType): IRType => ({ tag: 'Map', key, value });
+/** `Set<T>` → `AssocSet T` */
 export const TySet     = (elem: IRType):  IRType => ({ tag: 'Set',  elem });
+/** `Promise<T>` → `IO T` */
 export const TyPromise = (inner: IRType): IRType => ({ tag: 'Promise', inner });
+/** `Result<T, E>` → `Except E T` */
 export const TyResult  = (ok: IRType, err: IRType): IRType => ({ tag: 'Result', ok, err });
+/** Named type reference with optional type arguments. */
 export const TyRef     = (name: string, args: IRType[] = []): IRType => ({ tag: 'TypeRef', name, args });
+/** Type variable (generic parameter). */
 export const TyVar     = (name: string): IRType => ({ tag: 'TypeVar', name });
+/** Function type `(p₁ → p₂ → … → ret)` with an effect annotation. */
 export const TyFn      = (params: IRType[], ret: IRType, effect: Effect = Pure): IRType =>
   ({ tag: 'Function', params, ret, effect });
 
-// ─── Expressions ─────────────────────────────────────────────────────────────
+// ─── Expressions ────────────────────────────────────────────────────────────────
+//
+// Every IRExpr node carries `type: IRType` and `effect: Effect` via the IRNode
+// mixin.  This is the key invariant: the IR is always fully typed and effected.
 
+/** Source location for error messages and debugging. */
 export interface Span { file: string; line: number; col: number }
 
+/**
+ * Base mixin for all IR expression nodes.
+ * Every node carries a resolved type and effect — this is the central invariant.
+ */
 export interface IRNode { type: IRType; effect: Effect; span?: Span }
 
+/**
+ * IR expression — the core of the intermediate representation.
+ *
+ * Literals, variables, function application, let-binding, if-then-else, match,
+ * do-notation, monadic bind, state/throw/try-catch, and structural operations.
+ */
 export type IRExpr =
+  // Literals
   | ({ tag: 'LitNat';    value: number }    & IRNode)
   | ({ tag: 'LitInt';    value: number }    & IRNode)
   | ({ tag: 'LitFloat';  value: number }    & IRNode)
@@ -108,55 +193,83 @@ export type IRExpr =
   | ({ tag: 'LitBool';   value: boolean }   & IRNode)
   | ({ tag: 'LitUnit' }                     & IRNode)
   | ({ tag: 'LitNull' }                     & IRNode)
-  | ({ tag: 'Var';       name: string }     & IRNode)
-  | ({ tag: 'FieldAccess'; obj: IRExpr; field: string }               & IRNode)
-  | ({ tag: 'IndexAccess'; obj: IRExpr; index: IRExpr }               & IRNode)
-  | ({ tag: 'Lambda'; params: IRParam[]; body: IRExpr }               & IRNode)
-  | ({ tag: 'App';    fn: IRExpr; args: IRExpr[] }                    & IRNode)
-  | ({ tag: 'TypeApp'; fn: IRExpr; typeArgs: IRType[] }               & IRNode)
-  | ({ tag: 'Let';    name: string; annot?: IRType; value: IRExpr; body: IRExpr } & IRNode)
-  | ({ tag: 'IfThenElse'; cond: IRExpr; then: IRExpr; else_: IRExpr } & IRNode)
-  | ({ tag: 'Match'; scrutinee: IRExpr; cases: IRCase[] }             & IRNode)
-  | ({ tag: 'Sequence'; stmts: IRExpr[] }                             & IRNode)
+  // Variables and access
+  | ({ tag: 'Var';         name: string }                                  & IRNode)
+  | ({ tag: 'FieldAccess'; obj: IRExpr; field: string }                    & IRNode)
+  | ({ tag: 'IndexAccess'; obj: IRExpr; index: IRExpr }                    & IRNode)
+  // Functions
+  | ({ tag: 'Lambda';  params: IRParam[]; body: IRExpr }                   & IRNode)
+  | ({ tag: 'App';     fn: IRExpr; args: IRExpr[] }                        & IRNode)
+  | ({ tag: 'TypeApp'; fn: IRExpr; typeArgs: IRType[] }                    & IRNode)
+  // Bindings
+  | ({ tag: 'Let';  name: string; annot?: IRType; value: IRExpr; body: IRExpr } & IRNode)
+  | ({ tag: 'Bind'; name: string; monad: IRExpr; body: IRExpr }            & IRNode)
+  // Control flow
+  | ({ tag: 'IfThenElse'; cond: IRExpr; then: IRExpr; else_: IRExpr }      & IRNode)
+  | ({ tag: 'Match';      scrutinee: IRExpr; cases: IRCase[] }             & IRNode)
+  | ({ tag: 'Sequence';   stmts: IRExpr[] }                                & IRNode)
+  | ({ tag: 'Return';     value: IRExpr }                                  & IRNode)
+  // Constructors and literals (compound)
   | ({ tag: 'StructLit'; typeName: string; fields: Array<{ name: string; value: IRExpr }> } & IRNode)
-  | ({ tag: 'CtorApp'; ctor: string; args: IRExpr[] }                 & IRNode)
-  | ({ tag: 'ArrayLit'; elems: IRExpr[] }                             & IRNode)
-  | ({ tag: 'TupleLit'; elems: IRExpr[] }                             & IRNode)
-  | ({ tag: 'DoBlock'; stmts: DoStmt[] }                              & IRNode)
-  | ({ tag: 'Pure_';  value: IRExpr }                                 & IRNode)
-  | ({ tag: 'Bind';   name: string; monad: IRExpr; body: IRExpr }     & IRNode)
-  | ({ tag: 'StateGet' }                                              & IRNode)
-  | ({ tag: 'StateSet'; value: IRExpr }                               & IRNode)
-  | ({ tag: 'Throw';  error: IRExpr }                                 & IRNode)
-  | ({ tag: 'TryCatch'; body: IRExpr; errName: string; handler: IRExpr } & IRNode)
-  | ({ tag: 'Await';  expr: IRExpr }                                  & IRNode)
-  | ({ tag: 'Assign'; target: IRExpr; value: IRExpr }                 & IRNode)
-  | ({ tag: 'BinOp';  op: BinOp; left: IRExpr; right: IRExpr }       & IRNode)
-  | ({ tag: 'UnOp';   op: UnOp;  operand: IRExpr }                   & IRNode)
-  | ({ tag: 'Cast';   expr: IRExpr; targetType: IRType }              & IRNode)
-  | ({ tag: 'IsType'; expr: IRExpr; testType: IRType }                & IRNode)
-  | ({ tag: 'Return'; value: IRExpr }                                 & IRNode)
-  | ({ tag: 'Panic';       msg: string }                                          & IRNode)
-  | ({ tag: 'Hole' }                                                              & IRNode)
-  // New nodes added in v3:
+  | ({ tag: 'CtorApp';   ctor: string; args: IRExpr[] }                    & IRNode)
+  | ({ tag: 'ArrayLit';  elems: IRExpr[] }                                 & IRNode)
+  | ({ tag: 'TupleLit';  elems: IRExpr[] }                                 & IRNode)
+  // Monadic / do-notation
+  | ({ tag: 'DoBlock';  stmts: DoStmt[] }                                  & IRNode)
+  | ({ tag: 'Pure_';    value: IRExpr }                                    & IRNode)
+  | ({ tag: 'StateGet' }                                                   & IRNode)
+  | ({ tag: 'StateSet'; value: IRExpr }                                    & IRNode)
+  // Error handling
+  | ({ tag: 'Throw';    error: IRExpr }                                    & IRNode)
+  | ({ tag: 'TryCatch'; body: IRExpr; errName: string; handler: IRExpr }   & IRNode)
+  // Async
+  | ({ tag: 'Await'; expr: IRExpr }                                        & IRNode)
+  // Mutation
+  | ({ tag: 'Assign'; target: IRExpr; value: IRExpr }                      & IRNode)
+  // Operators
+  | ({ tag: 'BinOp'; op: BinOp; left: IRExpr; right: IRExpr }             & IRNode)
+  | ({ tag: 'UnOp';  op: UnOp;  operand: IRExpr }                         & IRNode)
+  // Type operations
+  | ({ tag: 'Cast';   expr: IRExpr; targetType: IRType }                   & IRNode)
+  | ({ tag: 'IsType'; expr: IRExpr; testType: IRType }                     & IRNode)
+  // Special
+  | ({ tag: 'Panic'; msg: string }                                         & IRNode)
+  | ({ tag: 'Hole' }                                                       & IRNode)
+  // Structural operations (spread, with-update, optional chaining)
   | ({ tag: 'StructUpdate'; base: IRExpr; fields: Array<{ name: string; value: IRExpr }> } & IRNode)
-  | ({ tag: 'TypeNarrow';  expr: IRExpr; narrowedType: IRType; narrowKind: 'typeof' | 'instanceof' | 'in' | 'truthy' } & IRNode)
-  | ({ tag: 'YieldExpr';   value?: IRExpr }                                       & IRNode)
-  | ({ tag: 'OptChain';    expr: IRExpr }                                         & IRNode)   // obj?.x already optional
-  | ({ tag: 'MultiLet';    bindings: Array<{ name: string; type: IRType; value: IRExpr }>; body: IRExpr } & IRNode)
-  | ({ tag: 'Labeled';     label: string; body: IRExpr }                          & IRNode)
-  | ({ tag: 'Break';       label?: string }                                       & IRNode)
-  | ({ tag: 'Continue';    label?: string }                                       & IRNode);
+  | ({ tag: 'OptChain';     expr: IRExpr }                                 & IRNode)
+  // Type narrowing (typeof / instanceof / in / truthy guards)
+  | ({ tag: 'TypeNarrow'; expr: IRExpr; narrowedType: IRType; narrowKind: 'typeof' | 'instanceof' | 'in' | 'truthy' } & IRNode)
+  // Generators
+  | ({ tag: 'YieldExpr'; value?: IRExpr }                                  & IRNode)
+  // Multi-binding (const a=1, b=2)
+  | ({ tag: 'MultiLet'; bindings: Array<{ name: string; type: IRType; value: IRExpr }>; body: IRExpr } & IRNode)
+  // Labels and jumps
+  | ({ tag: 'Labeled';  label: string; body: IRExpr }                      & IRNode)
+  | ({ tag: 'Break';    label?: string }                                   & IRNode)
+  | ({ tag: 'Continue'; label?: string }                                   & IRNode);
 
+// ─── Supporting types ───────────────────────────────────────────────────────────
+
+/** A function parameter in the IR.  May be implicit (Lean `{}`) or have a default value. */
 export interface IRParam {
   name: string;
   type: IRType;
+  /** Lean implicit parameter `{name : Type}` — used for type-class constraints. */
   implicit?: boolean;
+  /** Default value expression — emitted as `(name : Type := default)`. */
   default_?: IRExpr;
 }
 
+/** A single case arm in a `match` expression. */
 export interface IRCase { pattern: IRPattern; guard?: IRExpr; body: IRExpr }
 
+/**
+ * Pattern in a `match` expression.
+ *
+ * `PString` is a transitional node: the rewrite pass converts it to `PCtor`
+ * when the match scrutinises a discriminant field (e.g. `s.kind`).
+ */
 export type IRPattern =
   | { tag: 'PVar';    name: string }
   | { tag: 'PLit';    value: string | number | boolean }
@@ -166,16 +279,18 @@ export type IRPattern =
   | { tag: 'PWild' }
   | { tag: 'POr';     pats: IRPattern[] }
   | { tag: 'PAs';     pattern: IRPattern; name: string }
-  | { tag: 'PString'; value: string }   // pre-rewrite discriminant string
+  | { tag: 'PString'; value: string }
   | { tag: 'PNone' }
   | { tag: 'PSome';   inner: IRPattern };
 
+/** A statement inside a `do`-block (Lean do-notation). */
 export type DoStmt =
   | { tag: 'DoBind';   name: string; expr: IRExpr }
   | { tag: 'DoLet';    name: string; value: IRExpr }
   | { tag: 'DoExpr';   expr: IRExpr }
   | { tag: 'DoReturn'; value: IRExpr };
 
+/** Binary operators — arithmetic, comparison, logical, bitwise, string. */
 export type BinOp =
   'Add' | 'Sub' | 'Mul' | 'Div' | 'Mod' |
   'Eq' | 'Ne' | 'Lt' | 'Le' | 'Gt' | 'Ge' |
@@ -183,10 +298,20 @@ export type BinOp =
   'BitAnd' | 'BitOr' | 'BitXor' | 'Shl' | 'Shr' |
   'Concat' | 'NullCoalesce';
 
+/** Unary operators. */
 export type UnOp = 'Not' | 'Neg' | 'BitNot';
 
-// ─── Declarations ─────────────────────────────────────────────────────────────
+// ─── Declarations ───────────────────────────────────────────────────────────────
 
+/**
+ * Top-level declaration in the IR.
+ *
+ * Each variant maps directly to a Lean 4 declaration form:
+ * - `StructDef`    → `structure Foo where`
+ * - `InductiveDef` → `inductive Foo where`
+ * - `FuncDef`      → `def foo ...` or `partial def foo ...`
+ * - `Namespace`    → `namespace Foo ... end Foo`
+ */
 export type IRDecl =
   | { tag: 'TypeAlias';    name: string; typeParams: string[]; body: IRType;  comment?: string }
   | { tag: 'StructDef';    name: string; typeParams: string[]; fields: Array<{ name: string; type: IRType; mutable?: boolean }>; deriving?: string[]; comment?: string; extends_?: string }
@@ -198,15 +323,16 @@ export type IRDecl =
   | { tag: 'Namespace';    name: string; decls: IRDecl[] }
   | { tag: 'RawLean';      code: string }
   | { tag: 'VarDecl';      name: string; type: IRType; value: IRExpr; mutable: boolean }
-  // New in v3:
   | { tag: 'SectionDecl';  name?: string; decls: IRDecl[] }
   | { tag: 'AttributeDecl'; attr: string; target: string }
   | { tag: 'DeriveDecl';   typeName: string; classes: string[] };
 
-// ─── Module ───────────────────────────────────────────────────────────────────
+// ─── Module ─────────────────────────────────────────────────────────────────────
 
+/** A Lean 4 import — corresponds to `import Module.Path`. */
 export interface IRImport { module: string; names?: string[] }
 
+/** Top-level IR module — one per `.ts` source file. */
 export interface IRModule {
   name: string;
   imports: IRImport[];
@@ -215,22 +341,40 @@ export interface IRModule {
   sourceFile?: string;
 }
 
-// ─── Smart constructors ───────────────────────────────────────────────────────
+// ─── Smart constructors ─────────────────────────────────────────────────────────
+//
+// Convenience functions for building IR nodes in the parser.  Each returns a
+// fully-typed, effected node so callers never need to assemble IRNode fields.
 
-export function litStr(v: string):  IRExpr { return { tag: 'LitString', value: v, type: TyString, effect: Pure }; }
-export function litNat(v: number):  IRExpr { return { tag: 'LitNat',    value: v, type: TyNat,    effect: Pure }; }
-export function litBool(v: boolean):IRExpr { return { tag: 'LitBool',   value: v, type: TyBool,   effect: Pure }; }
-export function litUnit():          IRExpr { return { tag: 'LitUnit',              type: TyUnit,   effect: Pure }; }
-export function litFloat(v: number):IRExpr { return { tag: 'LitFloat',  value: v, type: TyFloat,  effect: Pure }; }
-export function litInt(v: number):  IRExpr { return { tag: 'LitInt',    value: v, type: TyInt,    effect: Pure }; }
-export function varExpr(name: string, type: IRType = TyUnit): IRExpr { return { tag: 'Var', name, type, effect: Pure }; }
-export function holeExpr(type: IRType = TyUnit): IRExpr { return { tag: 'Hole', type, effect: Pure }; }
+/** String literal. */
+export function litStr(v: string):   IRExpr { return { tag: 'LitString', value: v, type: TyString, effect: Pure }; }
+/** Natural number literal. */
+export function litNat(v: number):   IRExpr { return { tag: 'LitNat',    value: v, type: TyNat,    effect: Pure }; }
+/** Boolean literal. */
+export function litBool(v: boolean): IRExpr { return { tag: 'LitBool',   value: v, type: TyBool,   effect: Pure }; }
+/** Unit literal `()`. */
+export function litUnit():           IRExpr { return { tag: 'LitUnit',              type: TyUnit,   effect: Pure }; }
+/** Float literal. */
+export function litFloat(v: number): IRExpr { return { tag: 'LitFloat',  value: v, type: TyFloat,  effect: Pure }; }
+/** Integer literal. */
+export function litInt(v: number):   IRExpr { return { tag: 'LitInt',    value: v, type: TyInt,     effect: Pure }; }
+/** Variable reference. */
+export function varExpr(name: string, type: IRType = TyUnit): IRExpr {
+  return { tag: 'Var', name, type, effect: Pure };
+}
+/** Placeholder for an unknown expression — emits `sorry` in Lean. */
+export function holeExpr(type: IRType = TyUnit): IRExpr {
+  return { tag: 'Hole', type, effect: Pure };
+}
+/** Struct update: `{ base with field₁ := v₁, … }`. */
 export function structUpdate(base: IRExpr, fields: Array<{ name: string; value: IRExpr }>, type: IRType): IRExpr {
   return { tag: 'StructUpdate', base, fields, type, effect: base.effect };
 }
+/** Function application.  Effect is the join of fn and all arg effects. */
 export function appExpr(fn: IRExpr, args: IRExpr[]): IRExpr {
   return { tag: 'App', fn, args, type: TyUnit, effect: combineEffects([fn.effect, ...args.map(a => a.effect)]) };
 }
+/** Sequence of expressions — last expression determines the type. */
 export function seqExpr(stmts: IRExpr[]): IRExpr {
   if (stmts.length === 0) return litUnit();
   if (stmts.length === 1) return stmts[0];
