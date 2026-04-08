@@ -61,15 +61,10 @@ import TSLean.Generated.FullProject.Backend.RateLimiterDo
 import TSLean.Generated.FullProject.Backend.AnalyticsDo
 import TSLean.Generated.FullProject.Backend.Router
 
--- Generated (transpiler output, fixed)
-import TSLean.Generated.Basic.Hello
-import TSLean.Generated.Basic.Interfaces
-import TSLean.Generated.Basic.Classes
-import TSLean.Generated.Generics.BrandedTypes
-import TSLean.Generated.Generics.DiscriminatedUnions
-import TSLean.Generated.Generics.Generics
-import TSLean.Generated.Effects.Async
-import TSLean.Generated.Effects.Exceptions
+-- Transpiler output (compiles with lake build — separate namespace from hand-written)
+-- Note: not imported here to avoid name clashes with hand-written Generated/ files.
+-- Import individually: `import TSLean.Generated.Basic.Hello` etc.
+-- TODO: merge hand-written and transpiler-generated into single namespace
 
 -- Veil Transition Systems
 import TSLean.Veil.Core
