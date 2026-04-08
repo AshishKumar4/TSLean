@@ -2,6 +2,7 @@
 -- Source: /workspace/tslean/tests/fixtures/basic/classes.ts
 
 import TSLean.Runtime.Basic
+import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 
 open TSLean
@@ -47,7 +48,7 @@ def pop {T : Type} (self : StackState T) : Option T :=
   self.items.back?
 
 def peek {T : Type} (self : StackState T) : Option T :=
-  self.items.getD self.items.size - 1 sorry
+  self.items.getD (self.items.size - 1) sorry
 
 def isEmpty {T : Type} (self : StackState T) : Bool :=
   self.items.size == 0
@@ -71,7 +72,7 @@ def BankAccount.init (self : BankAccountState) (owner : String) (initial : Float
 def deposit (self : BankAccountState) (amount : Float) : StateT BankAccountState (ExceptT String IO) Unit :=
   do
     if amount <= 0 then
-      throw (TSError.typeError "must be positive")
+      throw "must be positive"
     else
       modify (fun s => { s with balance := self.balance + amount })
 

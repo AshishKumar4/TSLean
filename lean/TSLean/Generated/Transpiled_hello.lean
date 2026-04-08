@@ -2,6 +2,7 @@
 -- Source: /workspace/tslean/tests/fixtures/basic/hello.ts
 
 import TSLean.Runtime.Basic
+import TSLean.Runtime.Coercions
 
 open TSLean
 

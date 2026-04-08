@@ -306,7 +306,7 @@ describe('Parser types: type assertions', () => {
 describe('Generated Lean file quality', () => {
   it('Hello.lean has all functions', () => {
     const code = require('fs').readFileSync(
-      path.join(process.cwd(), 'lean/TSLean/Generated/Basic/Hello.lean'), 'utf8'
+      path.join(process.cwd(), 'lean/TSLean/Generated/Transpiled_hello.lean'), 'utf8'
     );
     expect(code).toContain('def greet');
     expect(code).toContain('def add');
@@ -321,7 +321,7 @@ describe('Generated Lean file quality', () => {
 
   it('Interfaces.lean has all structures', () => {
     const code = require('fs').readFileSync(
-      path.join(process.cwd(), 'lean/TSLean/Generated/Basic/Interfaces.lean'), 'utf8'
+      path.join(process.cwd(), 'lean/TSLean/Generated/Transpiled_interfaces.lean'), 'utf8'
     );
     expect(code).toContain('structure Point');
     expect(code).toContain('structure Rectangle');
@@ -332,7 +332,7 @@ describe('Generated Lean file quality', () => {
 
   it('DiscriminatedUnions.lean has inductives and match', () => {
     const code = require('fs').readFileSync(
-      path.join(process.cwd(), 'lean/TSLean/Generated/Generics/DiscriminatedUnions.lean'), 'utf8'
+      path.join(process.cwd(), 'lean/TSLean/Generated/Transpiled_discriminated_unions.lean'), 'utf8'
     );
     expect(code).toContain('inductive Shape');
     expect(code).toContain('| Circle');
@@ -344,7 +344,7 @@ describe('Generated Lean file quality', () => {
 
   it('BrandedTypes.lean has structures with val field', () => {
     const code = require('fs').readFileSync(
-      path.join(process.cwd(), 'lean/TSLean/Generated/Generics/BrandedTypes.lean'), 'utf8'
+      path.join(process.cwd(), 'lean/TSLean/Generated/Transpiled_branded_types.lean'), 'utf8'
     );
     expect(code).toContain('structure UserId');
     expect(code).toContain('val : String');
@@ -354,7 +354,7 @@ describe('Generated Lean file quality', () => {
 
   it('Async.lean has IO return types', () => {
     const code = require('fs').readFileSync(
-      path.join(process.cwd(), 'lean/TSLean/Generated/Effects/Async.lean'), 'utf8'
+      path.join(process.cwd(), 'lean/TSLean/Generated/Transpiled_async.lean'), 'utf8'
     );
     expect(code).toContain('IO');
     expect(code).toMatch(/def fetchUser|partial def fetchUser/);

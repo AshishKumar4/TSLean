@@ -174,7 +174,9 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
     return TyFn(params, mapType(checker.getReturnTypeOfSignature(sig), checker, depth + 1), Pure);
   }
 
-  return TyRef(sym.name === TS_ANON_TYPE ? 'AnonStruct' : sym.name);
+  // Anonymous object types (e.g. { name: string }) can't be directly expressed in Lean.
+  // Map them to String (serialised) as a compilable approximation.
+  return TyRef(sym.name === TS_ANON_TYPE ? 'String' : sym.name);
 }
 
 // ─── Generic type references ────────────────────────────────────────────────────
@@ -228,7 +230,11 @@ function typeStr(t: IRType): string {
     case 'Option':    return `Option ${irTypeToLean(t.inner, true)}`;
     case 'Array':     return `Array ${irTypeToLean(t.elem, true)}`;
     case 'Tuple':     return t.elems.length === 0 ? 'Unit' : `(${t.elems.map(typeStr).join(' × ')})`;
-    case 'Function':  return `${t.params.map(p => irTypeToLean(p, true)).join(' → ')} → ${typeStr(t.ret)}`;
+    case 'Function': {
+      // Empty params () → T becomes Unit → T in Lean
+      const paramStr = t.params.length === 0 ? 'Unit' : t.params.map(p => irTypeToLean(p, true)).join(' → ');
+      return `${paramStr} → ${typeStr(t.ret)}`;
+    }
     case 'Map':       return `AssocMap ${irTypeToLean(t.key, true)} ${irTypeToLean(t.value, true)}`;
     case 'Set':       return `AssocSet ${irTypeToLean(t.elem, true)}`;
     case 'Promise': {

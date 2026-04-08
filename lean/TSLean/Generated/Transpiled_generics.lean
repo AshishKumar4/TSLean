@@ -2,6 +2,7 @@
 -- Source: /workspace/tslean/tests/fixtures/generics/generics.ts
 
 import TSLean.Runtime.Basic
+import TSLean.Runtime.Coercions
 
 open TSLean
 

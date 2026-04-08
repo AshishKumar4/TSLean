@@ -2,6 +2,7 @@
 -- Source: /workspace/tslean/tests/fixtures/effects/async.ts
 
 import TSLean.Runtime.Basic
+import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
 
@@ -10,7 +11,7 @@ open TSLean TSLean.WebAPI
 namespace TSLean.Generated.Async
 
 -- // Async/await → IO monad
-def fetchUser (id : String) : IO (IO AnonStruct) :=
+def fetchUser (id : String) : IO String :=
   do
     let response ← WebAPI.fetch (s!"https://api.example.com/users/{id}")
     let data ← response.toJson
@@ -27,13 +28,13 @@ def fetchAndProcess (ids : Array String) : IO (Array String) :=
 def delay (ms : Float) : IO Unit :=
   sorry
 
-def withRetry {T : Type} (op :  → IO T) (maxRetries : Float) : StateT Unit (ExceptT String IO) (IO T) :=
+def withRetry {T : Type} (op : Unit → IO T) (maxRetries : Float) : StateT Unit (ExceptT String IO) (IO T) :=
   do
     let lastError : Option Error := sorry
     do
       let _loop_719 := fun i => if i < maxRetries then
         do
-          tryCatch pure op (fun e => do
+          tryCatch (pure op) (fun e => do
             let lastError := e
             delay (100 * (i + 1)))
           _loop_719 (i + 1)

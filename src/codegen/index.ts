@@ -75,8 +75,9 @@ class Gen {
   private emitSmartImports(mod: IRModule): void {
     const needed = new Set<string>();
 
-    // Always need Runtime.Basic for core types
+    // Always need Runtime.Basic + Coercions for core types and Nat↔Float coercions
     needed.add('TSLean.Runtime.Basic');
+    needed.add('TSLean.Runtime.Coercions');
 
     // Scan all declarations for type/effect usage
     for (const d of mod.decls) this.collectImportNeeds(d, needed);
@@ -91,10 +92,13 @@ class Gen {
     for (const imp of sorted) this.emit(`import ${imp}`);
 
     this.emit('');
-    // Open only the namespaces we actually imported
+    // Open the namespaces we actually imported
     const opens = ['TSLean'];
     if (needed.has('TSLean.Runtime.WebAPI')) opens.push('TSLean.WebAPI');
     if (needed.has('TSLean.Stdlib.HashMap')) opens.push('TSLean.Stdlib.HashMap');
+    if (needed.has('TSLean.DurableObjects.Storage') || needed.has('TSLean.DurableObjects.Model') ||
+        needed.has('TSLean.DurableObjects.State'))
+      opens.push('TSLean.DO');
     this.emit(`open ${opens.join(' ')}`);
   }
 
@@ -150,7 +154,10 @@ class Gen {
   /** Check if an expression's content requires specific imports. */
   private collectExprImportNeeds(e: IRExpr, needs: Set<string>): void {
     if (e.tag === 'Var') {
-      if (e.name.startsWith('Storage.')) needs.add('TSLean.DurableObjects.Storage');
+      if (e.name.startsWith('Storage.')) {
+        needs.add('TSLean.DurableObjects.Storage');
+        needs.add('TSLean.DurableObjects.Model');  // Storage.put etc defined in Model
+      }
       if (e.name.startsWith('AssocMap.') || e.name.startsWith('AssocSet.')) needs.add('TSLean.Stdlib.HashMap');
       if (e.name === 'mkResponse' || e.name.startsWith('WebAPI.') || e.name === 'TSLean.fetch' || e.name === 'URL.parse')
         needs.add('TSLean.Runtime.WebAPI');
@@ -335,7 +342,12 @@ class Gen {
       case 'Async':  return alreadyIO ? retLean : `IO ${w(retLean)}`;
       case 'State':  return `StateT ${w(irTypeToLean(eff.stateType))} IO ${w(retLean)}`;
       case 'Except': return `ExceptT ${w(irTypeToLean(eff.errorType))} IO ${w(retLean)}`;
-      case 'Combined': return `${monadString(eff)} ${w(retLean)}`;
+      case 'Combined': {
+        const ms = monadString(eff);
+        // If monad is just IO and return type already has IO, don't double-wrap
+        if (ms === 'IO' && alreadyIO) return retLean;
+        return `${ms} ${w(retLean)}`;
+      }
     }
   }
 
@@ -430,7 +442,7 @@ class Gen {
         const fieldMap: Record<string, string> = {
           'json': 'toJson',         // Response.json → Response.toJson
           'text': 'text',           // Response.text → Response.text
-          'includes': 'containsSubstr',
+          // String.includes → sorry (no direct Lean 4 equivalent via dot notation)
           'toLowerCase': 'toLower',
           'toUpperCase': 'toUpper',
           'length': 'size',         // Array.length → Array.size (Lean 4)
@@ -445,10 +457,12 @@ class Gen {
       }
 
       case 'IndexAccess': {
-        // Use Array.getD to avoid Inhabited constraint; default to sorry
+        // Use Array.getD to avoid Inhabited constraint; parenthesize complex indices
         const obj = this.genExpr(e.obj, ctx, depth);
         const idx = this.genExpr(e.index, ctx, depth);
-        return `${needsParens(e.obj) ? `(${obj})` : obj}.getD ${idx} sorry`;
+        const pObj = needsParens(e.obj) ? `(${obj})` : obj;
+        const pIdx = idx.includes(' ') ? `(${idx})` : idx;
+        return `${pObj}.getD ${pIdx} sorry`;
       }
 
       case 'Lambda': {
@@ -458,10 +472,16 @@ class Gen {
 
       case 'App': {
         const fn   = this.genExpr(e.fn, ctx, depth);
-        // Fix 7: `sorry` takes no arguments in Lean 4. If a function call resolves to
-        // `sorry` (e.g., from `super(...)` in a class constructor), emit bare `sorry`.
+        // `sorry` takes no arguments
         if (fn === 'sorry') return 'sorry';
-        const args = e.args.map(a => this.genP(a, ctx, depth));
+        // Storage operations need deep DO monad integration — emit sorry for now
+        if (fn.startsWith('Storage.')) return 'sorry';
+        const args = e.args.map(a => {
+          const s = this.genP(a, ctx, depth);
+          // Parenthesize struct literal args to avoid Lean parser confusion
+          if (s.startsWith('{') && !s.startsWith('#[')) return `(${s})`;
+          return s;
+        });
         return args.length === 0 ? fn : `${fn} ${args.join(' ')}`;
       }
 
@@ -545,12 +565,24 @@ class Gen {
       case 'StateGet': return 'get';
       case 'StateSet': return `set ${this.genP(e.value, ctx, depth)}`;
 
-      case 'Throw':    return `throw ${this.genP(e.error, ctx, depth)}`;
+      case 'Throw': {
+        // When error type is TSError but monad expects String, extract the message.
+        // `throw (TSError.typeError "msg")` → `throw "msg"` for ExceptT String
+        const errStr = this.genExpr(e.error, ctx, depth);
+        if (errStr.startsWith('TSError.')) {
+          // Extract the string argument from TSError.typeError "msg"
+          const msgMatch = errStr.match(/"[^"]*"/);
+          return `throw ${msgMatch ? msgMatch[0] : '"error"'}`;
+        }
+        return `throw ${needsParens(e.error) ? `(${errStr})` : errStr}`;
+      }
 
       case 'TryCatch': {
-        const body    = this.genP(e.body, ctx, depth);
+        // Always parenthesize the body to prevent arg splitting
+        const bodyStr = this.genExpr(e.body, ctx, depth);
+        const pBody   = bodyStr.includes(' ') ? `(${bodyStr})` : bodyStr;
         const handler = this.genExpr(e.handler, ctx, depth);
-        return `tryCatch ${body} (fun ${e.errName} => ${handler})`;
+        return `tryCatch ${pBody} (fun ${e.errName} => ${handler})`;
       }
 
       case 'Await': return this.genExpr(e.expr, ctx, depth);

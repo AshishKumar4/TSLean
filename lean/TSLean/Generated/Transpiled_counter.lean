@@ -6,10 +6,11 @@ import TSLean.DurableObjects.Model
 import TSLean.DurableObjects.State
 import TSLean.DurableObjects.Storage
 import TSLean.Runtime.Basic
+import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
 
-open TSLean TSLean.WebAPI
+open TSLean TSLean.WebAPI TSLean.DO
 
 namespace TSLean.Generated.Counter
 
@@ -31,27 +32,27 @@ def fetch (self : CounterDOState) (request : Request) : StateT CounterDOState IO
       do
         modify (fun s => { s with count := self.count + 1 })
         do
-          Storage.put self.state.storage "count" self.count
-          return mkResponse (TSLean.serialize { count := self.count }) { headers := sorry }
+          sorry
+          return mkResponse (serialize ({ count := self.count })) ({ headers := sorry })
     else
       if (url.pathname == "/decrement") && (request.method == "POST") then
         do
           modify (fun s => { s with count := max 0 (self.count - 1) })
           do
-            Storage.put self.state.storage "count" self.count
-            return mkResponse (TSLean.serialize { count := self.count }) { headers := sorry }
+            sorry
+            return mkResponse (serialize ({ count := self.count })) ({ headers := sorry })
       else
         if (url.pathname == "/reset") && (request.method == "POST") then
           do
             modify (fun s => { s with count := 0 })
             do
-              Storage.put self.state.storage "count" 0
-              return mkResponse (TSLean.serialize { count := 0 }) { headers := sorry }
+              sorry
+              return mkResponse (serialize ({ count := 0 })) ({ headers := sorry })
         else
           if (url.pathname == "/value") && (request.method == "GET") then
-            pure (mkResponse (TSLean.serialize { count := self.count }) { headers := sorry })
+            pure (mkResponse (serialize ({ count := self.count })) ({ headers := sorry }))
           else
-            pure (mkResponse "Not Found" { status := 404 })
+            pure (mkResponse "Not Found" ({ status := 404 }))
 
 end CounterDO
 

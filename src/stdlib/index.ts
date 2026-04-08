@@ -116,8 +116,8 @@ const GLOBALS: Record<string, GlobalTx> = {
   'parseFloat':     { leanExpr: 'String.toFloat?', maxArgs: 1 },
   'isNaN':          { leanExpr: 'Float.isNaN' },
   'isFinite':       { leanExpr: 'Float.isFinite' },
-  'JSON.stringify': { leanExpr: 'TSLean.serialize' },
-  'JSON.parse':     { leanExpr: 'TSLean.deserialize' },
+  'JSON.stringify': { leanExpr: 'serialize' },    // TSLean.serialize, opened via `open TSLean`
+  'JSON.parse':     { leanExpr: 'deserialize' },  // TSLean.deserialize
   'Object.keys':    { leanExpr: 'AssocMap.keys' },
   'Object.values':  { leanExpr: 'AssocMap.values' },
   'Object.entries': { leanExpr: 'AssocMap.toList' },

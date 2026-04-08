@@ -105,15 +105,15 @@ describe('Stdlib mapping: console.log → IO.println', () => {
 });
 
 describe('Stdlib mapping: JSON.stringify/parse', () => {
-  it('JSON.stringify(x) → TSLean.serialize x', () => {
+  it('JSON.stringify(x) → serialize x', () => {
     const code = inline('function toJson(x: number): string { return JSON.stringify(x); }');
-    expect(code).toContain('TSLean.serialize x');
+    expect(code).toContain('serialize x');
     expect(code).not.toContain('JSON.stringify');
   });
 
-  it('JSON.parse(s) → TSLean.deserialize s', () => {
+  it('JSON.parse(s) → deserialize s', () => {
     const code = inline('function fromJson(s: string): any { return JSON.parse(s); }');
-    expect(code).toContain('TSLean.deserialize s');
+    expect(code).toContain('deserialize s');
     expect(code).not.toContain('JSON.parse');
   });
 });

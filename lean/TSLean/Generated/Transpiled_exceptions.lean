@@ -2,6 +2,7 @@
 -- Source: /workspace/tslean/tests/fixtures/effects/exceptions.ts
 
 import TSLean.Runtime.Basic
+import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 
 open TSLean
@@ -15,30 +16,30 @@ def parseAge (input : String) : ExceptT String IO Float :=
   do
     let n : Float := sorry
     if Float.isNaN n then
-      throw (TSError.typeError "age")
+      throw "age"
     else
       if (n < 0) || (n > 150) then
-        throw (TSError.typeError "age")
+        throw "age"
       else
         pure n
 
 def divide (a : Float) (b : Float) : ExceptT String IO Float :=
   do
     if b == 0 then
-      throw (TSError.typeError "Division by zero")
+      throw "Division by zero"
     else
       pure (a / b)
 
 def safeDivide (a : Float) (b : Float) : Option Float :=
-  tryCatch divide a b (fun _e => none)
+  tryCatch (divide a b) (fun _e => none)
 
 def validateEmail (email : String) : ExceptT String IO String :=
   do
-    if !(email.containsSubstr "@") then
-      throw (TSError.typeError "email")
+    if !(email.includes "@") then
+      throw "email"
     else
       if email.size < 5 then
-        throw (TSError.typeError "email")
+        throw "email"
       else
         pure (email.toLower.trim)
 
