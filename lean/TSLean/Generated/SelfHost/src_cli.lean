@@ -24,8 +24,9 @@ structure Args where
 def parseArgs (argv : Array String) : StateT Unit IO Args :=
   sorry /- parseArgs: complex do body -/
 def single (opts : Args) : StateT Unit IO Unit :=
-  do pure ()
+  sorry /- single: complex tryCatch + nested if/let -/
 
+-- // ─── Project mode ─────────────────────────────────────────────────────────────
 def project (opts : Args) : Unit :=
   default
 

@@ -30,11 +30,17 @@ def mapObject (t : TSAny) (checker : TSAny) (depth : Float) : IRType :=
   sorry /- mapObject: body has sequential ifs outside do -/
 def mapTypeRef (t : TSAny) (checker : TSAny) (depth : Float) : IRType :=
   sorry /- mapTypeRef: body has sequential ifs outside do -/
-/-- Convert an IR type to its Lean 4 syntax string. -/
 partial def typeStr (t : IRType) : String :=
   sorry /- typeStr: body has sequential ifs outside do -/
 def irTypeToLean (t : IRType) (parens : Bool := false) : String :=
-  sorry /- irTypeToLean: let-then-match/if pattern -/
+  let s := typeStr t
+    if parens && (s.includes " ") then
+      s!"({s})"
+    else
+      s
+
+-- // ─── Struct field extraction ────────────────────────────────────────────────────
+-- A single field extracted from a TypeScript interface or class declaration.
 structure StructField where
   mk ::
   name : String
@@ -43,7 +49,7 @@ structure StructField where
   mutable : Bool
   deriving Repr, BEq, Inhabited
 
-/-- Extract struct fields from a TypeScript interface or class declaration. Handles optional fields (`?`), readonly modifiers, and resolves types via the type checker. -/
+
 def extractStructFields (node : TSAny) (checker : TSAny) : Array StructField :=
   default
 
@@ -55,14 +61,14 @@ structure DiscriminantInfo where
   variants : Array String
   deriving Repr, BEq, Inhabited
 
-/-- Detect whether a TypeScript union type is a discriminated union. Checks each known discriminant field name in priority order.  Returns the first field for which every union member has a unique string literal value. -/
+
 def detectDiscriminatedUnion (t : TSAny) (checker : TSAny) : Option DiscriminantInfo :=
   default
 
 def tryField (types : Array ObjectType) (field : String) (checker : TSAny) : Option DiscriminantInfo :=
   default
 
-/-- Extract type parameter names from a TypeScript declaration. -/
+
 def extractTypeParams (node : TSAny) : Array String :=
   sorry
 

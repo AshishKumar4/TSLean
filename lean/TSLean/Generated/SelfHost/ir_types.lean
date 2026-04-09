@@ -73,8 +73,12 @@ inductive IRType where
 
 end
 
-instance : ToString Effect := ⟨fun _ => "Effect"⟩
-instance : ToString IRType := ⟨fun _ => "IRType"⟩
+instance : Inhabited Effect := ⟨sorry⟩
+instance : BEq Effect := ⟨fun _ _ => false⟩
+instance : Repr Effect := ⟨fun _ _ => .text s!"Effect"⟩
+instance : Inhabited IRType := ⟨sorry⟩
+instance : BEq IRType := ⟨fun _ _ => false⟩
+instance : Repr IRType := ⟨fun _ _ => .text s!"IRType"⟩
 
 instance : Inhabited Effect := ⟨sorry⟩
 instance : BEq Effect := ⟨fun _ _ => false⟩
@@ -85,26 +89,12 @@ instance : Repr IRType := ⟨fun _ _ => .text s!"IRType"⟩
 
 def Pure : Effect := Effect.Pure
 
-def IO : Effect := Effect.IO
-
-def Async : Effect := Effect.Async
-
-/-- Construct a State effect over the given state type. -/
-def stateEffect (stateType : IRType) : Effect :=
-  Effect.State stateType
-
-/-- Construct an Except effect over the given error type. -/
-def exceptEffect (errorType : IRType) : Effect :=
-  Effect.Except errorType
-
 def isPure : Effect → Bool
   | .Pure => true
   | _ => false
 
-
 def dedup (effects : Array Effect) : Array Effect :=
   effects.foldl (fun acc e => if acc.any (· == e) then acc else acc.push e) #[]
-
 
 def combineEffects (effects : Array Effect) : Effect :=
   let flat := effects.foldl (fun acc e =>
@@ -117,21 +107,30 @@ def combineEffects (effects : Array Effect) : Effect :=
   else if deduped.size == 1 then deduped.getD 0 default
   else Effect.Combined deduped
 
+def IO : Effect := Effect.IO
+
+def Async : Effect := Effect.Async
+
+
+/-- True when the effect tree contains `Async` (recursively). -/
 partial def hasAsync : Effect → Bool
   | .Async => true
   | .Combined es => es.any hasAsync
   | _ => false
 
+/-- True when the effect tree contains `State` (recursively). -/
 partial def hasState : Effect → Bool
   | .State _ => true
   | .Combined es => es.any hasState
   | _ => false
 
+/-- True when the effect tree contains `Except` (recursively). -/
 partial def hasExcept : Effect → Bool
   | .Except _ => true
   | .Combined es => es.any hasExcept
   | _ => false
 
+/-- True when the effect tree contains `IO` (recursively). -/
 partial def hasIO : Effect → Bool
   | .IO => true
   | .Combined es => es.any hasIO
@@ -255,7 +254,7 @@ structure IRCase where
   mk ::
   pattern : TSAny := default
   guard : Option String
-  body : IRExpr
+  body : IRExpr := default
   deriving Repr, BEq, Inhabited
 
 -- Pattern in a `match` expression.
@@ -355,39 +354,52 @@ structure IRModule where
   sourceFile : Option (Option String)
   deriving Repr, BEq, Inhabited
 
+
 def litStr (v : String) : IRExpr :=
-  { tag := "LitString", value := v, type := TyString, effect := Pure }
+  { tag := "LitString", value := toString v, type := TyString, effect := Pure }
+
 
 def litNat (v : Float) : IRExpr :=
   { tag := "LitNat", value := toString v, type := TyNat, effect := Pure }
 
+
 def litBool (v : Bool) : IRExpr :=
   { tag := "LitBool", value := toString v, type := TyBool, effect := Pure }
+
 
 def litUnit : IRExpr :=
   { tag := "LitUnit", type := TyUnit, effect := Pure }
 
+
 def litFloat (v : Float) : IRExpr :=
   { tag := "LitFloat", value := toString v, type := TyFloat, effect := Pure }
+
 
 def litInt (v : Float) : IRExpr :=
   { tag := "LitInt", value := toString v, type := TyInt, effect := Pure }
 
+
 def varExpr (name : String) (type : IRType := TyUnit) : IRExpr :=
   { tag := "Var", name := name, type := type, effect := Pure }
+
 
 def holeExpr (type : IRType := TyUnit) : IRExpr :=
   { tag := "Hole", type := type, effect := Pure }
 
+
 def structUpdate (base : IRExpr) (fields : Array String) (type : IRType) : IRExpr :=
   { tag := "StructUpdate", base := base.tag, fields := default, type := type, effect := base.effect }
 
+
 def appExpr (fn : IRExpr) (args : Array IRExpr) : IRExpr :=
-  { tag := "App", fn := fn.tag, args := default, type := TyUnit, effect := Pure }
+  { tag := "App", fn := fn.tag, args := default, type := TyUnit, effect := combineEffects (#[fn.effect] ++ args.map (fun a => a.effect)) }
+
+
 
 def seqExpr (stmts : Array IRExpr) : IRExpr :=
   if stmts.size == 0 then litUnit
   else if stmts.size == 1 then stmts.getD 0 default
-  else { tag := "Sequence", stmts := default, type := (stmts.getD (stmts.size - 1) default).type, effect := default }
+  else { tag := "Sequence", stmts := default, type := (stmts.getD (stmts.size - 1) default).type, effect := combineEffects (stmts.map (fun s => s.effect)) }
+
 
 end TSLean.Generated.Types

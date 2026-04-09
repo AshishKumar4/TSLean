@@ -22,17 +22,14 @@ def FALLBACK_ERROR_TYPE : String := "TSError"
 /-- Infer the algebraic effect of a TypeScript AST node. For function-like nodes, analyses the body directly (skipping the outer signature) so that nested-function guards don't suppress the top level. -/
 def inferNodeEffect (node : TSAny) (checker : TSAny) : Effect :=
   sorry /- inferNodeEffect: body has sequential ifs outside do -/
-/-- Convert an Effect to its Lean 4 monad string representation. The monad transformer stack is built right-to-left: ``` ['StateT S', 'ExceptT E', 'IO'] → 'ExceptT E IO'             (fold step 1) → 'StateT S (ExceptT E IO)'  (fold step 2) ``` -/
 def monadString (effect : Effect) (stateTypeName : String := "σ") : String :=
   sorry /- monadString: body has sequential ifs outside do -/
-/-- Generate the DOMonad type string for a Durable Object. -/
 def doMonadType (stateTypeName : String) : String :=
   s!"DOMonad {stateTypeName}"
 
-/-- Compute the join (least upper bound) of two effects. Pure is the identity element. -/
+
 def joinEffects (a : Effect) (b : Effect) : Effect :=
   sorry /- joinEffects: body has sequential ifs outside do -/
-/-- Test whether effect `a` subsumes effect `b` — i.e., `a` can handle `b`. Pure is subsumed by everything.  Combined effects check recursively. -/
 partial def effectSubsumes (a : Effect) (b : Effect) : Bool :=
   sorry /- effectSubsumes: body has sequential ifs outside do -/
 partial def getFunctionBody (node : TSAny) : Option TSAny :=

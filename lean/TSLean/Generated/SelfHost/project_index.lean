@@ -29,6 +29,8 @@ structure ProjectResult where
 
 def transpileProject (opts : ProjectOpts) : StateT Unit IO ProjectResult :=
   sorry /- transpileProject: complex do body -/
+
+
 def writeProjectOutputs (result : ProjectResult) : Unit :=
   default
 
@@ -39,22 +41,32 @@ partial def discoverTs (dir : String) : Array String :=
 
 -- // ─── Import resolution ────────────────────────────────────────────────────────
 def fixImports (mod : IRModule) (tsFile : String) (rootDir : String) (rootNS : String) : IRModule :=
-  sorry /- fixImports: let-then-match/if pattern -/
+  sorry /- fixImports: struct update on imports -/
+
+
 def relToLean (spec : String) (fromFile : String) (rootDir : String) (rootNS : String) : String :=
-  sorry /- relToLean: let-then-match/if pattern -/
+  sorry /- relToLean: calls resolveSpec/specToLean -/
+
+
 def resolveSpec (spec : String) (fromFile : String) : Option String :=
   default
 
 def specToLean (spec : String) (rootNS : String) : String :=
-  sorry /- specToLean: let-then-match/if pattern -/
+  sorry /- specToLean: spec → Lean module path -/
+
+
+-- // ─── Path helpers ─────────────────────────────────────────────────────────────
 def toLeanPath (tsFile : String) (projectDir : String) (outputDir : String) (rootNS : String := "TSLean.Generated") : String :=
-  sorry /- toLeanPath: let-then-match/if pattern -/
+  sorry /- toLeanPath: path manipulation -/
+
+
 def toModuleName (tsFile : String) (projectDir : String) (rootNS : String := "TSLean.Generated") : String :=
-  sorry /- toModuleName: let-then-match/if pattern -/
+  sorry /- toModuleName: path → module name -/
+
+
 def cap (s : String) : String :=
-  if !s.isEmpty then
-      (sorry) ++ (sorry)
-    else
-      s
+  if s.isEmpty then s
+  else String.ofList (s.toList.head!.toUpper :: s.toList.tail!)
+
 
 end TSLean.Generated.SelfHost.ProjectIndex
