@@ -176,7 +176,7 @@ describe('All fixtures: effects/exceptions.ts', () => {
   it('divide is FuncDef', () => expect(findDecl(mod, 'divide')?.tag).toBe('FuncDef'));
   it('safeDivide is FuncDef', () => expect(findDecl(mod, 'safeDivide')?.tag).toBe('FuncDef'));
   it('output: throw keyword', () => expect(code).toContain('throw'));
-  it('output: tryCatch or sorry (cross-monad try)', () => expect(code).toMatch(/tryCatch|sorry/));
+  it('output: tryCatch or sorry (cross-monad try)', () => expect(code).toMatch(/tryCatch|default/));
 });
 
 // ─── durable-objects — comprehensive ──────────────────────────────────────

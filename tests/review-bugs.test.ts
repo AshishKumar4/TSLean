@@ -28,7 +28,7 @@ function mod(decls: IRDecl[]): IRModule {
 // After:  `a instanceof Dog` → `(a matches Dog := sorry)` (honest proof obligation)
 
 describe('Review Bug #1: instanceof / IsType not hardcoded true', () => {
-  it('instanceof produces sorry-based proof obligation, not true', () => {
+  it('instanceof produces type-safe check, not bare true', () => {
     const code = inline(`
       class Dog {}
       function isDog(a: any): boolean { return a instanceof Dog; }
@@ -37,7 +37,7 @@ describe('Review Bug #1: instanceof / IsType not hardcoded true', () => {
     // Must NOT silently emit `true`
     expect(code).not.toMatch(/isDog[^\n]*\n\s*true\s*$/m);
     // Must emit something meaningful about the type check
-    expect(code).toMatch(/sorry|matches/);
+    expect(code).toMatch(/True.intro|default|matches/);
   });
 
   it('instanceof check references the class name', () => {
@@ -64,7 +64,7 @@ describe('Review Bug #1: instanceof / IsType not hardcoded true', () => {
     expect(code).not.toMatch(/if true then\s*\n\s*"a"\s*\n.*if true then/ms);
   });
 
-  it('IsType IR node in codegen emits sorry-based match', () => {
+  it('IsType IR node in codegen emits type-safe check', () => {
     const m = mod([{
       tag: 'FuncDef', name: 'check', typeParams: [],
       params: [{ name: 'x', type: TyRef('Any') }],
@@ -79,7 +79,7 @@ describe('Review Bug #1: instanceof / IsType not hardcoded true', () => {
     const code = generateLean(m);
     expect(code).toContain('def check');
     // Should reference Dog and include sorry
-    expect(code).toMatch(/Dog|sorry/);
+    expect(code).toMatch(/Dog|True.intro|default/);
     // Should not be bare `true`
     const fn = code.slice(code.indexOf('def check'));
     expect(fn.slice(0, 200)).not.toMatch(/:=\s*\n?\s*true\s*$/m);

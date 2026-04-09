@@ -34,24 +34,24 @@ inductive Either (L : Type) (R : Type) where
 
 def areaShape (s : Shape) : Float :=
   match s with
-    | .Circle radius => (3.14159265358979 * radius) * radius
-    | .Rectangle width height => width * height
-    | .Triangle base height => ((0.5) * base) * height
+      | .Circle radius => (3.14159265358979 * radius) * radius
+      | .Rectangle width height => width * height
+      | .Triangle base height => ((0.5) * base) * height
 
 def perimeter (s : Shape) : Float :=
   match s with
-    | .Circle radius => (2 * 3.14159265358979) * radius
-    | .Rectangle width height => 2 * (width + height)
-    | .Triangle base height => base * 3
+      | .Circle radius => (2 * 3.14159265358979) * radius
+      | .Rectangle width height => 2 * (width + height)
+      | .Triangle base height => base * 3
 
 partial def treeDepth {T : Type} (t : Tree T) : Float :=
   match t with
-    | .Leaf value => 1
-    | .Node left right value => 1 + (max (treeDepth left) (treeDepth right))
+      | .Leaf value => 1
+      | .Node left right value => 1 + (max (treeDepth left) (treeDepth right))
 
 def mapEither {L : Type} {R : Type} {S : Type} (e : Either L R) (f : R → S) : Either L S :=
   match e with
-    | .Left value => Either.Left value
-    | .Right value => Either.Right (f value)
+      | .Left value => Either.Left value
+      | .Right value => Either.Right (f value)
 
 end TSLean.Generated.DiscriminatedUnions

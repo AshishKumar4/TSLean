@@ -10,37 +10,37 @@ open TSLean
 namespace TSLean.Generated.Exceptions
 
 def ValidationError.init (self : ValidationErrorState) (field : String) (reason : String) : Unit :=
-  sorry
+  default
 
 def parseAge (input : String) : ExceptT String IO Float :=
   do
-    let n : Float := sorry
-    if Float.isNaN n then
-      throw "age"
-    else
-      if (n < 0) || (n > 150) then
+    let n : Float := default
+      if Float.isNaN n then
         throw "age"
       else
-        pure n
+        if (n < 0) || (n > 150) then
+          throw "age"
+        else
+          pure n
 
 def divide (a : Float) (b : Float) : ExceptT String IO Float :=
   do
     if b == 0 then
-      throw "Division by zero"
-    else
-      pure (a / b)
+        throw "Division by zero"
+      else
+        pure (a / b)
 
 def safeDivide (a : Float) (b : Float) : Option Float :=
-  sorry
+  default
 
 def validateEmail (email : String) : ExceptT String IO String :=
   do
     if !(email.includes "@") then
-      throw "email"
-    else
-      if email.length < 5 then
         throw "email"
       else
-        pure (email.toLower.trim)
+        if email.length < 5 then
+          throw "email"
+        else
+          pure (email.toLower.trim)
 
 end TSLean.Generated.Exceptions

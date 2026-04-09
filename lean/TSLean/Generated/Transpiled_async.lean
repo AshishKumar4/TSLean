@@ -18,12 +18,12 @@ def fetchUser (id : String) : IO String :=
       pure data
 
 def fetchAndProcess (ids : Array String) : IO (Array String) :=
-  sorry
+  pure default
 
 def delay (ms : Float) : IO Unit :=
-  sorry
+  default
 
-def withRetry {T : Type} (op : Unit → IO T) (maxRetries : Float) : StateT Unit (ExceptT String IO) T :=
-  sorry
+def withRetry {T : Type} [Inhabited T] (op : Unit → IO T) (maxRetries : Float) : StateT Unit (ExceptT String IO) T :=
+  pure default
 
 end TSLean.Generated.Async

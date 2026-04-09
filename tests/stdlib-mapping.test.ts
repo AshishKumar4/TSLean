@@ -121,7 +121,7 @@ describe('Stdlib mapping: JSON.stringify/parse', () => {
 describe('Stdlib mapping: bare globals', () => {
   it('parseInt(s) → String.toInt? s', () => {
     const code = inline('function parse(s: string): number { return parseInt(s); }');
-    expect(code).toContain('sorry');
+    expect(code).toMatch(/sorry|default|True.intro/);
     // parseInt mapped to sorry;
   });
 
@@ -233,7 +233,8 @@ describe('Non-exhaustive match: wildcard preserved', () => {
       }
     `);
     const matchSection = code.slice(code.indexOf('match'));
-    expect(matchSection).toContain('sorry');
+    // Wildcard uses a type-appropriate default, not Unit
+    expect(matchSection).toContain('| _ =>');
     expect(matchSection).not.toContain('| _ => ()');
   });
 

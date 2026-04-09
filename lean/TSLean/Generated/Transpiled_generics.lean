@@ -32,12 +32,12 @@ def swapPair {A : Type} {B : Type} (p : Pair A B) : Pair B A :=
 
 def mapOpt {T : Type} {U : Type} (opt : Option T) (f : T → U) : Option U :=
   match opt with
-    | none => none
-    | some _v => f _v
+      | none => none
+      | some _v => f _v
 
 def flatMapOpt {T : Type} {U : Type} (opt : Option T) (f : T → Option U) : Option U :=
   match opt with
-    | none => none
-    | some _v => f _v
+      | none => none
+      | some _v => f _v
 
 end TSLean.Generated.Generics

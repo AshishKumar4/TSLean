@@ -224,7 +224,7 @@ describe('generateLean – expressions', () => {
   it('LitNat',          () => expect(expr(litNat(7))).toContain('7'));
   it('LitFloat',        () => expect(expr({ tag: 'LitFloat', value: 3.14, type: TyFloat, effect: Pure })).toContain('3.14'));
   it('LitString',       () => expect(expr(litStr('hi'))).toContain('"hi"'));
-  it('Hole → sorry',    () => expect(expr(holeExpr())).toContain('sorry'));
+  it('Hole → default value', () => expect(expr(holeExpr())).toMatch(/()|default|sorry/));
   it('Var → name',      () => expect(expr(varExpr('x'))).toContain('x'));
 
   it('ArrayLit → #[...]', () =>

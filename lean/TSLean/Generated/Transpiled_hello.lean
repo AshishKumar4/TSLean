@@ -20,9 +20,9 @@ def isPositive (n : Float) : Bool :=
 
 partial def factorial (n : Float) : Float :=
   if n <= 0 then
-    1
-  else
-    n * (factorial (n - 1))
+      1
+    else
+      n * (factorial (n - 1))
 
 def PI : Float := 3.14159
 
