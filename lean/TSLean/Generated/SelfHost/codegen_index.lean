@@ -5,9 +5,9 @@ import TSLean.DurableObjects.Http
 import TSLean.DurableObjects.Model
 import TSLean.DurableObjects.State
 import TSLean.DurableObjects.Storage
-import TSLean.Generated.Effects.Index
-import TSLean.Generated.Ir.Types
-import TSLean.Generated.Stdlib.Index
+import TSLean.Generated.SelfHost.effects_index
+import TSLean.Generated.SelfHost.IR_Types
+import TSLean.Generated.SelfHost.stdlib_index
 import TSLean.Generated.Typemap.Index
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions

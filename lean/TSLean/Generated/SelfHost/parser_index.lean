@@ -7,10 +7,10 @@ import TSLean.DurableObjects.State
 import TSLean.DurableObjects.Storage
 import TSLean.External.Path
 import TSLean.External.Typescript
-import TSLean.Generated.DoModel.Ambient
-import TSLean.Generated.Effects.Index
-import TSLean.Generated.Ir.Types
-import TSLean.Generated.Stdlib.Index
+import TSLean.Generated.SelfHost.DoModel_Ambient
+import TSLean.Generated.SelfHost.effects_index
+import TSLean.Generated.SelfHost.IR_Types
+import TSLean.Generated.SelfHost.stdlib_index
 import TSLean.Generated.Typemap.Index
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions

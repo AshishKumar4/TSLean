@@ -78,6 +78,16 @@ import TSLean.Veil.QueueDO
 import TSLean.Veil.RateLimiterDO
 import TSLean.Veil.SessionStoreDO
 
+-- External stubs (TS compiler API, Node.js path/fs)
+import TSLean.External.Typescript
+import TSLean.External.Path
+import TSLean.External.Fs
+
+-- Self-hosting (transpiled source files that compile)
+import TSLean.Generated.SelfHost.IR_Types
+import TSLean.Generated.SelfHost.DoModel_Ambient
+import TSLean.Generated.SelfHost.verification_index
+
 -- Specification & Tests
 import TSLean.Specification
 import TSLean.Tests

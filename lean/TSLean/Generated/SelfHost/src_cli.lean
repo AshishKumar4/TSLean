@@ -3,11 +3,11 @@
 
 import TSLean.External.Fs
 import TSLean.External.Path
-import TSLean.Generated.Codegen.Index
-import TSLean.Generated.Parser.Index
-import TSLean.Generated.Project.Index
-import TSLean.Generated.Rewrite.Index
-import TSLean.Generated.Verification.Index
+import TSLean.Generated.SelfHost.codegen_index
+import TSLean.Generated.SelfHost.parser_index
+import TSLean.Generated.SelfHost.project_index
+import TSLean.Generated.SelfHost.rewrite_index
+import TSLean.Generated.SelfHost.verification_index
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad

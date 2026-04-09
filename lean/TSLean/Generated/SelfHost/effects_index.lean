@@ -2,7 +2,7 @@
 -- Source: /workspace/tslean/src/effects/index.ts
 
 import TSLean.External.Typescript
-import TSLean.Generated.Ir.Types
+import TSLean.Generated.SelfHost.IR_Types
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Stdlib.HashMap
