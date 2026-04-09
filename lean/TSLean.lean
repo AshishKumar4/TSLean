@@ -84,19 +84,8 @@ import TSLean.External.Typescript
 import TSLean.External.Path
 import TSLean.External.Fs
 
--- Self-hosting (all 11 transpiled source files compile)
-import TSLean.Generated.SelfHost.IR_Types
-import TSLean.Generated.SelfHost.ir_types
-import TSLean.Generated.SelfHost.DoModel_Ambient
-import TSLean.Generated.SelfHost.verification_index
-import TSLean.Generated.SelfHost.stdlib_index
-import TSLean.Generated.SelfHost.effects_index
-import TSLean.Generated.SelfHost.typemap_index
-import TSLean.Generated.SelfHost.rewrite_index
-import TSLean.Generated.SelfHost.codegen_index
-import TSLean.Generated.SelfHost.parser_index
-import TSLean.Generated.SelfHost.project_index
-import TSLean.Generated.SelfHost.src_cli
+-- Self-hosting: all 12 transpiled source files compile (Bootstrap imports them all)
+import TSLean.Generated.SelfHost.Bootstrap
 
 -- Specification & Tests
 import TSLean.Specification

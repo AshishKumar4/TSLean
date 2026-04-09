@@ -23,6 +23,7 @@ import TSLean.DurableObjects.WebSocket
 import TSLean.DurableObjects.MultiDO
 import TSLean.Veil.DSL
 import TSLean.Veil.DSLExamples
+import TSLean.Generated.SelfHost.Bootstrap
 
 open TSLean TSLean.Stdlib.HashMap TSLean.DO
 
@@ -551,6 +552,17 @@ private def testAdvancedQueue : IO Unit := do
   IO.println "  ✓ Advanced Queue"
 
 #eval testAdvancedQueue
+
+/-! ## Bootstrap verification -/
+
+private def testBootstrap : IO Unit := do
+  -- The fact that this file compiles proves all 12 self-host modules type-check.
+  -- Bootstrap.lean transitively imports every SelfHost module.
+  let stats := TSLean.Generated.SelfHost.Bootstrap.stats
+  assert! stats.length > 0
+  IO.println "  ✓ Bootstrap verified: all 12 self-host modules type-check"
+
+#eval testBootstrap
 
 /-! ## Test runner -/
 
