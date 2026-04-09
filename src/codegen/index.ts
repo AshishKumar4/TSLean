@@ -548,7 +548,10 @@ class Gen {
     // (tag + IRNode fields) so field access like `.tag`, `.type` works.
     if (bodyStr === d.name || bodyStr === 'String' || bodyStr === 'TSAny') {
       // Check if this is a known IR type with tag+type+effect fields
-      const knownTaggedTypes = new Set(['IRExpr', 'IRDecl', 'IRPattern', 'DoStmt', 'IRCase']);
+      // Only IRExpr and IRDecl get structure treatment (tag + fields).
+      // IRPattern stays inductive (rewrite pass handles it).
+      // IRCase/DoStmt become abbrev := String to avoid Type 1 universe from IRPattern.
+      const knownTaggedTypes = new Set(['IRExpr', 'IRDecl']);
       if (knownTaggedTypes.has(d.name)) {
         this.emit(`structure ${d.name}${tp} where`);
         this.emit(`  tag : String`);
@@ -564,10 +567,7 @@ class Gen {
                      'decls', 'code', 'extends_', 'methods', 'isPartial', 'attr',
                      'classes', 'typeName', 'statement', 'proof', 'docComment', 'comment',
                      'mutable', 'value'],
-          'IRPattern': ['name', 'value', 'ctor', 'args', 'pats', 'pattern', 'fields',
-                        'elems', 'inner'],
-          'DoStmt': ['name', 'value', 'expr'],
-          'IRCase': ['pattern', 'guard', 'body'],
+
         };
         for (const f of extraFields[d.name] ?? []) {
           this.emit(`  ${f} : String := default`);
@@ -774,8 +774,14 @@ class Gen {
   // ─── Expression generation ──────────────────────────────────────────────────
 
   genExpr(e: IRExpr, ctx: Effect, depth = 0): string {
+    if (!e) return 'default';
     // indent is ABSOLUTE — includes this.ind + depth
     const indent = '  '.repeat(this.ind + depth);
+    try { return this._genExprInner(e, ctx, depth, indent); }
+    catch { return 'default /- codegen error -/'; }
+  }
+
+  private _genExprInner(e: IRExpr, ctx: Effect, depth: number, indent: string): string {
     switch (e.tag) {
       case 'LitNat':    return String(e.value);
       case 'LitInt':    return String(e.value);
@@ -822,9 +828,9 @@ class Gen {
         // `.tag` on inductive types: inductives don't have fields.
         // When accessing .tag on an Effect or IRType (which are inductives),
         // emit a toString/repr call or default string since these are discriminant accesses.
-        const objType = e.obj.type;
-        const isInductiveType = objType.tag === 'Inductive' ||
-          (objType.tag === 'TypeRef' && ['Effect', 'IRType', 'BinOp', 'UnOp'].includes(objType.name));
+        const objType = e.obj?.type;
+        const isInductiveType = objType?.tag === 'Inductive' ||
+          (objType?.tag === 'TypeRef' && ['Effect', 'IRType', 'BinOp', 'UnOp'].includes(objType?.name ?? ''));
         if (isInductiveType && (e.field === 'tag' || e.field === 'effects' ||
             e.field === 'stateType' || e.field === 'errorType')) {
           if (e.field === 'tag') return `default`;  // discriminant: use default String
@@ -834,7 +840,7 @@ class Gen {
         const obj = this.genExpr(e.obj, ctx, depth);
         // Map JS field/method names to Lean equivalents.
         // Some names differ between String and Array — disambiguate by type.
-        const isString = e.obj.type.tag === 'String';
+        const isString = e.obj?.type?.tag === 'String';
         const fieldMap: Record<string, string> = {
           'json': 'toJson',
           'text': 'text',
@@ -880,8 +886,8 @@ class Gen {
         }
         // Check if the field exists on the known struct type.
         // If not (e.g. accessing inherited method on wrong subclass), use default.
-        if (e.obj.type.tag === 'TypeRef') {
-          const rawName = e.obj.type.name;
+        if (e.obj?.type?.tag === 'TypeRef') {
+          const rawName = e.obj?.type?.name;
           const stateName = this.classToState.get(rawName) ?? rawName;
           const knownFields = this.structFields.get(stateName) ??
             this.structFields.get(rawName) ??
@@ -891,9 +897,9 @@ class Gen {
           }
         }
         // String/Any types don't have arbitrary fields — emit default
-        const isStringType = e.obj.type.tag === 'String' ||
-          (e.obj.type.tag === 'TypeRef' && e.obj.type.name === 'String');
-        const isAnyType = e.obj.type.tag === 'TypeRef' && (e.obj.type.name === 'Any' || e.obj.type.name === 'TSAny');
+        const isStringType = e.obj?.type?.tag === 'String' ||
+          (e.obj?.type?.tag === 'TypeRef' && e.obj?.type?.name === 'String');
+        const isAnyType = e.obj?.type?.tag === 'TypeRef' && (e.obj?.type?.name === 'Any' || e.obj?.type?.name === 'TSAny');
         const isCrossFileType = false; // Any→String mapping handles this
         const stringMethods = ['length', 'size', 'includes', 'trim',
           'toLower', 'toUpper', 'startsWith', 'endsWith', 'splitOn', 'replace'];
@@ -947,9 +953,9 @@ class Gen {
           const obj = this.genExpr(e.fn.obj, ctx, depth);
           const pObj = needsParens(e.fn.obj) ? `(${obj})` : obj;
           const method = e.fn.field;
-          const isStr = e.fn.obj.type.tag === 'String' ||
-            (e.fn.obj.type.tag === 'TypeRef' && e.fn.obj.type.name === 'String');
-          const isArr = e.fn.obj.type.tag === 'Array';
+          const isStr = e.fn?.obj?.type?.tag === 'String' ||
+            (e.fn?.obj?.type?.tag === 'TypeRef' && e.fn?.obj?.type?.name === 'String');
+          const isArr = e.fn?.obj?.type?.tag === 'Array';
           const args = e.args.map(a => this.genP(a, ctx, depth));
           // String methods → Lean function-style calls
           if (isStr && method === 'split')
@@ -968,11 +974,17 @@ class Gen {
           if (isArr && method === 'push' && args.length > 0)
             return `Array.push ${pObj} ${args[0]}`;
           if (isArr && method === 'filter' && args.length > 0)
-            return `Array.filter ${pObj} ${args[0]}`;
+            return `Array.filter ${args[0]} ${pObj}`;
           if (isArr && method === 'map' && args.length > 0)
             return `Array.map ${args[0]} ${pObj}`;
-          // Collection methods that need function-call style (Set.add, Map.set, etc.)
-          const collectionMethods: Record<string, string> = {
+          // Collection methods: distinguish Set from Map by object type
+          const isSet = e.obj.type?.tag === 'Set' ||
+            (e.obj.type?.tag === 'TypeRef' && (e.obj.type?.name === 'Set' || e.obj.type?.name === 'AssocSet'));
+          const collectionMethods: Record<string, string> = isSet ? {
+            'add': 'AssocSet.insert', 'has': 'AssocSet.contains',
+            'delete': 'AssocSet.erase', 'size': 'AssocSet.size',
+            'forEach': 'AssocSet.forEach',
+          } : {
             'set': 'AssocMap.insert', 'get': 'AssocMap.find?', 'has': 'AssocMap.contains',
             'delete': 'AssocMap.erase', 'add': 'Array.push',
             'keys': 'AssocMap.keys', 'values': 'AssocMap.values',
@@ -987,8 +999,8 @@ class Gen {
         const fn   = this.genExpr(e.fn, ctx, depth);
         // AssocMap.contains on a non-map struct type → true (field existence is static)
         if (fn === 'AssocMap.contains' && e.args.length >= 1 &&
-            e.args[0].type.tag === 'TypeRef' && e.args[0].type.name !== 'Map' &&
-            !e.args[0].type.name.includes('AssocMap')) {
+            e.args[0].type.tag === 'TypeRef' && e.args?.[0]?.type?.name !== 'Map' &&
+            !e.args?.[0]?.type?.name.includes('AssocMap')) {
           return 'true';
         }
         // Unresolved functions emit default
@@ -1033,7 +1045,13 @@ class Gen {
       case 'Let': {
         const v    = this.genExpr(e.value, ctx, depth);
         const body = this.genExpr(e.body, ctx, depth);
-        const ann  = e.annot ? ` : ${this.typeToLean(e.annot)}` : '';
+        // Drop type annotations that resolve to String/TSAny for compound types.
+        // These arise from self-referencing types (Effect[] → Array String) and
+        // cause type mismatches. Let Lean infer instead.
+        const rawAnn = e.annot ? this.typeToLean(e.annot) : '';
+        const dropAnn = !rawAnn || rawAnn === 'String' || rawAnn === 'TSAny' ||
+          rawAnn.includes('String') || rawAnn === 'Array String' || rawAnn === 'Array TSAny';
+        const ann = dropAnn ? '' : ` : ${rawAnn}`;
         // Self-referencing let (loop helpers): use `let rec` for recursive bindings
         const isRecursive = e.value.tag === 'Lambda' && bodyContainsVarRef(e.value.body, e.name);
         const kw = isRecursive ? 'let rec' : 'let';
@@ -1101,8 +1119,8 @@ class Gen {
 
       case 'StructLit': {
         // If the target type is String/Any (from TS any), can't construct with struct literal syntax
-        if (e.type.tag === 'String' ||
-            (e.type.tag === 'TypeRef' && (e.type.name === 'Any' || e.type.name === 'TSAny'))) {
+        if (e.type?.tag === 'String' ||
+            (e.type?.tag === 'TypeRef' && (e.type.name === 'Any' || e.type.name === 'TSAny'))) {
           return 'default';
         }
         // For known tagged struct types (IRExpr, IRDecl, etc.), wrap non-string field
@@ -1110,7 +1128,7 @@ class Gen {
         const knownTaggedStructs = new Set(['IRExpr', 'IRDecl', 'IRPattern', 'DoStmt', 'IRCase']);
         // Check if ANY field is named 'tag' — signals a discriminated union struct
         const hasTagField = e.fields.some(f => f.name === 'tag');
-        const isKnownTagged = hasTagField || (e.type.tag === 'TypeRef' && knownTaggedStructs.has(e.type.name));
+        const isKnownTagged = hasTagField || (e.type?.tag === 'TypeRef' && knownTaggedStructs.has(e.type.name));
         // Detect struct-update pattern: one `_base` field + other fields → `{ base with f := v }`
         const baseField = e.fields.find(f => f.name === '_base');
         const realFields = e.fields.filter(f => f.name !== '_base' && f.name !== '_spread' && !f.name.startsWith('_computed') && !f.name.startsWith('_computed'));
@@ -1162,10 +1180,27 @@ class Gen {
       }
 
       case 'ArrayLit': {
-        const elems = e.elems.map(x => this.genExpr(x, ctx, depth));
         // If the declared type is a Tuple, emit as tuple (a, b) not array #[a, b]
-        if (e.type.tag === 'Tuple') {
-          return `(${elems.join(', ')})`;
+        if (e.type?.tag === 'Tuple') {
+          return `(${e.elems.map(x => this.genExpr(x, ctx, depth)).join(', ')})`;
+        }
+        // Handle spread elements: if generated value looks like an array operation,
+        // emit ++ concatenation instead of nesting inside #[...]
+        const elems = e.elems.map(x => this.genExpr(x, ctx, depth));
+        const hasSpread = elems.some(v => v.startsWith('Array.map') || v.startsWith('Array.filter'));
+        if (hasSpread) {
+          const parts: string[] = [];
+          let lits: string[] = [];
+          for (const v of elems) {
+            if (v.startsWith('Array.map') || v.startsWith('Array.filter') || v.startsWith('Array.flatMap')) {
+              if (lits.length > 0) { parts.push(`#[${lits.join(', ')}]`); lits = []; }
+              parts.push(`(${v})`);
+            } else {
+              lits.push(v);
+            }
+          }
+          if (lits.length > 0) parts.push(`#[${lits.join(', ')}]`);
+          return parts.join(' ++ ');
         }
         return `#[${elems.join(', ')}]`;
       }
@@ -1222,7 +1257,7 @@ class Gen {
       }
 
       case 'Cast': {
-        const from = e.expr.type;
+        const from = e.expr?.type;
         const to   = e.targetType;
         // Cast Array → Tuple: emit as tuple literal (a, b, c) not array #[a, b, c]
         if (to.tag === 'Tuple' && e.expr.tag === 'ArrayLit') {
@@ -1462,21 +1497,21 @@ class Gen {
       return `${l}.isSome`;
     }
     // Try to emit s!"..." interpolation for Concat chains (template literals)
-    if (e.op === 'Concat' || (e.op === 'Add' && e.left.type.tag === 'String')) {
+    if (e.op === 'Concat' || (e.op === 'Add' && e.left?.type?.tag === 'String')) {
       const interp = this.trySInterp(e, ctx, depth);
       if (interp) return interp;
     }
     const l = this.genP(e.left, ctx, depth);
     const r = this.genP(e.right, ctx, depth);
     // Comparison on Any type: no Ord/OfNat instance → default
-    const isAnyL = (e.left.type.tag === 'TypeRef' && (e.left.type.name === 'Any' || e.left.type.name === 'TSAny')) ||
+    const isAnyL = (e.left?.type?.tag === 'TypeRef' && (e.left.type.name === 'Any' || e.left.type.name === 'TSAny')) ||
       (e.left.tag === 'TypeNarrow' && e.left.expr.type.tag === 'TypeRef' && (e.left.expr.type.name === 'Any' || e.left.expr.type.name === 'TSAny'));
     const isAnyR = (e.right.type.tag === 'TypeRef' && (e.right.type.name === 'Any' || e.right.type.name === 'TSAny')) ||
       (e.right.tag === 'TypeNarrow' && e.right.expr.type.tag === 'TypeRef' && (e.right.expr.type.name === 'Any' || e.right.expr.type.name === 'TSAny'));
     if ((e.op === 'Lt' || e.op === 'Le' || e.op === 'Gt' || e.op === 'Ge') && (isAnyL || isAnyR)) {
       return '(sorry : Bool)';
     }
-    const op = translateBinOp(e.op, e.left.type);
+    const op = translateBinOp(e.op, e.left?.type ?? { tag: "Unit" });
     return `${l} ${op} ${r}`;
   }
 
@@ -1864,7 +1899,7 @@ function groupMutual(decls: IRDecl[]): IRDecl[][] {
 function flattenConcat(e: IRExpr): IRExpr[] | null {
   if (e.tag === 'LitString') return [e];
   // Non-string-concat binary: stop
-  if (e.tag === 'BinOp' && (e.op === 'Concat' || (e.op === 'Add' && e.left.type.tag === 'String'))) {
+  if (e.tag === 'BinOp' && (e.op === 'Concat' || (e.op === 'Add' && e.left?.type?.tag === 'String'))) {
     const left  = flattenConcat(e.left);
     const right = flattenConcat(e.right);
     if (!left || !right) return null;
