@@ -136,6 +136,12 @@ def empty : Request := { method := "GET", url := "/", headers := [] }
 
 def parsedUrl (r : Request) : URL := URL.parse r.url
 
+/-- Parse request body as JSON (stub — returns body as-is). -/
+def toJson (r : Request) : IO String := pure (r.body.getD "")
+
+/-- Get request body as text. -/
+def text (r : Request) : IO String := pure (r.body.getD "")
+
 instance : Inhabited Request := ⟨empty⟩
 
 end Request

@@ -38,6 +38,8 @@ structure CoordinatorDOState where
 
 namespace CoordinatorDO
 
+mutual
+
 def CoordinatorDO.init : CoordinatorDOState :=
   { nodes := default }
 
@@ -47,7 +49,7 @@ def fetch (self : CoordinatorDOState) (request : Request) : IO Response :=
     do
       if (request.method == "POST") && (url.pathname == "/rpc") then
         let envelope ← request.toJson
-        let response ← self.handleRPC envelope
+        let response ← handleRPC self envelope
         pure (mkResponse (serialize response) ({ headers := default }))
       else
         ()
@@ -67,6 +69,7 @@ def handleRPC (self : CoordinatorDOState) (envelope : RPCEnvelope) : IO RPCRespo
       | "broadcast" => pure { id := id, result := default }
       | _ => pure { id := id, error := default }
 
+end
 end CoordinatorDO
 
 end TSLean.Generated.MultiDo

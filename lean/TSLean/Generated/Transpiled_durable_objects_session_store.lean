@@ -30,6 +30,8 @@ structure SessionStoreDOState where
 
 namespace SessionStoreDO
 
+mutual
+
 def SessionStoreDO.init : SessionStoreDOState :=
   { TTL_MS := (0 : Float) }
 
@@ -40,13 +42,13 @@ def fetch (self : SessionStoreDOState) (request : Request) : IO Response :=
     do
       if (request.method == "POST") && (url.pathname == "/create") then
         let body ← request.toJson
-        let id ← self.createSession body.userId (Option.getD body.data {  })
+        let id ← createSession self body.userId (Option.getD body.data {  })
         pure (mkResponse ("<serialized>") ({ headers := default }))
       else
         ()
       do
         if ((request.method == "GET") && (url.pathname == "/get")) && sessionId then
-          let session ← self.getSession sessionId
+          let session ← getSession self sessionId
           if !session then
             pure (mkResponse ("<serialized>") ({ status := 404, headers := default }))
           else
@@ -55,7 +57,7 @@ def fetch (self : SessionStoreDOState) (request : Request) : IO Response :=
           ()
         if ((request.method == "DELETE") && (url.pathname == "/destroy")) && sessionId then
           do
-            self.destroySession sessionId
+            destroySession self sessionId
             return mkResponse ("<serialized>") ({ headers := default })
         else
           pure (mkResponse "Not Found" ({ status := 404 }))
@@ -86,6 +88,7 @@ def destroySession (self : SessionStoreDOState) (id : String) : IO Unit :=
   do
     Storage.delete self.state.storage (s!"session:{id}")
 
+end
 end SessionStoreDO
 
 end TSLean.Generated.SessionStore

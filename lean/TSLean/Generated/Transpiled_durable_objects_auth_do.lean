@@ -31,6 +31,8 @@ structure AuthDOState where
 
 namespace AuthDO
 
+mutual
+
 def AuthDO.init : AuthDOState :=
   { TOKEN_TTL := (0 : Float) }
 
@@ -40,7 +42,7 @@ def fetch (self : AuthDOState) (request : Request) : IO Response :=
     do
       if (request.method == "POST") && (url.pathname == "/login") then
         let creds ← request.toJson
-        pure (self.handleLogin creds)
+        pure (handleLogin self creds)
       else
         ()
       if (request.method == "POST") && (url.pathname == "/logout") then
@@ -49,7 +51,7 @@ def fetch (self : AuthDOState) (request : Request) : IO Response :=
           pure (mkResponse ("<serialized>") ({ status := 401 }))
         else
           do
-            self.logout token
+            logout self token
             return mkResponse ("<serialized>") ({ headers := default })
       else
         do
@@ -58,7 +60,7 @@ def fetch (self : AuthDOState) (request : Request) : IO Response :=
             if !token then
               pure (mkResponse ("<serialized>") ({ status := 401 }))
             else
-              let session ← self.authenticate token
+              let session ← authenticate self token
               if !session then
                 pure (mkResponse ("<serialized>") ({ status := 401 }))
               else
@@ -95,6 +97,7 @@ def authenticate (self : AuthDOState) (token : String) : IO (Option AuthSession)
       else
         pure session
 
+end
 end AuthDO
 
 end TSLean.Generated.AuthDo

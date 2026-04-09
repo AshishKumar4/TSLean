@@ -43,7 +43,7 @@ def sound (self : AnimalState) : String :=
   ""
 
 def describe (self : AnimalState) : String :=
-  (s!"{self.name} says ") ++ (self.sound)
+  (s!"{self.name} says ") ++ (sound self)
 
 -- State for Dog
 structure DogState where

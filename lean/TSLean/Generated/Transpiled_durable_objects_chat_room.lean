@@ -33,6 +33,8 @@ structure ChatRoomDOState where
 
 namespace ChatRoomDO
 
+mutual
+
 def ChatRoomDO.init : ChatRoomDOState :=
   { sessions := default, messages := #[], nextId := (0 : Float) }
 
@@ -52,6 +54,7 @@ def broadcast (self : ChatRoomDOState) (message : String) (excludeId : Option St
   else
     ())
 
+end
 end ChatRoomDO
 
 end TSLean.Generated.ChatRoom

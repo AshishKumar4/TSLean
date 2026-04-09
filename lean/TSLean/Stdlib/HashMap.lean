@@ -361,5 +361,11 @@ theorem eq_of_entries_eq (m1 m2 : AssocMap α β)
     (h : m1.entries = m2.entries) : m1 = m2 := by
   cases m1; cases m2; simp only [AssocMap.mk.injEq]; exact h
 
+instance [BEq α] [BEq β] : BEq (AssocMap α β) where
+  beq m1 m2 := m1.entries == m2.entries
+
+instance [BEq α] : Inhabited (AssocMap α β) where
+  default := AssocMap.empty
+
 end AssocMap
 end TSLean.Stdlib.HashMap

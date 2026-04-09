@@ -425,19 +425,27 @@ class Gen {
   private emitNamespace(d: Extract<IRDecl, { tag: 'Namespace' }>): void {
     this.emit(`namespace ${d.name}`);
     this.emit('');
-    // Detect mutual recursion groups
-    const groups = groupMutual(d.decls);
-    for (const group of groups) {
-      if (group.length === 1) {
-        this.emitDecl(group[0]);
-        this.emit('');
-      } else {
-        this.emit('mutual');
-        this.emit('');
-        for (const x of group) { this.emitDecl(x); this.emit(''); }
-        this.emit('end');
-        this.emit('');
+    // Check if any FuncDef in this namespace references another FuncDef by name.
+    // If so, wrap all FuncDefs in a `mutual` block for forward reference support.
+    const funcNames = new Set(d.decls.filter(x => x.tag === 'FuncDef').map(x => (x as any).name as string));
+    const hasForwardRefs = d.decls.some(x =>
+      x.tag === 'FuncDef' && funcNames.size > 1 &&
+      bodyContainsAnyVarRef((x as any).body, funcNames, (x as any).name)
+    );
+
+    if (hasForwardRefs && funcNames.size > 1) {
+      // Emit non-functions first, then mutual block for all functions
+      for (const x of d.decls) {
+        if (x.tag !== 'FuncDef') { this.emitDecl(x); this.emit(''); }
       }
+      this.emit('mutual');
+      this.emit('');
+      for (const x of d.decls) {
+        if (x.tag === 'FuncDef') { this.emitDecl(x); this.emit(''); }
+      }
+      this.emit('end');
+    } else {
+      for (const x of d.decls) { this.emitDecl(x); this.emit(''); }
     }
     this.emit(`end ${d.name}`);
   }
@@ -506,6 +514,13 @@ class Gen {
       }
 
       case 'App': {
+        // Fix: when calling self.methodName(args), rewrite to methodName self args.
+        // Class methods are standalone defs, not struct fields.
+        if (e.fn.tag === 'FieldAccess' && e.fn.obj.tag === 'Var' && e.fn.obj.name === 'self') {
+          const method = e.fn.field;
+          const args = e.args.map(a => this.genP(a, ctx, depth));
+          return `${method} self ${args.join(' ')}`.trim();
+        }
         const fn   = this.genExpr(e.fn, ctx, depth);
         // Unresolved functions emit default
         if (fn === 'sorry' || fn === 'default') return 'default';
@@ -1016,6 +1031,37 @@ function fixStateEffect(eff: Effect, params: IRParam[]): Effect {
 }
 
 // ─── Partial def detection ────────────────────────────────────────────────────
+
+/** Check if an expression references ANY name from a set (excluding selfName).
+ *  Recurses deeply into ALL expression types. */
+function bodyContainsAnyVarRef(expr: IRExpr, names: Set<string>, selfName: string): boolean {
+  function check(e: IRExpr): boolean {
+    if (!e || typeof e !== 'object') return false;
+    if (e.tag === 'Var' && names.has(e.name) && e.name !== selfName) return true;
+    if (e.tag === 'FieldAccess' && e.obj.tag === 'Var' && e.obj.name === 'self' && names.has(e.field))
+      return true;
+    // Recurse into ALL child expression fields
+    for (const [_k, v] of Object.entries(e)) {
+      if (v && typeof v === 'object') {
+        if (Array.isArray(v)) {
+          for (const item of v) {
+            if (item && typeof item === 'object' && 'tag' in item && check(item as IRExpr)) return true;
+            // Also check array of {body, value, expr, etc.} objects (IRCase, DoStmt)
+            if (item && typeof item === 'object') {
+              for (const sub of Object.values(item)) {
+                if (sub && typeof sub === 'object' && 'tag' in (sub as any) && check(sub as IRExpr)) return true;
+              }
+            }
+          }
+        } else if ('tag' in v) {
+          if (check(v as IRExpr)) return true;
+        }
+      }
+    }
+    return false;
+  }
+  return check(expr);
+}
 
 function bodyContainsVarRef(expr: IRExpr, name: string): boolean {
   function check(e: IRExpr): boolean {

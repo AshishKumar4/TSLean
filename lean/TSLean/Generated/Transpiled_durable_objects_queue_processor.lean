@@ -26,6 +26,8 @@ structure QueueItem where
 
 namespace QueueProcessorDO
 
+mutual
+
 def QueueProcessorDO.init : QueueProcessorDOState :=
   {  }
 
@@ -35,13 +37,13 @@ def fetch (self : QueueProcessorDOState) (request : Request) : IO Response :=
     do
       if (request.method == "POST") && (url.pathname == "/enqueue") then
         let body ← request.toJson
-        let id ← self.enqueue body.payload (Option.getD body.maxAttempts 3)
+        let id ← enqueue self body.payload (Option.getD body.maxAttempts 3)
         pure (mkResponse ("<serialized>") ({ headers := default }))
       else
         ()
       do
         if (request.method == "POST") && (url.pathname == "/process") then
-          let processed ← self.processNext
+          let processed ← processNext self
           pure (mkResponse ("<serialized>") ({ headers := default }))
         else
           ()
@@ -64,6 +66,7 @@ def enqueue (self : QueueProcessorDOState) (payload : Any) (maxAttempts : Float)
 def processNext (self : QueueProcessorDOState) : StateT QueueProcessorDOState IO Bool :=
   pure default
 
+end
 end QueueProcessorDO
 
 end TSLean.Generated.QueueProcessor

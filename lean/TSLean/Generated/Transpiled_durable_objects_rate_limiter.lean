@@ -29,6 +29,8 @@ structure RateLimiterDOState where
 
 namespace RateLimiterDO
 
+mutual
+
 def RateLimiterDO.init : RateLimiterDOState :=
   { windowMs := (0 : Float), maxRequests := (0 : Float) }
 
@@ -38,7 +40,7 @@ def fetch (self : RateLimiterDOState) (request : Request) : IO Response :=
     let clientId : String := Option.getD (url.searchParams.get "clientId") "default"
     do
       if (request.method == "POST") && (url.pathname == "/check") then
-        let allowed ← self.checkRateLimit clientId
+        let allowed ← checkRateLimit self clientId
         pure (mkResponse ("<serialized>") ({ headers := default, status := if allowed then
           200
         else
@@ -68,6 +70,7 @@ def checkRateLimit (self : RateLimiterDOState) (clientId : String) : IO Bool :=
           Storage.put self.state.storage clientId valid
           return true
 
+end
 end RateLimiterDO
 
 end TSLean.Generated.RateLimiter

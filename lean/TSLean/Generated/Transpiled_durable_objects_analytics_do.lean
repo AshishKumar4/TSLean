@@ -25,6 +25,8 @@ structure Metric where
 
 namespace AnalyticsDO
 
+mutual
+
 def AnalyticsDO.init : AnalyticsDOState :=
   {  }
 
@@ -35,7 +37,7 @@ def fetch (self : AnalyticsDOState) (request : Request) : IO Response :=
       if (request.method == "POST") && (url.pathname == "/track") then
         let event ← request.toJson
         do
-          self.trackEvent event
+          trackEvent self event
           return mkResponse ("<serialized>") ({ headers := default })
       else
         ()
@@ -66,6 +68,7 @@ def trackEvent (self : AnalyticsDOState) (event : String) : IO Unit :=
       Storage.put self.state.storage key updated
       let total ← Option.getD Storage.get self.state.storage "total:events" 0
 
+end
 end AnalyticsDO
 
 end TSLean.Generated.AnalyticsDo
