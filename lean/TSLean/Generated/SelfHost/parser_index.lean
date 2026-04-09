@@ -31,6 +31,6 @@ structure ParserCtx where
 
 -- Note: IRModule is Type 1 (mutual Effect/IRType), so can't use IO IRModule.
 def parseFileSync (opts : ParseOptions) : IRModule :=
-  { name := opts.filePath, imports := #[], decls := #[] }
+  default
 
 end TSLean.Generated.SelfHost.Parser

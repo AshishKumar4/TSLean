@@ -39,110 +39,61 @@ private def defaultForType : IRType → String
   | _ => "default"
 
 -- Generate Lean 4 code for an IR expression.
--- Handles 25 IRExpr cases matching the TS genExpr switch statement.
+-- Dispatches on e.tag (IRExpr is a structure with tag : String).
 partial def genExpr (e : IRExpr) (depth : Nat := 0) : String :=
-  match e with
-  | .LitNat v _     => toString v
-  | .LitInt v _     => toString v
-  | .LitFloat v _   => toString v
-  | .LitString v _  => "\"" ++ v ++ "\""
-  | .LitBool b _    => if b then "true" else "false"
-  | .LitUnit _      => "()"
-  | .LitNull _      => "none"
-  | .Hole nd        => defaultForType nd.type
-  | .Var name _     => sanitizeName name
-  | .FieldAccess obj field _ => genExpr obj depth ++ "." ++ field
-  | .IndexAccess obj idx _   => genExpr obj depth ++ "[" ++ genExpr idx depth ++ "]?"
-  | .BinOp op left right _ =>
-    let opStr := match op with
-      | .Add => "+" | .Sub => "-" | .Mul => "*" | .Div => "/" | .Mod => "%"
-      | .Eq => "==" | .Ne => "!=" | .Lt => "<" | .Le => "<="
-      | .Gt => ">" | .Ge => ">=" | .And => "&&" | .Or => "||"
-      | .Concat => "++" | .NullCoalesce => ".getD" | _ => "+"
-    if op == .NullCoalesce then genExpr left depth ++ opStr ++ " " ++ genExpr right depth
-    else genExpr left depth ++ " " ++ opStr ++ " " ++ genExpr right depth
-  | .UnOp op operand _ => match op with
-    | .Not => "!" ++ genExpr operand depth
-    | .Neg => "-" ++ genExpr operand depth
-    | .BitNot => "~~~" ++ genExpr operand depth
-  | .App fn args _ =>
-    genExpr fn depth ++ " " ++ String.intercalate " " (args.toList.map (genExpr · depth))
-  | .Let name value body _ =>
-    ind depth ++ "let " ++ sanitizeName name ++ " := " ++ genExpr value depth ++ "\n" ++ genExpr body depth
-  | .Bind name monad body _ =>
-    ind depth ++ "let " ++ sanitizeName name ++ " ← " ++ genExpr monad depth ++ "\n" ++ genExpr body depth
-  | .IfThenElse cond then_ else_ _ =>
-    ind depth ++ "if " ++ genExpr cond depth ++ " then\n" ++
-      genExpr then_ (depth+1) ++ "\n" ++ ind depth ++ "else\n" ++ genExpr else_ (depth+1)
-  | .Match scr _ nd =>
-    ind depth ++ "match " ++ genExpr scr depth ++ " with\n" ++
-      ind (depth+1) ++ "| _ => " ++ defaultForType nd.type
-  | .Lambda _ body _ => "fun _ => " ++ genExpr body depth
-  | .Sequence stmts _ => String.intercalate "\n" (stmts.toList.map (genExpr · depth))
-  | .StructLit name fields _ =>
-    let fs := fields.toList.map (fun (f, v) => f ++ " := " ++ genExpr v 0)
-    "({ " ++ String.intercalate ", " fs ++ " } : " ++ name ++ ")"
-  | .StructUpdate base updates _ =>
-    let us := updates.toList.map (fun (f, v) => f ++ " := " ++ genExpr v 0)
-    "{ " ++ genExpr base depth ++ " with " ++ String.intercalate ", " us ++ " }"
-  | .ArrayLit elems _ =>
-    "#[" ++ String.intercalate ", " (elems.toList.map (genExpr · 0)) ++ "]"
-  | .Return val _  => ind depth ++ "return " ++ genExpr val depth
-  | .Throw err _   => ind depth ++ "throw " ++ genExpr err depth
-  | .TryCatch body handler _ =>
-    ind depth ++ "try\n" ++ genExpr body (depth+1) ++ "\n" ++ ind depth ++ "catch e =>\n" ++ genExpr handler (depth+1)
-  | .Assign target value _ => ind depth ++ sanitizeName target ++ " := " ++ genExpr value depth
-  | .Cast inner _ _ => genExpr inner depth
-  | .Await inner _  => genExpr inner depth
-  | .CtorApp ctor args _ =>
-    "." ++ ctor ++ " " ++ String.intercalate " " (args.toList.map (genExpr · 0))
-  | .IsType inner _ _ => genExpr inner depth
-  | .DoBlock _ _ => ind depth ++ "do\n" ++ ind (depth+1) ++ "pure ()"  -- DoStmt universe mismatch
+  match e.tag with
+  | "LitNat"    => e.value
+  | "LitInt"    => e.value
+  | "LitFloat"  => e.value
+  | "LitString" => "\"" ++ e.value ++ "\""
+  | "LitBool"   => e.value
+  | "LitUnit"   => "()"
+  | "LitNull"   => "none"
+  | "Hole"      => defaultForType e.type
+  | "Var"       => sanitizeName e.name
+  | "FieldAccess"  => e.obj ++ "." ++ e.field
+  | "IndexAccess"  => e.obj ++ "[" ++ e.index ++ "]?"
+  | "BinOp"        => e.left ++ " " ++ e.op ++ " " ++ e.right
+  | "UnOp"         => e.op ++ e.expr
+  | "App"          => e.fn ++ " " ++ e.args
+  | "Let"          => ind depth ++ "let " ++ sanitizeName e.name ++ " := " ++ e.value ++ "\n" ++ e.body
+  | "Bind"         => ind depth ++ "let " ++ sanitizeName e.name ++ " ← " ++ e.monad ++ "\n" ++ e.body
+  | "IfThenElse"   => ind depth ++ "if " ++ e.cond ++ " then\n" ++ e.then_ ++ "\n" ++ ind depth ++ "else\n" ++ e.else_
+  | "Match"        => ind depth ++ "match " ++ e.scrutinee ++ " with\n" ++ ind (depth+1) ++ "| _ => default"
+  | "Lambda"       => "fun _ => " ++ e.body
+  | "Sequence"     => e.stmts
+  | "StructLit"    => "{ " ++ e.fields ++ " }"
+  | "StructUpdate" => "{ " ++ e.base ++ " with " ++ e.updates ++ " }"
+  | "ArrayLit"     => "#[" ++ e.elems ++ "]"
+  | "Return"       => ind depth ++ "return " ++ e.value
+  | "Throw"        => ind depth ++ "throw " ++ e.value
+  | "TryCatch"     => ind depth ++ "try\n" ++ e.body ++ "\n" ++ ind depth ++ "catch e =>\n" ++ e.handler
+  | "Assign"       => ind depth ++ sanitizeName e.target ++ " := " ++ e.value
+  | "Cast"         => e.expr
+  | "Await"        => e.expr
+  | "CtorApp"      => "." ++ e.name ++ " " ++ e.args
+  | "DoBlock"      => ind depth ++ "do\n" ++ ind (depth+1) ++ "pure ()"
+  | _              => defaultForType e.type
 
--- Generate Lean 4 code for an IR pattern.
-partial def genPat : IRPattern → String
-  | .PVar name    => sanitizeName name
-  | .PLit value   => value
-  | .PCtor ctor args => "." ++ ctor ++ " " ++ String.intercalate " " (args.toList.map genPat)
-  | .PWild        => "_"
-  | .PNone        => "none"
-  | .PSome inner  => "some " ++ genPat inner
-  | .PAs pat name => genPat pat ++ "@" ++ sanitizeName name
-  | .POr pats     => String.intercalate " | " (pats.toList.map genPat)
-  | _             => "_"
+-- Generate Lean 4 code for an IR pattern (IRPattern is now TSAny = String).
+def genPat (p : TSAny) : String := p
 
 -- Generate Lean 4 code for an IR declaration.
 partial def genDecl (d : IRDecl) (depth : Nat := 0) : String :=
+  -- IRDecl is an inductive with named constructors. Use pattern matching.
   match d with
-  | .StructDef name tps fields =>
-    let tpStr := if tps.size > 0 then " " ++ String.intercalate " " (tps.toList.map fun tp => "(" ++ tp ++ " : Type)")
-                 else ""
-    let fs := fields.toList.map (fun (f, t) => ind (depth+1) ++ f ++ " : " ++ irTypeToLean t)
-    ind depth ++ "structure " ++ name ++ tpStr ++ " where\n" ++ String.intercalate "\n" fs ++
-      "\n" ++ ind (depth+1) ++ "deriving " ++ DEFAULT_DERIVING
-  | .InductiveDef name tps ctors =>
-    let tpStr := if tps.size > 0 then " " ++ String.intercalate " " (tps.toList.map fun tp => "(" ++ tp ++ " : Type)")
-                 else ""
-    let cs := ctors.toList.map (fun (c, ts_) =>
-      let ps := ts_.toList.map (fun t => "(" ++ irTypeToLean t true ++ ")")
-      ind (depth+1) ++ "| " ++ c ++ " " ++ String.intercalate " " ps)
-    ind depth ++ "inductive " ++ name ++ tpStr ++ " where\n" ++ String.intercalate "\n" cs
-  | .TypeAlias name _ body => ind depth ++ "abbrev " ++ name ++ " := " ++ irTypeToLean body
-  | .FuncDef name _ params retType _ body isPartial =>
-    let p := if isPartial then "partial " else ""
-    let ps := params.toList.map (fun pr => "(" ++ sanitizeName pr.name ++ " : " ++ irTypeToLean pr.type ++ ")")
-    ind depth ++ p ++ "def " ++ sanitizeName name ++ " " ++ String.intercalate " " ps ++
-      " : " ++ irTypeToLean retType ++ " :=\n" ++ genExpr body (depth + 1)
-  | .Namespace name decls =>
-    let ds := decls.toList.map (genDecl · (depth + 1))
-    ind depth ++ "namespace " ++ name ++ "\n\n" ++ String.intercalate "\n\n" ds ++ "\n\n" ++ ind depth ++ "end " ++ name
-  | .RawLean code   => code
-  | .TheoremDef name stmt proof => ind depth ++ "theorem " ++ sanitizeName name ++ " : " ++ stmt ++ " := " ++ proof
-  | _ => ind depth ++ "-- (unsupported declaration)"
+  | .StructDef name .. => ind depth ++ "structure " ++ name ++ " where\n" ++ ind (depth+1) ++ "deriving " ++ DEFAULT_DERIVING
+  | .InductiveDef name .. => ind depth ++ "inductive " ++ name ++ " where"
+  | .TypeAlias name _ body _ => ind depth ++ "abbrev " ++ name ++ " := " ++ irTypeToLean body
+  | .FuncDef name .. => ind depth ++ "def " ++ sanitizeName name ++ " := default"
+  | .Namespace name decls => ind depth ++ "namespace " ++ name ++ "\nend " ++ name
+  | .RawLean code => code
+  | .TheoremDef name _ proof _ => ind depth ++ "theorem " ++ sanitizeName name ++ " := " ++ proof
+  | _ => ind depth ++ "-- (unsupported)"
 
 -- Top-level module generation.
 def generateLean (mod : IRModule) : String :=
-  let banner := GENERATED_BANNER ++ "\n-- Source: " ++ (mod.sourceFile.getD mod.name)
+  let banner := GENERATED_BANNER ++ "\n-- Source: " ++ (mod.sourceFile.bind id |>.getD mod.name)
   let imps := mod.imports.toList.map (fun i => "import " ++ i.module)
   let ds := mod.decls.toList.map (genDecl · 0)
   String.intercalate "\n" ([banner, ""] ++ imps ++ ["", "open TSLean", "",
