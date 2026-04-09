@@ -93,7 +93,8 @@ partial def genDecl (d : IRDecl) (depth : Nat := 0) : String :=
 
 -- Top-level module generation.
 def generateLean (mod : IRModule) : String :=
-  let banner := GENERATED_BANNER ++ "\n-- Source: " ++ (mod.sourceFile.bind id |>.getD mod.name)
+  let src := match mod.sourceFile with | some (some s) => s | _ => mod.name
+  let banner := GENERATED_BANNER ++ "\n-- Source: " ++ src
   let imps := mod.imports.toList.map (fun i => "import " ++ i.module)
   let ds := mod.decls.toList.map (genDecl · 0)
   String.intercalate "\n" ([banner, ""] ++ imps ++ ["", "open TSLean", "",
