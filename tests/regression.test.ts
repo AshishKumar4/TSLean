@@ -178,7 +178,7 @@ describe('Bug #2 regression: for-loop incrementor as recursive argument', () => 
     `;
     const code = pipeline(src);
     // Must produce a let _loop_ := fun i => ...
-    expect(code).toMatch(/let _loop_\d+ := fun \w+ =>/);
+    expect(code).toMatch(/let (rec )?_loop_\d+ := fun \w+ =>/);
   });
 });
 

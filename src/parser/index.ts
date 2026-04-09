@@ -1108,12 +1108,19 @@ class ParserCtx {
       }
     }
 
-    // Optional chaining: obj?.field  →  Option.map (·.field) obj
+    // Optional chaining: obj?.field → obj.bind (fun v => some v.field) [or .map for non-optional]
+    // Using .bind handles both optional and non-optional field types correctly.
     if (node.questionDotToken) {
+      // Use dot notation: obj.bind (fun _oc => _oc.field) — works for Option types
+      const fieldAccess: IRExpr = { tag: 'FieldAccess', obj: varExpr('_oc', obj.type), field, type: ty, effect: Pure };
+      const lambdaBody = ty.tag === 'Option'
+        ? fieldAccess  // field is already Option → bind returns Option
+        : { tag: 'App' as const, fn: varExpr('some'), args: [fieldAccess], type: TyOption(ty), effect: Pure };
       const accessor: IRExpr = { tag: 'Lambda', params: [{ name: '_oc', type: obj.type }],
-        body: { tag: 'FieldAccess', obj: varExpr('_oc', obj.type), field, type: ty, effect: Pure },
-        type: TyFn([obj.type], ty), effect: Pure };
-      return { tag: 'App', fn: varExpr('Option.map'), args: [accessor, obj], type: TyOption(ty), effect: obj.effect };
+        body: lambdaBody, type: TyFn([obj.type], TyOption(ty)), effect: Pure };
+      // Emit as: obj.bind (fun _oc => ...)  — dot notation avoids argument order issues
+      return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'bind', type: TyFn([TyFn([obj.type], TyOption(ty))], TyOption(ty)), effect: Pure },
+        args: [accessor], type: TyOption(ty), effect: obj.effect };
     }
 
     return { tag: 'FieldAccess', obj, field, type: ty, effect: Pure };

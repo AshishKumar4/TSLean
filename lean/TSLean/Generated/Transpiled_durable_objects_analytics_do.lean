@@ -44,13 +44,13 @@ def AnalyticsDO.fetch (self : AnalyticsDOState) (request : Request) : IO Respons
       do
         if (request.method == "GET") && (url.pathname == "/count") then
           let name : String := Option.getD (url.searchParams.get "event") ""
-          let metric ← Storage.get self.state.storage (s!"metric:{name}")
+          let metric ← Storage.get self.storage (s!"metric:{name}")
           pure (mkResponse ("<serialized>") ({ headers := default }))
         else
           ()
         if (request.method == "DELETE") && (url.pathname == "/reset") then
           do
-            Storage.deleteAll self.state.storage
+            Storage.deleteAll self.storage
             return mkResponse ("<serialized>") ({ headers := default })
         else
           pure (mkResponse "Not Found" ({ status := 404 }))
@@ -58,15 +58,15 @@ def AnalyticsDO.fetch (self : AnalyticsDOState) (request : Request) : IO Respons
 def AnalyticsDO.trackEvent (self : AnalyticsDOState) (event : String) : IO Unit :=
   do
     let key : String := s!"metric:{event.name}"
-    let existing ← Storage.get self.state.storage key
+    let existing ← Storage.get self.storage key
     let value : Float := Option.getD event.value 1
     let updated : Metric := if existing then
       { count := existing.count + 1, sum := existing.sum + value, min := min existing.min value, max := max existing.max value, lastSeen := event.timestamp }
     else
       { count := 1, sum := value, min := value, max := value, lastSeen := event.timestamp }
     do
-      Storage.put self.state.storage key updated
-      let total ← Option.getD Storage.get self.state.storage "total:events" 0
+      Storage.put self.storage key updated
+      let total ← Option.getD Storage.get self.storage "total:events" 0
 
 end
 end AnalyticsDO

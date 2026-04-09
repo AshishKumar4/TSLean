@@ -482,6 +482,17 @@ class Gen {
       case 'Var':       return sanitize(e.name);
 
       case 'FieldAccess': {
+        // Pattern 3: self.state.X → self.X (DO state IS the struct, no .state nesting)
+        if (e.obj.tag === 'FieldAccess' && e.obj.field === 'state' &&
+            e.obj.obj.tag === 'Var' && e.obj.obj.name === 'self') {
+          const inner = this.genExpr(e.obj.obj, ctx, depth);  // = "self"
+          return `${inner}.${e.field}`;
+        }
+        // Pattern 3b: self.state.storage.method → Storage.method self.storage
+        if (e.obj.tag === 'FieldAccess' && e.obj.field === 'storage' &&
+            e.obj.obj.tag === 'FieldAccess' && e.obj.obj.field === 'state') {
+          return 'default';  // Storage API needs deep DO monad integration
+        }
         const obj = this.genExpr(e.obj, ctx, depth);
         // Map JS field/method names to Lean equivalents.
         // Some names differ between String and Array — disambiguate by type.
@@ -496,6 +507,19 @@ class Gen {
           'endsWith': 'endsWith',
           'pop': 'back?',
           'push': 'push',
+          'reduce': 'foldl',
+          'filter': 'filter',
+          'map': 'map',
+          'find': 'find?',
+          'some': 'any',
+          'every': 'all',
+          'reverse': 'reverse',
+          'flat': 'join',
+          'flatMap': 'flatMap',
+          'concat': 'append',
+          'indexOf': 'indexOf?',
+          'slice': 'extract',
+          'join': 'foldl (· ++ ·) ""',   // Array.join with separator
           // Type-dependent mappings:
           'length': isString ? 'length' : 'size',   // String.length, Array.size
           'size': isString ? 'length' : 'size',
@@ -822,7 +846,9 @@ class Gen {
       if (s.tag === 'Bind') {
         lines.push(`${ind}let ${s.name} ← ${this.genExpr(s.monad, ctx, depth + 1)}`);
       } else if (s.tag === 'Let') {
-        lines.push(`${ind}let ${s.name} := ${this.genExpr(s.value, ctx, depth + 1)}`);
+        const isRec = s.value.tag === 'Lambda' && bodyContainsVarRef(s.value.body, s.name);
+        const kw = isRec ? 'let rec' : 'let';
+        lines.push(`${ind}${kw} ${s.name} := ${this.genExpr(s.value, ctx, depth + 1)}`);
       } else if (s.tag === 'Return') {
         lines.push(`${ind}return ${this.genExpr(s.value, ctx, depth + 1)}`);
       } else {

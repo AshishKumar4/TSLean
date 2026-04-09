@@ -15,7 +15,7 @@ def rangeSum (n : Float) : StateT Unit IO Float :=
   do
     let total : Float := 0
     do
-      let _loop_116 := fun i => do
+      let rec _loop_116 := fun i => do
         if i < n then
         do
           let total := total + i
@@ -28,7 +28,7 @@ def countDown (n : Float) : StateT Unit IO (Array Float) :=
   do
     let result : Array Float := #[]
     do
-      let _loop_260 := fun i => if i > 0 then
+      let rec _loop_260 := fun i => if i > 0 then
         result.push i
         _loop_260 (i - 1)
       else
@@ -49,7 +49,7 @@ def fibonacci (n : Float) : StateT Unit IO Float :=
   do
     let a : Float := 0
     do
-      let _while_719 := fun _ => do
+      let rec _while_719 := fun _ => do
         if let n := n - 1 > 0 then
         do
           let tmp := b

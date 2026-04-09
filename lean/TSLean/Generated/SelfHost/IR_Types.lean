@@ -43,6 +43,38 @@ inductive IRType where
 
 end
 
+-- BEq for mutual types (tag-based comparison with sorry for deep structural equality)
+mutual
+  private def Effect.beq : Effect → Effect → Bool
+    | .Pure, .Pure => true
+    | .IO, .IO => true
+    | .Async, .Async => true
+    | .State a, .State b => IRType.beq a b
+    | .Except a, .Except b => IRType.beq a b
+    | .Combined a, .Combined b => a.size == b.size  -- structural approx
+    | _, _ => false
+
+  private def IRType.beq : IRType → IRType → Bool
+    | .Nat, .Nat => true | .Int, .Int => true | .Float, .Float => true
+    | .String, .String => true | .Bool, .Bool => true | .Unit, .Unit => true
+    | .Never, .Never => true
+    | .Option a, .Option b => IRType.beq a b
+    | .Array a, .Array b => IRType.beq a b
+    | .Map k1 v1, .Map k2 v2 => IRType.beq k1 k2 && IRType.beq v1 v2
+    | .Set a, .Set b => IRType.beq a b
+    | .Promise a, .Promise b => IRType.beq a b
+    | .Result a1 b1, .Result a2 b2 => IRType.beq a1 a2 && IRType.beq b1 b2
+    | .TypeRef n1 _, .TypeRef n2 _ => n1 == n2
+    | .TypeVar n1, .TypeVar n2 => n1 == n2
+    | .Universe l1, .Universe l2 => l1 == l2
+    | _, _ => false
+end
+
+instance : BEq Effect := ⟨Effect.beq⟩
+instance : BEq IRType := ⟨IRType.beq⟩
+instance : Inhabited Effect := ⟨.Pure⟩
+instance : Inhabited IRType := ⟨.Unit⟩
+
 -- Effect constructors
 def Pure : Effect := .Pure
 def IO : Effect := .IO

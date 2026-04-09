@@ -17,15 +17,15 @@ structure Config where
   deriving Repr, BEq
 
 def getHost (config : Option Config) : String :=
-  Option.getD (Option.map (fun _oc => _oc.host) config) "localhost"
+  Option.getD (config.bind (fun _oc => _oc.host)) "localhost"
 
 def getDbUrl (config : Option Config) : String :=
-  Option.getD (Option.map (fun _oc => _oc.url) (Option.map (fun _oc => _oc.db) config)) "default-url"
+  Option.getD (config.bind (fun _oc => _oc.db).bind (fun _oc => _oc.url)) "default-url"
 
 def withDefaults (config : Option Config) : Config :=
-  let host : String := Option.getD (Option.map (fun _oc => _oc.host) config) "localhost"
-  let port : Float := Option.getD (Option.map (fun _oc => _oc.port) config) 5432
-  let dbName : String := Option.getD (Option.map (fun _oc => _oc.name) (Option.map (fun _oc => _oc.db) config)) "mydb"
+  let host : String := Option.getD (config.bind (fun _oc => _oc.host)) "localhost"
+  let port : Float := Option.getD (config.bind (fun _oc => _oc.port)) 5432
+  let dbName : String := Option.getD (config.bind (fun _oc => _oc.db).bind (fun _oc => _oc.name)) "mydb"
   { host := host, port := port, db := default }
 
 -- // Destructuring
@@ -40,7 +40,7 @@ partial def sumArray (_p703 : Any) : Float :=
 
 -- // Rest parameters
 def sum (nums : Array Float) : Float :=
-  nums.reduce (fun acc n => acc + n) 0
+  nums.foldl (fun acc n => acc + n) 0
 
 partial def max (nums : Array Float) : Float :=
   max nums

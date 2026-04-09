@@ -74,25 +74,25 @@ def AuthDO.handleLogin (self : AuthDOState) (creds : String) : IO Response :=
     if (!creds.username) || (!creds.password) then
       pure (mkResponse ("<serialized>") ({ status := 401 }))
     else
-      let token : String := crypto.randomUUID
+      let token : String := _uuid_stub_
       let session : AuthSession := { userId := creds.username, token := token, createdAt := 0, expiresAt := (0) + self.TOKEN_TTL, roles := #["user"] }
       do
-        Storage.put self.state.storage (s!"token:{token}") session
+        Storage.put self.storage (s!"token:{token}") session
         return mkResponse ("<serialized>") ({ headers := default })
 
 def AuthDO.logout (self : AuthDOState) (token : String) : IO Unit :=
   do
-    Storage.delete self.state.storage (s!"token:{token}")
+    Storage.delete self.storage (s!"token:{token}")
 
 def AuthDO.authenticate (self : AuthDOState) (token : String) : IO (Option AuthSession) :=
   do
-    let session ← Storage.get self.state.storage (s!"token:{token}")
+    let session ← Storage.get self.storage (s!"token:{token}")
     if !session then
       pure none
     else
       if (0) > session.expiresAt then
         do
-          Storage.delete self.state.storage (s!"token:{token}")
+          Storage.delete self.storage (s!"token:{token}")
           return none
       else
         pure session

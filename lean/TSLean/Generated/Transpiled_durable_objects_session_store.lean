@@ -64,29 +64,29 @@ def SessionStoreDO.fetch (self : SessionStoreDOState) (request : Request) : IO R
 
 def SessionStoreDO.createSession (self : SessionStoreDOState) (userId : String) (data : String) : IO String :=
   do
-    let id : String := crypto.randomUUID
+    let id : String := _uuid_stub_
     let now : Float := 0
     let session : Session := { userId := userId, data := data, createdAt := now, expiresAt := now + self.TTL_MS }
     do
-      Storage.put self.state.storage (s!"session:{id}") session
+      Storage.put self.storage (s!"session:{id}") session
       return id
 
 def SessionStoreDO.getSession (self : SessionStoreDOState) (id : String) : IO (Option Session) :=
   do
-    let session ← Storage.get self.state.storage (s!"session:{id}")
+    let session ← Storage.get self.storage (s!"session:{id}")
     if !session then
       pure none
     else
       if (0) > session.expiresAt then
         do
-          Storage.delete self.state.storage (s!"session:{id}")
+          Storage.delete self.storage (s!"session:{id}")
           return none
       else
         pure session
 
 def SessionStoreDO.destroySession (self : SessionStoreDOState) (id : String) : IO Unit :=
   do
-    Storage.delete self.state.storage (s!"session:{id}")
+    Storage.delete self.storage (s!"session:{id}")
 
 end
 end SessionStoreDO
