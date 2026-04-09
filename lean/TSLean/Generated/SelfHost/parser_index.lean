@@ -1,1 +1,1 @@
--- Stub: parser_index
+-- stub

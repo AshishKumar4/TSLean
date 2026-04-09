@@ -1,1 +1,1 @@
--- Stub: src_cli
+-- stub

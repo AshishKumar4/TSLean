@@ -1,1 +1,1 @@
--- Stub: effects_index (not yet compilable)
+-- stub

@@ -321,9 +321,8 @@ class Gen {
       this.emit('do');
       this.ind++;
       const bodyStr = this.genExpr(d.body, fixedEffect);  // generated at do-block indent
-      // Complex monadic patterns → default
-      const isComplex = (bodyStr.includes('Array.forM') && bodyStr.includes('←')) ||
-        (fixedEffect.tag === 'Combined' && bodyStr.split('do\n').length > 3);
+      // Only bail for the one truly uncompilable pattern: ← inside an Array.forM lambda
+      const isComplex = bodyStr.includes('Array.forM') && bodyStr.includes('←');
       if (isComplex) {
         this.emit('pure default');
       } else if (d.retType.tag === 'Unit' && !bodyStr.trim().startsWith('do') &&
