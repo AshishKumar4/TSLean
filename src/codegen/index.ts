@@ -646,9 +646,11 @@ class Gen {
         if (e.obj.type.tag === 'TypeRef') {
           const rawName = e.obj.type.name;
           const stateName = this.classToState.get(rawName) ?? rawName;
-          const knownFields = this.structFields.get(stateName) ?? this.structFields.get(rawName);
-          if (knownFields && !knownFields.some(f => f.name === mappedField)) {
-            return 'default';
+          const knownFields = this.structFields.get(stateName) ??
+            this.structFields.get(rawName) ??
+            this.structFields.get(rawName + 'State');
+          if (knownFields) {
+            if (!knownFields.some(f => f.name === mappedField)) return 'default';
           }
         }
         return `${obj}.${mappedField}`;
