@@ -85,10 +85,10 @@ def set_radius (self : CircleState) (value : Float) : CircleState :=
 def get_area (self : CircleState) : Float :=
   (3.14159265358979 * self.radius) * self.radius
 
-def Circle.fromDiameter (d : Float) : Circle :=
+def Circle.fromDiameter (d : Float) : CircleState :=
   default
 
-def Circle.unitCircle : Circle :=
+def Circle.unitCircle : CircleState :=
   default
 
 end TSLean.Generated.ClassFeatures

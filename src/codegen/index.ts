@@ -42,18 +42,23 @@ export function generateLean(mod: IRModule): string {
 class Gen {
   private lines: string[] = [];
   private ind = 0;
+  /** Registry of struct fields by struct name — used for inheritance. */
+  private structFields = new Map<string, Array<{ name: string; type: IRType }>>();
+  /** Map from class name → state struct name (e.g. Circle → CircleState). */
+  private classToState = new Map<string, string>();
 
   /** Generate a complete Lean 4 file from an IR module. */
   gen(mod: IRModule): string {
+    // Pre-pass: collect struct field info for inheritance resolution
+    this.collectStructInfo(mod.decls);
+
     this.emit(GENERATED_BANNER);
     this.emit(`-- Source: ${mod.sourceFile ?? 'unknown'}`);
     this.emit('');
 
-    // Fix 1 + Fix 5: Emit specific imports based on IR analysis (never `import TSLean`)
     this.emitSmartImports(mod);
     this.emit('');
 
-    // Fix 1: Wrap all declarations in a namespace matching the module name
     const ns = mod.name;
     if (ns && ns !== 'T' && ns !== 'Test') {
       this.emit(`namespace ${ns}`);
@@ -66,6 +71,71 @@ class Gen {
       this.emit(`end ${ns}`);
     }
     return this.lines.join('\n');
+  }
+
+  /** Collect struct field info and class→state mappings for all StructDefs.
+   *  Also detect missing fields from method bodies (inherited field access). */
+  private collectStructInfo(decls: IRDecl[]): void {
+    // First pass: register structs
+    for (const d of decls) {
+      if (d.tag === 'StructDef') {
+        this.structFields.set(d.name, d.fields.map(f => ({ name: f.name, type: f.type })));
+        if (d.name.endsWith('State')) {
+          this.classToState.set(d.name.slice(0, -5), d.name);
+        }
+      }
+      if (d.tag === 'Namespace') this.collectStructInfo(d.decls);
+    }
+    // Second pass: find field accesses on `self` in method bodies and add missing fields
+    for (const d of decls) {
+      if (d.tag === 'FuncDef' && d.params.some(p => p.name === 'self')) {
+        const selfType = d.params.find(p => p.name === 'self')?.type;
+        if (selfType?.tag === 'TypeRef') {
+          const structName = selfType.name;
+          const fields = this.structFields.get(structName);
+          if (fields) {
+            const accessed = collectFieldAccesses(d.body, 'self');
+            for (const [fname, ftype] of accessed) {
+              if (!fields.some(f => f.name === fname) && !fname.startsWith('_')) {
+                fields.push({ name: fname, type: ftype });
+              }
+            }
+          }
+        }
+      }
+      if (d.tag === 'Namespace') {
+        for (const inner of d.decls) {
+          if (inner.tag === 'FuncDef' && inner.params.some(p => p.name === 'self')) {
+            const selfType = inner.params.find(p => p.name === 'self')?.type;
+            if (selfType?.tag === 'TypeRef') {
+              const structName = selfType.name;
+              const fields = this.structFields.get(structName);
+              if (fields) {
+                const accessed = collectFieldAccesses(inner.body, 'self');
+                for (const [fname, ftype] of accessed) {
+                  if (!fields.some(f => f.name === fname) && !fname.startsWith('_')) {
+                    fields.push({ name: fname, type: ftype });
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /** Resolve a type name through the class→state mapping.
+   *  e.g. "Circle" → "CircleState" if CircleState is a known struct. */
+  private resolveType(ty: string): string {
+    // Check if this is a class name that should be a state type
+    for (const [cls, state] of this.classToState) {
+      // Replace whole-word occurrences of the class name
+      if (ty === cls) return state;
+      // Also handle "IO Circle" → "IO CircleState" etc.
+      ty = ty.replace(new RegExp(`\\b${cls}\\b`, 'g'), state);
+    }
+    return ty;
   }
 
   // ─── Import resolver (Fix 1 + Fix 5) ───────────────────────────────────────
@@ -237,6 +307,19 @@ class Gen {
     this.emit(`structure ${d.name}${tp}${ext} where`);
     this.ind++;
     this.emit(`mk ::`);
+    // Include parent fields when struct extends another (inheritance)
+    if (d.extends_) {
+      const parentName = d.extends_ + 'State';
+      const parentFields = this.structFields.get(parentName);
+      if (parentFields) {
+        for (const pf of parentFields) {
+          // Only add if not already in child's fields
+          if (!d.fields.some(f => f.name === pf.name)) {
+            this.emit(`${pf.name} : ${irTypeToLean(pf.type)}`);
+          }
+        }
+      }
+    }
     for (const f of d.fields) {
       // Strip leading underscore from private field names (TS _radius → Lean radius)
       const fieldName = (f.name.startsWith('_') && f.name.length > 1 && /[a-zA-Z]/.test(f.name[1]))
@@ -308,8 +391,8 @@ class Gen {
     }).join(' ');
     const tp = d.typeParams.length > 0 ? ` ${tpStr}` : '';
     const params  = d.params.map(p => this.fmtParam(p, d.effect)).join(' ');
-    const retLean = irTypeToLean(d.retType);
-    const retSig  = this.retSig(fixedEffect, retLean);
+    const retLean = this.resolveType(irTypeToLean(d.retType));
+    const retSig  = this.resolveType(this.retSig(fixedEffect, retLean));
     const ps = params ? ` ${params}` : '';
     // Detect self-recursive functions for `partial def` (avoids termination checker rejection)
     const isRecursive = d.isPartial ?? bodyContainsVarRef(d.body, d.name);
@@ -394,7 +477,7 @@ class Gen {
   }
 
   private fmtParam(p: IRParam, eff: Effect): string {
-    const ty = irTypeToLean(p.type);
+    const ty = this.resolveType(irTypeToLean(p.type));
     if (p.implicit) return `{${p.name} : ${ty}}`;
     if (p.default_) return `(${p.name} : ${ty} := ${this.genExpr(p.default_, eff)})`;
     return `(${p.name} : ${ty})`;
@@ -1119,6 +1202,36 @@ function isSimpleValue(s: string): boolean {
   return /^\d+$/.test(t) || /^\(?\d+\s*:\s*Float\)?$/.test(t) ||
          t.startsWith('"') || t === 'true' || t === 'false' ||
          t === 'default' || t === 'none' || t === '#[]';
+}
+
+/** Collect all field names accessed on a given variable in an expression tree. */
+function collectFieldAccesses(expr: IRExpr, varName: string): Map<string, IRType> {
+  const fields = new Map<string, IRType>();
+  function walk(e: IRExpr): void {
+    if (!e || typeof e !== 'object') return;
+    if (e.tag === 'FieldAccess' && e.obj.tag === 'Var' && e.obj.name === varName) {
+      fields.set(e.field, e.type);
+    }
+    // Recurse into all child expressions
+    for (const v of Object.values(e)) {
+      if (v && typeof v === 'object') {
+        if (Array.isArray(v)) {
+          for (const item of v) {
+            if (item && typeof item === 'object' && 'tag' in item) walk(item as IRExpr);
+            if (item && typeof item === 'object') {
+              for (const sub of Object.values(item)) {
+                if (sub && typeof sub === 'object' && 'tag' in (sub as any)) walk(sub as IRExpr);
+              }
+            }
+          }
+        } else if ('tag' in v) {
+          walk(v as IRExpr);
+        }
+      }
+    }
+  }
+  walk(expr);
+  return fields;
 }
 
 function looksMonadic(s: string): boolean {
