@@ -62,8 +62,9 @@ def SessionStoreDO.createSession (self : SessionStoreDOState) (userId : String) 
     let id : String := "uuid-stub"
     let now : Float := 0
     let session : Session := { userId := userId, data := data, createdAt := now, expiresAt := now + self.TTL_MS }
-    pure default
-    return id
+    do
+      pure default
+      return id
 
 def SessionStoreDO.getSession (self : SessionStoreDOState) (id : String) : IO (Option Session) :=
   do

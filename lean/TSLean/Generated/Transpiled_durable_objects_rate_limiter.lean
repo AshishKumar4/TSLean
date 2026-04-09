@@ -10,7 +10,7 @@ import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
 
-open TSLean TSLean.WebAPI TSLean.DO
+open TSLean TSLean.WebAPI TSLean.DO TSLean.Stdlib.HashMap
 
 namespace TSLean.Generated.RateLimiter
 
@@ -56,7 +56,7 @@ def RateLimiterDO.checkRateLimit (self : RateLimiterDOState) (clientId : String)
   do
     let now : Float := 0
     let windowStart : Float := now - self.windowMs
-    let records := #[]
+    let records : Array RequestRecord := #[]
     let valid : Array RequestRecord := records.filter (fun r => r.timestamp >= windowStart)
     let total : Float := valid.foldl (fun sum r => sum + r.count) 0
     if total >= self.maxRequests then

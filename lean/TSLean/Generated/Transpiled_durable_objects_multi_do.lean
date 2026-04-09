@@ -19,14 +19,14 @@ structure RPCEnvelope where
   mk ::
   id : String
   method : String
-  params : Any
+  params : String
   timestamp : Float
   deriving Repr, BEq, Inhabited
 
 structure RPCResponse where
   mk ::
   id : String
-  result : Option Any
+  result : Option String
   error : Option (Option String)
   deriving Repr, BEq, Inhabited
 
@@ -62,7 +62,7 @@ def CoordinatorDO.handleRPC (self : CoordinatorDOState) (envelope : RPCEnvelope)
   do
     let id : String := envelope.id
     let method : String := envelope.method
-    let params : Any := envelope.params
+    let params : String := envelope.params
     match method with
       | "ping" => pure { id := id, result := default, error := default }
       | "broadcast" => pure { id := id, result := default, error := default }

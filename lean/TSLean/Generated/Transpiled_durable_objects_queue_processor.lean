@@ -22,7 +22,7 @@ structure QueueProcessorDOState where
 structure QueueItem where
   mk ::
   id : String
-  payload : Any
+  payload : String
   enqueuedAt : Float
   attempts : Float
   maxAttempts : Float
@@ -55,7 +55,7 @@ def QueueProcessorDO.fetch (self : QueueProcessorDOState) (request : Request) : 
               else
                 pure (mkResponse "Not Found" ({ status := 404 }))
 
-def QueueProcessorDO.enqueue (self : QueueProcessorDOState) (payload : Any) (maxAttempts : Float) : IO String :=
+def QueueProcessorDO.enqueue (self : QueueProcessorDOState) (payload : String) (maxAttempts : Float) : IO String :=
   do
     let id : String := "uuid-stub"
     let item : QueueItem := { id := id, payload := payload, enqueuedAt := 0, attempts := 0, maxAttempts := maxAttempts, nextRetryAt := 0 }

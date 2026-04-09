@@ -46,10 +46,10 @@ def Cat.meow (self : CatState) : IO Unit :=
     pure ()
 
 def makeSound (animal : AnimalState) : Unit :=
-  if (true : Bool) /- animal matches Dog -/ then
+  if (sorry : Bool) /- animal matches Dog -/ then
     default
   else
-    if (true : Bool) /- animal matches Cat -/ then
+    if (sorry : Bool) /- animal matches Cat -/ then
       default
     else
       ()
@@ -67,10 +67,10 @@ structure HasAge where
 def describeEntity (entity : HasName) : String :=
   s!"Named: {entity.name}"
 
-def isString (x : Any) : Bool :=
+def isString (x : String) : Bool :=
   (TSLean.typeOf x) == "string"
 
-def isPositiveNumber (x : Any) : Bool :=
+def isPositiveNumber (x : String) : Bool :=
   (TSLean.typeOf x) == "number"
 
 end TSLean.Generated.TypeNarrowing
