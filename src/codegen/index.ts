@@ -72,12 +72,101 @@ class Gen {
     // Emit missing state structs (referenced in method signatures but not defined)
     this.emitMissingStateStructs(mod.decls);
 
-    for (const d of mod.decls) { this.emitDecl(d); this.emit(''); }
+    // Detect mutually recursive inductives and wrap them in mutual blocks
+    this.emitDeclsWithMutualDetection(mod.decls);
 
     if (ns && ns !== 'T' && ns !== 'Test') {
       this.emit(`end ${ns}`);
     }
     return this.lines.join('\n');
+  }
+
+  /** Emit declarations, detecting mutually recursive inductives and wrapping in mutual blocks. */
+  private emitDeclsWithMutualDetection(decls: IRDecl[]): void {
+    // Collect type names defined by each inductive/struct
+    const typeDecls = new Map<string, IRDecl>();
+    for (const d of decls) {
+      if ((d.tag === 'InductiveDef' || d.tag === 'StructDef') && d.name) {
+        typeDecls.set(d.name, d);
+      }
+    }
+    // Collect type references used by each type decl (in constructor fields)
+    const typeRefs = new Map<string, Set<string>>();
+    for (const [name, d] of typeDecls) {
+      const refs = new Set<string>();
+      const collectRefs = (t: IRType): void => {
+        if (t.tag === 'TypeRef' && typeDecls.has(t.name) && t.name !== name) refs.add(t.name);
+        if ('inner' in t && t.inner) collectRefs(t.inner as IRType);
+        if ('elem' in t && t.elem) collectRefs(t.elem as IRType);
+        if ('key' in t && t.key) collectRefs(t.key as IRType);
+        if ('value' in t && t.value) collectRefs(t.value as IRType);
+        if ('ret' in t && t.ret) collectRefs(t.ret as IRType);
+        if ('params' in t && Array.isArray(t.params)) (t.params as IRType[]).forEach(collectRefs);
+        if ('args' in t && Array.isArray(t.args)) (t.args as IRType[]).forEach(collectRefs);
+        if ('elems' in t && Array.isArray(t.elems)) (t.elems as IRType[]).forEach(collectRefs);
+        if ('ok' in t && t.ok) collectRefs(t.ok as IRType);
+        if ('err' in t && t.err) collectRefs(t.err as IRType);
+        if ('paramType' in t && t.paramType) collectRefs(t.paramType as IRType);
+        if ('body' in t && t.body && typeof t.body === 'object' && 'tag' in t.body) collectRefs(t.body as IRType);
+        if ('base' in t && t.base && typeof t.base === 'object' && 'tag' in t.base) collectRefs(t.base as IRType);
+      };
+      if (d.tag === 'InductiveDef') {
+        for (const c of d.ctors) for (const f of c.fields) collectRefs(f.type);
+      }
+      if (d.tag === 'StructDef') {
+        for (const f of d.fields) collectRefs(f.type);
+      }
+      typeRefs.set(name, refs);
+    }
+    // Find mutual groups: types A and B are mutual if A→B and B→A (transitively)
+    const findMutualGroup = (start: string): Set<string> => {
+      const group = new Set<string>();
+      const queue = [start];
+      while (queue.length > 0) {
+        const name = queue.pop()!;
+        if (group.has(name)) continue;
+        group.add(name);
+        const refs = typeRefs.get(name);
+        if (refs) for (const ref of refs) {
+          // Only add if ref also references something in this group (mutual)
+          const backRefs = typeRefs.get(ref);
+          if (backRefs && [...group].some(g => backRefs.has(g))) queue.push(ref);
+        }
+      }
+      return group.size > 1 ? group : new Set<string>();
+    };
+    const mutualGroups: Set<string>[] = [];
+    const inMutual = new Set<string>();
+    for (const name of typeDecls.keys()) {
+      if (inMutual.has(name)) continue;
+      const group = findMutualGroup(name);
+      if (group.size > 1) {
+        mutualGroups.push(group);
+        for (const n of group) inMutual.add(n);
+      }
+    }
+    // Emit declarations, wrapping mutual groups
+    const emittedMutuals = new Set<string>();
+    for (const d of decls) {
+      const name = 'name' in d ? (d as any).name : '';
+      if (inMutual.has(name) && !emittedMutuals.has(name)) {
+        // Find the mutual group this belongs to
+        const group = mutualGroups.find(g => g.has(name))!;
+        this.emit('mutual');
+        this.emit('');
+        for (const memberName of group) {
+          const memberDecl = typeDecls.get(memberName);
+          if (memberDecl) { this.emitDecl(memberDecl); this.emit(''); }
+          emittedMutuals.add(memberName);
+        }
+        this.emit('end');
+        this.emit('');
+        // Emit non-type decls that were between the mutual members
+        continue;
+      }
+      if (emittedMutuals.has(name)) continue;
+      this.emitDecl(d); this.emit('');
+    }
   }
 
   /** Collect struct field info and class→state mappings for all StructDefs.
