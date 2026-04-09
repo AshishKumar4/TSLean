@@ -248,7 +248,19 @@ function typeStr(t: IRType): string {
       return `IO ${irTypeToLean(inner, true)}`;
     }
     case 'Result':    return `Except ${irTypeToLean(t.err, true)} ${irTypeToLean(t.ok, true)}`;
-    case 'TypeRef':   return t.args.length === 0 ? t.name : `${t.name} ${t.args.map(a => irTypeToLean(a, true)).join(' ')}`;
+    case 'TypeRef': {
+      // Map TS-specific types to Any (no Lean equivalent)
+      const tsOnlyTypes = new Set(['CompilerHost', 'SourceFile', 'Program', 'TypeChecker',
+        'Node', 'Statement', 'Declaration', 'Expression', 'FunctionDeclaration',
+        'ClassDeclaration', 'InterfaceDeclaration', 'TypeAliasDeclaration',
+        'VariableStatement', 'ModuleDeclaration', 'EnumDeclaration',
+        'PropertyAccessExpression', 'CallExpression', 'BinaryExpression',
+        'ReadableStream', 'ArrayBuffer', 'ArrayBufferView', 'IterableIterator',
+        'Generator', 'AsyncGenerator', 'PromiseLike', 'RegExp',
+        'SymbolConstructor', 'PropertyDescriptor', 'PropertyKey']);
+      if (tsOnlyTypes.has(t.name)) return 'Any';
+      return t.args.length === 0 ? t.name : `${t.name} ${t.args.map(a => irTypeToLean(a, true)).join(' ')}`;
+    }
     case 'TypeVar':   return t.name;
     case 'Structure': return t.name;
     case 'Inductive': return t.name;

@@ -34,7 +34,7 @@ def Cat.meow (self : CatState) : IO Unit :=
     let _ := IO.println "meow"
     pure ()
 
-def makeSound (animal : Animal) : Unit :=
+def makeSound (animal : AnimalState) : Unit :=
   if True.intro then
     animal.bark
   else

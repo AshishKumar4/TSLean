@@ -154,10 +154,14 @@ class Gen {
 
     // Add user-specified imports (from TS import statements).
     // Skip TSLean.External.* (external JS packages with no Lean equivalent).
-    // Keep TSLean.Generated.* cross-file imports (needed for project mode).
+    // For self-host files (source is src/*.ts), also skip TSLean.Generated.* cross-file
+    // imports since those modules don't exist as compilable .lean files.
+    // For project-mode files, keep TSLean.Generated.* (resolved by project mode).
+    const isSelfHost = mod.sourceFile?.includes('/src/') ?? false;
     for (const imp of mod.imports) {
-      if (imp.module.startsWith('TSLean.') && !imp.module.startsWith('TSLean.External.'))
-        needed.add(imp.module);
+      if (imp.module.startsWith('TSLean.External.')) continue;
+      if (isSelfHost && imp.module.startsWith('TSLean.Generated.')) continue;
+      if (imp.module.startsWith('TSLean.')) needed.add(imp.module);
     }
 
     // Emit deduplicated, sorted imports
@@ -435,7 +439,10 @@ class Gen {
         this.ind--;
       } else {
         const bodyStr = this.genExpr(d.body, d.effect);
-        if (bodyStr.includes('Array.forM') || bodyStr.includes('Array.mapM')) {
+        // Bail for bodies that reference TS-only APIs or imperative iteration
+        if (bodyStr.includes('Array.forM') || bodyStr.includes('Array.mapM') ||
+            bodyStr.includes('ts.create') || bodyStr.includes('base.getSource') ||
+            bodyStr.includes('getSourceFile') || bodyStr.includes('fileExists')) {
           this.emit('default');
         } else if (d.retType.tag === 'Unit' && !['()', 'sorry', 'default', 'pure default'].includes(bodyStr.trim()) &&
             !bodyStr.includes('let ') && !bodyStr.includes('if ') && !bodyStr.includes('match ')) {
@@ -630,8 +637,12 @@ class Gen {
         let mappedField = (e.field && fieldMap[e.field]) ?? e.field ?? 'default';
         if (typeof mappedField !== 'string') mappedField = String(mappedField);
         // toString/function: use standalone function, not dot notation.
-        // Also catch JS native code artifacts like "function toString() { [native code] }"
         if (mappedField === 'toString' || mappedField.startsWith('function')) return `toString ${obj}`;
+        // JS-specific methods with no Lean equivalent → default
+        if (mappedField === 'test' || mappedField === 'getSourceFile' ||
+            mappedField === 'fileExists' || mappedField === 'readFile' ||
+            mappedField === 'writeFile' || mappedField === 'existsSync')
+          return 'default';
         // Strip leading underscore from private field names (TS _radius → Lean radius)
         if (mappedField.startsWith('_') && mappedField.length > 1 && /[a-zA-Z]/.test(mappedField[1])) {
           mappedField = mappedField.slice(1);
@@ -670,6 +681,9 @@ class Gen {
         const fn   = this.genExpr(e.fn, ctx, depth);
         // Unresolved functions emit default
         if (fn === 'sorry' || fn === 'default') return 'default';
+        // TS compiler API calls have no Lean equivalent
+        if (fn.startsWith('ts.') || fn.startsWith('path.') || fn.startsWith('fs.') || fn.startsWith('process.'))
+          return 'default';
         // Storage operations: emit as pure function calls on the state
         if (fn.startsWith('Storage.')) {
           const args = e.args.map(a => this.genP(a, ctx, depth));
@@ -784,7 +798,14 @@ class Gen {
         return args.length === 0 ? name : `${name} ${args.join(' ')}`;
       }
 
-      case 'ArrayLit': return `#[${e.elems.map(x => this.genExpr(x, ctx, depth)).join(', ')}]`;
+      case 'ArrayLit': {
+        const elems = e.elems.map(x => this.genExpr(x, ctx, depth));
+        // If the declared type is a Tuple, emit as tuple (a, b) not array #[a, b]
+        if (e.type.tag === 'Tuple') {
+          return `(${elems.join(', ')})`;
+        }
+        return `#[${elems.join(', ')}]`;
+      }
 
       case 'TupleLit': return `(${e.elems.map(x => this.genExpr(x, ctx, depth)).join(', ')})`;
 
@@ -838,11 +859,14 @@ class Gen {
       }
 
       case 'Cast': {
-        // When casting to a branded/newtype struct, emit the constructor.
-        // `raw as UserId` → `UserId.mk raw`; `id as string` → `id.val`
-        const inner = this.genExpr(e.expr, ctx, depth);
         const from = e.expr.type;
         const to   = e.targetType;
+        // Cast Array → Tuple: emit as tuple literal (a, b, c) not array #[a, b, c]
+        if (to.tag === 'Tuple' && e.expr.tag === 'ArrayLit') {
+          return `(${e.expr.elems.map(x => this.genExpr(x, ctx, depth)).join(', ')})`;
+        }
+        // When casting to a branded/newtype struct, emit the constructor.
+        const inner = this.genExpr(e.expr, ctx, depth);
         // Casting TO a branded struct (has a single `val` field): wrap in constructor
         if (to.tag === 'TypeRef' && from.tag === 'String') {
           return `${to.name}.mk ${inner}`;
