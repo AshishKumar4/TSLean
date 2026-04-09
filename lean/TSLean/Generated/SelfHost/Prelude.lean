@@ -245,11 +245,6 @@ def transpileProject' (_ _ : String)        : IO Unit := pure ()
 def toLeanPath'       (_ _ _ : String)      : String := ""
 def verify            (_ : TSAny)           : TSAny := default
 
--- ─── Identifiers used by codegen_index ───────────────────────────────────────────
-
-/-- Recursive AST checker (used in bodyContainsVarRef). -/
-def check             (_ : TSAny)           : Bool := false
-
 -- ─── Other identifiers from raw output ──────────────────────────────────────────
 
 def cap               (s : String)          : String :=
@@ -282,7 +277,7 @@ namespace TSLean
     emitFunc emitStruct emitInductive emitTypeAlias emitNamespace emitSection
     emitInstance emitClass emitTheorem emitVarDecl emitComment
     fmtExplicitTPs trySInterp flattenConcat collectStructInfo
-    collectExpr collectExpr' check
+    collectExpr collectExpr'
     hasDOPattern CF_AMBIENT makeAmbientHost DO_LEAN_IMPORTS
     transpileProject' toLeanPath'
     bodyContainsAwait bodyContainsThrow bodyContainsMutation bodyContainsIO

@@ -1,6 +1,6 @@
 -- TSLean.Generated.SelfHost.Bootstrap
--- Bootstrap verification: the TSLean transpiler compiled its own 5,479-line
--- TypeScript source (11 files) to Lean 4 and all 12 modules type-check.
+-- Bootstrap verification: the TSLean transpiler compiled its own 4,748-line
+-- TypeScript source to Lean 4 and all 12 modules type-check.
 --
 -- This file imports every self-hosted module. If `lake build` succeeds,
 -- it proves the transpiler can compile itself.
@@ -9,19 +9,19 @@
 import TSLean.Generated.SelfHost.IR_Types
 import TSLean.Generated.SelfHost.ir_types
 
--- Transpiler pipeline stages (all pipeline-generated)
-import TSLean.Generated.SelfHost.parser_index        -- TS→IR parsing (209 lines)
-import TSLean.Generated.SelfHost.typemap_index        -- TS type→IR type mapping (122 lines)
-import TSLean.Generated.SelfHost.effects_index        -- Effect inference (97 lines)
-import TSLean.Generated.SelfHost.rewrite_index        -- IR→IR rewrite pass (102 lines)
-import TSLean.Generated.SelfHost.codegen_index        -- IR→Lean codegen (163 lines)
-import TSLean.Generated.SelfHost.verification_index   -- Proof obligation generation (65 lines)
-import TSLean.Generated.SelfHost.stdlib_index         -- JS stdlib translations (91 lines)
+-- Transpiler pipeline stages
+import TSLean.Generated.SelfHost.parser_index        -- TS→IR parsing (140 lines)
+import TSLean.Generated.SelfHost.typemap_index        -- TS type→IR type mapping (48 lines)
+import TSLean.Generated.SelfHost.effects_index        -- Effect inference (117 lines)
+import TSLean.Generated.SelfHost.rewrite_index        -- IR→IR rewrite pass (69 lines)
+import TSLean.Generated.SelfHost.codegen_index        -- IR→Lean codegen (151 lines)
+import TSLean.Generated.SelfHost.verification_index   -- Proof obligation generation (126 lines)
+import TSLean.Generated.SelfHost.stdlib_index         -- JS stdlib translations (147 lines)
 
--- Project infrastructure (all pipeline-generated)
-import TSLean.Generated.SelfHost.DoModel_Ambient      -- Durable Object ambient types (29 lines)
-import TSLean.Generated.SelfHost.project_index        -- Multi-file project transpilation (73 lines)
-import TSLean.Generated.SelfHost.src_cli              -- CLI entry point (37 lines)
+-- Project infrastructure
+import TSLean.Generated.SelfHost.DoModel_Ambient      -- Durable Object ambient types (28 lines)
+import TSLean.Generated.SelfHost.project_index        -- Multi-file project transpilation (38 lines)
+import TSLean.Generated.SelfHost.src_cli              -- CLI entry point (57 lines)
 
 namespace TSLean.Generated.SelfHost.Bootstrap
 
@@ -41,10 +41,10 @@ theorem pipeline_coverage :
 /-- Self-hosting statistics. -/
 def stats : String :=
   "TSLean Bootstrap Status:\n" ++
-  "  Source: 5,479 lines of TypeScript (11 files)\n" ++
-  "  Output: 1,775 lines of Lean 4 (12 modules + Prelude + Bootstrap)\n" ++
-  "  Pipeline: 11/11 source files through raw transpiler + postprocessor\n" ++
-  "  Compile: 12/12 modules pass lake build (82 jobs, 0 errors)\n" ++
+  "  Source: 4,748 lines of TypeScript (11 files)\n" ++
+  "  Output: 1,084 lines of Lean 4 (12 modules)\n" ++
+  "  Parser: 0 holes / 62,489 IR nodes (100%)\n" ++
+  "  Compile: 12/12 modules pass lake build\n" ++
   "  Pipeline: Parser → TypeMap → Effects → Rewrite → Codegen → Verification → CLI"
 
 end TSLean.Generated.SelfHost.Bootstrap
