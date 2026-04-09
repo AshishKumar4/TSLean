@@ -48,6 +48,10 @@ class Gen {
   private classToState = new Map<string, string>();
   /** Set of names defined in this module (functions, types, vars) — for cross-file ref detection. */
   private definedNames = new Set<string>();
+  /** Whether currently emitting inside a mutual block. */
+  private inMutualBlock = false;
+  /** Names of types in mutual blocks (need standalone instances). */
+  private mutualTypeNames: string[] = [];
 
   /** Generate a complete Lean 4 file from an IR module. */
   gen(mod: IRModule): string {
@@ -154,12 +158,26 @@ class Gen {
         const group = mutualGroups.find(g => g.has(name))!;
         this.emit('mutual');
         this.emit('');
+        this.inMutualBlock = true;
+        const groupNames: string[] = [];
         for (const memberName of group) {
           const memberDecl = typeDecls.get(memberName);
-          if (memberDecl) { this.emitDecl(memberDecl); this.emit(''); }
+          if (memberDecl) {
+            this.emitDecl(memberDecl); this.emit('');
+            groupNames.push(memberName);
+          }
           emittedMutuals.add(memberName);
         }
+        this.inMutualBlock = false;
         this.emit('end');
+        this.emit('');
+        // Emit standalone instances for mutual types (deriving can't handle mutual blocks)
+        for (const tn of groupNames) {
+          this.emit(`instance : Inhabited ${tn} := ⟨sorry⟩`);
+          this.emit(`instance : BEq ${tn} := ⟨fun _ _ => false⟩`);
+          this.emit(`instance : Repr ${tn} := ⟨fun _ _ => .text s!"${tn}"⟩`);
+        }
+        this.mutualTypeNames.push(...groupNames);
         this.emit('');
         // Emit non-type decls that were between the mutual members
         continue;
@@ -507,10 +525,12 @@ class Gen {
       this.emit(`${fieldName} : ${this.typeToLean(f.type)}`);
     }
     this.ind--;
-    // Branded types (single val field) also need DecidableEq for use as map keys
-    const isBranded = enrichedFields.length === 1 && enrichedFields[0].name === 'val';
-    const deriving = isBranded ? `${DEFAULT_DERIVING}, DecidableEq` : DEFAULT_DERIVING;
-    this.emit(`  deriving ${deriving}`);
+    // Skip deriving in mutual blocks (standalone instances emitted after end)
+    if (!this.inMutualBlock) {
+      const isBranded = enrichedFields.length === 1 && enrichedFields[0].name === 'val';
+      const deriving = isBranded ? `${DEFAULT_DERIVING}, DecidableEq` : DEFAULT_DERIVING;
+      this.emit(`  deriving ${deriving}`);
+    }
   }
 
   private emitInductive(d: Extract<IRDecl, { tag: 'InductiveDef' }>): void {
@@ -536,7 +556,9 @@ class Gen {
         this.emit(`  | ${c.name} ${fs}`);
       }
     }
-    this.emit(`  deriving ${DEFAULT_DERIVING}`);
+    if (!this.inMutualBlock) {
+      this.emit(`  deriving ${DEFAULT_DERIVING}`);
+    }
   }
 
   private emitTypeAlias(d: Extract<IRDecl, { tag: 'TypeAlias' }>): void {
@@ -572,7 +594,9 @@ class Gen {
         for (const f of extraFields[d.name] ?? []) {
           this.emit(`  ${f} : String := default`);
         }
-        this.emit(`  deriving Repr, BEq, Inhabited`);
+        if (!this.inMutualBlock) {
+          this.emit(`  deriving Repr, BEq, Inhabited`);
+        }
       } else {
         this.emit(`abbrev ${d.name}${tp} := String`);
       }
@@ -626,7 +650,7 @@ class Gen {
       const hasDeeplyNestedDo = fixedEffect.tag === 'Combined' && bodyStr.split('do\n').length > 3;
       const isComplex = hasMonadicIteration || hasDeeplyNestedDo;
       if (isComplex) {
-        this.emit('pure default');
+        this.emit('sorry /- complex body -/');
       } else if (d.retType.tag === 'Unit' && !bodyStr.trim().startsWith('do') &&
           !bodyStr.includes('modify') && !bodyStr.includes('return') && !bodyStr.includes('pure') &&
           !['()', 'sorry', 'default', 'pure default', 'pure ()'].includes(bodyStr.trim())) {
@@ -1133,6 +1157,12 @@ class Gen {
         const baseField = e.fields.find(f => f.name === '_base');
         const realFields = e.fields.filter(f => f.name !== '_base' && f.name !== '_spread' && !f.name.startsWith('_computed') && !f.name.startsWith('_computed'));
         if (baseField && realFields.length > 0) {
+          // If base type is String/Any, struct update won't work
+          const baseType = baseField.value?.type;
+          if (baseType?.tag === 'String' || baseType?.tag === 'TypeRef' &&
+              (baseType.name === 'Any' || baseType.name === 'TSAny')) {
+            return 'default';
+          }
           const base = this.genExpr(baseField.value, ctx, depth);
           const updates = realFields.map(f => `${sanitize(f.name)} := ${this.genExpr(f.value, ctx, depth)}`).join(', ');
           return `{ ${base} with ${updates} }`;
