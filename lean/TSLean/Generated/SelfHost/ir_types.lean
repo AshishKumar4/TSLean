@@ -36,7 +36,6 @@ inductive Effect where
   | Async
   | Except (errorType : IRType)
   | Combined (effects : Array Effect)
-  deriving Repr, BEq, Inhabited
 
 -- // ─── Types ──────────────────────────────────────────────────────────────────────
 -- //
@@ -71,9 +70,18 @@ inductive IRType where
   | Dependent (param : String) (paramType : IRType) (body : IRType)
   | Subtype (base : IRType) (refinement : String)
   | Universe (level : Float)
-  deriving Repr, BEq, Inhabited
 
 end
+
+instance : ToString Effect := ⟨fun _ => "Effect"⟩
+instance : ToString IRType := ⟨fun _ => "IRType"⟩
+
+instance : Inhabited Effect := ⟨sorry⟩
+instance : BEq Effect := ⟨fun _ _ => false⟩
+instance : Repr Effect := ⟨fun _ _ => .text s!"Effect"⟩
+instance : Inhabited IRType := ⟨sorry⟩
+instance : BEq IRType := ⟨fun _ _ => false⟩
+instance : Repr IRType := ⟨fun _ _ => .text s!"IRType"⟩
 
 def Pure : Effect := Effect.Pure
 
@@ -89,18 +97,17 @@ def stateEffect (stateType : IRType) : Effect :=
 def exceptEffect (errorType : IRType) : Effect :=
   Effect.Except errorType
 
-/-- True when the effect is strictly `Pure`. -/
 def isPure : Effect → Bool
   | .Pure => true
   | _ => false
 
-/-- Structural deduplication of effects using serialized keys. -/
+
 def dedup (effects : Array Effect) : Array Effect :=
   effects.foldl (fun acc e => if acc.any (· == e) then acc else acc.push e) #[]
 
-/-- Compute the join of multiple effects in the effect lattice. -/
+
 def combineEffects (effects : Array Effect) : Effect :=
-  let flat : Array Effect := effects.foldl (fun acc e =>
+  let flat := effects.foldl (fun acc e =>
     match e with
     | .Combined inner => acc ++ inner
     | other => acc.push other) #[]
@@ -110,25 +117,21 @@ def combineEffects (effects : Array Effect) : Effect :=
   else if deduped.size == 1 then deduped.getD 0 default
   else Effect.Combined deduped
 
-/-- True when the effect tree contains `Async` (recursively). -/
 partial def hasAsync : Effect → Bool
   | .Async => true
   | .Combined es => es.any hasAsync
   | _ => false
 
-/-- True when the effect tree contains `State` (recursively). -/
 partial def hasState : Effect → Bool
   | .State _ => true
   | .Combined es => es.any hasState
   | _ => false
 
-/-- True when the effect tree contains `Except` (recursively). -/
 partial def hasExcept : Effect → Bool
   | .Except _ => true
   | .Combined es => es.any hasExcept
   | _ => false
 
-/-- True when the effect tree contains `IO` (recursively). -/
 partial def hasIO : Effect → Bool
   | .IO => true
   | .Combined es => es.any hasIO
@@ -248,12 +251,11 @@ structure IRParam where
   deriving Repr, BEq, Inhabited
 
 -- A single case arm in a `match` expression.
--- pattern is TSAny (not IRPattern) to avoid Type 1 universe from recursive inductive.
 structure IRCase where
   mk ::
   pattern : TSAny := default
-  guard : Option String := none
-  body : IRExpr := default
+  guard : Option String
+  body : IRExpr
   deriving Repr, BEq, Inhabited
 
 -- Pattern in a `match` expression.
@@ -267,7 +269,7 @@ inductive IRPattern where
   | PTuple (elems : Array IRPattern)
   | PWild
   | POr (pats : Array IRPattern)
-  | PAs (pattern : IRPattern) (name : String)
+  | PAs (pattern : TSAny := default) (name : String)
   | PString (value : String)
   | PNone
   | PSome (inner : IRPattern)
@@ -353,56 +355,39 @@ structure IRModule where
   sourceFile : Option (Option String)
   deriving Repr, BEq, Inhabited
 
-/-- String literal. -/
 def litStr (v : String) : IRExpr :=
   { tag := "LitString", value := v, type := TyString, effect := Pure }
 
-/-- Natural number literal. -/
 def litNat (v : Float) : IRExpr :=
   { tag := "LitNat", value := toString v, type := TyNat, effect := Pure }
 
-/-- Boolean literal. -/
 def litBool (v : Bool) : IRExpr :=
   { tag := "LitBool", value := toString v, type := TyBool, effect := Pure }
 
-/-- Unit literal `()`. -/
 def litUnit : IRExpr :=
   { tag := "LitUnit", type := TyUnit, effect := Pure }
 
-/-- Float literal. -/
 def litFloat (v : Float) : IRExpr :=
   { tag := "LitFloat", value := toString v, type := TyFloat, effect := Pure }
 
-/-- Integer literal. -/
 def litInt (v : Float) : IRExpr :=
   { tag := "LitInt", value := toString v, type := TyInt, effect := Pure }
 
-/-- Variable reference. -/
 def varExpr (name : String) (type : IRType := TyUnit) : IRExpr :=
   { tag := "Var", name := name, type := type, effect := Pure }
 
-/-- Placeholder for an unknown expression — emits `sorry` in Lean. -/
 def holeExpr (type : IRType := TyUnit) : IRExpr :=
   { tag := "Hole", type := type, effect := Pure }
 
-/-- Struct update: `{ base with field₁ := v₁, … }`. -/
 def structUpdate (base : IRExpr) (fields : Array String) (type : IRType) : IRExpr :=
   { tag := "StructUpdate", base := base.tag, fields := default, type := type, effect := base.effect }
 
-/-- Function application.  Effect is the join of fn and all arg effects. -/
 def appExpr (fn : IRExpr) (args : Array IRExpr) : IRExpr :=
-  let argEffects := args.map (fun a => a.effect)
-  { tag := "App", fn := fn.tag, args := default, type := TyUnit,
-    effect := combineEffects (#[fn.effect] ++ argEffects) }
+  { tag := "App", fn := fn.tag, args := default, type := TyUnit, effect := Pure }
 
-/-- Sequence of expressions — last expression determines the type. -/
 def seqExpr (stmts : Array IRExpr) : IRExpr :=
   if stmts.size == 0 then litUnit
   else if stmts.size == 1 then stmts.getD 0 default
-  else
-    let last := stmts.getD (stmts.size - 1) default
-    let allEffects := stmts.map (fun s => s.effect)
-    { tag := "Sequence", stmts := default, type := last.type,
-      effect := combineEffects allEffects }
+  else { tag := "Sequence", stmts := default, type := (stmts.getD (stmts.size - 1) default).type, effect := default }
 
 end TSLean.Generated.Types

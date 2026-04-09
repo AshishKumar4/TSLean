@@ -2,7 +2,6 @@
 -- Source: /workspace/tslean/src/project/index.ts
 
 import TSLean.Generated.SelfHost.Prelude
-import TSLean.Generated.SelfHost.Prelude
 import TSLean.Generated.SelfHost.ir_types
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
@@ -28,47 +27,34 @@ structure ProjectResult where
   errors : Array String
   deriving Repr, BEq, Inhabited
 
--- Forward declaration
-partial def discoverTs (dir : String) : Array String := default
-
 def transpileProject (opts : ProjectOpts) : StateT Unit IO ProjectResult :=
-  do
-    let projectDir := opts.projectDir
-    let outputDir := opts.outputDir
-    let tsFiles := discoverTs projectDir
-    if tsFiles.size == 0 then
-      pure { files := #[], errors := #[s!"No .ts files in {projectDir}"] }
-    else
-      sorry /- transpileProject: iterate tsFiles, parseFile→rewriteModule→generateLean -/
-
+  sorry /- transpileProject: complex do body -/
 def writeProjectOutputs (result : ProjectResult) : Unit :=
   default
 
 def IGNORED : Array String := #[]
 
--- discoverTs: declared above (forward reference)
+partial def discoverTs (dir : String) : Array String :=
+  default
 
 -- // ─── Import resolution ────────────────────────────────────────────────────────
 def fixImports (mod : IRModule) (tsFile : String) (rootDir : String) (rootNS : String) : IRModule :=
-  sorry /- fixImports: rewrites import paths for project-mode output -/
-
+  sorry /- fixImports: let-then-match/if pattern -/
 def relToLean (spec : String) (fromFile : String) (rootDir : String) (rootNS : String) : String :=
-  sorry /- relToLean: resolve relative import spec to Lean module path -/
-
+  sorry /- relToLean: let-then-match/if pattern -/
 def resolveSpec (spec : String) (fromFile : String) : Option String :=
   default
 
 def specToLean (spec : String) (rootNS : String) : String :=
-  sorry /- specToLean: convert TS import spec to Lean module name -/
-
--- // ─── Path helpers ─────────────────────────────────────────────────────────────
+  sorry /- specToLean: let-then-match/if pattern -/
 def toLeanPath (tsFile : String) (projectDir : String) (outputDir : String) (rootNS : String := "TSLean.Generated") : String :=
-  sorry /- toLeanPath: compute output .lean file path -/
-
+  sorry /- toLeanPath: let-then-match/if pattern -/
 def toModuleName (tsFile : String) (projectDir : String) (rootNS : String := "TSLean.Generated") : String :=
-  sorry /- toModuleName: compute Lean module name from file path -/
-
+  sorry /- toModuleName: let-then-match/if pattern -/
 def cap (s : String) : String :=
-  if s == "" then s else (s.take 1).toString.toUpper ++ (s.drop 1).toString
+  if !s.isEmpty then
+      (sorry) ++ (sorry)
+    else
+      s
 
 end TSLean.Generated.SelfHost.ProjectIndex

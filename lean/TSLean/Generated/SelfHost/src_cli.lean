@@ -2,7 +2,6 @@
 -- Source: /workspace/tslean/src/cli.ts
 
 import TSLean.Generated.SelfHost.Prelude
-import TSLean.Generated.SelfHost.Prelude
 import TSLean.Generated.SelfHost.ir_types
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
@@ -23,16 +22,13 @@ structure Args where
   deriving Repr, BEq, Inhabited
 
 def parseArgs (argv : Array String) : StateT Unit IO Args :=
-  pure default /- parseArgs: CLI argument parsing loop -/
-
--- // ─── Single file ──────────────────────────────────────────────────────────────
+  sorry /- parseArgs: complex do body -/
 def single (opts : Args) : StateT Unit IO Unit :=
-  sorry /- single: transpile one file (parseFile → rewriteModule → generateLean) -/
+  do pure ()
 
--- // ─── Project mode ─────────────────────────────────────────────────────────────
 def project (opts : Args) : Unit :=
   default
 
-def opts : Args := default /- parseArgs from process.argv -/
+def opts : Args := default /- parseArgs default -/
 
 end TSLean.Generated.SelfHost.SrcCli

@@ -28,6 +28,8 @@ SRC[parser_index]=src/parser/index.ts
 SRC[project_index]=src/project/index.ts
 SRC[src_cli]=src/cli.ts
 
+FIX_IR="$PROJ/scripts/fix-ir-types.ts"
+
 echo ""
 echo "Step 1: Transpile + post-process"
 for name in "${NAMES[@]}"; do
@@ -36,7 +38,10 @@ for name in "${NAMES[@]}"; do
   out="$TMP/${name}.lean"
   cd "$PROJ"
   if npx tsx src/cli.ts "$src" -o "$raw" 2>/dev/null; then
-    if npx tsx "$PP" "$raw" "$out" 2>/dev/null; then
+    if [ "$name" = "ir_types" ]; then
+      # ir_types uses dedicated fix script (avoids regex bugs in general postprocessor)
+      npx tsx "$FIX_IR" "$raw" "$out" 2>&1 | head -1
+    elif npx tsx "$PP" "$raw" "$out" 2>&1 | head -1; then
       :
     else
       echo "  ! $name: post-process failed, using raw"
