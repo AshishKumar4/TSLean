@@ -5,10 +5,11 @@ import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Stdlib.HashMap
+set_option linter.unusedVariables false
 
 open TSLean TSLean.Stdlib.HashMap
 
-namespace TSLean.Generated.ForLoops
+namespace TSLean.Transpiled.ForLoops
 
 -- For loops, for-of, for-in, while, destructuring in loops
 def rangeSum (n : Float) : IO Float :=
@@ -50,4 +51,4 @@ def fibonacci (n : Float) : IO Float :=
 def findFirst {T : Type} (items : Array T) (pred : T → Bool) : Option T :=
   default
 
-end TSLean.Generated.ForLoops
+end TSLean.Transpiled.ForLoops

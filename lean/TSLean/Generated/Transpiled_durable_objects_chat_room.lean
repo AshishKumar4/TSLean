@@ -10,10 +10,11 @@ import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
 import TSLean.Stdlib.HashMap
+set_option linter.unusedVariables false
 
 open TSLean TSLean.WebAPI TSLean.Stdlib.HashMap TSLean.DO
 
-namespace TSLean.Generated.ChatRoom
+namespace TSLean.Transpiled.ChatRoom
 
 structure ChatMessage where
   mk ::
@@ -56,4 +57,4 @@ def ChatRoomDO.broadcast (self : ChatRoomDOState) (message : String) (excludeId 
 end
 end ChatRoomDO
 
-end TSLean.Generated.ChatRoom
+end TSLean.Transpiled.ChatRoom

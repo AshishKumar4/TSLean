@@ -9,10 +9,11 @@ import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
+set_option linter.unusedVariables false
 
 open TSLean TSLean.WebAPI TSLean.DO
 
-namespace TSLean.Generated.Counter
+namespace TSLean.Transpiled.Counter
 
 -- State for CounterDO
 structure CounterDOState where
@@ -31,4 +32,4 @@ def CounterDO.fetch (self : CounterDOState) (request : Request) : StateT Counter
 
 end CounterDO
 
-end TSLean.Generated.Counter
+end TSLean.Transpiled.Counter

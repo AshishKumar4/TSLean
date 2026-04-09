@@ -9,10 +9,11 @@ import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
+set_option linter.unusedVariables false
 
 open TSLean TSLean.WebAPI TSLean.DO
 
-namespace TSLean.Generated.QueueProcessor
+namespace TSLean.Transpiled.QueueProcessor
 
 -- Auto-generated empty state struct for QueueProcessorDOState
 structure QueueProcessorDOState where
@@ -68,4 +69,4 @@ def QueueProcessorDO.processNext (self : QueueProcessorDOState) : StateT QueuePr
 end
 end QueueProcessorDO
 
-end TSLean.Generated.QueueProcessor
+end TSLean.Transpiled.QueueProcessor

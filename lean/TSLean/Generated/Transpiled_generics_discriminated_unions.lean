@@ -3,10 +3,11 @@
 
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
+set_option linter.unusedVariables false
 
 open TSLean
 
-namespace TSLean.Generated.DiscriminatedUnions
+namespace TSLean.Transpiled.DiscriminatedUnions
 
 -- // Discriminated unions → Lean inductive types
 inductive Shape where
@@ -54,4 +55,4 @@ def mapEither {L : Type} {R : Type} {S : Type} (e : Either L R) (f : R → S) : 
     | .Left value => Either.Left value
     | .Right value => Either.Right (f value)
 
-end TSLean.Generated.DiscriminatedUnions
+end TSLean.Transpiled.DiscriminatedUnions

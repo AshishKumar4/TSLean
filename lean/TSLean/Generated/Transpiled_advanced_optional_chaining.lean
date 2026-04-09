@@ -3,10 +3,11 @@
 
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
+set_option linter.unusedVariables false
 
 open TSLean
 
-namespace TSLean.Generated.OptionalChaining
+namespace TSLean.Transpiled.OptionalChaining
 
 -- Optional chaining, nullish coalescing, destructuring, rest params
 structure Config where
@@ -47,4 +48,4 @@ def sum (nums : Array Float) : Float :=
 def maxVal (nums : Array Float) : Float :=
   nums.foldl (fun acc n => if n > acc then n else acc) 0
 
-end TSLean.Generated.OptionalChaining
+end TSLean.Transpiled.OptionalChaining

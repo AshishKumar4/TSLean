@@ -10,10 +10,11 @@ import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
 import TSLean.Stdlib.HashMap
+set_option linter.unusedVariables false
 
 open TSLean TSLean.WebAPI TSLean.Stdlib.HashMap TSLean.DO
 
-namespace TSLean.Generated.MultiDo
+namespace TSLean.Transpiled.MultiDo
 
 structure RPCEnvelope where
   mk ::
@@ -71,4 +72,4 @@ def CoordinatorDO.handleRPC (self : CoordinatorDOState) (envelope : RPCEnvelope)
 end
 end CoordinatorDO
 
-end TSLean.Generated.MultiDo
+end TSLean.Transpiled.MultiDo

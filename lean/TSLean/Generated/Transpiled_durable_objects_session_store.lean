@@ -9,10 +9,11 @@ import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
+set_option linter.unusedVariables false
 
 open TSLean TSLean.WebAPI TSLean.DO
 
-namespace TSLean.Generated.SessionStore
+namespace TSLean.Transpiled.SessionStore
 
 structure Session where
   mk ::
@@ -85,4 +86,4 @@ def SessionStoreDO.destroySession (self : SessionStoreDOState) (id : String) : I
 end
 end SessionStoreDO
 
-end TSLean.Generated.SessionStore
+end TSLean.Transpiled.SessionStore

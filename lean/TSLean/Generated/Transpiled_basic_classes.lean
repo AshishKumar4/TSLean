@@ -4,10 +4,11 @@
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
+set_option linter.unusedVariables false
 
 open TSLean
 
-namespace TSLean.Generated.Classes
+namespace TSLean.Transpiled.Classes
 
 -- State for Counter
 structure CounterState where
@@ -87,4 +88,4 @@ def BankAccount.withdraw (self : BankAccountState) (amount : Float) : StateT Ban
 def BankAccount.getBalance (self : BankAccountState) : Float :=
   self.balance
 
-end TSLean.Generated.Classes
+end TSLean.Transpiled.Classes

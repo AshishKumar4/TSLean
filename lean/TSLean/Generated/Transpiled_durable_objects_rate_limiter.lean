@@ -9,10 +9,11 @@ import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
+set_option linter.unusedVariables false
 
 open TSLean TSLean.WebAPI TSLean.DO TSLean.Stdlib.HashMap
 
-namespace TSLean.Generated.RateLimiter
+namespace TSLean.Transpiled.RateLimiter
 
 structure RequestRecord where
   mk ::
@@ -70,4 +71,4 @@ def RateLimiterDO.checkRateLimit (self : RateLimiterDOState) (clientId : String)
 end
 end RateLimiterDO
 
-end TSLean.Generated.RateLimiter
+end TSLean.Transpiled.RateLimiter

@@ -5,10 +5,11 @@ import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Stdlib.HashMap
+set_option linter.unusedVariables false
 
 open TSLean TSLean.Stdlib.HashMap
 
-namespace TSLean.Generated.TypeNarrowing
+namespace TSLean.Transpiled.TypeNarrowing
 
 -- Auto-generated empty state struct for DogState
 structure DogState where
@@ -73,4 +74,4 @@ def isString (x : String) : Bool :=
 def isPositiveNumber (x : String) : Bool :=
   (TSLean.typeOf x) == "number"
 
-end TSLean.Generated.TypeNarrowing
+end TSLean.Transpiled.TypeNarrowing

@@ -9,10 +9,11 @@ import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
+set_option linter.unusedVariables false
 
 open TSLean TSLean.WebAPI TSLean.DO
 
-namespace TSLean.Generated.AuthDo
+namespace TSLean.Transpiled.AuthDo
 
 structure AuthSession where
   mk ::
@@ -90,4 +91,4 @@ def AuthDO.authenticate (self : AuthDOState) (token : String) : IO (Option AuthS
 end
 end AuthDO
 
-end TSLean.Generated.AuthDo
+end TSLean.Transpiled.AuthDo
