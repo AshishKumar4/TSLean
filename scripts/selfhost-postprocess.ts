@@ -141,28 +141,35 @@ if (baseName === 'ir_types') {
     code = code.replace(re, replacement);
   }
 
-  // Reorder: isPure and dedup must come before combineEffects
-  // Find and move isPure before combineEffects
-  const isPureMatch = code.match(/(\/\*\*.*?\*\/\n)?def isPure[\s\S]*?\| _ => false/);
-  const dedupMatch = code.match(/(\/\*\*.*?\*\/\n)?def dedup[\s\S]*?#\[\]/);
-  const combineMatch = code.match(/def combineEffects/);
+  // Remove any remaining broken originals (funcFixes may leave fragments)
+  code = code.replace(/\/\-\-[^]*?-\/\ndef isPure[\s\S]*?\| _ => false\n?/g, '');
+  code = code.replace(/def isPure[\s\S]*?\| _ => false\n?/g, '');
 
-  if (isPureMatch && dedupMatch && combineMatch) {
-    const isPureText = isPureMatch[0];
-    const dedupText = dedupMatch[0];
-    const combineIdx = code.indexOf('def combineEffects');
+  // Inject all three functions after `def Pure := Effect.Pure`
+  const allThree = `
+def isPure : Effect → Bool
+  | .Pure => true
+  | _ => false
 
-    // Remove isPure and dedup from their current positions
-    code = code.replace(isPureText, '');
-    code = code.replace(dedupText, '');
+def dedup (effects : Array Effect) : Array Effect :=
+  effects.foldl (fun acc e => if acc.any (· == e) then acc else acc.push e) #[]
 
-    // Re-find combineEffects position (may have shifted)
-    const newCombineIdx = code.indexOf('def combineEffects');
-    if (newCombineIdx >= 0) {
-      code = code.slice(0, newCombineIdx) +
-        isPureText + '\n\n' + dedupText + '\n\n' +
-        code.slice(newCombineIdx);
-    }
+def combineEffects (effects : Array Effect) : Effect :=
+  let flat := effects.foldl (fun acc e =>
+    match e with
+    | .Combined inner => acc ++ inner
+    | other => acc.push other) #[]
+  let noPure := flat.filter (fun e => !isPure e)
+  let deduped := dedup noPure
+  if deduped.size == 0 then Pure
+  else if deduped.size == 1 then deduped.getD 0 default
+  else Effect.Combined deduped
+`;
+
+  const pureDefIdx = code.indexOf('def Pure :');
+  if (pureDefIdx >= 0) {
+    const eol = code.indexOf('\n', pureDefIdx);
+    code = code.slice(0, eol + 1) + allThree + code.slice(eol + 1);
   }
 }
 
@@ -201,6 +208,30 @@ code = code.replace(/(\w+)\.tag(?=\s*,\s*(args|stmts|elems|fields)\s*:=)/g, '$1'
 
 // Fix orphaned doc comments (moved functions may leave comments behind)
 code = code.replace(/\n\n\/\-\-[^-]*-\/\n\n\/\-\-/g, '\n\n/--');
+
+// 10. Fix specific ir_types function bodies
+if (baseName === 'ir_types') {
+  // Replace appExpr body
+  code = code.replace(
+    /def appExpr \(fn : IRExpr\) \(args : Array IRExpr\) : IRExpr :=[\s\S]*?(?=\n\/\-\-|\ndef )/,
+    `def appExpr (fn : IRExpr) (args : Array IRExpr) : IRExpr :=\n  { tag := "App", fn := fn.tag, args := default, type := TyUnit, effect := combineEffects (#[fn.effect] ++ args.map (fun a => a.effect)) }\n\n`
+  );
+  // Replace seqExpr body
+  code = code.replace(
+    /def seqExpr \(stmts : Array IRExpr\) : IRExpr :=[\s\S]*?(?=\nend )/,
+    `def seqExpr (stmts : Array IRExpr) : IRExpr :=\n  if stmts.size == 0 then litUnit\n  else if stmts.size == 1 then stmts.getD 0 default\n  else { tag := "Sequence", stmts := default, type := (stmts.getD (stmts.size - 1) default).type, effect := combineEffects (stmts.map (fun s => s.effect)) }\n\n`
+  );
+  // Fix structUpdate: base := base → base := base.tag
+  code = code.replace(
+    /\{ tag := "StructUpdate", base := base,/g,
+    '{ tag := "StructUpdate", base := base.tag,'
+  );
+  // Fix any remaining chained field: x.getD n default.type → (x.getD n default).type
+  code = code.replace(
+    /stmts\.getD \(stmts\.size - 1\) default\.type/g,
+    '(stmts.getD (stmts.size - 1) default).type'
+  );
+}
 
 // Write output
 fs.writeFileSync(outputFile, code);
