@@ -56,13 +56,13 @@ def RateLimiterDO.checkRateLimit (self : RateLimiterDOState) (clientId : String)
   do
     let now : Float := 0
     let windowStart : Float := now - self.windowMs
-    let records ← #[]
+    let records := #[]
     let valid : Array RequestRecord := records.filter (fun r => r.timestamp >= windowStart)
     let total : Float := valid.foldl (fun sum r => sum + r.count) 0
     if total >= self.maxRequests then
       pure false
     else do
-        valid.push ({ timestamp := now, count := 1 })
+        let _ := valid.push ({ timestamp := now, count := 1 })
         do
           pure default
           return true

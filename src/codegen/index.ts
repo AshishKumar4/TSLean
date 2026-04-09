@@ -725,7 +725,12 @@ class Gen {
       case 'Bind': {
         const m    = this.genExpr(e.monad, ctx, depth);
         const body = this.genExpr(e.body, ctx, depth);
-        return `let ${e.name} ← ${m}\n${indent}${body}`;
+        // If the "monad" is actually a pure value (array literal, struct, default, number),
+        // use := instead of ← (no monadic bind needed for pure expressions)
+        const isPureValue = m.startsWith('#[') || m.startsWith('{') || m === 'default' ||
+          m.startsWith('"') || /^\d/.test(m) || m === 'true' || m === 'false' || m === 'none';
+        const op = isPureValue ? ':=' : '←';
+        return `let ${e.name} ${op} ${m}\n${indent}${body}`;
       }
 
       case 'IfThenElse': {
@@ -1019,7 +1024,11 @@ class Gen {
 
     for (const s of processed) {
       if (s.tag === 'Bind') {
-        lines.push(`${ind}let ${s.name} ← ${this.genExpr(s.monad, ctx, depth + 1)}`);
+        const mStr = this.genExpr(s.monad, ctx, depth + 1);
+        const isPureVal = mStr.startsWith('#[') || mStr.startsWith('{') || mStr === 'default' ||
+          mStr.startsWith('"') || /^\d/.test(mStr) || mStr === 'true' || mStr === 'false' || mStr === 'none';
+        const op = isPureVal ? ':=' : '←';
+        lines.push(`${ind}let ${s.name} ${op} ${mStr}`);
       } else if (s.tag === 'Let') {
         const isRec = s.value.tag === 'Lambda' && bodyContainsVarRef(s.value.body, s.name);
         const kw = isRec ? 'let rec' : 'let';
@@ -1027,7 +1036,14 @@ class Gen {
       } else if (s.tag === 'Return') {
         lines.push(`${ind}return ${this.genExpr(s.value, ctx, depth + 1)}`);
       } else {
-        lines.push(`${ind}${this.genExpr(s, ctx, depth + 1)}`);
+        const expr = this.genExpr(s, ctx, depth + 1);
+        // In do blocks, non-last expressions that return non-Unit (like Array.push)
+        // need `let _ :=` to discard the return value
+        if (expr.includes('.push ') || expr.includes('.push(')) {
+          lines.push(`${ind}let _ := ${expr}`);
+        } else {
+          lines.push(`${ind}${expr}`);
+        }
       }
     }
     return lines.join('\n');
