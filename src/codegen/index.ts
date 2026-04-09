@@ -46,11 +46,15 @@ class Gen {
   private structFields = new Map<string, Array<{ name: string; type: IRType }>>();
   /** Map from class name → state struct name (e.g. Circle → CircleState). */
   private classToState = new Map<string, string>();
+  /** Set of names defined in this module (functions, types, vars) — for cross-file ref detection. */
+  private definedNames = new Set<string>();
 
   /** Generate a complete Lean 4 file from an IR module. */
   gen(mod: IRModule): string {
     // Pre-pass: collect struct field info for inheritance resolution
     this.collectStructInfo(mod.decls);
+    // Pre-pass: collect all defined names for cross-file reference detection
+    this.collectDefinedNames(mod.decls);
 
     this.emit(GENERATED_BANNER);
     this.emit(`-- Source: ${mod.sourceFile ?? 'unknown'}`);
@@ -78,6 +82,13 @@ class Gen {
 
   /** Collect struct field info and class→state mappings for all StructDefs.
    *  Also detect missing fields from method bodies (inherited field access). */
+  private collectDefinedNames(decls: IRDecl[]): void {
+    for (const d of decls) {
+      if ('name' in d && typeof d.name === 'string') this.definedNames.add(d.name);
+      if (d.tag === 'Namespace') this.collectDefinedNames(d.decls);
+    }
+  }
+
   private collectStructInfo(decls: IRDecl[]): void {
     // First pass: register structs
     for (const d of decls) {
@@ -718,9 +729,16 @@ class Gen {
         const isStringType = e.obj.type.tag === 'String' ||
           (e.obj.type.tag === 'TypeRef' && e.obj.type.name === 'String');
         const isAnyType = e.obj.type.tag === 'TypeRef' && e.obj.type.name === 'Any';
+        // Cross-file types mapped to Any at typemap level — their fields aren't accessible
+        const crossFileTypes = new Set([
+          'IRModule', 'IRDecl', 'IRExpr', 'IRType', 'IRParam', 'IRCase', 'IRPattern',
+          'IRImport', 'IRField', 'Effect', 'BinOp', 'UnOp', 'DoStmt',
+          'ProofObligation', 'ProjectResult', 'ProjectOptions',
+        ]);
+        const isCrossFileType = e.obj.type.tag === 'TypeRef' && crossFileTypes.has(e.obj.type.name);
         const stringMethods = ['length', 'size', 'includes', 'trim',
           'toLower', 'toUpper', 'startsWith', 'endsWith', 'splitOn', 'replace'];
-        if ((isStringType || isAnyType) && !stringMethods.includes(mappedField)) {
+        if ((isStringType || isAnyType || isCrossFileType) && !stringMethods.includes(mappedField)) {
           return 'default';
         }
         return `${obj}.${mappedField}`;
@@ -740,8 +758,14 @@ class Gen {
         const lambdaCtx = e.effect ?? ctx;
         const bodyStr = this.genExpr(e.body, lambdaCtx, depth + 1);
         const bodyIndent = '  '.repeat(this.ind + depth + 1);
-        // If the lambda body uses monadic operations (Bind/←), wrap in `do`
-        if (!isPure(lambdaCtx) && (bodyStr.includes('←') || bodyStr.includes('let ') && bodyStr.includes(':='))) {
+        // Wrap in `do` when body has monadic ops or sequential statements
+        const needsDo = !isPure(lambdaCtx) && (
+          bodyStr.includes('←') ||
+          (bodyStr.includes('let ') && bodyStr.includes(':='))
+        );
+        // Also need `do` when body is a Sequence (multiple statements)
+        const isSeq = e.body.tag === 'Sequence' || e.body.tag === 'DoBlock';
+        if (needsDo || isSeq) {
           return `fun ${ps || '_'} => do\n${bodyIndent}${bodyStr}`;
         }
         // Multi-line body (if/else, match, let): put on next line for proper indentation
@@ -762,27 +786,44 @@ class Gen {
         // Rewrite method calls on known types to Lean function-call style
         if (e.fn.tag === 'FieldAccess') {
           const obj = this.genExpr(e.fn.obj, ctx, depth);
+          const pObj = needsParens(e.fn.obj) ? `(${obj})` : obj;
           const method = e.fn.field;
-          const isStr = e.fn.obj.type.tag === 'String';
+          const isStr = e.fn.obj.type.tag === 'String' ||
+            (e.fn.obj.type.tag === 'TypeRef' && e.fn.obj.type.name === 'String');
           const isArr = e.fn.obj.type.tag === 'Array';
           const args = e.args.map(a => this.genP(a, ctx, depth));
           // String methods → Lean function-style calls
           if (isStr && method === 'split')
-            return args.length > 0 ? `${obj}.splitOn ${args[0]}` : `${obj}.splitOn ""`;
+            return args.length > 0 ? `${pObj}.splitOn ${args[0]}` : `${pObj}.splitOn ""`;
           if (isStr && method === 'replace' && args.length >= 2)
-            return `${obj}.replace ${args[0]} ${args[1]}`;
+            return `${pObj}.replace ${args[0]} ${args[1]}`;
           if (isStr && method === 'startsWith' && args.length > 0)
-            return `${obj}.startsWith ${args[0]}`;
+            return `${pObj}.startsWith ${args[0]}`;
           if (isStr && method === 'endsWith' && args.length > 0)
-            return `${obj}.endsWith ${args[0]}`;
+            return `${pObj}.endsWith ${args[0]}`;
           if (isStr && method === 'includes' && args.length > 0)
-            return `${obj}.includes ${args[0]}`;
-          // Array.join(sep) → String.intercalate sep arr
+            return `${pObj}.includes ${args[0]}`;
+          // Array methods → function-call style (avoids invalid field projection)
           if (isArr && method === 'join' && args.length > 0)
-            return `String.intercalate ${args[0]} ${obj}`;
-          // Array.push → let _ := arr.push val (handled downstream)
+            return `String.intercalate ${args[0]} ${pObj}`;
           if (isArr && method === 'push' && args.length > 0)
-            return `${obj}.push ${args[0]}`;
+            return `Array.push ${pObj} ${args[0]}`;
+          if (isArr && method === 'filter' && args.length > 0)
+            return `Array.filter ${pObj} ${args[0]}`;
+          if (isArr && method === 'map' && args.length > 0)
+            return `Array.map ${args[0]} ${pObj}`;
+          // Collection methods that need function-call style (Set.add, Map.set, etc.)
+          const collectionMethods: Record<string, string> = {
+            'set': 'AssocMap.insert', 'get': 'AssocMap.find?', 'has': 'AssocMap.contains',
+            'delete': 'AssocMap.erase', 'add': 'AssocSet.insert',
+            'keys': 'AssocMap.keys', 'values': 'AssocMap.values',
+            'entries': 'AssocMap.toList', 'forEach': 'Array.forM',
+          };
+          if (collectionMethods[method]) {
+            return args.length > 0
+              ? `${collectionMethods[method]} ${pObj} ${args.join(' ')}`
+              : `${collectionMethods[method]} ${pObj}`;
+          }
         }
         const fn   = this.genExpr(e.fn, ctx, depth);
         // AssocMap.contains on a non-map struct type → true (field existence is static)
@@ -802,6 +843,18 @@ class Gen {
         // serialize on struct literals: use toString on a string representation
         if ((fn === 'serialize' || fn === 'toString') && e.args.some(a => a.tag === 'StructLit')) {
           return `"<serialized>"`;
+        }
+        // Cross-file reference detection: known imported functions from other TS modules
+        // that won't exist in the generated Lean file → emit default
+        const CROSS_FILE_FNS = new Set([
+          'parseFile', 'rewriteModule', 'generateLean', 'generateVerification',
+          'transpileProject', 'writeProjectOutputs', 'irTypeToLean', 'monadString',
+          'translateBinOp', 'lookupGlobal', 'lookupMethod', 'typeObjKind',
+          'inferNodeEffect', 'mapType',
+          'resolveSpec', 'specToLean',
+        ]);
+        if (e.fn.tag === 'Var' && CROSS_FILE_FNS.has(e.fn.name)) {
+          return 'default /- cross-file: ' + fn + ' -/';
         }
         const args = e.args.map(a => {
           const s = this.genP(a, ctx, depth);
