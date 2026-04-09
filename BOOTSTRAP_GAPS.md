@@ -45,10 +45,15 @@ large switch bodies, template expression chains, and class method bodies.
 
 ## Codegen Gaps (NOT parser issues — transpiler-core scope)
 
-### Gap 1: Switch Body Truncation
-**Impact:** codegen.ts has 11 switch statements with 135 case clauses. The codegen emits 
-~6 cases per switch instead of all 14. The parser produces all cases correctly (verified by 
-test `switch on enum-like values produces Match` with all 10 cases).
+### Gap 1: Complex Switch Body Collapse (CRITICAL)
+**Impact:** 40% coverage on codegen.ts (513 of 1295 lines)
+
+The codegen emits `do pure default` for functions with large switch statements (>10 cases).
+Example: `Gen.genExpr` is 200+ lines in TS with ~30 case clauses. The parser produces a 
+complete `Match` IR node with all cases. The codegen collapses it to `do pure default`.
+
+**Evidence:** All 49 codegen.ts declarations appear in the output (49/49 = 100% declaration
+coverage). The bodies are truncated — the line gap is entirely body content, not missing functions.
 
 ### Gap 2: Discriminated Union Construction
 The codegen emits `{ tag := "FuncDef", ... }` (struct literal) for `IRDecl` values, but
@@ -59,8 +64,8 @@ The codegen emits `e.tag == "FuncDef"` but `IRExpr` is an inductive with no `.ta
 Should use `match e with | .FuncDef ... => ...`.
 
 ### Gap 4: Template Expression Density
-codegen.ts has 140 template expressions. The codegen handles them but the output is compressed —
-multiline template strings get flattened, reducing line count.
+codegen.ts has 140 template expressions. The codegen handles them but multiline template 
+strings get flattened into single-line `s!"..."` interpolations, reducing line count.
 
 ### Gap 5: Universe Constraints (Type 1)
 The mutual `Effect`/`IRType` generates types in `Type 1`. `IO` only accepts `Type`.
