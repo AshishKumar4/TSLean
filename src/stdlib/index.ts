@@ -100,7 +100,7 @@ const GLOBALS: Record<string, GlobalTx> = {
   'console.error':  { leanExpr: 'IO.eprintln',          io: true },
   'console.warn':   { leanExpr: 'IO.eprintln',          io: true },
   'console.info':   { leanExpr: 'IO.println',           io: true },
-  'Date.now':       { leanExpr: 'IO.monoNanoseconds',   io: true },
+  'Date.now':       { leanExpr: 'IO.monoNanosNow',       io: true },
   'Math.floor':     { leanExpr: 'Float.floor' },
   'Math.ceil':      { leanExpr: 'Float.ceil' },
   'Math.round':     { leanExpr: 'Float.round' },

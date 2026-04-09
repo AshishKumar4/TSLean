@@ -37,46 +37,46 @@ def AuthDO.init : AuthDOState :=
 def fetch (self : AuthDOState) (request : Request) : IO Response :=
   do
     let url : URL := URL.parse request.url
-      do
-        if (request.method == "POST") && (url.pathname == "/login") then
-          let creds ← request.toJson
-          pure (self.handleLogin creds)
-        else
-          ()
-        if (request.method == "POST") && (url.pathname == "/logout") then
-          let token : Option String := request.headers.get "Authorization".replace "Bearer " ""
-          if !token then
-            pure (mkResponse ("<serialized>") ({ status := 401 }))
-          else
-            do
-              self.logout token
-              return mkResponse ("<serialized>") ({ headers := default })
+    do
+      if (request.method == "POST") && (url.pathname == "/login") then
+        let creds ← request.toJson
+        pure (self.handleLogin creds)
+      else
+        ()
+      if (request.method == "POST") && (url.pathname == "/logout") then
+        let token : Option String := request.headers.get "Authorization".replace "Bearer " ""
+        if !token then
+          pure (mkResponse ("<serialized>") ({ status := 401 }))
         else
           do
-            if (request.method == "GET") && (url.pathname == "/verify") then
-              let token : Option String := request.headers.get "Authorization".replace "Bearer " ""
-              if !token then
+            self.logout token
+            return mkResponse ("<serialized>") ({ headers := default })
+      else
+        do
+          if (request.method == "GET") && (url.pathname == "/verify") then
+            let token : Option String := request.headers.get "Authorization".replace "Bearer " ""
+            if !token then
+              pure (mkResponse ("<serialized>") ({ status := 401 }))
+            else
+              let session ← self.authenticate token
+              if !session then
                 pure (mkResponse ("<serialized>") ({ status := 401 }))
               else
-                let session ← self.authenticate token
-                if !session then
-                  pure (mkResponse ("<serialized>") ({ status := 401 }))
-                else
-                  pure (mkResponse ("<serialized>") ({ headers := default }))
-            else
-              ()
-            return mkResponse "Not Found" ({ status := 404 })
+                pure (mkResponse ("<serialized>") ({ headers := default }))
+          else
+            ()
+          return mkResponse "Not Found" ({ status := 404 })
 
 def handleLogin (self : AuthDOState) (creds : String) : IO Response :=
   do
     if (!creds.username) || (!creds.password) then
-        pure (mkResponse ("<serialized>") ({ status := 401 }))
-      else
-        let token : String := crypto.randomUUID
-        let session ← { userId := creds.username, token := token, createdAt := IO.monoNanoseconds, expiresAt := (IO.monoNanoseconds) + self.TOKEN_TTL, roles := #["user"] }
-        do
-          Storage.put self.state.storage (s!"token:{token}") session
-          return mkResponse ("<serialized>") ({ headers := default })
+      pure (mkResponse ("<serialized>") ({ status := 401 }))
+    else
+      let token : String := crypto.randomUUID
+      let session ← { userId := creds.username, token := token, createdAt := IO.monoNanosNow, expiresAt := (IO.monoNanosNow) + self.TOKEN_TTL, roles := #["user"] }
+      do
+        Storage.put self.state.storage (s!"token:{token}") session
+        return mkResponse ("<serialized>") ({ headers := default })
 
 def logout (self : AuthDOState) (token : String) : IO Unit :=
   do
@@ -85,15 +85,15 @@ def logout (self : AuthDOState) (token : String) : IO Unit :=
 def authenticate (self : AuthDOState) (token : String) : IO (Option AuthSession) :=
   do
     let session ← Storage.get self.state.storage (s!"token:{token}")
-      if !session then
-        pure none
+    if !session then
+      pure none
+    else
+      if (IO.monoNanosNow) > session.expiresAt then
+        do
+          Storage.delete self.state.storage (s!"token:{token}")
+          return none
       else
-        if (IO.monoNanoseconds) > session.expiresAt then
-          do
-            Storage.delete self.state.storage (s!"token:{token}")
-            return none
-        else
-          pure session
+        pure session
 
 end AuthDO
 

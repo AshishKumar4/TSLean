@@ -14,55 +14,55 @@ namespace TSLean.Generated.ForLoops
 def rangeSum (n : Float) : StateT Unit IO Float :=
   do
     let total : Float := 0
-      do
-        let _loop_116 := fun i => do
-          if i < n then
-          do
-            let total := total + i
-            _loop_116 (i + 1)
-        else
-          ()
-        return total
+    do
+      let _loop_116 := fun i => do
+        if i < n then
+        do
+          let total := total + i
+          _loop_116 (i + 1)
+      else
+        ()
+      return total
 
 def countDown (n : Float) : StateT Unit IO (Array Float) :=
   do
     let result : Array Float := #[]
-      do
-        let _loop_260 := fun i => if i > 0 then
-          result.push i
-          _loop_260 (i - 1)
-        else
-          ()
-        return result
+    do
+      let _loop_260 := fun i => if i > 0 then
+        result.push i
+        _loop_260 (i - 1)
+      else
+        ()
+      return result
 
 def processItems (items : Array String) : Array String :=
   let out : Array String := #[]
-    Array.forM items (fun item => out.push (item.toUpper))
-    out
+  Array.forM items (fun item => out.push (item.toUpper))
+  out
 
 def objectKeys (obj : String) : Array String :=
   let keys : Array String := #[]
-    Array.forM (AssocMap.keys obj) (fun key => keys.push key)
-    keys
+  Array.forM (AssocMap.keys obj) (fun key => keys.push key)
+  keys
 
 def fibonacci (n : Float) : StateT Unit IO Float :=
   do
     let a : Float := 0
-      do
-        let _while_719 := fun _ => do
-          if let n := n - 1 > 0 then
-          do
-            let tmp := b
-            _while_719
-        else
-          ()
-        return a
+    do
+      let _while_719 := fun _ => do
+        if let n := n - 1 > 0 then
+        do
+          let tmp := b
+          _while_719
+      else
+        ()
+      return a
 
 def findFirst {T : Type} (items : Array T) (pred : T → Bool) : Option T :=
   Array.forM items (fun item => if pred item then
-      item
-    else
-      ())
-    none
+    item
+  else
+    ())
+  none
 
 end TSLean.Generated.ForLoops

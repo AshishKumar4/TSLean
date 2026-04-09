@@ -36,51 +36,51 @@ def SessionStoreDO.init : SessionStoreDOState :=
 def fetch (self : SessionStoreDOState) (request : Request) : IO Response :=
   do
     let url : URL := URL.parse request.url
-      let sessionId : Option String := url.searchParams.get "sessionId"
+    let sessionId : Option String := url.searchParams.get "sessionId"
+    do
+      if (request.method == "POST") && (url.pathname == "/create") then
+        let body ← request.toJson
+        let id ← self.createSession body.userId (Option.getD body.data {  })
+        pure (mkResponse ("<serialized>") ({ headers := default }))
+      else
+        ()
       do
-        if (request.method == "POST") && (url.pathname == "/create") then
-          let body ← request.toJson
-          let id ← self.createSession body.userId (Option.getD body.data {  })
-          pure (mkResponse ("<serialized>") ({ headers := default }))
+        if ((request.method == "GET") && (url.pathname == "/get")) && sessionId then
+          let session ← self.getSession sessionId
+          if !session then
+            pure (mkResponse ("<serialized>") ({ status := 404, headers := default }))
+          else
+            pure (mkResponse ("<serialized>") ({ headers := default }))
         else
           ()
-        do
-          if ((request.method == "GET") && (url.pathname == "/get")) && sessionId then
-            let session ← self.getSession sessionId
-            if !session then
-              pure (mkResponse ("<serialized>") ({ status := 404, headers := default }))
-            else
-              pure (mkResponse ("<serialized>") ({ headers := default }))
-          else
-            ()
-          if ((request.method == "DELETE") && (url.pathname == "/destroy")) && sessionId then
-            do
-              self.destroySession sessionId
-              return mkResponse ("<serialized>") ({ headers := default })
-          else
-            pure (mkResponse "Not Found" ({ status := 404 }))
+        if ((request.method == "DELETE") && (url.pathname == "/destroy")) && sessionId then
+          do
+            self.destroySession sessionId
+            return mkResponse ("<serialized>") ({ headers := default })
+        else
+          pure (mkResponse "Not Found" ({ status := 404 }))
 
 def createSession (self : SessionStoreDOState) (userId : String) (data : String) : IO String :=
   do
     let id : String := crypto.randomUUID
-      let now ← IO.monoNanoseconds
-      let session : Session := { userId := userId, data := data, createdAt := now, expiresAt := now + self.TTL_MS }
-      do
-        Storage.put self.state.storage (s!"session:{id}") session
-        return id
+    let now ← IO.monoNanosNow
+    let session : Session := { userId := userId, data := data, createdAt := now, expiresAt := now + self.TTL_MS }
+    do
+      Storage.put self.state.storage (s!"session:{id}") session
+      return id
 
 def getSession (self : SessionStoreDOState) (id : String) : IO (Option Session) :=
   do
     let session ← Storage.get self.state.storage (s!"session:{id}")
-      if !session then
-        pure none
+    if !session then
+      pure none
+    else
+      if (IO.monoNanosNow) > session.expiresAt then
+        do
+          Storage.delete self.state.storage (s!"session:{id}")
+          return none
       else
-        if (IO.monoNanoseconds) > session.expiresAt then
-          do
-            Storage.delete self.state.storage (s!"session:{id}")
-            return none
-        else
-          pure session
+        pure session
 
 def destroySession (self : SessionStoreDOState) (id : String) : IO Unit :=
   do

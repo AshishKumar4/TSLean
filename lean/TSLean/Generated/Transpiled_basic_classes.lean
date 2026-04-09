@@ -66,24 +66,24 @@ structure BankAccountState where
 def BankAccount.init (self : BankAccountState) (owner : String) (initial : Float := 0) : StateT BankAccountState IO Unit :=
   do
     do
-        modify (fun s => { s with owner := owner })
-        modify (fun s => { s with balance := initial })
+      modify (fun s => { s with owner := owner })
+      modify (fun s => { s with balance := initial })
 
 def deposit (self : BankAccountState) (amount : Float) : StateT BankAccountState (ExceptT String IO) Unit :=
   do
     if amount <= 0 then
-        throw "must be positive"
-      else
-        modify (fun s => { s with balance := self.balance + amount })
+      throw "must be positive"
+    else
+      modify (fun s => { s with balance := self.balance + amount })
 
 def withdraw (self : BankAccountState) (amount : Float) : StateT BankAccountState IO Bool :=
   do
     if amount > self.balance then
-        pure false
-      else
-        do
-          modify (fun s => { s with balance := self.balance - amount })
-          return true
+      pure false
+    else
+      do
+        modify (fun s => { s with balance := self.balance - amount })
+        return true
 
 def getBalance (self : BankAccountState) : Float :=
   self.balance

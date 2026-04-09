@@ -29,8 +29,8 @@ def userUrl (userId : String) : String :=
 
 def logMessage (level : String) (msg : String) : IO String :=
   do
-    let ts : Float := IO.monoNanoseconds
-      pure (s!"[{level}] {msg} at {ts}")
+    let ts : Float := IO.monoNanosNow
+    pure (s!"[{level}] {msg} at {ts}")
 
 structure User where
   mk ::

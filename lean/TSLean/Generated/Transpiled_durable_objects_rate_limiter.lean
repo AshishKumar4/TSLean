@@ -35,38 +35,38 @@ def RateLimiterDO.init : RateLimiterDOState :=
 def fetch (self : RateLimiterDOState) (request : Request) : IO Response :=
   do
     let url : URL := URL.parse request.url
-      let clientId : String := Option.getD (url.searchParams.get "clientId") "default"
-      do
-        if (request.method == "POST") && (url.pathname == "/check") then
-          let allowed ← self.checkRateLimit clientId
-          pure (mkResponse ("<serialized>") ({ headers := default, status := if allowed then
-            200
-          else
-            429 }))
+    let clientId : String := Option.getD (url.searchParams.get "clientId") "default"
+    do
+      if (request.method == "POST") && (url.pathname == "/check") then
+        let allowed ← self.checkRateLimit clientId
+        pure (mkResponse ("<serialized>") ({ headers := default, status := if allowed then
+          200
         else
-          ()
-        if (request.method == "DELETE") && (url.pathname == "/reset") then
-          do
-            Storage.delete self.state.storage clientId
-            return mkResponse ("<serialized>") ({ headers := default })
-        else
-          pure (mkResponse "Not Found" ({ status := 404 }))
+          429 }))
+      else
+        ()
+      if (request.method == "DELETE") && (url.pathname == "/reset") then
+        do
+          Storage.delete self.state.storage clientId
+          return mkResponse ("<serialized>") ({ headers := default })
+      else
+        pure (mkResponse "Not Found" ({ status := 404 }))
 
 def checkRateLimit (self : RateLimiterDOState) (clientId : String) : IO Bool :=
   do
-    let now ← IO.monoNanoseconds
-      let windowStart : Float := now - self.windowMs
-      let records ← Option.getD Storage.get self.state.storage clientId #[]
-      let valid : Array RequestRecord := records.filter (fun r => r.timestamp >= windowStart)
-      let total : Float := valid.reduce (fun sum r => sum + r.count) 0
-      if total >= self.maxRequests then
-        pure false
-      else
+    let now ← IO.monoNanosNow
+    let windowStart : Float := now - self.windowMs
+    let records ← Option.getD Storage.get self.state.storage clientId #[]
+    let valid : Array RequestRecord := records.filter (fun r => r.timestamp >= windowStart)
+    let total : Float := valid.reduce (fun sum r => sum + r.count) 0
+    if total >= self.maxRequests then
+      pure false
+    else
+      do
+        valid.push ({ timestamp := now, count := 1 })
         do
-          valid.push ({ timestamp := now, count := 1 })
-          do
-            Storage.put self.state.storage clientId valid
-            return true
+          Storage.put self.state.storage clientId valid
+          return true
 
 end RateLimiterDO
 

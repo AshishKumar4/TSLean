@@ -14,9 +14,9 @@ abbrev StringOrNumber := StringOrNumber
 
 def processValue (x : StringOrNumber) : String :=
   if (TSLean.typeOf x) == "string" then
-      x.toUpper
-    else
-      x.function toString() { [native code] }
+    x.toUpper
+  else
+    x.function toString() { [native code] }
 
 -- State for Animal
 structure AnimalState where
@@ -36,12 +36,12 @@ def meow (self : CatState) : IO Unit :=
 
 def makeSound (animal : Animal) : Unit :=
   if True.intro then
-      animal.bark
+    animal.bark
+  else
+    if True.intro then
+      animal.meow
     else
-      if True.intro then
-        animal.meow
-      else
-        ()
+      ()
 
 structure HasName where
   mk ::
@@ -55,9 +55,9 @@ structure HasAge where
 
 def describeEntity (entity : HasName) : String :=
   if AssocMap.contains entity "name" then
-      s!"Named: {entity.name}"
-    else
-      s!"Age: {entity.age}"
+    s!"Named: {entity.name}"
+  else
+    s!"Age: {entity.age}"
 
 def isString (x : Any) : Bool :=
   (TSLean.typeOf x) == "string"

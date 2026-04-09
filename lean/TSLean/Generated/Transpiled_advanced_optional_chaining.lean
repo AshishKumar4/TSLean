@@ -24,9 +24,9 @@ def getDbUrl (config : Option Config) : String :=
 
 def withDefaults (config : Option Config) : Config :=
   let host : String := Option.getD (Option.map (fun _oc => _oc.host) config) "localhost"
-    let port : Float := Option.getD (Option.map (fun _oc => _oc.port) config) 5432
-    let dbName : String := Option.getD (Option.map (fun _oc => _oc.name) (Option.map (fun _oc => _oc.db) config)) "mydb"
-    { host := host, port := port, db := default }
+  let port : Float := Option.getD (Option.map (fun _oc => _oc.port) config) 5432
+  let dbName : String := Option.getD (Option.map (fun _oc => _oc.name) (Option.map (fun _oc => _oc.db) config)) "mydb"
+  { host := host, port := port, db := default }
 
 -- // Destructuring
 def describePoint (_p606 : Any) : String :=
@@ -34,9 +34,9 @@ def describePoint (_p606 : Any) : String :=
 
 partial def sumArray (_p703 : Any) : Float :=
   if rest.size == 0 then
-      first
-    else
-      first + (sumArray rest)
+    first
+  else
+    first + (sumArray rest)
 
 -- // Rest parameters
 def sum (nums : Array Float) : Float :=

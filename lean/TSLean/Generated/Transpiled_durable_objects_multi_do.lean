@@ -44,28 +44,28 @@ def CoordinatorDO.init : CoordinatorDOState :=
 def fetch (self : CoordinatorDOState) (request : Request) : IO Response :=
   do
     let url : URL := URL.parse request.url
-      do
-        if (request.method == "POST") && (url.pathname == "/rpc") then
-          let envelope ← request.toJson
-          let response ← self.handleRPC envelope
-          pure (mkResponse (serialize response) ({ headers := default }))
-        else
-          ()
-        if (request.method == "GET") && (url.pathname == "/topology") then
-          let topology : Array __object := Array.ofList (self.nodes.entries).map (fun _p890 => { id := id, lastSeen := node.lastSeen })
-          pure (mkResponse ("<serialized>") ({ headers := default }))
-        else
-          pure (mkResponse "Not Found" ({ status := 404 }))
+    do
+      if (request.method == "POST") && (url.pathname == "/rpc") then
+        let envelope ← request.toJson
+        let response ← self.handleRPC envelope
+        pure (mkResponse (serialize response) ({ headers := default }))
+      else
+        ()
+      if (request.method == "GET") && (url.pathname == "/topology") then
+        let topology : Array __object := Array.ofList (self.nodes.entries).map (fun _p890 => { id := id, lastSeen := node.lastSeen })
+        pure (mkResponse ("<serialized>") ({ headers := default }))
+      else
+        pure (mkResponse "Not Found" ({ status := 404 }))
 
 def handleRPC (self : CoordinatorDOState) (envelope : RPCEnvelope) : IO RPCResponse :=
   do
     let id : String := envelope.id
-      let method : String := envelope.method
-      let params : Any := envelope.params
-      match method with
-        | "ping" => pure { id := id, result := default }
-        | "broadcast" => pure { id := id, result := default }
-        | _ => pure { id := id, error := default }
+    let method : String := envelope.method
+    let params : Any := envelope.params
+    match method with
+      | "ping" => pure { id := id, result := default }
+      | "broadcast" => pure { id := id, result := default }
+      | _ => pure { id := id, error := default }
 
 end CoordinatorDO
 

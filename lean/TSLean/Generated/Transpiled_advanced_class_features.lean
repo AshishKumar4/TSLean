@@ -14,20 +14,20 @@ inductive Status where
   | Active
   | Inactive
   | Pending
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def Status.toString (e : Status) : String :=
   match e with
-      | .Active => "ACTIVE"
-      | .Inactive => "INACTIVE"
-      | .Pending => "PENDING"
+    | .Active => "ACTIVE"
+    | .Inactive => "INACTIVE"
+    | .Pending => "PENDING"
 
 inductive Direction where
   | North
   | South
   | East
   | West
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 -- State for Animal
 structure AnimalState where
@@ -54,8 +54,8 @@ structure DogState where
 def Dog.init (self : DogState) (name : String) (breed : String) : StateT DogState IO Unit :=
   do
     do
-        default
-        modify (fun s => { s with breed := breed })
+      default
+      modify (fun s => { s with breed := breed })
 
 def sound (self : DogState) : String :=
   "woof"

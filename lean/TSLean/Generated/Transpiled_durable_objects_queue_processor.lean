@@ -32,34 +32,34 @@ def QueueProcessorDO.init : QueueProcessorDOState :=
 def fetch (self : QueueProcessorDOState) (request : Request) : IO Response :=
   do
     let url : URL := URL.parse request.url
+    do
+      if (request.method == "POST") && (url.pathname == "/enqueue") then
+        let body ← request.toJson
+        let id ← self.enqueue body.payload (Option.getD body.maxAttempts 3)
+        pure (mkResponse ("<serialized>") ({ headers := default }))
+      else
+        ()
       do
-        if (request.method == "POST") && (url.pathname == "/enqueue") then
-          let body ← request.toJson
-          let id ← self.enqueue body.payload (Option.getD body.maxAttempts 3)
+        if (request.method == "POST") && (url.pathname == "/process") then
+          let processed ← self.processNext
           pure (mkResponse ("<serialized>") ({ headers := default }))
         else
           ()
         do
-          if (request.method == "POST") && (url.pathname == "/process") then
-            let processed ← self.processNext
+          if (request.method == "GET") && (url.pathname == "/size") then
+            let ids ← Option.getD Storage.get self.state.storage "queue:ids" #[]
             pure (mkResponse ("<serialized>") ({ headers := default }))
           else
             ()
-          do
-            if (request.method == "GET") && (url.pathname == "/size") then
-              let ids ← Option.getD Storage.get self.state.storage "queue:ids" #[]
-              pure (mkResponse ("<serialized>") ({ headers := default }))
-            else
-              ()
-            return mkResponse "Not Found" ({ status := 404 })
+          return mkResponse "Not Found" ({ status := 404 })
 
 def enqueue (self : QueueProcessorDOState) (payload : Any) (maxAttempts : Float) : IO String :=
   do
     let id : String := crypto.randomUUID
-      let item ← { id := id, payload := payload, enqueuedAt := IO.monoNanoseconds, attempts := 0, maxAttempts := maxAttempts, nextRetryAt := IO.monoNanoseconds }
-      do
-        Storage.put self.state.storage (s!"queue:{id}") item
-        let ids ← Option.getD Storage.get self.state.storage "queue:ids" #[]
+    let item ← { id := id, payload := payload, enqueuedAt := IO.monoNanosNow, attempts := 0, maxAttempts := maxAttempts, nextRetryAt := IO.monoNanosNow }
+    do
+      Storage.put self.state.storage (s!"queue:{id}") item
+      let ids ← Option.getD Storage.get self.state.storage "queue:ids" #[]
 
 def processNext (self : QueueProcessorDOState) : StateT QueueProcessorDOState IO Bool :=
   pure default
