@@ -248,6 +248,19 @@ structure IRModule where
   comments   : Array String := #[]
   sourceFile : Option String := none
 
+/-! ## Inhabited instances -/
+
+private def defNode : IRNode := { type := .Unit, effect := .Pure, span := none }
+
+instance : Inhabited IRNode    := ⟨defNode⟩
+instance : Inhabited IRExpr    := ⟨.Hole defNode⟩
+instance : Inhabited IRPattern := ⟨.PWild⟩
+instance : Inhabited IRCase    := ⟨.mk IRPattern.PWild none (.Hole defNode)⟩
+instance : Inhabited DoStmt    := ⟨.DoExpr (.Hole defNode)⟩
+instance : Inhabited IRParam   := ⟨{ name := "", type := .Unit }⟩
+instance : Inhabited IRDecl    := ⟨.RawLean ""⟩
+instance : Inhabited IRModule  := ⟨{ name := "", imports := #[], decls := #[] }⟩
+
 /-! ## Smart constructors -/
 
 private def pureNode (t : IRType) : IRNode := { type := t, effect := .Pure }

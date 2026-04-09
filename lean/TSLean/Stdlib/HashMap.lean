@@ -111,6 +111,31 @@ def toList (m : AssocMap α β) : List (α × β) := m.entries
 def fromList (pairs : List (α × β)) : AssocMap α β :=
   pairs.foldl (fun acc (k, v) => acc.insert k v) empty
 
+-- ─── JS-compatible aliases ──────────────────────────────────────────────────
+-- The transpiler emits these names to match the JavaScript Map/Set API.
+
+/-- Alias for `insert` — matches the JavaScript `Map.set(k, v)` API. -/
+def set (m : AssocMap α β) (k : α) (v : β) : AssocMap α β := m.insert k v
+/-- Remove all entries. -/
+def clear (_ : AssocMap α β) : AssocMap α β := empty
+/-- Apply a function to every key-value pair. -/
+def forEach (m : AssocMap α β) (f : α → β → Unit) : Unit :=
+  m.entries.foldl (fun _ (k, v) => f k v) ()
+/-- Update a value at a key, applying f to the existing value if present. -/
+def update (m : AssocMap α β) (k : α) (f : β → β) : AssocMap α β :=
+  match m.get? k with
+  | some v => m.insert k (f v)
+  | none   => m
+/-- Check if any entry satisfies the predicate. -/
+def anyM (m : AssocMap α β) (p : α → β → Bool) : Bool :=
+  m.entries.any fun (k, v) => p k v
+/-- Check if all entries satisfy the predicate. -/
+def allM (m : AssocMap α β) (p : α → β → Bool) : Bool :=
+  m.entries.all fun (k, v) => p k v
+/-- Filter entries by predicate on key and value. -/
+def filterKV (m : AssocMap α β) (p : α → β → Bool) : AssocMap α β :=
+  fromList (m.entries.filter fun (k, v) => p k v)
+
 -- Theorems
 
 theorem get?_empty (k : α) : (empty : AssocMap α β).get? k = none := by simp [empty, get?]
@@ -371,8 +396,6 @@ instance [BEq α] : Inhabited (AssocMap α β) where
 
 -- find? is an alias for get? (TS codegen emits Map.find?)
 abbrev find? := @get? α β _
--- set is an alias for insert (JS Map.set compatibility)
-abbrev set := @insert α β _
 
 theorem find?_eq_get? (m : AssocMap α β) (k : α) : m.find? k = m.get? k := rfl
 theorem set_eq_insert (m : AssocMap α β) (k : α) (v : β) : m.set k v = m.insert k v := rfl
