@@ -680,7 +680,13 @@ class Gen {
           // needs `do` wrapping (otherwise Lean parses `let` as a top-level command).
           // Similarly, `if` after `let` needs to be in the same `do` block.
           const lines = bodyStr.split('\n').filter(l => l.trim());
-          const needsDo = lines.length > 1 && !bodyStr.trimStart().startsWith('do') && (
+          // Only add `do` if the body actually needs monadic notation (has ← or monadic calls)
+          // OR if the return type is monadic
+          const retIsMonadic2 = retSig.startsWith('IO ') || retSig.startsWith('StateT ') ||
+            retSig.startsWith('ExceptT ') || retSig.includes('Monad');
+          const bodyNeedsDo = bodyStr.includes('←') || bodyStr.includes('Array.forM') ||
+            bodyStr.includes('pure ') || bodyStr.includes('throw ');
+          const needsDo = (retIsMonadic2 || bodyNeedsDo) && lines.length > 1 && !bodyStr.trimStart().startsWith('do') && (
             bodyStr.includes('\nlet ') ||
             bodyStr.includes('\n  let ') ||
             /\blet .+\n.*\bif /.test(bodyStr) ||
