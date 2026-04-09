@@ -26,9 +26,106 @@ structure GlobalTx where
   maxArgs  : Option Nat := none
   deriving Repr, BEq, Inhabited
 
-def lookupMethod (_kind : ObjKind) (_method : String) : Option MethodTx := none
+-- String method translations (mirrors TS STRING_METHODS record)
+private def stringMethod : String → Option MethodTx
+  | "length"      => some { leanFn := "String.length" }
+  | "toUpperCase" => some { leanFn := "String.toUpper" }
+  | "toLowerCase" => some { leanFn := "String.toLower" }
+  | "trim"        => some { leanFn := "String.trim" }
+  | "includes"    => some { leanFn := "String.containsSubstr" }
+  | "startsWith"  => some { leanFn := "String.startsWith" }
+  | "endsWith"    => some { leanFn := "String.endsWith" }
+  | "split"       => some { leanFn := "String.splitOn" }
+  | "replace"     => some { leanFn := "String.replace" }
+  | "indexOf"     => some { leanFn := "String.findSubstr?" }
+  | "charAt"      => some { leanFn := "String.get?" }
+  | "slice"       => some { leanFn := "String.extract" }
+  | _             => none
 
-def lookupGlobal (_name : String) : Option GlobalTx := none
+-- Array method translations (mirrors TS ARRAY_METHODS record)
+private def arrayMethod : String → Option MethodTx
+  | "length"    => some { leanFn := "Array.size" }
+  | "push"      => some { leanFn := "Array.push" }
+  | "pop"       => some { leanFn := "Array.pop" }
+  | "map"       => some { leanFn := "Array.map" }
+  | "filter"    => some { leanFn := "Array.filter" }
+  | "reduce"    => some { leanFn := "Array.foldl" }
+  | "forEach"   => some { leanFn := "Array.forM" }
+  | "find"      => some { leanFn := "Array.find?" }
+  | "findIndex" => some { leanFn := "Array.findIdx?" }
+  | "some"      => some { leanFn := "Array.any" }
+  | "every"     => some { leanFn := "Array.all" }
+  | "includes"  => some { leanFn := "Array.contains" }
+  | "indexOf"   => some { leanFn := "Array.indexOf?" }
+  | "slice"     => some { leanFn := "Array.extract" }
+  | "concat"    => some { leanFn := "Array.append" }
+  | "join"      => some { leanFn := "String.intercalate" }
+  | "reverse"   => some { leanFn := "Array.reverse" }
+  | "flat"      => some { leanFn := "Array.flatten" }
+  | "flatMap"   => some { leanFn := "Array.flatMap" }
+  | _           => none
+
+-- Map method translations
+private def mapMethod : String → Option MethodTx
+  | "get"     => some { leanFn := "AssocMap.get?" }
+  | "set"     => some { leanFn := "AssocMap.insert" }
+  | "has"     => some { leanFn := "AssocMap.contains" }
+  | "delete"  => some { leanFn := "AssocMap.erase" }
+  | "size"    => some { leanFn := "AssocMap.size" }
+  | "keys"    => some { leanFn := "AssocMap.keys" }
+  | "values"  => some { leanFn := "AssocMap.values" }
+  | "entries" => some { leanFn := "AssocMap.toList" }
+  | "forEach" => some { leanFn := "AssocMap.foldl" }
+  | _         => none
+
+-- Set method translations
+private def setMethod : String → Option MethodTx
+  | "add"     => some { leanFn := "TSHashSet.insert" }
+  | "has"     => some { leanFn := "TSHashSet.contains" }
+  | "delete"  => some { leanFn := "TSHashSet.erase" }
+  | "size"    => some { leanFn := "TSHashSet.size" }
+  | _         => none
+
+-- Lookup a method translation by object kind and method name
+def lookupMethod (kind : ObjKind) (method : String) : Option MethodTx :=
+  match kind with
+  | .String  => stringMethod method
+  | .Array   => arrayMethod method
+  | .Map     => mapMethod method
+  | .Set     => setMethod method
+  | .Unknown => none
+
+-- Global function translations (mirrors TS GLOBALS record)
+def lookupGlobal (name : String) : Option GlobalTx :=
+  match name with
+  | "console.log"   => some { leanExpr := "IO.println",   io := true }
+  | "console.error" => some { leanExpr := "IO.eprintln",  io := true }
+  | "console.warn"  => some { leanExpr := "IO.eprintln",  io := true }
+  | "Date.now"      => some { leanExpr := "IO.monoMsNow", io := true }
+  | "Math.floor"    => some { leanExpr := "Float.floor" }
+  | "Math.ceil"     => some { leanExpr := "Float.ceil" }
+  | "Math.round"    => some { leanExpr := "Float.round" }
+  | "Math.abs"      => some { leanExpr := "Float.abs" }
+  | "Math.sqrt"     => some { leanExpr := "Float.sqrt" }
+  | "Math.max"      => some { leanExpr := "Float.max" }
+  | "Math.min"      => some { leanExpr := "Float.min" }
+  | "Math.pow"      => some { leanExpr := "Float.pow" }
+  | "Math.log"      => some { leanExpr := "Float.log" }
+  | "Math.PI"       => some { leanExpr := "Float.pi" }
+  | "parseInt"      => some { leanExpr := "String.toNat?" }
+  | "parseFloat"    => some { leanExpr := "String.toFloat?" }
+  | "isNaN"         => some { leanExpr := "Float.isNaN" }
+  | "isFinite"      => some { leanExpr := "Float.isFinite" }
+  | "JSON.stringify" => some { leanExpr := "TSLean.serialize" }
+  | "JSON.parse"    => some { leanExpr := "TSLean.deserialize" }
+  | "Object.keys"   => some { leanExpr := "AssocMap.keys" }
+  | "Object.values"  => some { leanExpr := "AssocMap.values" }
+  | "Object.entries" => some { leanExpr := "AssocMap.toList" }
+  | "Array.from"     => some { leanExpr := "id" }
+  | "Array.isArray"  => some { leanExpr := "fun _ => true" }
+  | "Promise.resolve" => some { leanExpr := "pure", io := true }
+  | "fetch"          => some { leanExpr := "TSLean.WebAPI.fetch", io := true }
+  | _                => none
 
 def translateBinOp (op : BinOp) (lhsType : IRType) : String :=
   match op with

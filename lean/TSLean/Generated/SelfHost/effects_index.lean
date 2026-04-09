@@ -34,7 +34,29 @@ partial def irTypeName : IRType → String
     else s!"({name} {String.intercalate " " (args.toList.map irTypeName)})"
   | _ => FALLBACK_ERROR_TYPE
 
--- Convert an Effect to its Lean 4 monad string
+-- Helper: find the first State effect in an array
+private def findState : Array Effect → Option IRType
+  | es => es.toList.findSome? fun
+    | .State t => some t
+    | _ => none
+
+-- Helper: find the first Except effect in an array
+private def findExcept : Array Effect → Option IRType
+  | es => es.toList.findSome? fun
+    | .Except t => some t
+    | _ => none
+
+-- Helper: right-fold parts into a nested monad string
+-- ["StateT S", "ExceptT E", "IO"] → "StateT S (ExceptT E IO)"
+private def rightFold (parts : List String) : String :=
+  match parts.reverse with
+  | [] => "Id"
+  | [x] => x
+  | inner :: rest => rest.foldl (fun acc outer =>
+      s!"{outer} {if acc.any (· == ' ') then s!"({acc})" else acc}") inner
+
+-- Convert an Effect to its Lean 4 monad string.
+-- Mirrors the TS monadString exactly including Combined right-fold.
 def monadString (effect : Effect) (stateTypeName : String := "σ") : String :=
   match effect with
   | .Pure       => PURE_MONAD
@@ -42,36 +64,54 @@ def monadString (effect : Effect) (stateTypeName : String := "σ") : String :=
   | .Async      => "IO"
   | .State st   => s!"StateT {irTypeName st} IO"
   | .Except et  => s!"ExceptT {irTypeName et} IO"
-  | .Combined _ => s!"StateT {stateTypeName} (ExceptT {FALLBACK_ERROR_TYPE} IO)"
+  | .Combined es =>
+    let statePart := match findState es with
+      | some st => [s!"StateT {irTypeName st}"]
+      | none =>
+        if es.any (fun e => match e with | .State _ => true | _ => false) then
+          [s!"StateT {stateTypeName}"]
+        else []
+    let exceptPart := match findExcept es with
+      | some et => [s!"ExceptT {irTypeName et}"]
+      | none =>
+        if es.any (fun e => match e with | .Except _ => true | _ => false) then
+          [s!"ExceptT {FALLBACK_ERROR_TYPE}"]
+        else []
+    rightFold (statePart ++ exceptPart ++ ["IO"])
 
 -- Generate the DOMonad type string
 def doMonadType (stateTypeName : String) : String :=
   s!"DOMonad {stateTypeName}"
 
--- Join (least upper bound) of two effects
+-- Join (least upper bound) of two effects. Pure is the identity element.
+-- Mirrors the TS joinEffects exactly.
 def joinEffects (a b : Effect) : Effect :=
   match a, b with
   | .Pure, e | e, .Pure => e
   | _, _ => .Combined #[a, b]
 
--- Test whether effect `a` subsumes effect `b`
+-- Test whether effect `a` subsumes effect `b`.
+-- Pure is subsumed by everything. Combined checks recursively.
+-- Mirrors the TS effectSubsumes exactly.
 partial def effectSubsumes (a b : Effect) : Bool :=
   match b with
   | .Pure => true
-    | _ => match a with
+  | _ => match a with
     | .Combined es => es.any (effectSubsumes · b)
     | _ => a == b
 
--- Check if a SyntaxKind is an assignment operator
+-- Check if a SyntaxKind is an assignment operator (=, +=, -=, *=, /=, %=)
 def isAssignOp (kind : SyntaxKind) : Bool :=
   kind == .Other 64 || kind == .Other 65 || kind == .Other 66 ||
   kind == .Other 67 || kind == .Other 68 || kind == .Other 69
 
--- Check if a SyntaxKind is increment/decrement
+-- Check if a SyntaxKind is increment/decrement (++, --)
 def isIncrDecr (kind : SyntaxKind) : Bool :=
   kind == .Other 46 || kind == .Other 47
 
--- Check if a node represents a nested function scope
-def isNestedFnScope (_node : Node) : Bool := false
+-- Check if a node represents a nested function scope (arrow, function, method)
+def isNestedFnScope (node : Node) : Bool :=
+  node.kind == .ArrowFunction || node.kind == .FunctionDeclaration ||
+  node.kind == .MethodDeclaration || node.kind == .Constructor
 
 end TSLean.Generated.SelfHost.Effects
