@@ -24,41 +24,42 @@ structure QueueItem where
   nextRetryAt : Float
   deriving Repr, BEq, Inhabited
 
+-- State for QueueProcessorDO (no persistent fields)
+structure QueueProcessorDOState where
+  mk ::
+  deriving Repr, BEq, Inhabited
+
 namespace QueueProcessorDO
 
 mutual
 
 def QueueProcessorDO.init : QueueProcessorDOState :=
-  {  }
+  default
 
 def QueueProcessorDO.fetch (self : QueueProcessorDOState) (request : Request) : IO Response :=
   do
     let url : URL := URL.parse request.url
-    do
-      if (request.method == "POST") && (url.pathname == "/enqueue") then
-        let body ← request.toJson
-        let id ← enqueue self body.payload (Option.getD body.maxAttempts 3)
-        pure (mkResponse ("<serialized>") ({ headers := default }))
-      else do
-          if (request.method == "POST") && (url.pathname == "/process") then
-            let processed ← processNext self
-            pure (mkResponse ("<serialized>") ({ headers := default }))
-          else do
-              if (request.method == "GET") && (url.pathname == "/size") then
-                let ids ← #[]
-                pure (mkResponse ("<serialized>") ({ headers := default }))
-              else
-                pure (mkResponse "Not Found" ({ status := 404 }))
+    if (request.method == "POST") && (url.pathname == "/enqueue") then
+      let body ← request.toJson
+      let id ← enqueue self default (Option.getD default 3)
+      pure (mkResponse ("<serialized>") ({ headers := default }))
+    else if (request.method == "POST") && (url.pathname == "/process") then
+      let processed ← processNext self
+      pure (mkResponse ("<serialized>") ({ headers := default }))
+    else if (request.method == "GET") && (url.pathname == "/size") then
+      let ids : Array String := #[]
+      pure (mkResponse ("<serialized>") ({ headers := default }))
+    else
+      pure (mkResponse "Not Found" ({ status := 404 }))
 
 def QueueProcessorDO.enqueue (self : QueueProcessorDOState) (payload : Any) (maxAttempts : Float) : IO String :=
   do
-    let id : String := _uuid_stub_
+    let id : String := "uuid-stub"
     let item : QueueItem := { id := id, payload := payload, enqueuedAt := 0, attempts := 0, maxAttempts := maxAttempts, nextRetryAt := 0 }
-    do
-      pure default
-      let ids ← #[]
+    pure default
+    return id
 
-def QueueProcessorDO.processNext (self : QueueProcessorDOState) : StateT QueueProcessorDOState IO Bool :=
+def QueueProcessorDO.processNext (self : QueueProcessorDOState) : IO Bool :=
   do
     pure default
 
