@@ -76,7 +76,7 @@ partial def genExpr (e : IRExpr) (depth : Nat := 0) : String :=
   | _              => defaultForType e.type
 
 -- Generate Lean 4 code for an IR pattern (IRPattern is now TSAny = String).
-def genPat (p : TSAny) : String := p
+def genPat (p : TSAny) : String := toString p
 
 -- Generate Lean 4 code for an IR declaration.
 partial def genDecl (d : IRDecl) (depth : Nat := 0) : String :=
