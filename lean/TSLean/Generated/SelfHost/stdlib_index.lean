@@ -2,6 +2,7 @@
 -- Source: /workspace/tslean/src/stdlib/index.ts
 
 import TSLean.Generated.SelfHost.Prelude
+import TSLean.Generated.SelfHost.Prelude
 import TSLean.Generated.SelfHost.ir_types
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
@@ -9,7 +10,7 @@ import TSLean.Stdlib.HashMap
 
 open TSLean TSLean.Generated.Types TSLean.Stdlib.HashMap
 
-namespace TSLean.Generated.SelfHost.Stdlib
+namespace TSLean.Generated.SelfHost.StdlibIndex
 
 -- // ─── Method translations ──────────────────────────────────────────────────────
 structure MethodTx where
@@ -38,10 +39,10 @@ inductive ObjKind where
 
 def lookupMethod (kind : ObjKind) (method : String) : Option MethodTx :=
   match kind with
-      | .String => STRING_METHODS.get? method
-      | .Array => ARRAY_METHODS.get? method
-      | .Map => MAP_METHODS.get? method
-      | .Set => SET_METHODS.get? method
+      | .String => (STRING_METHODS.get? method).getD default
+      | .Array => (ARRAY_METHODS.get? method).getD default
+      | .Map => (MAP_METHODS.get? method).getD default
+      | .Set => (SET_METHODS.get? method).getD default
       | _ => none
 
 -- // ─── Global function translations ─────────────────────────────────────────────
@@ -86,24 +87,6 @@ def translateBinOp (op : String) (lhsType : IRType) : String :=
         | _ => op
 
 def typeObjKind (t : IRType) : ObjKind :=
-  if default == "String" then
-      .String
-    else
-      if default == "Array" then
-        .Array
-      else
-        if default == "Map" then
-          .Map
-        else
-          if default == "Set" then
-            .Set
-          else
-            if (default == "TypeRef") && ((default == "Map") || (default == "AssocMap")) then
-              .Map
-            else
-              if (default == "TypeRef") && ((default == "Set") || (default == "AssocSet")) then
-                .Set
-              else
-                .Unknown
+  sorry /- typeObjKind: dispatches on IRType tag to determine String/Array/Map/Set -/
 
-end TSLean.Generated.SelfHost.Stdlib
+end TSLean.Generated.SelfHost.StdlibIndex
