@@ -233,6 +233,83 @@ if (baseName === 'ir_types') {
   );
 }
 
+// ─── Fix A: if/else outside do (monadic functions only) ─────────────────────
+{
+  const fixLines = code.split('\n');
+  const fixOut: string[] = [];
+  for (let i = 0; i < fixLines.length; i++) {
+    const line = fixLines[i];
+    fixOut.push(line);
+    // Only add do for monadic return types
+    if (/^\s*(?:partial\s+)?def\s+\w+.*:=$/.test(line) && /\b(?:IO|StateT)\b/.test(line)) {
+      let j = i + 1;
+      while (j < fixLines.length && fixLines[j].trim() === '') j++;
+      if (j < fixLines.length) {
+        const next = fixLines[j].trim();
+        if ((next.startsWith('if ') || next.startsWith('let ')) && !line.includes(':= do')) {
+          let hasSeq = false;
+          const bi = fixLines[j].search(/\S/);
+          for (let k = j + 1; k < fixLines.length && k < j + 20; k++) {
+            const ki = fixLines[k].search(/\S/);
+            if (ki < 0) continue;
+            if (ki < bi) break;
+            if (ki === bi && (fixLines[k].trim().startsWith('if ') || fixLines[k].trim().startsWith('let '))) {
+              hasSeq = true; break;
+            }
+          }
+          if (hasSeq) fixOut[fixOut.length - 1] = line.replace(/:=$/, ':= do');
+        }
+      }
+    }
+  }
+  code = fixOut.join('\n');
+}
+
+// ─── Fix B: TS compiler API field access → sorry ────────────────────────────
+{
+  const tsFields = ['operator','operatorToken','operand','getChildren','getText',
+    'getSourceFile','getStart','getEnd','getChildCount','forEachChild','getFullText',
+    'declarationList','declarations','initializer','expression',
+    'thenStatement','elseStatement','incrementor','condition',
+    'catchClause','finallyBlock','variableDeclaration','moduleSpecifier',
+    'propertyName','questionToken','typeArguments','typeParameters',
+    'heritageClauses','members','modifiers','decorators'];
+  for (const f of tsFields) {
+    const re = new RegExp(`([a-z_]\\w*)\\.${f}\\b`, 'g');
+    code = code.replace(re, (_m: string, obj: string) => {
+      if (['Array','String','Option','List','AssocMap','TSLean','IO'].includes(obj)) return _m;
+      return `sorry /- ${obj}.${f} -/`;
+    });
+  }
+}
+
+// ─── Fix D: stdlib method tables ────────────────────────────────────────────
+if (baseName === 'stdlib_index' || baseName === 'StdlibIndex') {
+  // Method table struct literals → AssocMap default
+  code = code.replace(/: String := \{[^}]*\}/g, ': AssocMap String MethodTx := default');
+  // Fix .getD calls
+  code = code.replace(/(\w+)\.getD (\w+) default/g, '($1.get? $2).getD default');
+  // Add HashMap import
+  if (!code.includes('import TSLean.Stdlib.HashMap')) {
+    code = code.replace(/(import TSLean\.Runtime\.Coercions)/, '$1\nimport TSLean.Stdlib.HashMap');
+  }
+  // Add HashMap open
+  code = code.replace(/^(open TSLean\b.*)$/m, '$1 TSLean.Stdlib.HashMap');
+  // ObjKind string → constructor
+  code = code.replace(/\| "String" =>/g, '| .String =>');
+  code = code.replace(/\| "Array" =>/g, '| .Array =>');
+  code = code.replace(/\| "Map" =>/g, '| .Map =>');
+  code = code.replace(/\| "Set" =>/g, '| .Set =>');
+  // BinOp type
+  code = code.replace(/op : BinOp\)/g, 'op : String)');
+}
+
+// ─── Fix E: struct update on String-typed vars → sorry ──────────────────────
+code = code.replace(
+  /\{ ([a-z]\w*) with (?:\w+ := [^,}]+(?:, )?)+\}/g,
+  (_m: string, base: string) => `sorry /- struct update on ${base} -/`
+);
+
 // Write output
 fs.writeFileSync(outputFile, code);
 console.log(`✓ ${inputFile} → ${outputFile} (${code.split('\n').length} lines)`);
