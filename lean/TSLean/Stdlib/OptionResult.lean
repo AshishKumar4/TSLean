@@ -107,4 +107,30 @@ theorem isOk_ok {α} (a : α) : isOk (.ok a : TSResult α) = true := by
 theorem isError_error {α} (e : TSError) : isError (.error e : TSResult α) = true := by
   simp [isError, Except.isOk, Except.toBool]
 
+/-! ## Composition lemmas -/
+
+-- map then bind
+theorem mapOpt_bind_compose {α β γ} (o : Option α) (f : α → β) (g : β → Option γ) :
+    bindOpt (mapOpt o f) g = bindOpt o (fun a => g (f a)) := by
+  cases o <;> rfl
+
+-- fromOption roundtrip: ok case
+theorem fromOption_toOption_ok {α} (a : α) (e : TSError) :
+    toOption (fromOption (some a) e) = some a := rfl
+
+-- isOk / isError partition
+theorem isOk_not_isError {α} (r : TSResult α) :
+    isOk r = !isError r := by
+  cases r <;> simp [isOk, isError, Except.isOk, Except.toBool]
+
+-- getD aliases for codegen
+theorem option_getD_none (d : α) : (none : Option α).getD d = d := rfl
+theorem option_getD_some (a d : α) : (some a).getD d = a := rfl
+
+-- map distributes
+-- bind then map = map inside bind
+theorem bindResult_map {α β γ} (r : TSResult α) (f : α → TSResult β) (g : β → γ) :
+    mapResult (bindResult r f) g = bindResult r (fun a => mapResult (f a) g) := by
+  cases r <;> rfl
+
 end TSLean.Stdlib.OptionResult

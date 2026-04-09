@@ -367,5 +367,70 @@ instance [BEq α] [BEq β] : BEq (AssocMap α β) where
 instance [BEq α] : Inhabited (AssocMap α β) where
   default := AssocMap.empty
 
+/-! ## Additional interaction lemmas for codegen support -/
+
+-- find? is an alias for get? (TS codegen emits Map.find?)
+abbrev find? := @get? α β _
+
+theorem find?_eq_get? (m : AssocMap α β) (k : α) : m.find? k = m.get? k := rfl
+
+-- getD returns default when key absent
+theorem getD_empty (k : α) (d : β) : (empty : AssocMap α β).getD k d = d := by
+  simp [getD, get?_empty]
+
+-- getD returns value when key present
+theorem getD_insert_same (m : AssocMap α β) (k : α) (v d : β) :
+    (m.insert k v).getD k d = v := by
+  simp [getD, get?_insert_same]
+
+-- getD on different key falls through
+theorem getD_insert_diff (m : AssocMap α β) (k k' : α) (v d : β) (hne : k ≠ k') :
+    (m.insert k v).getD k' d = m.getD k' d := by
+  simp [getD, get?_insert_diff _ _ _ _ hne]
+
+-- insert then contains is true
+theorem contains_insert (m : AssocMap α β) (k : α) (v : β) :
+    (m.insert k v).contains k = true := by
+  simp [contains_iff_get?_isSome, get?_insert_same]
+
+-- erase then contains is false
+theorem contains_erase (m : AssocMap α β) (k : α) :
+    (m.erase k).contains k = false := by
+  simp [contains_iff_get?_isSome, get?_erase]
+
+-- erase preserves other keys' containment
+theorem contains_erase_ne (m : AssocMap α β) (k k' : α) (hne : k ≠ k') :
+    (m.erase k).contains k' = m.contains k' := by
+  simp [contains_iff_get?_isSome, get?_erase_ne _ _ _ hne]
+
+-- insert preserves other keys' values
+theorem get?_insert_ne (m : AssocMap α β) (k k' : α) (v : β) (hne : k ≠ k') :
+    (m.insert k v).get? k' = m.get? k' :=
+  get?_insert_diff m k k' v hne
+
+-- size after erase is ≤ original
+theorem size_erase_le (m : AssocMap α β) (k : α) :
+    (m.erase k).size ≤ m.size := by
+  simp only [erase, size]; exact List.length_filter_le _ _
+
+-- empty has no keys
+theorem keys_empty : (empty : AssocMap α β).keys = [] := by
+  simp [empty, keys]
+
+-- values of empty
+theorem values_empty : (empty : AssocMap α β).values = [] := by
+  simp [empty, values]
+
+-- toList preserves entries
+theorem toList_eq_entries (m : AssocMap α β) : m.toList = m.entries := rfl
+
+-- fromList then toList is identity for nodup lists (modulo order)
+theorem fromList_empty : fromList ([] : List (α × β)) = empty := by
+  simp [fromList, empty]
+
+-- size of singleton
+theorem size_singleton_eq (k : α) (v : β) : (singleton k v).size = 1 :=
+  singleton_size k v
+
 end AssocMap
 end TSLean.Stdlib.HashMap

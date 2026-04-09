@@ -6,10 +6,10 @@
 
 **Transpile real-world TypeScript into verified Lean 4 code — with automated proofs for Cloudflare Durable Objects.**
 
-[![Tests](https://img.shields.io/badge/tests-1051_passing-brightgreen)](#tests)
-[![Theorems](https://img.shields.io/badge/theorems-933_proved-blue)](#lean-4-runtime--verification-library)
+[![Tests](https://img.shields.io/badge/tests-1336_passing-brightgreen)](#tests)
+[![Theorems](https://img.shields.io/badge/theorems-1102_proved-blue)](#lean-4-runtime--verification-library)
 [![Lean](https://img.shields.io/badge/Lean_4-v4.29.0-orange)](#requirements)
-[![Build](https://img.shields.io/badge/lake_build-50%2F50_passing-brightgreen)](#building)
+[![Build](https://img.shields.io/badge/lake_build-69%2F69_passing-brightgreen)](#building)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](#license)
 
 </div>
@@ -21,10 +21,12 @@
 TSLean is a research-grade transpiler that converts properly-typed TypeScript into compilable, verifiable **Lean 4** code. It ships with:
 
 - **A complete transpiler pipeline** — Parser (TS Compiler API) → IR (System Fω + effects) → Type Mapper → Effect Analyzer → Rewrite Pass → Lean 4 Codegen
-- **A 6,800+ line Lean 4 verification library** — 933 theorems proving safety properties of Cloudflare Durable Objects (rate limiters, auth sessions, chat rooms, queues, analytics, transactions)
-- **Veil-style transition system verification** — 7 DO models formalized as state machines with invariant induction proofs
+- **A 14,900+ line Lean 4 verification library** — 1,102 theorems proving safety properties of Cloudflare Durable Objects (rate limiters, auth sessions, chat rooms, queues, analytics, transactions)
+- **Veil-style transition system verification** — 7 DO models formalized as state machines with invariant induction proofs, plus a mini DSL for declaring new transition systems
+- **A formal specification sheet** — `Specification.lean` aggregates all 8 verified safety properties with theorem references
+- **18 executable test suites** — 186 `#eval`-based assertions covering HashMap, HashSet, BrandedTypes, Validation, Queue, Auth, WebAPI, Float, and more
 - **Multi-file project transpilation** — Resolves TypeScript import graphs and generates cross-file Lean module imports
-- **1,051 tests** across 27 test files with 0 failures
+- **1,336+ tests** across 27+ test files with 0 failures
 
 ### Why?
 
@@ -111,7 +113,7 @@ cd lean && lake build
 
 ## Lean 4 Runtime & Verification Library
 
-The `lean/` directory contains a **6,800+ line, 933-theorem** verification library with zero external dependencies (pure Lean 4.29 core).
+The `lean/` directory contains a **14,900+ line, 1,102-theorem** verification library with zero external dependencies (pure Lean 4.29 core). Zero `sorry` in the built code — IO monad laws use honest `axiom` declarations.
 
 ### Module Structure
 
@@ -156,12 +158,22 @@ lean/TSLean/
 │
 ├── Veil/                 # Transition system verification (inspired by verse-lab/veil)
 │   ├── Core.lean         # TransitionSystem typeclass, reachability, invariant induction
-│   ├── CounterDO.lean    # Bounded counter: count ∈ [min, max] always
+│   ├── DSL.lean          # Mini Veil DSL: veil_action, veil_relation, veil_safety macros
+│   ├── DSLExamples.lean  # 3 verified examples: NatCounter, TokenRing, BoundedQueue
+│   ├── DSLAdoption.lean  # All 7 DOs expressed using DSL + nextN combinators
+│   ├── CounterDO.lean    # Bounded counter: count ∈ [min, max] always (48 theorems)
 │   ├── AuthDO.lean       # Session lifecycle: revoked tokens can never authenticate
 │   ├── RateLimiterDO.lean# Sliding window transitions: rate never exceeds limit
 │   ├── ChatRoomDO.lean   # Message ordering preserved through all transitions
 │   ├── QueueDO.lean      # Durable queue: enqueue/dequeue/ack with ordering
 │   └── SessionStoreDO.lean # TTL session management with expiry safety
+│
+├── External/             # External API stubs for self-hosting
+│   ├── Typescript.lean   # ts.Node, ts.SyntaxKind, ts.SourceFile, ts.TypeChecker
+│   ├── Path.lean         # Node.js path module operations
+│   └── Fs.lean           # Node.js fs module operations
+│
+├── Specification.lean    # Formal spec sheet: 8 verified safety properties
 │
 ├── Verification/         # Proof automation
 │   ├── ProofObligation.lean  # Obligation types: bounds, division, null, invariant
@@ -314,6 +326,57 @@ instance : TransitionSystem CounterState where
 theorem counter_safety : ∀ s, reachable s → safe s
 ```
 
+### Mini Veil DSL
+
+TSLean includes a lightweight macro-based DSL for declaring transition systems:
+
+```lean
+import TSLean.Veil.DSL
+open TSLean.Veil.DSL
+
+-- Define actions using macros
+veil_action increment (s : State) where { s with count := s.count + 1 }
+
+veil_relation guarded_inc (pre post : State) where
+  pre.count < pre.max ∧ post = { pre with count := pre.count + 1 }
+
+veil_safety bounded (s : State) where s.count ≤ s.max
+
+-- Combine actions using nextN combinators
+instance : TransitionSystem State where
+  next := next2 guarded_inc reset
+
+-- Prove safety using the combinator
+theorem safety : ∀ s, reachable s → bounded s :=
+  safety_of_inv_inductive State assu_inv init_inv
+    (fun s s' ha hi hn => next2_preserves inc_ok reset_ok ha hi hn)
+    (fun _ _ hi => hi.1)
+```
+
+The DSL provides:
+- **`veil_action`** — generates `def name (pre post : S) : Prop := post = f pre`
+- **`veil_relation`** — generates explicit two-state relations
+- **`veil_safety`** — generates safety predicates
+- **`next2`..`next5`** — fixed-arity action disjunction combinators
+- **`next2_preserves`..`next5_preserves`** — per-action invariant preservation
+- **`safety_of_inv_inductive`** — one-call safety proof combinator
+- **`veil_auto`** — cascading tactic: `omega >> simp_all >> decide >> constructor`
+
+### Formal Specification Sheet
+
+`lean/TSLean/Specification.lean` aggregates all verified safety properties:
+
+| Property | Theorem | What it guarantees |
+|---|---|---|
+| Rate limiting | `rate_limit_bounded` | Count in window ≤ maxCount for all reachable states |
+| Authentication | `auth_revoked_rejected` | Revoked tokens can never authenticate |
+| Queue bounds | `queue_bounded` | Total messages ≤ capacity always |
+| Counter bounds | `counter_in_bounds` | count ∈ [minCount, maxCount] always |
+| Session freshness | `session_fresh_valid` | getFresh only returns non-expired sessions |
+| Message ordering | `chatroom_delivered_in_log` | Every delivered message exists in the log |
+| ACID transactions | `acid_read_own_write` | Reads see own writes within a transaction |
+| Framework soundness | `framework_soundness` | Inductive invariants hold for all reachable states |
+
 ---
 
 ## Building
@@ -336,7 +399,7 @@ npm install
 
 ```bash
 cd lean
-lake build    # 50/50 jobs, 933 theorems verified
+lake build    # 69/69 jobs, 1,102 theorems verified, 0 sorry
 ```
 
 ---
@@ -346,16 +409,17 @@ lake build    # 50/50 jobs, 933 theorems verified
 | Metric | Value |
 |--------|-------|
 | TypeScript source | 3,454 lines across 11 files |
-| Lean 4 library | 6,841 lines across 55 files |
-| Tests | 1,051 passing across 27 files |
-| Proved theorems | 933 (207 Veil + 726 classical) |
-| `lake build` | 50/50 jobs, 0 errors |
-| Type class instances | 46 |
-| Structures | 50 |
-| Inductive types | 15 |
-| DO model files | 16 |
-| Veil transition systems | 7 |
-| Git commits | 11 |
+| Lean 4 library | 14,900+ lines across 70+ files |
+| Tests (TypeScript) | 1,336+ passing across 27+ files |
+| Tests (Lean `#eval`) | 18 suites, 186 assertions |
+| Proved theorems | **1,102** (zero sorry in built code) |
+| `lake build` | 69/69 jobs, 0 errors |
+| Veil DSL macros | `veil_action`, `veil_relation`, `veil_safety` |
+| DSL examples | 3 (NatCounter, TokenRing, BoundedQueue) |
+| DO model files | 16 + 7 Veil transition systems |
+| Formal spec properties | 8 (Specification.lean) |
+| External stubs | TypeScript compiler API, Node.js path/fs |
+| Self-hosting files | 3/11 compiling (IR_Types, DoModel_Ambient, verification) |
 
 ---
 
@@ -364,9 +428,10 @@ lake build    # 50/50 jobs, 933 theorems verified
 - **TypeScript Compiler API** (not Babel) — full type resolution, generic instantiation, type narrowing
 - **System Fω IR** with algebraic effect annotations — every node carries resolved type + effect
 - **`DOMonad σ α = StateT σ (ExceptT TSError IO)`** — canonical Durable Object monad stack
-- **AssocMap over Std.HashMap** — Batteries has 0 correctness theorems on `Std.HashMap`; we need provable maps
-- **No external Lean dependencies** — pure Lean 4.29 core (Std is merged into core since 4.x)
-- **Veil-inspired but standalone** — we implement the transition system pattern without depending on Veil's build (avoids Mathlib dependency chain)
+- **AssocMap over Std.HashMap** — our `AssocMap` carries a `Nodup` proof; `Std.HashMap` is opaque to the kernel
+- **No external Lean dependencies** — pure Lean 4.29 core. Batteries/Aesop/Mathlib all target v4.30+ and can't be mixed. We implement everything from scratch
+- **Veil-inspired but standalone** — our `TransitionSystem` typeclass is structurally identical to real Veil's `RelationalTransitionSystem` (same 5 fields), but without Mathlib/lean-smt/Z3/cvc5 dependency chain
+- **Mini DSL vs full Veil** — real Veil provides SMT-backed `#check_invariants`; our DSL provides macro-based `veil_action`/`veil_safety` + `nextN_preserves` combinators for manual but systematic proof
 
 ---
 
