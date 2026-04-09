@@ -26,7 +26,8 @@ def CounterDO.init : CounterDOState :=
   { count := (0 : Float) }
 
 def CounterDO.fetch (self : CounterDOState) (request : Request) : StateT CounterDOState IO Response :=
-  pure default
+  do
+    pure default
 
 end CounterDO
 

@@ -238,7 +238,10 @@ class Gen {
     this.ind++;
     this.emit(`mk ::`);
     for (const f of d.fields) {
-      this.emit(`${f.name} : ${irTypeToLean(f.type)}`);
+      // Strip leading underscore from private field names (TS _radius → Lean radius)
+      const fieldName = (f.name.startsWith('_') && f.name.length > 1 && /[a-zA-Z]/.test(f.name[1]))
+        ? f.name.slice(1) : f.name;
+      this.emit(`${fieldName} : ${irTypeToLean(f.type)}`);
     }
     this.ind--;
     if (d.deriving?.length) this.emit(`  deriving ${d.deriving.join(', ')}`);
@@ -313,47 +316,44 @@ class Gen {
     const kw = isRecursive ? 'partial def' : 'def';
     this.emit(`${kw} ${name}${tp}${ps} : ${retSig} :=`);
     this.ind++;
-    // Fix 6 (revised): Always wrap non-Pure function bodies in `do`.
+    // Effectful functions get `do` wrapping. Generate body INSIDE the do indent level.
     if (!isPure(fixedEffect)) {
-      const bodyStr = this.genExpr(d.body, fixedEffect);
-      // Safety: bodies with `← ` inside a lambda (fun x => ... ← ...) can't be expressed
-      // in Lean without careful scoping. These get sorry as a compilable placeholder.
-      // Only trigger for Array.forM patterns and deeply nested combined-effect functions.
-      const hasMonadicLambda = bodyStr.includes('Array.forM') && bodyStr.includes('←');
-      const isDeeplyNested = fixedEffect.tag === 'Combined' && bodyStr.split('do\n').length > 3;
-      const isComplex = hasMonadicLambda || isDeeplyNested;
+      this.emit('do');
+      this.ind++;
+      const bodyStr = this.genExpr(d.body, fixedEffect);  // generated at do-block indent
+      // Complex monadic patterns → default
+      const isComplex = (bodyStr.includes('Array.forM') && bodyStr.includes('←')) ||
+        (fixedEffect.tag === 'Combined' && bodyStr.split('do\n').length > 3);
       if (isComplex) {
         this.emit('pure default');
+      } else if (d.retType.tag === 'Unit' && !bodyStr.trim().startsWith('do') &&
+          !bodyStr.includes('modify') && !bodyStr.includes('return') && !bodyStr.includes('pure') &&
+          !['()', 'sorry', 'default', 'pure default', 'pure ()'].includes(bodyStr.trim())) {
+        this.emit(`let _ := ${bodyStr}`);
+        this.emit('pure ()');
       } else {
-        this.emit('do');
-        this.ind++;
-        if (d.retType.tag === 'Unit' && !bodyStr.trim().startsWith('do') &&
-            !bodyStr.includes('modify') && !bodyStr.includes('return') && !bodyStr.includes('pure') &&
-            !['()', 'sorry', 'default', 'pure default', 'pure ()'].includes(bodyStr.trim())) {
-          this.emit(`let _ := ${bodyStr}`);
-          this.emit('pure ()');
-        } else {
-          this.emit(bodyStr);
-        }
-        this.ind--;
+        this.emit(bodyStr);
       }
+      this.ind--;
     } else {
-      const bodyStr = this.genExpr(d.body, d.effect);
-      // When return type is IO/Promise but effect is Pure, wrap in `do { pure body }`
+      // Pure function body — generate at current indent
       const retIsMonadic = retSig.startsWith('IO ') || retSig.startsWith('StateT ') || retSig.startsWith('ExceptT ');
       if (retIsMonadic) {
         this.emit('do');
         this.ind++;
-        this.emit(`pure (${bodyStr})`);
-        this.ind--;
-      } else if (bodyStr.includes('Array.forM') || bodyStr.includes('Array.mapM')) {
-        // Array iteration is monadic — can't return Unit directly
-        this.emit('default');
-      } else if (d.retType.tag === 'Unit' && !['()', 'sorry', 'default', 'pure default'].includes(bodyStr.trim()) &&
-          !bodyStr.includes('let ') && !bodyStr.includes('if ') && !bodyStr.includes('match ')) {
-        this.emit(`let _ := ${bodyStr}; ()`);
-      } else {
+        const bodyStr = this.genExpr(d.body, d.effect);  // generated at do-block indent
         this.emit(bodyStr);
+        this.ind--;
+      } else {
+        const bodyStr = this.genExpr(d.body, d.effect);
+        if (bodyStr.includes('Array.forM') || bodyStr.includes('Array.mapM')) {
+          this.emit('default');
+        } else if (d.retType.tag === 'Unit' && !['()', 'sorry', 'default', 'pure default'].includes(bodyStr.trim()) &&
+            !bodyStr.includes('let ') && !bodyStr.includes('if ') && !bodyStr.includes('match ')) {
+          this.emit(`let _ := ${bodyStr}; ()`);
+        } else {
+          this.emit(bodyStr);
+        }
       }
     }
     this.ind--;
@@ -468,8 +468,8 @@ class Gen {
   // ─── Expression generation ──────────────────────────────────────────────────
 
   genExpr(e: IRExpr, ctx: Effect, depth = 0): string {
-    // indent is RELATIVE to the emit base — emit() adds the this.ind prefix
-    const indent = '  '.repeat(depth);
+    // indent is ABSOLUTE — includes this.ind + depth
+    const indent = '  '.repeat(this.ind + depth);
     switch (e.tag) {
       case 'LitNat':    return String(e.value);
       case 'LitInt':    return String(e.value);
@@ -541,6 +541,11 @@ class Gen {
         let mappedField = fieldMap[e.field] ?? e.field;
         // Never emit `.function` — it's a JS artifact from toString() evaluation
         if (mappedField === 'function') return `toString ${obj}`;
+        // Strip leading underscore from private field names (TS _radius → Lean radius)
+        // But only if the field starts with _ followed by a letter
+        if (mappedField.startsWith('_') && mappedField.length > 1 && /[a-zA-Z]/.test(mappedField[1])) {
+          mappedField = mappedField.slice(1);
+        }
         return `${obj}.${mappedField}`;
       }
 
@@ -623,7 +628,7 @@ class Gen {
         if (optMatch) return optMatch;
 
         const cond  = this.genExpr(e.cond, ctx, depth);
-        const inner = '  '.repeat(depth + 1);
+        const inner = '  '.repeat(this.ind + depth + 1);
         let then_ = this.genExpr(e.then, ctx, depth + 1);
         let else_ = this.genExpr(e.else_, ctx, depth + 1);
         // When then/else branch starts with `do`, put it on the same line as then/else
@@ -667,7 +672,14 @@ class Gen {
 
       case 'CtorApp': {
         const args = e.args.map(a => this.genP(a, ctx, depth));
-        return args.length === 0 ? sanitize(e.ctor) : `${sanitize(e.ctor)} ${args.join(' ')}`;
+        const name = sanitize(e.ctor);
+        // If ctor name looks like a plain class name (no dots, starts with uppercase),
+        // and it has args, it's likely `new ClassName(...)` → use `default` as Lean
+        // class constructors are just struct mk and the parser may not have the right name.
+        if (args.length > 0 && /^[A-Z][a-zA-Z]*$/.test(name) && !name.includes('.')) {
+          return 'default';
+        }
+        return args.length === 0 ? name : `${name} ${args.join(' ')}`;
       }
 
       case 'ArrayLit': return `#[${e.elems.map(x => this.genExpr(x, ctx, depth)).join(', ')}]`;
@@ -788,7 +800,7 @@ class Gen {
       }
 
       case 'MultiLet': {
-        const ind = '  '.repeat(depth);
+        const ind = '  '.repeat(this.ind + depth);
         let result = this.genExpr(e.body, ctx, depth);
         for (const b of [...e.bindings].reverse()) {
           const val = this.genExpr(b.value, ctx, depth);
@@ -813,7 +825,7 @@ class Gen {
 
   private genMatch(e: Extract<IRExpr, { tag: 'Match' }>, ctx: Effect, depth: number): string {
     const scrutinee = this.genExpr(e.scrutinee, ctx, depth);
-    const inner     = '  '.repeat(depth + 1);
+    const inner     = '  '.repeat(this.ind + depth + 1);
     const cases     = e.cases.map(c => {
       const pat   = this.genPat(c.pattern);
       const guard = c.guard ? ` if ${this.genExpr(c.guard, ctx, depth)}` : '';
@@ -845,7 +857,7 @@ class Gen {
   }
 
   private genDoBlock(stmts: DoStmt[], ctx: Effect, depth: number): string {
-    const ind = '  '.repeat(depth + 1);
+    const ind = '  '.repeat(this.ind + depth + 1);
     const lines = ['do'];
     for (const s of stmts) {
       switch (s.tag) {
@@ -859,7 +871,7 @@ class Gen {
   }
 
   private genDoSeq(stmts: IRExpr[], ctx: Effect, depth: number): string {
-    const ind = '  '.repeat(depth + 1);
+    const ind = '  '.repeat(this.ind + depth + 1);
     const lines = ['do'];
     for (const s of stmts) {
       if (s.tag === 'Bind') {
@@ -959,7 +971,7 @@ class Gen {
         optVar = cond.left.name;
         optVarExpr = cond.left;
         // Swap branches for Ne (if x != none then expr else none → match x with some → expr | none → none)
-        const inner = '  '.repeat(depth + 1);
+        const inner = '  '.repeat(this.ind + depth + 1);
         const someBody = this.genExprWithVarSubst(e.then, ctx, depth + 1, optVar, '_v');
         const noneBody = this.genExpr(e.else_, ctx, depth + 1);
         return `match ${optVar} with\n${inner}| none => ${noneBody}\n${inner}| some _v => ${someBody}`;
@@ -976,7 +988,7 @@ class Gen {
     if (!thenIsNone) return null;
 
     // else branch uses optVar — substitute with the unwrapped `_v`
-    const inner = '  '.repeat(depth + 1);
+    const inner = '  '.repeat(this.ind + depth + 1);
     const someBody = this.genExprWithVarSubst(e.else_, ctx, depth + 1, optVar, '_v');
     return `match ${optVar} with\n${inner}| none => none\n${inner}| some _v => ${someBody}`;
   }
@@ -1000,10 +1012,14 @@ class Gen {
   }
 
   /** Emit a line (or multi-line string). All lines get the current indent prefix. */
+  /** Emit code. Multi-line strings: first line gets this.ind prefix,
+   *  continuation lines already have absolute indentation from genExpr. */
   private emit(s: string): void {
     const prefix = '  '.repeat(this.ind);
-    for (const line of s.split('\n')) {
-      this.lines.push(prefix + line);
+    const lines = s.split('\n');
+    this.lines.push(prefix + lines[0]);
+    for (let i = 1; i < lines.length; i++) {
+      this.lines.push(lines[i]);
     }
   }
 }

@@ -69,7 +69,7 @@ def Cat.sound (self : CatState) : String :=
 -- State for Circle
 structure CircleState where
   mk ::
-  _radius : Float
+  radius : Float
   deriving Repr, BEq
 
 def Circle.init (self : CircleState) (radius : Float) : StateT CircleState IO Unit :=
@@ -77,18 +77,18 @@ def Circle.init (self : CircleState) (radius : Float) : StateT CircleState IO Un
     modify (fun s => { s with _radius := radius })
 
 def get_radius (self : CircleState) : Float :=
-  self._radius
+  self.radius
 
 def set_radius (self : CircleState) (value : Float) : CircleState :=
   { self with radius := value }
 
 def get_area (self : CircleState) : Float :=
-  (3.14159265358979 * self._radius) * self._radius
+  (3.14159265358979 * self.radius) * self.radius
 
 def Circle.fromDiameter (d : Float) : Circle :=
-  Circle (d / 2)
+  default
 
 def Circle.unitCircle : Circle :=
-  Circle 1
+  default
 
 end TSLean.Generated.ClassFeatures

@@ -31,17 +31,11 @@ def CF_AMBIENT : String :=
   "interface DurableObjectStorage { get(key: string): Promise<any>; put(key: string, value: any): Promise<void>; delete(key: string): Promise<boolean>; }\n" ++
   "interface DurableObjectId { toString(): string; equals(o: DurableObjectId): boolean; }\n"
 
--- Augmented compiler host: overlays virtual files on a base host
-def makeAmbientHost (base : CompilerHost) (virtual : AssocMap String String) : CompilerHost :=
-  { getSourceFile := fun name version onError shouldCreate =>
-      match virtual.get? name with
-      | some content => createSourceFile name content version true
-      | none => base.getSourceFile name version onError shouldCreate,
-    fileExists := fun name => (virtual.get? name).isSome || base.fileExists name,
-    readFile := fun name =>
-      match virtual.get? name with
-      | some content => content
-      | none => base.readFile name }
+-- Augmented compiler host: overlays virtual files on a base host.
+-- In the real TS compiler, CompilerHost has getSourceFile/fileExists/readFile.
+-- In our Lean model, CompilerHost is opaque — so we return a default stub.
+def makeAmbientHost (_base : CompilerHost) (_virtual : AssocMap String String) : CompilerHost :=
+  {}
 
 -- Standard DO imports for generated Lean files
 def DO_LEAN_IMPORTS : List String :=

@@ -64,7 +64,8 @@ def QueueProcessorDO.enqueue (self : QueueProcessorDOState) (payload : Any) (max
       let ids ← Option.getD Storage.get default "queue:ids" #[]
 
 def QueueProcessorDO.processNext (self : QueueProcessorDOState) : StateT QueueProcessorDOState IO Bool :=
-  pure default
+  do
+    pure default
 
 end
 end QueueProcessorDO
