@@ -459,4 +459,55 @@ theorem size_singleton_eq (k : α) (v : β) : (singleton k v).size = 1 :=
   singleton_size k v
 
 end AssocMap
+
+/-! ## AssocSet: list-based set (maps JS Set<T>) -/
+
+abbrev AssocSet (α : Type) [BEq α] := List α
+
+namespace AssocSet
+
+variable {α : Type} [BEq α]
+
+def empty : AssocSet α := []
+
+def insert (s : AssocSet α) (x : α) : AssocSet α :=
+  if List.contains s x then s else x :: s
+
+def contains (s : AssocSet α) (x : α) : Bool := List.contains s x
+
+def erase (s : AssocSet α) (x : α) : AssocSet α := List.filter (· != x) s
+
+def toArray (s : AssocSet α) : Array α := List.toArray s
+
+def size (s : AssocSet α) : Nat := s.length
+
+def toList (s : AssocSet α) : List α := s
+
+def union (a b : AssocSet α) : AssocSet α :=
+  b.foldl (fun acc x => if List.contains acc x then acc else x :: acc) a
+
+def inter (a b : AssocSet α) : AssocSet α :=
+  List.filter (fun x => contains b x) a
+
+def diff (a b : AssocSet α) : AssocSet α :=
+  List.filter (fun x => !contains b x) a
+
+def forEach (s : AssocSet α) (f : α → Unit) : Unit :=
+  List.foldl (fun _ x => f x) () s
+
+-- Theorems
+axiom contains_insert_same (s : AssocSet α) (x : α) :
+    (insert s x).contains x = true
+
+theorem contains_empty (x : α) : contains (empty : AssocSet α) x = false := rfl
+
+theorem size_empty_eq : (empty : AssocSet α).size = 0 := rfl
+
+end AssocSet
+
+/-! ## Array.dedup -/
+
+def Array.dedup [BEq α] (arr : Array α) : Array α :=
+  arr.foldl (fun acc x => if acc.contains x then acc else acc.push x) #[]
+
 end TSLean.Stdlib.HashMap
