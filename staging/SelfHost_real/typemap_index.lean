@@ -19,9 +19,9 @@ def TS_ANON_TYPE : String := "__type"
 def DISCRIMINANT_FIELDS : Array String := #["kind", "type", "tag", "ok", "hasValue", "_type"]
 
 /-- Map a TypeScript compiler type to an IR type. Handles primitives, unions, intersections, arrays, tuples, object types, generic references, conditional types, and branded newtypes. -/
-partial def mapType (t : Type) (checker : Any) (depth : Float := 0) : Any :=
+partial def mapType (t : Type) (checker : String) (depth : Float := 0) : IRType :=
   if depth > MAX_TYPE_DEPTH then
-    default /- cross-file: TyRef -/
+    TyRef "TSAny"
   else
     let f : TypeFlags := t.flags
     if f &&& ts.TypeFlags.String then
@@ -34,10 +34,10 @@ partial def mapType (t : Type) (checker : Any) (depth : Float := 0) : Any :=
           TyBool
         else
           if f &&& ts.TypeFlags.Undefined then
-            default /- cross-file: TyOption -/
+            TyOption TyUnit
           else
             if f &&& ts.TypeFlags.Null then
-              default /- cross-file: TyOption -/
+              TyOption TyUnit
             else
               if f &&& ts.TypeFlags.Void then
                 TyUnit
@@ -46,10 +46,10 @@ partial def mapType (t : Type) (checker : Any) (depth : Float := 0) : Any :=
                   TyNever
                 else
                   if f &&& ts.TypeFlags.Any then
-                    default /- cross-file: TyRef -/
+                    TyRef "TSAny"
                   else
                     if f &&& ts.TypeFlags.Unknown then
-                      default /- cross-file: TyRef -/
+                      TyRef "TSAny"
                     else
                       if f &&& ts.TypeFlags.BigInt then
                         TyInt
@@ -64,7 +64,7 @@ partial def mapType (t : Type) (checker : Any) (depth : Float := 0) : Any :=
                               TyBool
                             else
                               if f &&& ts.TypeFlags.TypeParameter then
-                                default /- cross-file: TyVar -/
+                                TyVar (Option.getD (t.symbol.bind (fun _oc => some _oc.name)) FALLBACK_TYPE_VAR)
                               else
                                 if t.isUnion then
                                   mapUnion t checker depth
@@ -74,11 +74,14 @@ partial def mapType (t : Type) (checker : Any) (depth : Float := 0) : Any :=
                                   else
                                     if checker.isArrayType t then
                                       let elem : Type := (checker.getTypeArguments t).getD 0 default
-                                      default /- cross-file: TyArray -/
+                                      TyArray (if elem then
+                                        default /- cross-file: mapType -/
+                                      else
+                                        TyRef "TSAny")
                                     else
                                       if checker.isTupleType t then
                                         let args : Array Type := checker.getTypeArguments t
-                                        default /- cross-file: TyTuple -/
+                                        TyTuple (Array.map (fun a => default /- cross-file: mapType -/) args)
                                       else
                                         if f &&& ts.TypeFlags.Object then
                                           mapObject t checker depth
@@ -86,24 +89,24 @@ partial def mapType (t : Type) (checker : Any) (depth : Float := 0) : Any :=
                                           if f &&& ts.TypeFlags.Conditional then
                                             let c : ConditionalType := t
                                             let resolved : Option Type := default
-                                            mapType (Option.getD resolved c.checkType) checker (depth + 1)
+                                            default /- cross-file: mapType -/
                                           else
                                             if f &&& ts.TypeFlags.Index then
                                               TyString
                                             else
-                                              default /- cross-file: TyRef -/
+                                              TyRef (checker.typeToString t)
 
 -- // ─── Union types ────────────────────────────────────────────────────────────────
-def mapUnion (t : UnionType) (checker : Any) (depth : Float) : Any :=
+def mapUnion (t : UnionType) (checker : String) (depth : Float) : IRType :=
   let types : Array Type := t.types
   let withoutNil : Array Type := Array.filter types (fun x => !(x.flags &&& (ts.TypeFlags.Undefined ||| ts.TypeFlags.Null)))
   if (withoutNil.size == 1) && (withoutNil.size < types.size) then
-    default /- cross-file: TyOption -/
+    TyOption (default /- cross-file: mapType -/)
   else
     if types.all (fun x => x.flags &&& ts.TypeFlags.StringLiteral) then
       let alias : Option String := getAliasName t
       if alias then
-        default /- cross-file: TyRef -/
+        TyRef alias
       else
         TyString
     else
@@ -114,23 +117,23 @@ def mapUnion (t : UnionType) (checker : Any) (depth : Float) : Any :=
         if alias then
           let aliasArgs : Option (Array Type) := default
           if aliasArgs && (aliasArgs.size > 0) then
-            default /- cross-file: TyRef -/
+            TyRef alias (Array.map (fun a => default /- cross-file: mapType -/) aliasArgs)
           else
-            default /- cross-file: TyRef -/
+            TyRef alias
         else
           if withoutNil.size > 0 then
-            mapType withoutNil.getD 0 default checker (depth + 1)
+            default /- cross-file: mapType -/
           else
-            default /- cross-file: TyRef -/
+            TyRef "TSAny"
 
 -- // ─── Intersection types ─────────────────────────────────────────────────────────
-def mapIntersection (t : IntersectionType) (checker : Any) (depth : Float) : Any :=
+def mapIntersection (t : IntersectionType) (checker : String) (depth : Float) : IRType :=
   let base : Option Type := t.types.find? (fun x => x.flags &&& (ts.TypeFlags.String ||| ts.TypeFlags.Number))
   let brand : Option Type := t.types.find? (fun x => (x.flags &&& ts.TypeFlags.Object) && (x.getProperties.any (fun p => (p.name.startsWith "__brand") || (p.name.startsWith "_brand"))))
   if base && brand then
     let alias : Option String := getAliasName t
     if alias then
-      default /- cross-file: TyRef -/
+      TyRef alias
     else
       if base.flags &&& ts.TypeFlags.String then
         TyString
@@ -139,80 +142,80 @@ def mapIntersection (t : IntersectionType) (checker : Any) (depth : Float) : Any
   else
     let alias : Option String := getAliasName t
     if alias then
-      default /- cross-file: TyRef -/
+      TyRef alias
     else
       let concrete : Option Type := t.types.find? (fun x => (!(x.flags &&& ts.TypeFlags.Object)) || (x.getProperties.size > 0))
       if concrete then
-        mapType concrete checker (depth + 1)
+        default /- cross-file: mapType -/
       else
-        default /- cross-file: TyRef -/
+        TyRef "TSAny"
 
 -- // ─── Object types ───────────────────────────────────────────────────────────────
-def mapObject (t : ObjectType) (checker : Any) (depth : Float) : Any :=
+def mapObject (t : ObjectType) (checker : String) (depth : Float) : IRType :=
   if t.objectFlags &&& ts.ObjectFlags.Reference then
     mapTypeRef t checker depth
   else
     let sym : Symbol := t.symbol
     if !sym then
-      default /- cross-file: TyRef -/
+      TyRef "TSAny"
     else
       let calls : Array Signature := checker.getSignaturesOfType t ts.SignatureKind.Call
       if calls.size > 0 then
         let sig : Signature := calls.getD 0 default
-        let params : Array Any := Array.map (fun p =>
+        let params : Array IRType := Array.map (fun p =>
           let pt : Type := checker.getTypeOfSymbolAtLocation p (Option.getD p.valueDeclaration (Array.get? p.declarations 0))
-          mapType pt checker (depth + 1)) (sig.getParameters)
-        default /- cross-file: TyFn -/
+          default /- cross-file: mapType -/) (sig.getParameters)
+        TyFn params (default /- cross-file: mapType -/) Pure
       else
         let name : String := sym.name
         if name == TS_ANON_TYPE then
-          default /- cross-file: TyRef -/
+          TyRef "String"
         else
           if (name == "Error") || (name.endsWith "Error") then
             TyString
           else
-            default /- cross-file: TyRef -/
+            TyRef name
 
 -- // ─── Generic type references ────────────────────────────────────────────────────
-def mapTypeRef (t : TypeReference) (checker : Any) (depth : Float) : Any :=
+def mapTypeRef (t : TypeReference) (checker : String) (depth : Float) : IRType :=
   let name : String := Option.getD (t.target.symbol.bind (fun _oc => some _oc.name)) ""
   let args : Array Type := checker.getTypeArguments t
-  let map1 : Unit → Any := fun _ =>
+  let map1 : Unit → IRType := fun _ =>
     if args.getD 0 default then
-      mapType args.getD 0 default checker (depth + 1)
+      default /- cross-file: mapType -/
     else
-      default /- cross-file: TyRef -/
-  let map2 : Float → Any := fun i =>
+      TyRef "TSAny"
+  let map2 : Float → IRType := fun i =>
     if args.getD i default then
-      mapType args.getD i default checker (depth + 1)
+      default /- cross-file: mapType -/
     else
-      default /- cross-file: TyRef -/
+      TyRef "TSAny"
   match name with
-    | "Array" => default /- cross-file: TyArray -/
-    | "ReadonlyArray" => default /- cross-file: TyArray -/
-    | "Map" => default /- cross-file: TyMap -/
-    | "WeakMap" => default /- cross-file: TyMap -/
-    | "Set" => default /- cross-file: TySet -/
-    | "WeakSet" => default /- cross-file: TySet -/
-    | "Promise" => default /- cross-file: TyPromise -/
-    | "Record" => default /- cross-file: TyMap -/
-    | "Readonly" => default /- cross-file: map1 -/
-    | "NonNullable" => default /- cross-file: map1 -/
+    | "Array" => TyArray (map1)
+    | "ReadonlyArray" => TyArray (map1)
+    | "Map" => TyMap (map1) (map2 1)
+    | "WeakMap" => TyMap (map1) (map2 1)
+    | "Set" => TySet (map1)
+    | "WeakSet" => TySet (map1)
+    | "Promise" => TyPromise (map1)
+    | "Record" => TyMap (map1) (map2 1)
+    | "Readonly" => map1
+    | "NonNullable" => map1
     | _ => if args.size == 0 then
-      default /- cross-file: TyRef -/
+      TyRef name
     else
-      default /- cross-file: TyRef -/
+      TyRef name (Array.map (fun a => default /- cross-file: mapType -/) args)
 
 /-- Convert an IR type to its Lean 4 syntax string. -/
-def irTypeToLean (t : Any) (parens : Bool := false) : String :=
+def irTypeToLean (t : IRType) (parens : Bool := false) : String :=
   let s : String := typeStr t
   if parens && (s.includes " ") then
     s!"({s})"
   else
     s
 
-partial def typeStr (t : Any) : String :=
-  match default with
+partial def typeStr (t : IRType) : String :=
+  match t.tag with
     | "Nat" => "Nat"
     | "Int" => "Int"
     | "Float" => "Float"
@@ -220,8 +223,8 @@ partial def typeStr (t : Any) : String :=
     | "Bool" => "Bool"
     | "Unit" => "Unit"
     | "Never" => "Empty"
-    | "Option" => "Option " ++ (irTypeToLean default true)
-    | "Array" => "Array " ++ (irTypeToLean default true)
+    | "Option" => "Option " ++ (default /- cross-file: irTypeToLean -/)
+    | "Array" => "Array " ++ (default /- cross-file: irTypeToLean -/)
     | "Tuple" => if default.size == 0 then
       "Unit"
     else
@@ -229,24 +232,24 @@ partial def typeStr (t : Any) : String :=
     | "Function" => let paramStr : String := if default.size == 0 then
       "Unit"
     else
-      String.intercalate " → " (Array.map (fun p => irTypeToLean p true) default)
+      String.intercalate " → " (Array.map (fun p => default /- cross-file: irTypeToLean -/) default)
     (s!"{paramStr} → ") ++ (typeStr default)
-    | "Map" => (("AssocMap " ++ (irTypeToLean default true)) ++ " ") ++ (irTypeToLean default true)
-    | "Set" => "AssocSet " ++ (irTypeToLean default true)
-    | "Promise" => let inner : Any := default
-    if default == "Promise" then
-      "IO " ++ (irTypeToLean default true)
+    | "Map" => (("AssocMap " ++ (default /- cross-file: irTypeToLean -/)) ++ " ") ++ (default /- cross-file: irTypeToLean -/)
+    | "Set" => "Array " ++ (default /- cross-file: irTypeToLean -/)
+    | "Promise" => let inner : IRType := default
+    if inner.tag == "Promise" then
+      "IO " ++ (default /- cross-file: irTypeToLean -/)
     else
-      "IO " ++ (irTypeToLean inner true)
-    | "Result" => (("Except " ++ (irTypeToLean default true)) ++ " ") ++ (irTypeToLean default true)
-    | "TypeRef" => let tsOnlyTypes : AssocSet String := AssocSet.empty
+      "IO " ++ (default /- cross-file: irTypeToLean -/)
+    | "Result" => (("Except " ++ (default /- cross-file: irTypeToLean -/)) ++ " ") ++ (default /- cross-file: irTypeToLean -/)
+    | "TypeRef" => let tsOnlyTypes : Array String := #[]
     if AssocMap.contains tsOnlyTypes default then
-      "Any"
+      "TSAny"
     else
       if default.size == 0 then
         default
       else
-        (s!"{default} ") ++ (String.intercalate " " (Array.map (fun a => irTypeToLean a true) default))
+        (s!"{default} ") ++ (String.intercalate " " (Array.map (fun a => default /- cross-file: irTypeToLean -/) default))
     | "TypeVar" => default
     | "Structure" => default
     | "Inductive" => default
@@ -256,20 +259,20 @@ partial def typeStr (t : Any) : String :=
       "Prop"
     else
       s!"Type {default}"
-    | _ => "Any"
+    | _ => "TSAny"
 
 -- // ─── Struct field extraction ────────────────────────────────────────────────────
 -- A single field extracted from a TypeScript interface or class declaration.
 structure StructField where
   mk ::
   name : String
-  type : Any
+  type : IRType
   optional : Bool
   mutable : Bool
   deriving Repr, BEq, Inhabited
 
 /-- Extract struct fields from a TypeScript interface or class declaration. Handles optional fields (`?`), readonly modifiers, and resolves types via the type checker. -/
-def extractStructFields (node : Any) (checker : Any) : Array StructField :=
+def extractStructFields (node : String) (checker : String) : Array StructField :=
   default
 
 -- // ─── Discriminated union detection ──────────────────────────────────────────────
@@ -281,14 +284,14 @@ structure DiscriminantInfo where
   deriving Repr, BEq, Inhabited
 
 /-- Detect whether a TypeScript union type is a discriminated union. Checks each known discriminant field name in priority order.  Returns the first field for which every union member has a unique string literal value. -/
-def detectDiscriminatedUnion (t : UnionType) (checker : Any) : Option DiscriminantInfo :=
+def detectDiscriminatedUnion (t : UnionType) (checker : String) : Option DiscriminantInfo :=
   default
 
-def tryField (types : Array ObjectType) (field : String) (checker : Any) : Option DiscriminantInfo :=
+def tryField (types : Array ObjectType) (field : String) (checker : String) : Option DiscriminantInfo :=
   default
 
 /-- Extract type parameter names from a TypeScript declaration. -/
-def extractTypeParams (node : Any) : Array String :=
+def extractTypeParams (node : String) : Array String :=
   Array.map (fun tp => tp.name.text) (Option.getD node.typeParameters #[])
 
 /-- Access the `aliasSymbol.name` on a TypeScript type. This property is not in the public TS API typings but is stable across TypeScript versions (4.x–5.x).  It gives the user-defined alias name for union and intersection types. -/

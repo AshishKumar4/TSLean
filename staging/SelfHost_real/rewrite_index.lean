@@ -12,7 +12,7 @@ open TSLean TSLean.Stdlib.HashMap
 namespace TSLean.Generated.Index
 
 /-- Apply all rewrite transformations to a parsed IR module. 1. Collects union metadata from `InductiveDef` declarations. 2. Rewrites `Match` nodes that scrutinise discriminant fields. 3. Substitutes `s.field` references with pattern-bound variables. -/
-def rewriteModule (mod : Any) : Any :=
+def rewriteModule (mod : IRModule) : IRModule :=
   default
 
 -- // ─── Union registry ─────────────────────────────────────────────────────────────
@@ -31,7 +31,7 @@ structure VariantInfo where
   fields : Array String
   deriving Repr, BEq, Inhabited
 
-def DISCRIMINANT_FIELDS : AssocSet String := AssocSet.empty
+def DISCRIMINANT_FIELDS : Array String := #[]
 
 -- State for RewriteCtx
 structure RewriteCtxState where
@@ -39,19 +39,19 @@ structure RewriteCtxState where
   unions : AssocMap String UnionInfo
   deriving Repr, BEq, Inhabited
 
-def RewriteCtx.collectUnionInfo (self : RewriteCtxState) (d : Any) : Unit :=
+def RewriteCtx.collectUnionInfo (self : RewriteCtxState) (d : IRDecl) : Unit :=
   default
 
-def RewriteCtx.rewriteDecl (self : RewriteCtxState) (d : Any) : Any :=
-  match default with
+def RewriteCtx.rewriteDecl (self : RewriteCtxState) (d : IRDecl) : IRDecl :=
+  match d.tag with
     | "FuncDef" => { d with body := rewrite self default }
     | "Namespace" => { d with decls := Array.map (fun x => rewriteDecl self x) default }
     | "VarDecl" => { d with value := rewrite self default }
     | "InstanceDef" => { d with methods := Array.map (fun x => rewriteDecl self x) default }
     | _ => d
 
-def RewriteCtx.rewrite (self : RewriteCtxState) (e : Any) : Any :=
-  match default with
+def RewriteCtx.rewrite (self : RewriteCtxState) (e : IRExpr) : IRExpr :=
+  match e.tag with
     | "Match" => rewriteMatch self e
     | "StructLit" => Option.getD (rewriteStructLit self e) (rewriteFields self e)
     | "IfThenElse" => { e with cond := rewrite self default, then := rewrite self default, else_ := rewrite self default }
@@ -79,43 +79,43 @@ def RewriteCtx.rewrite (self : RewriteCtxState) (e : Any) : Any :=
     | "StructUpdate" => { e with base := rewrite self default, fields := default }
     | _ => e
 
-def RewriteCtx.rewriteDoStmt (self : RewriteCtxState) (s : Any) : Any :=
-  match default with
+def RewriteCtx.rewriteDoStmt (self : RewriteCtxState) (s : DoStmt) : DoStmt :=
+  match s.tag with
     | "DoBind" => { s with expr := rewrite self default }
     | "DoLet" => { s with value := rewrite self default }
     | "DoExpr" => { s with expr := rewrite self default }
     | "DoReturn" => { s with value := rewrite self default }
 
-def RewriteCtx.rewriteMatch (self : RewriteCtxState) (e : String) : Any :=
+def RewriteCtx.rewriteMatch (self : RewriteCtxState) (e : String) : IRExpr :=
   let disc : Option String := detectDiscriminant self default
   if !(disc.bind (fun _oc => _oc.union)) then
     { e with scrutinee := rewrite self default, cases := Array.map (fun c => rewriteCase self c) default }
   else
-    let obj : Any := default
+    let obj : IRExpr := default
     let union : UnionInfo := default
-    let scrutineeName : Option String := if default == "Var" then
+    let scrutineeName : Option String := if obj.tag == "Var" then
       default
     else
       none
-    let newCases : Array Any := Array.map (fun c => rewriteDiscCase self c union scrutineeName) default
+    let newCases : Array IRCase := Array.map (fun c => rewriteDiscCase self c union scrutineeName) default
     { e with scrutinee := rewrite self obj, cases := newCases }
 
-def RewriteCtx.detectDiscriminant (self : RewriteCtxState) (scrutinee : Any) : StateT RewriteCtxState IO (Option String) :=
+def RewriteCtx.detectDiscriminant (self : RewriteCtxState) (scrutinee : IRExpr) : StateT RewriteCtxState IO (Option String) :=
   do
-    if default != "FieldAccess" then
+    if scrutinee.tag != "FieldAccess" then
       pure none
     else
       if !(AssocMap.contains DISCRIMINANT_FIELDS default) then
         pure none
       else
-        let obj : Any := default
+        let obj : IRExpr := default
         let field : String := default
         let union : Option UnionInfo := none
         do
-          if default == "TypeRef" then
+          if obj.type.tag == "TypeRef" then
             let union := Option.getD (AssocMap.find? self.unions default) none
           else do
-              if default == "Inductive" then
+              if obj.type.tag == "Inductive" then
                 let union := Option.getD (AssocMap.find? self.unions default) none
               else do
                   if union then
@@ -130,9 +130,9 @@ def RewriteCtx.detectDiscriminant (self : RewriteCtxState) (scrutinee : Any) : S
                       else
                         pure { obj := obj, field := field, union := union }
 
-def RewriteCtx.rewriteDiscCase (self : RewriteCtxState) (c : Any) (union : UnionInfo) (scrutineeName : Option String) : Any :=
-  let p : Any := default
-  let key : Option String := if default == "PString" then
+def RewriteCtx.rewriteDiscCase (self : RewriteCtxState) (c : IRCase) (union : UnionInfo) (scrutineeName : Option String) : IRCase :=
+  let p : IRPattern := c.pattern
+  let key : Option String := if p.tag == "PString" then
     default
   else
     if (default == "PLit") && ((TSLean.typeOf default) == "string") then
@@ -145,24 +145,24 @@ def RewriteCtx.rewriteDiscCase (self : RewriteCtxState) (c : Any) (union : Union
     if info then
       let args : Array __object := Array.map (fun f => { tag := "PVar", name := f }) info.fields
       let subst : AssocMap String String := AssocMap.empty
-      let rewrittenBody : Any := match scrutineeName with
-        | none => rewrite self default
-        | some _v => substituteFieldAccesses (rewrite self default) _v subst
+      let rewrittenBody : IRExpr := match scrutineeName with
+        | none => rewrite self c.body
+        | some _v => substituteFieldAccesses (rewrite self c.body) _v subst
       { pattern := default, body := rewrittenBody }
     else
       ()
   rewriteCase self c
 
-def RewriteCtx.rewriteCase (self : RewriteCtxState) (c : Any) : Any :=
-  { c with guard := if default then
-    rewrite self default
+def RewriteCtx.rewriteCase (self : RewriteCtxState) (c : IRCase) : IRCase :=
+  { c with guard := if c.guard then
+    rewrite self c.guard
   else
-    none, body := rewrite self default }
+    none, body := rewrite self c.body }
 
 def RewriteCtx.rewriteStructLit (self : RewriteCtxState) (e : String) : String :=
   default
 
-def RewriteCtx.rewriteFields (self : RewriteCtxState) (e : String) : Any :=
+def RewriteCtx.rewriteFields (self : RewriteCtxState) (e : String) : IRExpr :=
   { e with fields := default }
 
 -- // ─── Field access substitution ──────────────────────────────────────────────────
@@ -170,7 +170,7 @@ def RewriteCtx.rewriteFields (self : RewriteCtxState) (e : String) : Any :=
 -- // After `match s with | .Circle radius => ...`, the variable `s` is bound to
 -- // the inductive value — it no longer has structure field accessors.  We
 -- // substitute `s.radius` → `radius` using the pattern-bound variable name.
-def substituteFieldAccesses (expr : Any) (scrutineeName : String) (subst : AssocMap String String) : Any :=
-  default /- cross-file: go -/
+def substituteFieldAccesses (expr : IRExpr) (scrutineeName : String) (subst : AssocMap String String) : IRExpr :=
+  go expr
 
 end TSLean.Generated.Index

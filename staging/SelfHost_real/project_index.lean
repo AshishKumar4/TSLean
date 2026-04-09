@@ -26,7 +26,7 @@ structure ProjectResult where
   errors : Array String
   deriving Repr, BEq, Inhabited
 
-def transpileProject (opts : ProjectOpts) : StateT Unit IO Any :=
+def transpileProject (opts : ProjectOpts) : StateT Unit IO ProjectResult :=
   do
     let projectDir : String := opts.projectDir
     let outputDir : String := opts.outputDir
@@ -43,9 +43,9 @@ def transpileProject (opts : ProjectOpts) : StateT Unit IO Any :=
         let errors : Array String := #[]
         do
           let _ := Array.forM tsFiles (fun f => do
-            tryCatch (let src : Any := default
-            let mod : Any := default /- cross-file: parseFile -/
-            let rw : Any := default /- cross-file: rewriteModule -/
+            tryCatch (let src : String := default
+            let mod : IRModule := default /- cross-file: parseFile -/
+            let rw : IRModule := default /- cross-file: rewriteModule -/
             let code : String := default /- cross-file: generateLean -/
             do
               let _ := if verify then
@@ -62,30 +62,30 @@ def transpileProject (opts : ProjectOpts) : StateT Unit IO Any :=
                 Array.push results { tsFile := f, leanFile := lf, content := code }) (fun err => Array.push errors (s!"{f}: {default}")))
           return { files := results, errors := errors }
 
-def writeProjectOutputs (result : Any) : Unit :=
+def writeProjectOutputs (result : ProjectResult) : Unit :=
   default
 
-def IGNORED : AssocSet String := AssocSet.empty
+def IGNORED : Array String := #[]
 
 partial def discoverTs (dir : String) : Array String :=
   default
 
 -- // ─── Import resolution ────────────────────────────────────────────────────────
-def fixImports (mod : Any) (tsFile : String) (rootDir : String) (rootNS : String) : Any :=
-  let fixed : Array Any := Array.map (fun imp =>
-    if (default.startsWith "TSLean.") || (default.startsWith "Lean") then
+def fixImports (mod : IRModule) (tsFile : String) (rootDir : String) (rootNS : String) : IRModule :=
+  let fixed : Array IRImport := Array.map (fun imp =>
+    if (imp.module.startsWith "TSLean.") || (imp.module.startsWith "Lean") then
       imp
     else
-      { imp with module := relToLean default tsFile rootDir rootNS }) default
+      { imp with module := relToLean imp.module tsFile rootDir rootNS }) mod.imports
   { mod with imports := fixed }
 
 def relToLean (spec : String) (fromFile : String) (rootDir : String) (rootNS : String) : String :=
-  let resolved : Option String := resolveSpec spec fromFile
+  let resolved : Option String := default /- cross-file: resolveSpec -/
   if !resolved then
-    specToLean spec rootNS
+    default /- cross-file: specToLean -/
   else
-    let rel : Any := default
-    let parts : Any := default
+    let rel : String := default
+    let parts : String := default
     (s!"{rootNS}.") ++ (default)
 
 def resolveSpec (spec : String) (fromFile : String) : Option String :=
@@ -97,13 +97,13 @@ def specToLean (spec : String) (rootNS : String) : String :=
 
 -- // ─── Path helpers ─────────────────────────────────────────────────────────────
 def toLeanPath (tsFile : String) (projectDir : String) (outputDir : String) (rootNS : String := "TSLean.Generated") : String :=
-  let rel : Any := default
-  let parts : Any := default
+  let rel : String := default
+  let parts : String := default
   (default) + ".lean"
 
 def toModuleName (tsFile : String) (projectDir : String) (rootNS : String := "TSLean.Generated") : String :=
-  let rel : Any := default
-  let parts : Any := default
+  let rel : String := default
+  let parts : String := default
   (s!"{rootNS}.") ++ (default)
 
 def cap (s : String) : String :=

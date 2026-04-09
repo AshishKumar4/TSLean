@@ -56,14 +56,14 @@ def single (opts : Args) : StateT Unit IO Unit :=
           default
           default
       else
-        tryCatch (let src : Any := default
-        let mod : Any := default /- cross-file: parseFile -/
-        let rw : Any := default /- cross-file: rewriteModule -/
+        tryCatch (let src : String := default
+        let mod : IRModule := default /- cross-file: parseFile -/
+        let rw : IRModule := default /- cross-file: rewriteModule -/
         let code : String := default /- cross-file: generateLean -/
         do
           if verify then
             let leanCode : String := default /- cross-file: generateVerification -/.leanCode
-            let obligations : Array Any := default /- cross-file: generateVerification -/.obligations
+            let obligations : Array ProofObligation := default /- cross-file: generateVerification -/.obligations
             do
               if leanCode then
                 let code := s!"{code}

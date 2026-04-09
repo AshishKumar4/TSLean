@@ -12,56 +12,56 @@ namespace TSLean.Generated.Index
 
 def IO_TRIGGERING_PREFIXES : (String × String × String × String) := ("console.", "Date.", "Math.random", "crypto.")
 
-def IO_TRIGGERING_CALLS : AssocSet String := AssocSet.empty
+def IO_TRIGGERING_CALLS : Array String := #[]
 
 def PURE_MONAD : String := "Id"
 
 def FALLBACK_ERROR_TYPE : String := "TSError"
 
 /-- Infer the algebraic effect of a TypeScript AST node. For function-like nodes, analyses the body directly (skipping the outer signature) so that nested-function guards don't suppress the top level. -/
-def inferNodeEffect (node : Any) (checker : Any) : Any :=
-  let target : Any := Option.getD (getFunctionBody node) node
-  let effects : Array Any := #[]
+def inferNodeEffect (node : String) (checker : String) : Effect :=
+  let target : String := Option.getD (getFunctionBody node) node
+  let effects : Array Effect := #[]
   if bodyContainsAwait target then
     Array.push effects Async
   else
     ()
   if bodyContainsThrow target then
-    Array.push effects (default /- cross-file: exceptEffect -/)
+    Array.push effects (exceptEffect TyString)
   else
     ()
   if bodyContainsMutation target then
-    Array.push effects (default /- cross-file: stateEffect -/)
+    Array.push effects (stateEffect TyUnit)
   else
     ()
   if bodyContainsIO target then
     Array.push effects IO
   else
     ()
-  default /- cross-file: combineEffects -/
+  combineEffects effects
 
 /-- Convert an Effect to its Lean 4 monad string representation. The monad transformer stack is built right-to-left: ``` ['StateT S', 'ExceptT E', 'IO'] → 'ExceptT E IO'             (fold step 1) → 'StateT S (ExceptT E IO)'  (fold step 2) ``` -/
-def monadString (effect : Any) (stateTypeName : String := "σ") : String :=
-  match default with
+def monadString (effect : Effect) (stateTypeName : String := "σ") : String :=
+  match effect.tag with
     | "Pure" => PURE_MONAD
     | "IO" => "IO"
     | "Async" => "IO"
     | "State" => ("StateT " ++ (leanTypeName default)) ++ " IO"
     | "Except" => ("ExceptT " ++ (leanTypeName default)) ++ " IO"
-    | "Combined" => let se : Option String := default.find? (fun e => default == "State")
-    let ee : Option String := default.find? (fun e => default == "Except")
+    | "Combined" => let se : Option String := default.find? (fun e => e.tag == "State")
+    let ee : Option String := default.find? (fun e => e.tag == "Except")
     let parts : Array String := #[]
     if se then
       Array.push parts ("StateT " ++ (leanTypeName default))
     else
-      if default.any (fun e => default == "State") then
+      if default.any (fun e => e.tag == "State") then
         Array.push parts (s!"StateT {stateTypeName}")
       else
         ()
     if ee then
       Array.push parts ("ExceptT " ++ (leanTypeName default))
     else
-      if default.any (fun e => default == "Except") then
+      if default.any (fun e => e.tag == "Except") then
         Array.push parts (s!"ExceptT {FALLBACK_ERROR_TYPE}")
       else
         ()
@@ -80,24 +80,24 @@ def doMonadType (stateTypeName : String) : String :=
   s!"DOMonad {stateTypeName}"
 
 /-- Compute the join (least upper bound) of two effects. Pure is the identity element. -/
-def joinEffects (a : Any) (b : Any) : Any :=
-  if default == "Pure" then
+def joinEffects (a : Effect) (b : Effect) : Effect :=
+  if a.tag == "Pure" then
     b
   else
-    if default == "Pure" then
+    if b.tag == "Pure" then
       a
     else
-      default /- cross-file: combineEffects -/
+      combineEffects #[a, b]
 
 /-- Test whether effect `a` subsumes effect `b` — i.e., `a` can handle `b`. Pure is subsumed by everything.  Combined effects check recursively. -/
-partial def effectSubsumes (a : Any) (b : Any) : Bool :=
-  if default == "Pure" then
+partial def effectSubsumes (a : Effect) (b : Effect) : Bool :=
+  if b.tag == "Pure" then
     true
   else
-    if default == default then
+    if a.tag == default then
       true
     else
-      if default == "Combined" then
+      if a.tag == "Combined" then
         default.any (fun e => effectSubsumes e b)
       else
         false
@@ -107,7 +107,7 @@ partial def effectSubsumes (a : Any) (b : Any) : Bool :=
 -- // Each `bodyContains*` function walks the AST looking for a specific pattern,
 -- // but never recurses into nested function scopes (lambdas, arrow functions,
 -- // method declarations) — those are separate effect boundaries.
-partial def getFunctionBody (node : Any) : Option Any :=
+partial def getFunctionBody (node : String) : Option String :=
   if ((default) || (default)) || (default) then
     Option.getD node.body none
   else
@@ -124,7 +124,7 @@ partial def getFunctionBody (node : Any) : Option Any :=
         ()
       none
 
-partial def bodyContainsAwait (node : Any) : Bool :=
+partial def bodyContainsAwait (node : String) : Bool :=
   if default then
     true
   else
@@ -133,7 +133,7 @@ partial def bodyContainsAwait (node : Any) : Bool :=
     else
       node.getChildren.any bodyContainsAwait
 
-partial def bodyContainsThrow (node : Any) : Bool :=
+partial def bodyContainsThrow (node : String) : Bool :=
   if default then
     true
   else
@@ -142,7 +142,7 @@ partial def bodyContainsThrow (node : Any) : Bool :=
     else
       node.getChildren.any bodyContainsThrow
 
-partial def bodyContainsMutation (node : Any) : Bool :=
+partial def bodyContainsMutation (node : String) : Bool :=
   if (default) && (isAssignOp node.operatorToken.kind) then
     true
   else
@@ -157,7 +157,7 @@ partial def bodyContainsMutation (node : Any) : Bool :=
         else
           node.getChildren.any bodyContainsMutation
 
-partial def bodyContainsIO (node : Any) : Bool :=
+partial def bodyContainsIO (node : String) : Bool :=
   if default then
     let text : String := node.expression.getText
     if (IO_TRIGGERING_PREFIXES.any (fun p => text.startsWith p)) || (AssocMap.contains IO_TRIGGERING_CALLS text) then
@@ -171,7 +171,7 @@ partial def bodyContainsIO (node : Any) : Bool :=
   else
     node.getChildren.any bodyContainsIO
 
-def isNestedFnScope (node : Any) : Bool :=
+def isNestedFnScope (node : String) : Bool :=
   (((default) || (default)) || (default)) || (default)
 
 def isAssignOp (kind : SyntaxKind) : Bool :=
@@ -181,8 +181,8 @@ def isIncrDecr (kind : SyntaxKind) : Bool :=
   (kind == ts.SyntaxKind.PlusPlusToken) || (kind == ts.SyntaxKind.MinusMinusToken)
 
 /-- Map an IR type to its Lean 4 name for use in monad signatures. Falls back to `TSError` for types that don't have a direct Lean primitive name. -/
-partial def leanTypeName (t : Any) : String :=
-  match default with
+partial def leanTypeName (t : IRType) : String :=
+  match t.tag with
     | "String" => "String"
     | "Float" => "Float"
     | "Nat" => "Nat"

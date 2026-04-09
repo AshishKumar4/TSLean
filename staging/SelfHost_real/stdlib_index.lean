@@ -14,7 +14,7 @@ structure MethodTx where
   mk ::
   leanFn : String
   argOrder : Option String
-  resultType : Any
+  resultType : IRType
   io : Option Bool
   deriving Repr, BEq, Inhabited
 
@@ -56,8 +56,8 @@ def lookupGlobal (name : String) : Option GlobalTx :=
   GLOBALS.getD name default
 
 -- // ─── Binary operator translation ──────────────────────────────────────────────
-def translateBinOp (op : Any) (lhsType : Any) : String :=
-  if (op == "Add") && (default == "String") then
+def translateBinOp (op : BinOp) (lhsType : IRType) : String :=
+  if (op == "Add") && (lhsType.tag == "String") then
     "++"
   else
     match op with
@@ -83,8 +83,8 @@ def translateBinOp (op : Any) (lhsType : Any) : String :=
       | "NullCoalesce" => "NullCoalesce"
       | _ => op
 
-def typeObjKind (t : Any) : ObjKind :=
-  if default == "String" then
+def typeObjKind (t : IRType) : ObjKind :=
+  if t.tag == "String" then
     "String"
   else
     if default == "Array" then

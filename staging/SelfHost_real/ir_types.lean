@@ -2,13 +2,14 @@
 -- Source: /workspace/tslean/src/ir/types.ts
 
 import TSLean.Runtime.Basic
-import TSLean.Generated.SelfHost.Prelude
 import TSLean.Runtime.Coercions
 import TSLean.Stdlib.HashMap
 
 open TSLean TSLean.Stdlib.HashMap
 
 namespace TSLean.Generated.Types
+
+mutual
 
 -- Core Intermediate Representation for the TS → Lean 4 transpiler.
 -- The IR is a System Fω with algebraic effect annotations.  Every expression
@@ -30,74 +31,12 @@ namespace TSLean.Generated.Types
 -- - `Combined` — multiple effects; maps to a transformer stack.
 inductive Effect where
   | Pure
-  | State (stateType : Any)
+  | State (stateType : IRType)
   | IO
   | Async
-  | Except (errorType : Any)
-  | Combined (effects : Array Any)
+  | Except (errorType : IRType)
+  | Combined (effects : Array Effect)
   deriving Repr, BEq, Inhabited
-
-def Pure : Any := Effect.Pure
-
-def IO : Any := Effect.IO
-
-def Async : Any := Effect.Async
-
-/-- Construct a State effect over the given state type. -/
-def stateEffect (stateType : Any) : Any :=
-  Effect.State stateType
-
-/-- Construct an Except effect over the given error type. -/
-def exceptEffect (errorType : Any) : Any :=
-  Effect.Except errorType
-
-/-- Compute the join of multiple effects in the effect lattice. Flattens nested `Combined`, removes `Pure`, and deduplicates structurally. Returns `Pure` if all inputs are pure, a single effect if only one remains, or `Combined` otherwise. -/
-def combineEffects (effects : Array Any) : Any :=
-  let flat : Array Any := effects.flatMap (fun e =>
-    if default == "Combined" then
-      default
-    else
-      #[e])
-  let noPure : Array String := Array.filter flat (fun e => default != "Pure")
-  let deduped : Array Any := dedup noPure
-  if deduped.size == 0 then
-    Pure
-  else
-    if deduped.size == 1 then
-      deduped.getD 0 default
-    else
-      Effect.Combined deduped
-
-/-- Structural deduplication of effects using serialized keys. -/
-def dedup (effects : Array Any) : Array Any :=
-  let seen : AssocSet String := AssocSet.empty
-  Array.filter effects (fun e =>
-    let k : String := serialize e
-    if AssocMap.contains seen k then
-      false
-    else
-      AssocSet.insert seen k
-      true)
-
-/-- True when the effect is strictly `Pure`. -/
-def isPure (e : Any) : Bool :=
-  default == "Pure"
-
-/-- True when the effect tree contains `Async` (recursively). -/
-partial def hasAsync (e : Any) : Bool :=
-  (default == "Async") || ((default == "Combined") && (default.any hasAsync))
-
-/-- True when the effect tree contains `State` (recursively). -/
-partial def hasState (e : Any) : Bool :=
-  (default == "State") || ((default == "Combined") && (default.any hasState))
-
-/-- True when the effect tree contains `Except` (recursively). -/
-partial def hasExcept (e : Any) : Bool :=
-  (default == "Except") || ((default == "Combined") && (default.any hasExcept))
-
-/-- True when the effect tree contains `IO` (recursively). -/
-partial def hasIO (e : Any) : Bool :=
-  (default == "IO") || ((default == "Combined") && (default.any hasIO))
 
 -- // ─── Types ──────────────────────────────────────────────────────────────────────
 -- //
@@ -117,65 +56,129 @@ inductive IRType where
   | Bool
   | Unit
   | Never
-  | Option (inner : Any)
-  | Array (elem : Any)
-  | Tuple (elems : Array Any)
-  | Function (params : Array Any) (ret : Any) (effect : Any)
+  | Option (inner : IRType)
+  | Array (elem : IRType)
+  | Tuple (elems : Array IRType)
+  | Function (params : Array IRType) (ret : IRType) (effect : Effect)
   | Structure (name : String) (fields : Array String)
   | Inductive (name : String) (typeParams : Array String) (ctors : Array String)
-  | TypeRef (name : String) (args : Array Any)
+  | TypeRef (name : String) (args : Array IRType)
   | TypeVar (name : String)
-  | Map (key : Any) (value : Any)
-  | Set (elem : Any)
-  | Promise (inner : Any)
-  | Result (ok : Any) (err : Any)
-  | Dependent (param : String) (paramType : Any) (body : Any)
-  | Subtype (base : Any) (refinement : String)
+  | Map (key : IRType) (value : IRType)
+  | Set (elem : IRType)
+  | Promise (inner : IRType)
+  | Result (ok : IRType) (err : IRType)
+  | Dependent (param : String) (paramType : IRType) (body : IRType)
+  | Subtype (base : IRType) (refinement : String)
   | Universe (level : Float)
   deriving Repr, BEq, Inhabited
 
-def TyNat : Any := IRType.Nat
+end
 
-def TyInt : Any := IRType.Int
+def Pure : Effect := Effect.Pure
 
-def TyFloat : Any := IRType.Float
+def IO : Effect := Effect.IO
 
-def TyString : Any := IRType.String
+def Async : Effect := Effect.Async
 
-def TyBool : Any := IRType.Bool
+/-- Construct a State effect over the given state type. -/
+def stateEffect (stateType : IRType) : Effect :=
+  Effect.State stateType
 
-def TyUnit : Any := IRType.Unit
+/-- Construct an Except effect over the given error type. -/
+def exceptEffect (errorType : IRType) : Effect :=
+  Effect.Except errorType
 
-def TyNever : Any := IRType.Never
+/-- Compute the join of multiple effects in the effect lattice. Flattens nested `Combined`, removes `Pure`, and deduplicates structurally. Returns `Pure` if all inputs are pure, a single effect if only one remains, or `Combined` otherwise. -/
+def combineEffects (effects : Array Effect) : Effect :=
+  let flat : Array Effect := effects.flatMap (fun e =>
+    if e.tag == "Combined" then
+      default
+    else
+      #[e])
+  let noPure : Array String := Array.filter flat (fun e => e.tag != "Pure")
+  let deduped : Array Effect := dedup noPure
+  if deduped.size == 0 then
+    Pure
+  else
+    if deduped.size == 1 then
+      deduped.getD 0 default
+    else
+      Effect.Combined deduped
 
-def TyOption (inner : Any) : Any :=
+/-- Structural deduplication of effects using serialized keys. -/
+def dedup (effects : Array Effect) : Array Effect :=
+  let seen : Array String := #[]
+  Array.filter effects (fun e =>
+    let k : String := serialize e
+    if AssocMap.contains seen k then
+      false
+    else
+      Array.push seen k
+      true)
+
+/-- True when the effect is strictly `Pure`. -/
+def isPure (e : Effect) : Bool :=
+  e.tag == "Pure"
+
+/-- True when the effect tree contains `Async` (recursively). -/
+partial def hasAsync (e : Effect) : Bool :=
+  (e.tag == "Async") || ((default == "Combined") && (default.any hasAsync))
+
+/-- True when the effect tree contains `State` (recursively). -/
+partial def hasState (e : Effect) : Bool :=
+  (e.tag == "State") || ((default == "Combined") && (default.any hasState))
+
+/-- True when the effect tree contains `Except` (recursively). -/
+partial def hasExcept (e : Effect) : Bool :=
+  (e.tag == "Except") || ((default == "Combined") && (default.any hasExcept))
+
+/-- True when the effect tree contains `IO` (recursively). -/
+partial def hasIO (e : Effect) : Bool :=
+  (e.tag == "IO") || ((default == "Combined") && (default.any hasIO))
+
+def TyNat : IRType := IRType.Nat
+
+def TyInt : IRType := IRType.Int
+
+def TyFloat : IRType := IRType.Float
+
+def TyString : IRType := IRType.String
+
+def TyBool : IRType := IRType.Bool
+
+def TyUnit : IRType := IRType.Unit
+
+def TyNever : IRType := IRType.Never
+
+def TyOption (inner : IRType) : IRType :=
   IRType.Option inner
 
-def TyArray (elem : Any) : Any :=
+def TyArray (elem : IRType) : IRType :=
   IRType.Array elem
 
-def TyTuple (elems : Array Any) : Any :=
+def TyTuple (elems : Array IRType) : IRType :=
   IRType.Tuple elems
 
-def TyMap (key : Any) (value : Any) : Any :=
+def TyMap (key : IRType) (value : IRType) : IRType :=
   IRType.Map key value
 
-def TySet (elem : Any) : Any :=
+def TySet (elem : IRType) : IRType :=
   IRType.Set elem
 
-def TyPromise (inner : Any) : Any :=
+def TyPromise (inner : IRType) : IRType :=
   IRType.Promise inner
 
-def TyResult (ok : Any) (err : Any) : Any :=
+def TyResult (ok : IRType) (err : IRType) : IRType :=
   IRType.Result ok err
 
-def TyRef (name : String) (args : Array Any := #[]) : Any :=
+def TyRef (name : String) (args : Array IRType := #[]) : IRType :=
   IRType.TypeRef name args
 
-def TyVar (name : String) : Any :=
+def TyVar (name : String) : IRType :=
   IRType.TypeVar name
 
-def TyFn (params : Array Any) (ret : Any) (effect : Any := Pure) : Any :=
+def TyFn (params : Array IRType) (ret : IRType) (effect : Effect := Pure) : IRType :=
   IRType.Function params ret effect
 
 -- // ─── Expressions ────────────────────────────────────────────────────────────────
@@ -194,22 +197,55 @@ structure Span where
 -- Every node carries a resolved type and effect — this is the central invariant.
 structure IRNode where
   mk ::
-  type : Any
-  effect : Any
+  type : IRType
+  effect : Effect
   span : Option (Option Span)
   deriving Repr, BEq, Inhabited
 
 -- IR expression — the core of the intermediate representation.
 -- Literals, variables, function application, let-binding, if-then-else, match,
 -- do-notation, monadic bind, state/throw/try-catch, and structural operations.
-abbrev IRExpr := Any
+structure IRExpr where
+  tag : String
+  type : IRType := default
+  effect : Effect := default
+  name : String := default
+  value : String := default
+  field : String := default
+  obj : String := default
+  fn : String := default
+  args : String := default
+  left : String := default
+  right : String := default
+  op : String := default
+  cond : String := default
+  then_ : String := default
+  else_ : String := default
+  body : String := default
+  scrutinee : String := default
+  cases : String := default
+  stmts : String := default
+  params : String := default
+  handler : String := default
+  target : String := default
+  elems : String := default
+  fields : String := default
+  base : String := default
+  updates : String := default
+  expr : String := default
+  monad : String := default
+  index : String := default
+  annot : String := default
+  targetType : String := default
+  errName : String := default
+  deriving Repr, BEq, Inhabited
 
 -- // ─── Supporting types ───────────────────────────────────────────────────────────
 -- A function parameter in the IR.  May be implicit (Lean `{}`) or have a default value.
 structure IRParam where
   mk ::
   name : String
-  type : Any
+  type : IRType
   implicit : Option Bool
   default_ : Option String
   deriving Repr, BEq, Inhabited
@@ -217,9 +253,9 @@ structure IRParam where
 -- A single case arm in a `match` expression.
 structure IRCase where
   mk ::
-  pattern : Any
+  pattern : IRPattern
   guard : Option String
-  body : Any
+  body : IRExpr
   deriving Repr, BEq, Inhabited
 
 -- Pattern in a `match` expression.
@@ -228,23 +264,23 @@ structure IRCase where
 inductive IRPattern where
   | PVar (name : String)
   | PLit (value : String)
-  | PCtor (ctor : String) (args : Array Any)
+  | PCtor (ctor : String) (args : Array IRPattern)
   | PStruct (fields : Array String)
-  | PTuple (elems : Array Any)
+  | PTuple (elems : Array IRPattern)
   | PWild
-  | POr (pats : Array Any)
-  | PAs (pattern : Any) (name : String)
+  | POr (pats : Array IRPattern)
+  | PAs (pattern : IRPattern) (name : String)
   | PString (value : String)
   | PNone
-  | PSome (inner : Any)
+  | PSome (inner : IRPattern)
   deriving Repr, BEq, Inhabited
 
 -- A statement inside a `do`-block (Lean do-notation).
 inductive DoStmt where
-  | DoBind (name : String) (expr : Any)
-  | DoLet (name : String) (value : Any)
-  | DoExpr (expr : Any)
-  | DoReturn (value : Any)
+  | DoBind (name : String) (expr : IRExpr)
+  | DoLet (name : String) (value : IRExpr)
+  | DoExpr (expr : IRExpr)
+  | DoReturn (value : IRExpr)
   deriving Repr, BEq, Inhabited
 
 -- Binary operators — arithmetic, comparison, logical, bitwise, string.
@@ -286,17 +322,17 @@ inductive UnOp where
 -- - `FuncDef`      → `def foo ...` or `partial def foo ...`
 -- - `Namespace`    → `namespace Foo ... end Foo`
 inductive IRDecl where
-  | TypeAlias (name : String) (typeParams : Array String) (body : Any) (comment : Option (Option String))
-  | StructDef (name : String) (typeParams : Array String) (fields : Array String) (deriving : Option (Option (Array String))) (comment : Option (Option String)) (extends_ : Option (Option String))
+  | TypeAlias (name : String) (typeParams : Array String) (body : IRType) (comment : Option (Option String))
+  | StructDef (name : String) (typeParams : Array String) (fields : Array String) («deriving» : Option (Option (Array String))) (comment : Option (Option String)) (extends_ : Option (Option String))
   | InductiveDef (name : String) (typeParams : Array String) (ctors : Array String) (comment : Option (Option String))
-  | FuncDef (name : String) (typeParams : Array String) (params : Array Any) (retType : Any) (effect : Any) (body : Any) (comment : Option (Option String)) (isPartial : Option Bool) (where_ : Option (Option (Array Any))) (docComment : Option (Option String))
-  | InstanceDef (typeClass : String) (typeArgs : Array Any) (methods : Array Any) (comment : Option (Option String))
+  | FuncDef (name : String) (typeParams : Array String) (params : Array IRParam) (retType : IRType) (effect : Effect) (body : IRExpr) (comment : Option (Option String)) (isPartial : Option Bool) (where_ : Option (Option (Array IRDecl))) (docComment : Option (Option String))
+  | InstanceDef (typeClass : String) (typeArgs : Array IRType) (methods : Array IRDecl) (comment : Option (Option String))
   | TheoremDef (name : String) (statement : String) (proof : String) (comment : Option (Option String))
   | ClassDecl (name : String) (typeParams : Array String) (supers : Option (Option (Array String))) (methods : Array String) (comment : Option (Option String))
-  | Namespace (name : String) (decls : Array Any)
+  | Namespace (name : String) (decls : Array IRDecl)
   | RawLean (code : String)
-  | VarDecl (name : String) (type : Any) (value : Any) (mutable : Bool)
-  | SectionDecl (name : Option (Option String)) (decls : Array Any)
+  | VarDecl (name : String) (type : IRType) (value : IRExpr) (mutable : Bool)
+  | SectionDecl (name : Option (Option String)) (decls : Array IRDecl)
   | AttributeDecl (attr : String) (target : String)
   | DeriveDecl (typeName : String) (classes : Array String)
   deriving Repr, BEq, Inhabited
@@ -313,60 +349,60 @@ structure IRImport where
 structure IRModule where
   mk ::
   name : String
-  imports : Array Any
-  decls : Array Any
+  imports : Array IRImport
+  decls : Array IRDecl
   comments : Array String
   sourceFile : Option (Option String)
   deriving Repr, BEq, Inhabited
 
 /-- String literal. -/
-def litStr (v : String) : Any :=
+def litStr (v : String) : IRExpr :=
   { tag := "LitString", value := v, type := TyString, effect := Pure }
 
 /-- Natural number literal. -/
-def litNat (v : Float) : Any :=
+def litNat (v : Float) : IRExpr :=
   { tag := "LitNat", value := v, type := TyNat, effect := Pure }
 
 /-- Boolean literal. -/
-def litBool (v : Bool) : Any :=
+def litBool (v : Bool) : IRExpr :=
   { tag := "LitBool", value := v, type := TyBool, effect := Pure }
 
 /-- Unit literal `()`. -/
-def litUnit : Any :=
+def litUnit : IRExpr :=
   { tag := "LitUnit", type := TyUnit, effect := Pure }
 
 /-- Float literal. -/
-def litFloat (v : Float) : Any :=
+def litFloat (v : Float) : IRExpr :=
   { tag := "LitFloat", value := v, type := TyFloat, effect := Pure }
 
 /-- Integer literal. -/
-def litInt (v : Float) : Any :=
+def litInt (v : Float) : IRExpr :=
   { tag := "LitInt", value := v, type := TyInt, effect := Pure }
 
 /-- Variable reference. -/
-def varExpr (name : String) (type : Any := TyUnit) : Any :=
+def varExpr (name : String) (type : IRType := TyUnit) : IRExpr :=
   { tag := "Var", name := name, type := type, effect := Pure }
 
 /-- Placeholder for an unknown expression — emits `sorry` in Lean. -/
-def holeExpr (type : Any := TyUnit) : Any :=
+def holeExpr (type : IRType := TyUnit) : IRExpr :=
   { tag := "Hole", type := type, effect := Pure }
 
 /-- Struct update: `{ base with field₁ := v₁, … }`. -/
-def structUpdate (base : Any) (fields : Array String) (type : Any) : Any :=
-  { tag := "StructUpdate", base := base, fields := fields, type := type, effect := default }
+def structUpdate (base : IRExpr) (fields : Array String) (type : IRType) : IRExpr :=
+  { tag := "StructUpdate", base := base, fields := fields, type := type, effect := base.effect }
 
 /-- Function application.  Effect is the join of fn and all arg effects. -/
-def appExpr (fn : Any) (args : Array Any) : Any :=
-  { tag := "App", fn := fn, args := args, type := TyUnit, effect := combineEffects #[default, Array.map (fun a => default) args] }
+def appExpr (fn : IRExpr) (args : Array IRExpr) : IRExpr :=
+  { tag := "App", fn := fn, args := args, type := TyUnit, effect := combineEffects #[fn.effect, Array.map (fun a => a.effect) args] }
 
 /-- Sequence of expressions — last expression determines the type. -/
-def seqExpr (stmts : Array Any) : Any :=
+def seqExpr (stmts : Array IRExpr) : IRExpr :=
   if stmts.size == 0 then
     litUnit
   else
     if stmts.size == 1 then
       stmts.getD 0 default
     else
-      { tag := "Sequence", stmts := stmts, type := default, effect := combineEffects (Array.map (fun s => default) stmts) }
+      { tag := "Sequence", stmts := stmts, type := stmts.getD (stmts.size - 1) default.type, effect := combineEffects (Array.map (fun s => s.effect) stmts) }
 
 end TSLean.Generated.Types

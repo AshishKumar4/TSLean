@@ -25,28 +25,28 @@ structure ParseOptions where
   deriving Repr, BEq, Inhabited
 
 /-- Parse a TypeScript source file into a fully-typed IR module. Creates a `ts.Program` with type checking, resolves all types and effects, and produces an `IRModule` ready for the rewrite and codegen passes. -/
-def parseFile (opts : ParseOptions) : ExceptT String IO Any :=
+def parseFile (opts : ParseOptions) : ExceptT String IO IRModule :=
   do
     let fileName : String := opts.fileName
     let sourceText : String := Option.getD (Option.getD opts.sourceText (default)) ""
     let virtual : AssocMap String String := AssocMap.empty
     do
       AssocMap.insert virtual fileName sourceText
-      let needsDO := default /- cross-file: hasDOPattern -/
+      let needsDO := hasDOPattern sourceText
 
 -- State for ParserCtx
 structure ParserCtxState where
   mk ::
-  imports : Array Any
-  sf : Any
+  imports : Array IRImport
+  sf : String
   needsDO : Bool
-  checker : Any
+  checker : String
   deriving Repr, BEq, Inhabited
 
-def ParserCtx.init (self : ParserCtxState) (checker : Any) (sf : Any) (needsDO : Bool) : Unit :=
+def ParserCtx.init (self : ParserCtxState) (checker : String) (sf : String) (needsDO : Bool) : Unit :=
   ()
 
-def ParserCtx.parseModule (self : ParserCtxState) : Any :=
+def ParserCtx.parseModule (self : ParserCtxState) : IRModule :=
   default
 
 def ParserCtx.collectImport (self : ParserCtxState) (node : ImportDeclaration) : Unit :=
@@ -60,7 +60,7 @@ def ParserCtx.tsModToLean (self : ParserCtxState) (spec : String) : String :=
     let parts : Array String := Array.map (fun p => String.intercalate "" (Array.map cap (p.splitOn "/[-_]/"))) (Array.filter (((spec.replace "/^[./]+/" "").replace "/\\.(ts|js)$/" "").splitOn "/") Boolean)
     "TSLean.Generated." ++ (String.intercalate "." parts)
 
-def ParserCtx.parseStatement (self : ParserCtxState) (stmt : Any) : String :=
+def ParserCtx.parseStatement (self : ParserCtxState) (stmt : String) : String :=
   if default then
     parseFnDecl self stmt
   else
@@ -89,12 +89,12 @@ def ParserCtx.parseStatement (self : ParserCtxState) (stmt : Any) : String :=
                     parseExportAssignment self stmt
                   else
                     if default then
-                      let e : Any := parseExpr self stmt.expression
+                      let e : IRExpr := parseExpr self stmt.expression
                       { tag := "VarDecl", name := "_main", type := TyUnit, value := e, mutable := false }
                     else
                       none
 
-def ParserCtx.parseExportDecl (self : ParserCtxState) (node : ExportDeclaration) : Option (Array Any) :=
+def ParserCtx.parseExportDecl (self : ParserCtxState) (node : ExportDeclaration) : Option (Array IRDecl) :=
   if !node.moduleSpecifier then
     none
   else
@@ -103,158 +103,158 @@ def ParserCtx.parseExportDecl (self : ParserCtxState) (node : ExportDeclaration)
     Array.push self.imports { module := lean }
     none
 
-def ParserCtx.parseExportAssignment (self : ParserCtxState) (node : ExportAssignment) : Option (Array Any) :=
+def ParserCtx.parseExportAssignment (self : ParserCtxState) (node : ExportAssignment) : Option (Array IRDecl) :=
   default
 
-def ParserCtx.parseFnDecl (self : ParserCtxState) (node : Any) : Any :=
+def ParserCtx.parseFnDecl (self : ParserCtxState) (node : String) : IRDecl :=
   let name : String := Option.getD (node.name.bind (fun _oc => _oc.text)) "anonymous"
-  let tps : Array String := default /- cross-file: extractTypeParams -/
-  let params : Array Any := parseParams self node.parameters
+  let tps : Array String := extractTypeParams node
+  let params : Array IRParam := parseParams self node.parameters
   let sig : Signature := self.checker.getSignatureFromDeclaration node
-  let ret : Any := if sig then
+  let ret : IRType := if sig then
     default /- cross-file: mapType -/
   else
     TyUnit
-  let eff : Any := default /- cross-file: inferNodeEffect -/
-  let body : Any := if node.body then
+  let eff : Effect := default /- cross-file: inferNodeEffect -/
+  let body : IRExpr := if node.body then
     parseBlock self node.body eff
   else
-    default /- cross-file: holeExpr -/
+    holeExpr ret
   let docComment : Option String := jsdocComment node self.sf
   { tag := "FuncDef", name := name, typeParams := tps, params := params, retType := ret, effect := eff, body := body, comment := leadingComment node self.sf, docComment := docComment }
 
-def ParserCtx.parseParams (self : ParserCtxState) (params : NodeArray ParameterDeclaration) : Array Any :=
+def ParserCtx.parseParams (self : ParserCtxState) (params : NodeArray ParameterDeclaration) : Array IRParam :=
   params.map (fun p =>
     if p.dotDotDotToken && (default) then
       let sym : Option Symbol := self.checker.getSymbolAtLocation p.name
-      let elemTy : Any := if sym then
+      let elemTy : IRType := if sym then
         default /- cross-file: mapType -/
       else
-        default /- cross-file: TyRef -/
-      let arrTy : Any := if default == "Array" then
+        TyRef "Any"
+      let arrTy : IRType := if elemTy.tag == "Array" then
         elemTy
       else
-        default /- cross-file: TyArray -/
+        TyArray elemTy
       { name := p.name.text, type := arrTy, default_ := none }
     else
       if !(default) then
-        { name := default, type := default /- cross-file: TyRef -/, default_ := none }
+        { name := default, type := TyRef "Any", default_ := none }
       else
         let name : String := p.name.text
         let sym : Option Symbol := self.checker.getSymbolAtLocation p.name
-        let ty : Any := if sym then
+        let ty : IRType := if sym then
           default /- cross-file: mapType -/
         else
-          default /- cross-file: TyRef -/
+          TyRef "Any"
         { name := name, type := ty, default_ := if p.initializer then
           parseExpr self p.initializer
         else
           none })
 
-def ParserCtx.parseClassDecl (self : ParserCtxState) (node : Any) : Array Any :=
+def ParserCtx.parseClassDecl (self : ParserCtxState) (node : String) : Array IRDecl :=
   default
 
 def ParserCtx.parseGetter (self : ParserCtxState) (node : GetAccessorDeclaration) (className : String) (stateType : String) : String :=
   let fieldName : String := Option.getD (node.name.getText self.sf) "unknown"
   let sig : Option Signature := self.checker.getSignatureFromDeclaration node
-  let ret : Any := if sig then
+  let ret : IRType := if sig then
     default /- cross-file: mapType -/
   else
     TyUnit
-  let self : Any := { name := "self", type := default /- cross-file: TyRef -/ }
-  let body : Any := if node.body then
+  let self : IRParam := { name := "self", type := TyRef stateType }
+  let body : IRExpr := if node.body then
     parseBlock self node.body Pure
   else
-    { tag := "FieldAccess", obj := default /- cross-file: varExpr -/, field := fieldName, type := ret, effect := Pure }
+    { tag := "FieldAccess", obj := varExpr "self" (TyRef stateType), field := fieldName, type := ret, effect := Pure }
   { tag := "FuncDef", name := default, typeParams := #[], params := #[self], retType := ret, effect := Pure, body := body }
 
 def ParserCtx.parseSetter (self : ParserCtxState) (node : SetAccessorDeclaration) (className : String) (stateType : String) : String :=
   let fieldName : String := Option.getD (node.name.getText self.sf) "unknown"
-  let params : Array Any := parseParams self node.parameters
-  let self : Any := { name := "self", type := default /- cross-file: TyRef -/ }
-  let valType : Any := Option.getD (default) TyUnit
-  let valName : String := Option.getD (default) "v"
-  let retType : Any := default /- cross-file: TyRef -/
-  let body : Any := { tag := "StructLit", typeName := stateType, fields := #[{ name := "_base", value := default /- cross-file: varExpr -/ }, { name := fieldName, value := default /- cross-file: varExpr -/ }], type := retType, effect := Pure }
+  let params : Array IRParam := parseParams self node.parameters
+  let self : IRParam := { name := "self", type := TyRef stateType }
+  let valType : IRType := Option.getD (params.getD 0 default.bind (fun _oc => some _oc.type)) TyUnit
+  let valName : String := Option.getD (params.getD 0 default.bind (fun _oc => some _oc.name)) "v"
+  let retType : IRType := TyRef stateType
+  let body : IRExpr := { tag := "StructLit", typeName := stateType, fields := #[{ name := "_base", value := varExpr "self" (TyRef stateType) }, { name := fieldName, value := varExpr valName valType }], type := retType, effect := Pure }
   { tag := "FuncDef", name := default, typeParams := #[], params := #[self, params], retType := retType, effect := Pure, body := body }
 
-def ParserCtx.isDOClass (self : ParserCtxState) (node : Any) : Bool :=
+def ParserCtx.isDOClass (self : ParserCtxState) (node : String) : Bool :=
   (Option.getD node.heritageClauses #[].any (fun h => h.types.any (fun t => (t.expression.getText self.sf).includes "DurableObject"))) || (node.members.any (fun m => (default) && (m.parameters.any (fun p => p.type.getText self.sf.contains "DurableObjectState"))))
 
-def ParserCtx.classStateFields (self : ParserCtxState) (node : Any) : Array String :=
+def ParserCtx.classStateFields (self : ParserCtxState) (node : String) : Array String :=
   default
 
 def ParserCtx.parseCtor (self : ParserCtxState) (node : ConstructorDeclaration) (className : String) (stateType : String) (isDO : Bool) : String :=
-  let params : Array Any := parseParams self node.parameters
-  let eff : Any := default /- cross-file: inferNodeEffect -/
+  let params : Array IRParam := parseParams self node.parameters
+  let eff : Effect := default /- cross-file: inferNodeEffect -/
   if isDO then
     let stateFields : Array String := classStateFields self node.parent
-    let appParams : Array Any := Array.filter params (fun p =>
-      let t : Any := default
-      if (default == "TypeRef") && ((default == "DurableObjectState") || (default == "Env")) then
+    let appParams : Array IRParam := Array.filter params (fun p =>
+      let t : IRType := p.type
+      if (t.tag == "TypeRef") && ((default == "DurableObjectState") || (default == "Env")) then
         false
       else
         true)
     let fields : Array __object := Array.map (fun f =>
-      { name := default, value := if appParams.find? (fun p => default == default) then
-        default /- cross-file: varExpr -/
+      { name := default, value := if appParams.find? (fun p => p.name == default) then
+        varExpr default default
       else
-        default /- cross-file: holeExpr -/ }) stateFields
-    let retType : Any := default /- cross-file: TyRef -/
-    let body : Any := if fields.size > 0 then
+        holeExpr default }) stateFields
+    let retType : IRType := TyRef stateType
+    let body : IRExpr := if fields.size > 0 then
       { tag := "StructLit", typeName := stateType, fields := fields, type := retType, effect := Pure }
     else
       { tag := "StructLit", typeName := stateType, fields := #[], type := retType, effect := Pure }
     { tag := "FuncDef", name := default, typeParams := #[], params := appParams, retType := retType, effect := Pure, body := body }
   else
-    let self : Any := { name := "self", type := default /- cross-file: TyRef -/ }
-    let body : Any := if node.body then
+    let self : IRParam := { name := "self", type := TyRef stateType }
+    let body : IRExpr := if node.body then
       parseBlock self node.body eff
     else
-      default /- cross-file: holeExpr -/
+      holeExpr TyUnit
     { tag := "FuncDef", name := default, typeParams := #[], params := #[self, params], retType := TyUnit, effect := eff, body := body }
 
 def ParserCtx.parseMethod (self : ParserCtxState) (node : MethodDeclaration) (className : String) (stateType : String) (isDO : Bool) : String :=
   let name : String := Option.getD (node.name.getText self.sf) "unknown"
   let isStatic : Bool := node.modifiers.any (fun m => m.kind == ts.SyntaxKind.StaticKeyword)
-  let methodTPs : Array String := default /- cross-file: extractTypeParams -/
+  let methodTPs : Array String := extractTypeParams node
   let classTPs : Array String := if node.parent && (default) then
-    default /- cross-file: extractTypeParams -/
+    extractTypeParams node.parent
   else
     #[]
-  let tps : Array String := #[AssocSet.empty]
+  let tps : Array String := #[#[]]
   let sig : Signature := self.checker.getSignatureFromDeclaration node
-  let ret : Any := if sig then
+  let ret : IRType := if sig then
     default /- cross-file: mapType -/
   else
     TyUnit
-  let eff : Any := default /- cross-file: inferNodeEffect -/
-  let params : Array Any := parseParams self node.parameters
-  let selfType : Any := if classTPs.size > 0 then
-    default /- cross-file: TyRef -/
+  let eff : Effect := default /- cross-file: inferNodeEffect -/
+  let params : Array IRParam := parseParams self node.parameters
+  let selfType : IRType := if classTPs.size > 0 then
+    TyRef stateType (Array.map (fun tp => TyVar tp) classTPs)
   else
-    default /- cross-file: TyRef -/
-  let self : Any := { name := "self", type := selfType }
-  let allParams : Array Any := if isStatic then
+    TyRef stateType
+  let self : IRParam := { name := "self", type := selfType }
+  let allParams : Array IRParam := if isStatic then
     params
   else
     #[self, params]
-  let body : Any := if node.body then
+  let body : IRExpr := if node.body then
     parseBlock self node.body eff
   else
-    default /- cross-file: holeExpr -/
+    holeExpr ret
   let fullName : String := s!"{className}.{name}"
   { tag := "FuncDef", name := fullName, typeParams := tps, params := allParams, retType := ret, effect := eff, body := body }
 
-def ParserCtx.parseInterface (self : ParserCtxState) (node : Any) : String :=
+def ParserCtx.parseInterface (self : ParserCtxState) (node : String) : String :=
   default
 
-def ParserCtx.parseTypeAlias (self : ParserCtxState) (node : Any) : String :=
+def ParserCtx.parseTypeAlias (self : ParserCtxState) (node : String) : String :=
   let name : String := node.name.text
-  let tps : Array String := default /- cross-file: extractTypeParams -/
+  let tps : Array String := extractTypeParams node
   let ty : Type := self.checker.getTypeAtLocation node
   if ty.isUnion then
-    let disc : Option DiscriminantInfo := default /- cross-file: detectDiscriminatedUnion -/
+    let disc : Option DiscriminantInfo := detectDiscriminatedUnion ty self.checker
     if disc then
       { tag := "InductiveDef", name := name, typeParams := tps, ctors := default, comment := leadingComment node self.sf }
     else
@@ -268,7 +268,7 @@ def ParserCtx.parseTypeAlias (self : ParserCtxState) (node : Any) : String :=
   if ty.isIntersection then
     let isBranded : Bool := ty.types.any (fun t => (t.flags &&& ts.TypeFlags.Object) && (t.getProperties.any (fun p => (p.name.startsWith "__brand") || (p.name.startsWith "_brand"))))
     if isBranded then
-      { tag := "StructDef", name := name, typeParams := tps, fields := #[{ name := "val", type := TyString }], deriving := #["Repr", "BEq", "DecidableEq"] }
+      { tag := "StructDef", name := name, typeParams := tps, fields := #[{ name := "val", type := TyString }], «deriving» := #["Repr", "BEq", "DecidableEq"] }
     else
       ()
   else
@@ -276,24 +276,24 @@ def ParserCtx.parseTypeAlias (self : ParserCtxState) (node : Any) : String :=
   let typeNode : TypeNode := node.type
   if typeNode then
     if default then
-      let resolved : Any := default /- cross-file: mapType -/
+      let resolved : IRType := default /- cross-file: mapType -/
       { tag := "TypeAlias", name := name, typeParams := tps, body := resolved, comment := "-- conditional type: " ++ (typeNode.getText self.sf) }
     else
       if default then
-        let resolved : Any := default /- cross-file: mapType -/
+        let resolved : IRType := default /- cross-file: mapType -/
         { tag := "TypeAlias", name := name, typeParams := tps, body := resolved, comment := "-- mapped type: " ++ (default) }
       else
         if default then
           { tag := "TypeAlias", name := name, typeParams := tps, body := TyString, comment := "-- template literal type: " ++ (typeNode.getText self.sf) }
         else
           if default then
-            let elems : Array Any := typeNode.elements.map (fun e =>
+            let elems : Array IRType := typeNode.elements.map (fun e =>
               let elemType : Type := self.checker.getTypeAtLocation e
               default /- cross-file: mapType -/)
-            { tag := "TypeAlias", name := name, typeParams := tps, body := default /- cross-file: TyTuple -/, comment := leadingComment node self.sf }
+            { tag := "TypeAlias", name := name, typeParams := tps, body := TyTuple elems, comment := leadingComment node self.sf }
           else
             if default then
-              let resolved : Any := default /- cross-file: mapType -/
+              let resolved : IRType := default /- cross-file: mapType -/
               { tag := "TypeAlias", name := name, typeParams := tps, body := resolved, comment := "-- typeof type: " ++ (typeNode.getText self.sf) }
             else
               if (default) && (typeNode.operator == ts.SyntaxKind.KeyOfKeyword) then
@@ -304,7 +304,7 @@ def ParserCtx.parseTypeAlias (self : ParserCtxState) (node : Any) : String :=
     ()
   { tag := "TypeAlias", name := name, typeParams := tps, body := default /- cross-file: mapType -/, comment := leadingComment node self.sf }
 
-def ParserCtx.parseEnum (self : ParserCtxState) (node : Any) : String :=
+def ParserCtx.parseEnum (self : ParserCtxState) (node : String) : String :=
   let enumName : String := node.name.text
   let members : Array __object := node.members.map (fun m =>
     { name := if default then
@@ -314,72 +314,72 @@ def ParserCtx.parseEnum (self : ParserCtxState) (node : Any) : String :=
       (m.initializer.getText self.sf).replace "/['\"]/g" ""
     else
       none })
-  let isStringEnum : Bool := members.any (fun m => (m.value.isSome) && (Float.isNaN (default /- cross-file: Number -/)))
-  let inductive : Any := { tag := "InductiveDef", name := enumName, typeParams := #[], ctors := default, comment := leadingComment node self.sf }
+  let isStringEnum : Bool := members.any (fun m => (m.value.isSome) && (Float.isNaN (Number m.value)))
+  let inductive : IRDecl := { tag := "InductiveDef", name := enumName, typeParams := #[], ctors := default, comment := leadingComment node self.sf }
   if !isStringEnum then
     «inductive»
   else
-    let toStringCases : Array Any := Array.map (fun m => { pattern := default, body := default /- cross-file: litStr -/ }) members
-    let toStringFn : Any := { tag := "FuncDef", name := default, typeParams := #[], params := #[{ name := "e", type := default /- cross-file: TyRef -/ }], retType := TyString, effect := Pure, body := default }
+    let toStringCases : Array IRCase := Array.map (fun m => { pattern := default, body := litStr (Option.getD m.value m.name) }) members
+    let toStringFn : IRDecl := { tag := "FuncDef", name := default, typeParams := #[], params := #[{ name := "e", type := TyRef enumName }], retType := TyString, effect := Pure, body := default }
     #[«inductive», toStringFn]
 
-def ParserCtx.parseVarStmt (self : ParserCtxState) (node : Any) : Array Any :=
+def ParserCtx.parseVarStmt (self : ParserCtxState) (node : String) : Array IRDecl :=
   default
 
-def ParserCtx.parseNamespace (self : ParserCtxState) (node : Any) : Any :=
+def ParserCtx.parseNamespace (self : ParserCtxState) (node : String) : IRDecl :=
   default
 
-def ParserCtx.parseBlock (self : ParserCtxState) (block : Block) (eff : Any) : Any :=
+def ParserCtx.parseBlock (self : ParserCtxState) (block : Block) (eff : Effect) : IRExpr :=
   parseStmts self block.statements eff
 
-def ParserCtx.parseStmts (self : ParserCtxState) (stmts : Array Any) (eff : Any) : Any :=
+def ParserCtx.parseStmts (self : ParserCtxState) (stmts : Array String) (eff : Effect) : IRExpr :=
   if stmts.size == 0 then
-    default /- cross-file: litUnit -/
+    litUnit
   else
-    let head : Any := stmts.getD 0 default
-    let rest : Array Any := stmts.getD 1 default
+    let head : String := stmts.getD 0 default
+    let rest : Array String := stmts.getD 1 default
     parseStmt self head rest eff
 
-def ParserCtx.parseStmt (self : ParserCtxState) (stmt : Any) (rest : Array Any) (eff : Any) : StateT ParserCtxState IO Any :=
+def ParserCtx.parseStmt (self : ParserCtxState) (stmt : String) (rest : Array String) (eff : Effect) : StateT ParserCtxState IO IRExpr :=
   do
-    let cont : Unit → Any := fun _ =>
+    let cont : Unit → IRExpr := fun _ =>
       if rest.size > 0 then
         parseStmts self rest eff
       else
-        default /- cross-file: litUnit -/
+        litUnit
     if default then
-      let v : Any := if stmt.expression then
+      let v : IRExpr := if stmt.expression then
         pure (parseExpr self stmt.expression)
       else
-        pure (default /- cross-file: litUnit -/)
-      pure { tag := "Return", value := v, type := default, effect := default }
+        pure (litUnit)
+      pure { tag := "Return", value := v, type := v.type, effect := v.effect }
     else do
         if default then
           let decl : VariableDeclaration := stmt.declarationList.declarations.getD 0 default
           if decl && (default) then
             let name : String := decl.name.text
-            let ty : Any := default /- cross-file: mapType -/
-            let val : Any := if decl.initializer then
+            let ty : IRType := default /- cross-file: mapType -/
+            let val : IRExpr := if decl.initializer then
               parseExpr self decl.initializer
             else
-              default /- cross-file: holeExpr -/
-            let body : Any := default /- cross-file: cont -/
-            let combined : Any := default /- cross-file: combineEffects -/
-            if (!(default /- cross-file: isPure -/)) && (default /- cross-file: hasAsync -/) then
-              pure { tag := "Bind", name := name, monad := val, body := body, type := default, effect := combined }
+              holeExpr ty
+            let body : IRExpr := cont
+            let combined : Effect := combineEffects #[val.effect, body.effect]
+            if (!(isPure val.effect)) && (hasAsync eff) then
+              pure { tag := "Bind", name := name, monad := val, body := body, type := body.type, effect := combined }
             else
-              pure { tag := "Let", name := name, annot := ty, value := val, body := body, type := default, effect := combined }
+              pure { tag := "Let", name := name, annot := ty, value := val, body := body, type := body.type, effect := combined }
           else
             if (decl && (default)) && decl.initializer then
-              let rhs : Any := parseExpr self decl.initializer
-              let body : Any := default /- cross-file: cont -/
+              let rhs : IRExpr := parseExpr self decl.initializer
+              let body : IRExpr := cont
               do
                 let body := flattenObjectBinding self decl.name rhs body
                 return body
             else
               if (decl && (default)) && decl.initializer then
-                let rhs : Any := parseExpr self decl.initializer
-                let body : Any := default /- cross-file: cont -/
+                let rhs : IRExpr := parseExpr self decl.initializer
+                let body : IRExpr := cont
                 do
                   let body := flattenArrayBinding self decl.name rhs body
                   return body
@@ -390,164 +390,164 @@ def ParserCtx.parseStmt (self : ParserCtxState) (stmt : Any) (rest : Array Any) 
             pure (parseIf self stmt rest eff)
           else
             if default then
-              let iter : Any := parseExpr self stmt.expression
+              let iter : IRExpr := parseExpr self stmt.expression
               let binding : String := if default then
                 stmt.initializer.declarations.getD 0 default.name.text
               else
                 "_x"
-              let body : Any := if default then
+              let body : IRExpr := if default then
                 parseBlock self stmt.statement eff
               else
                 parseStmt self stmt.statement #[] eff
-              let loop : Any := { tag := "App", fn := default /- cross-file: varExpr -/, args := #[iter, { tag := "Lambda", params := #[{ name := binding, type := TyUnit }], body := body, type := default /- cross-file: TyFn -/, effect := default }], type := TyUnit, effect := default /- cross-file: combineEffects -/ }
-              let c : Any := default /- cross-file: cont -/
-              pure (if default == "LitUnit" then
+              let loop : IRExpr := { tag := "App", fn := varExpr "Array.forM" (TyFn #[TyArray TyUnit, TyFn #[TyUnit] TyUnit] TyUnit), args := #[iter, { tag := "Lambda", params := #[{ name := binding, type := TyUnit }], body := body, type := TyFn #[TyUnit] TyUnit, effect := body.effect }], type := TyUnit, effect := combineEffects #[iter.effect, body.effect] }
+              let c : IRExpr := cont
+              pure (if c.tag == "LitUnit" then
                 loop
               else
                 seq loop c)
             else
               if default then
-                let loop : Any := parseFor self stmt eff
-                let c : Any := default /- cross-file: cont -/
-                pure (if default == "LitUnit" then
+                let loop : IRExpr := parseFor self stmt eff
+                let c : IRExpr := cont
+                pure (if c.tag == "LitUnit" then
                   loop
                 else
                   seq loop c)
               else
                 if default then
-                  let obj : Any := parseExpr self stmt.expression
+                  let obj : IRExpr := parseExpr self stmt.expression
                   let binding : String := if default then
                     stmt.initializer.declarations.getD 0 default.name.text
                   else
                     "_k"
-                  let body : Any := if default then
+                  let body : IRExpr := if default then
                     parseBlock self stmt.statement eff
                   else
                     parseStmt self stmt.statement #[] eff
-                  let keysExpr : Any := { tag := "App", fn := default /- cross-file: varExpr -/, args := #[obj], type := default /- cross-file: TyArray -/, effect := Pure }
-                  let loop : Any := { tag := "App", fn := default /- cross-file: varExpr -/, args := #[keysExpr, { tag := "Lambda", params := #[{ name := binding, type := TyString }], body := body, type := default /- cross-file: TyFn -/, effect := default }], type := TyUnit, effect := default /- cross-file: combineEffects -/ }
-                  let c : Any := default /- cross-file: cont -/
-                  pure (if default == "LitUnit" then
+                  let keysExpr : IRExpr := { tag := "App", fn := varExpr "AssocMap.keys", args := #[obj], type := TyArray TyString, effect := Pure }
+                  let loop : IRExpr := { tag := "App", fn := varExpr "Array.forM" (TyFn #[TyArray TyString, TyFn #[TyString] TyUnit] TyUnit), args := #[keysExpr, { tag := "Lambda", params := #[{ name := binding, type := TyString }], body := body, type := TyFn #[TyString] TyUnit, effect := body.effect }], type := TyUnit, effect := combineEffects #[obj.effect, body.effect] }
+                  let c : IRExpr := cont
+                  pure (if c.tag == "LitUnit" then
                     loop
                   else
                     seq loop c)
                 else
                   if default then
-                    let loop : Any := parseWhile self stmt eff
-                    let c : Any := default /- cross-file: cont -/
-                    pure (if default == "LitUnit" then
+                    let loop : IRExpr := parseWhile self stmt eff
+                    let c : IRExpr := cont
+                    pure (if c.tag == "LitUnit" then
                       loop
                     else
                       seq loop c)
                   else
                     if default then
-                      let err : Any := if stmt.expression then
+                      let err : IRExpr := if stmt.expression then
                         parseExpr self stmt.expression
                       else
-                        default /- cross-file: litStr -/
-                      pure { tag := "Throw", error := err, type := TyNever, effect := default /- cross-file: exceptEffect -/ }
+                        litStr "error"
+                      pure { tag := "Throw", error := err, type := TyNever, effect := exceptEffect TyString }
                     else
                       if default then
                         pure (parseTry self stmt rest eff)
                       else
                         if default then
-                          let m : Any := parseSwitch self stmt
-                          let c : Any := default /- cross-file: cont -/
-                          pure (if default == "LitUnit" then
+                          let m : IRExpr := parseSwitch self stmt
+                          let c : IRExpr := cont
+                          pure (if c.tag == "LitUnit" then
                             m
                           else
                             seq m c)
                         else
                           if default then
-                            let inner : Any := parseBlock self stmt eff
-                            let c : Any := default /- cross-file: cont -/
-                            pure (if default == "LitUnit" then
+                            let inner : IRExpr := parseBlock self stmt eff
+                            let c : IRExpr := cont
+                            pure (if c.tag == "LitUnit" then
                               inner
                             else
                               seq inner c)
                           else
                             if default then
-                              let e : Any := parseExpr self stmt.expression
-                              let c : Any := default /- cross-file: cont -/
-                              pure (if default == "LitUnit" then
+                              let e : IRExpr := parseExpr self stmt.expression
+                              let c : IRExpr := cont
+                              pure (if c.tag == "LitUnit" then
                                 e
                               else
                                 seq e c)
                             else
-                              pure (default /- cross-file: cont -/)
+                              pure (cont)
 
-def ParserCtx.parseIf (self : ParserCtxState) (stmt : IfStatement) (rest : Array Any) (eff : Any) : Any :=
-  let cond : Any := parseExpr self stmt.expression
-  let then_ : Any := if default then
+def ParserCtx.parseIf (self : ParserCtxState) (stmt : IfStatement) (rest : Array String) (eff : Effect) : IRExpr :=
+  let cond : IRExpr := parseExpr self stmt.expression
+  let then_ : IRExpr := if default then
     parseBlock self stmt.thenStatement eff
   else
     parseStmt self stmt.thenStatement #[] eff
   let thenRets : Bool := branchReturns then_
   if thenRets && (rest.size > 0) then
-    let else_ : Any := if stmt.elseStatement then
+    let else_ : IRExpr := if stmt.elseStatement then
       if default then
         parseBlock self stmt.elseStatement eff
       else
         parseStmt self stmt.elseStatement rest eff
     else
       parseStmts self rest eff
-    { tag := "IfThenElse", cond := cond, «then» := then_, else_ := else_, type := default, effect := default /- cross-file: combineEffects -/ }
+    { tag := "IfThenElse", cond := cond, «then» := then_, else_ := else_, type := else_.type, effect := combineEffects #[cond.effect, then_.effect, else_.effect] }
   else
-    let else_ : Any := if stmt.elseStatement then
+    let else_ : IRExpr := if stmt.elseStatement then
       if default then
         parseBlock self stmt.elseStatement eff
       else
         parseStmt self stmt.elseStatement #[] eff
     else
-      default /- cross-file: litUnit -/
-    let ifExpr : Any := { tag := "IfThenElse", cond := cond, «then» := then_, else_ := else_, type := default, effect := default /- cross-file: combineEffects -/ }
+      litUnit
+    let ifExpr : IRExpr := { tag := "IfThenElse", cond := cond, «then» := then_, else_ := else_, type := else_.type, effect := combineEffects #[cond.effect, then_.effect, else_.effect] }
     if rest.size == 0 then
       ifExpr
     else
-      let c : Any := parseStmts self rest eff
+      let c : IRExpr := parseStmts self rest eff
       seq ifExpr c
 
-def ParserCtx.parseSwitch (self : ParserCtxState) (node : SwitchStatement) : StateT ParserCtxState IO Any :=
+def ParserCtx.parseSwitch (self : ParserCtxState) (node : SwitchStatement) : StateT ParserCtxState IO IRExpr :=
   do
-    let scrutinee : Any := parseExpr self node.expression
-    let cases : Array Any := #[]
+    let scrutinee : IRExpr := parseExpr self node.expression
+    let cases : Array IRCase := #[]
     let hasDefault : Bool := false
     do
       let _ := Array.forM node.caseBlock.clauses (fun cl => do
         if default then
-          let caseExpr : Any := parseExpr self cl.expression
-          let pat : Any := exprToPat caseExpr
-          let body : Any := parseSwitchCaseBody self cl node.caseBlock.clauses
+          let caseExpr : IRExpr := parseExpr self cl.expression
+          let pat : IRPattern := exprToPat caseExpr
+          let body : IRExpr := parseSwitchCaseBody self cl node.caseBlock.clauses
           Array.push cases { pattern := pat, body := body }
         else do
             let hasDefault := true
             let body := parseStmts self cl.statements Pure)
       let _ := do
         let _ := if (!hasDefault) && (cases.size > 0) then
-          let allStringPatterns : Bool := cases.all (fun c => (default == "PString") || (default == "PLit"))
-          let isDiscriminantSwitch : Bool := (default == "FieldAccess") && ((((default == "kind") || (default == "type")) || (default == "tag")) || (default == "ok"))
+          let allStringPatterns : Bool := cases.all (fun c => (c.pattern.tag == "PString") || (default == "PLit"))
+          let isDiscriminantSwitch : Bool := (scrutinee.tag == "FieldAccess") && ((((default == "kind") || (default == "type")) || (default == "tag")) || (default == "ok"))
           if !(allStringPatterns && isDiscriminantSwitch) then
-            let retType : Any := Option.getD default.type TyUnit
-            let fallbackBody : Any := if default == "Unit" then
-              default /- cross-file: litUnit -/
+            let retType : IRType := Option.getD cases.getD 0 default.bind (fun _oc => some _oc.body).type TyUnit
+            let fallbackBody : IRExpr := if retType.tag == "Unit" then
+              litUnit
             else
-              default /- cross-file: holeExpr -/
+              holeExpr retType
             Array.push cases { pattern := default, body := fallbackBody }
           else
             pure ()
         else
-          pure { tag := "Match", scrutinee := scrutinee, cases := cases, type := Option.getD default.type TyUnit, effect := default /- cross-file: combineEffects -/ }
+          pure { tag := "Match", scrutinee := scrutinee, cases := cases, type := Option.getD cases.getD 0 default.bind (fun _oc => some _oc.body).type TyUnit, effect := combineEffects (Array.map (fun c => c.body.effect) cases) }
 
-def ParserCtx.parseSwitchCaseBody (self : ParserCtxState) (cl : CaseClause) (allClauses : NodeArray CaseOrDefaultClause) : StateT ParserCtxState IO Any :=
+def ParserCtx.parseSwitchCaseBody (self : ParserCtxState) (cl : CaseClause) (allClauses : NodeArray CaseOrDefaultClause) : StateT ParserCtxState IO IRExpr :=
   do
-    let stmts : Array Any := Array.filter (Array.ofList cl.statements) (fun s => (!(default)) && (!(default)))
+    let stmts : Array String := Array.filter (Array.ofList cl.statements) (fun s => (!(default)) && (!(default)))
     if stmts.size == 0 then
       let idx : Float := allClauses.indexOf? cl
       do
         let rec _loop_40376 := fun i =>
           if i < allClauses.size then
             let next : CaseOrDefaultClause := allClauses.getD i default
-            let nextStmts : Array Any := Array.filter (Array.ofList next.statements) (fun s => (!(default)) && (!(default)))
+            let nextStmts : Array String := Array.filter (Array.ofList next.statements) (fun s => (!(default)) && (!(default)))
             if nextStmts.size > 0 then
               parseStmts self nextStmts Pure
             else
@@ -555,11 +555,11 @@ def ParserCtx.parseSwitchCaseBody (self : ParserCtxState) (cl : CaseClause) (all
             _loop_40376 (i + 1)
           else
             ()
-        return default /- cross-file: litUnit -/
+        return litUnit
     else
       pure (parseStmts self stmts Pure)
 
-def ParserCtx.flattenObjectBinding (self : ParserCtxState) (pattern : ObjectBindingPattern) (rhs : Any) (body : Any) : StateT ParserCtxState IO Any :=
+def ParserCtx.flattenObjectBinding (self : ParserCtxState) (pattern : ObjectBindingPattern) (rhs : IRExpr) (body : IRExpr) : StateT ParserCtxState IO IRExpr :=
   do
     let elems : Array BindingElement := #[pattern.elements].reverse
     do
@@ -574,54 +574,54 @@ def ParserCtx.flattenObjectBinding (self : ParserCtxState) (pattern : ObjectBind
             el.name.text
           else
             s!"_el{el.pos}"
-        let ty : Any := default /- cross-file: mapType -/
-        let fieldVal : Any := { tag := "FieldAccess", obj := rhs, field := propName, type := ty, effect := default }
+        let ty : IRType := default /- cross-file: mapType -/
+        let fieldVal : IRExpr := { tag := "FieldAccess", obj := rhs, field := propName, type := ty, effect := rhs.effect }
         if default then
           let tmpName : String := s!"_ds_{propName}"
-          let tmpRef : Any := { tag := "Var", name := tmpName, type := ty, effect := Pure }
+          let tmpRef : IRExpr := { tag := "Var", name := tmpName, type := ty, effect := Pure }
           do
             let body := flattenObjectBinding self el.name tmpRef body
-            let body := { tag := "Let", name := tmpName, annot := ty, value := fieldVal, body := body, type := default, effect := default /- cross-file: combineEffects -/ }
+            let body := { tag := "Let", name := tmpName, annot := ty, value := fieldVal, body := body, type := body.type, effect := combineEffects #[rhs.effect, body.effect] }
         else
           if default then
             let tmpName : String := s!"_ds_{propName}"
-            let tmpRef : Any := { tag := "Var", name := tmpName, type := ty, effect := Pure }
+            let tmpRef : IRExpr := { tag := "Var", name := tmpName, type := ty, effect := Pure }
             do
               let body := flattenArrayBinding self el.name tmpRef body
-              let body := { tag := "Let", name := tmpName, annot := ty, value := fieldVal, body := body, type := default, effect := default /- cross-file: combineEffects -/ }
+              let body := { tag := "Let", name := tmpName, annot := ty, value := fieldVal, body := body, type := body.type, effect := combineEffects #[rhs.effect, body.effect] }
           else
             let bindName : String := if default then
               el.name.text
             else
               s!"_el{el.pos}"
             if el.initializer then
-              let defaultVal : Any := parseExpr self el.initializer
-              let withDefault : Any := { tag := "App", fn := default /- cross-file: varExpr -/, args := #[fieldVal, defaultVal], type := ty, effect := default /- cross-file: combineEffects -/ }
-              let body := { tag := "Let", name := bindName, annot := ty, value := withDefault, body := body, type := default, effect := default /- cross-file: combineEffects -/ }
+              let defaultVal : IRExpr := parseExpr self el.initializer
+              let withDefault : IRExpr := { tag := "App", fn := varExpr "Option.getD" TyUnit, args := #[fieldVal, defaultVal], type := ty, effect := combineEffects #[default, defaultVal.effect] }
+              let body := { tag := "Let", name := bindName, annot := ty, value := withDefault, body := body, type := body.type, effect := combineEffects #[rhs.effect, body.effect] }
             else
-              let body := { tag := "Let", name := bindName, annot := ty, value := fieldVal, body := body, type := default, effect := default /- cross-file: combineEffects -/ })
+              let body := { tag := "Let", name := bindName, annot := ty, value := fieldVal, body := body, type := body.type, effect := combineEffects #[rhs.effect, body.effect] })
       return body
 
-def ParserCtx.flattenArrayBinding (self : ParserCtxState) (pattern : ArrayBindingPattern) (rhs : Any) (body : Any) : Any :=
+def ParserCtx.flattenArrayBinding (self : ParserCtxState) (pattern : ArrayBindingPattern) (rhs : IRExpr) (body : IRExpr) : IRExpr :=
   default
 
-def ParserCtx.parseTry (self : ParserCtxState) (node : TryStatement) (rest : Array Any) (eff : Any) : Any :=
-  let body : Any := parseBlock self node.tryBlock eff
+def ParserCtx.parseTry (self : ParserCtxState) (node : TryStatement) (rest : Array String) (eff : Effect) : IRExpr :=
+  let body : IRExpr := parseBlock self node.tryBlock eff
   let errName : String := if node.catchClause.bind (fun _oc => _oc.variableDeclaration).bind (fun _oc => some _oc.name) then
     node.catchClause.variableDeclaration.name.text
   else
     "_e"
-  let handler : Any := if node.catchClause.bind (fun _oc => _oc.block) then
+  let handler : IRExpr := if node.catchClause.bind (fun _oc => _oc.block) then
     parseBlock self node.catchClause.block eff
   else
-    default /- cross-file: varExpr -/
-  let tryCatch : Any := { tag := "TryCatch", body := body, errName := errName, handler := handler, type := default, effect := default }
+    varExpr errName
+  let tryCatch : IRExpr := { tag := "TryCatch", body := body, errName := errName, handler := handler, type := body.type, effect := body.effect }
   if rest.size == 0 then
     tryCatch
   else
     seq tryCatch (parseStmts self rest eff)
 
-def ParserCtx.parseFor (self : ParserCtxState) (node : ForStatement) (eff : Any) : Any :=
+def ParserCtx.parseFor (self : ParserCtxState) (node : ForStatement) (eff : Effect) : IRExpr :=
   let init : Option VariableDeclaration := if node.initializer && (default) then
     node.initializer.declarations.getD 0 default
   else
@@ -630,80 +630,83 @@ def ParserCtx.parseFor (self : ParserCtxState) (node : ForStatement) (eff : Any)
     init.name.text
   else
     "_i"
-  let iVal : Any := if init.bind (fun _oc => _oc.initializer) then
+  let iVal : IRExpr := if init.bind (fun _oc => _oc.initializer) then
     parseExpr self init.initializer
   else
-    default /- cross-file: litNat -/
-  let cond : Any := if node.condition then
+    litNat 0
+  let cond : IRExpr := if node.condition then
     parseExpr self node.condition
   else
-    default /- cross-file: litBool -/
-  let body : Any := if default then
+    litBool true
+  let body : IRExpr := if default then
     parseBlock self node.statement eff
   else
     parseStmt self node.statement #[] eff
-  let incrParsed : Any := if node.incrementor then
+  let incrParsed : IRExpr := if node.incrementor then
     parseExpr self node.incrementor
   else
-    { tag := "BinOp", op := "Add", left := default /- cross-file: varExpr -/, right := default /- cross-file: litNat -/, type := TyNat, effect := Pure }
-  let incrArg : Any := if (default == "Assign") && (default == "Var") then
+    { tag := "BinOp", op := "Add", left := varExpr iName TyNat, right := litNat 1, type := TyNat, effect := Pure }
+  let incrArg : IRExpr := if (incrParsed.tag == "Assign") && (default.tag == "Var") then
     default
   else
     incrParsed
   let lName : String := s!"_loop_{node.pos}"
-  let recurse : Any := { tag := "App", fn := default /- cross-file: varExpr -/, args := #[incrArg], type := TyUnit, effect := Pure }
-  let loopBody : Any := { tag := "IfThenElse", cond := cond, «then» := seq body recurse, else_ := default /- cross-file: litUnit -/, type := TyUnit, effect := default /- cross-file: combineEffects -/ }
-  { tag := "Let", name := lName, value := default, body := default, type := TyUnit, effect := default }
+  let recurse : IRExpr := { tag := "App", fn := varExpr lName, args := #[incrArg], type := TyUnit, effect := Pure }
+  let loopBody : IRExpr := { tag := "IfThenElse", cond := cond, «then» := seq body recurse, else_ := litUnit, type := TyUnit, effect := combineEffects #[cond.effect, body.effect] }
+  { tag := "Let", name := lName, value := default, body := default, type := TyUnit, effect := body.effect }
 
-def ParserCtx.parseWhile (self : ParserCtxState) (node : WhileStatement) (eff : Any) : Any :=
-  let cond : Any := parseExpr self node.expression
-  let body : Any := if default then
+def ParserCtx.parseWhile (self : ParserCtxState) (node : WhileStatement) (eff : Effect) : IRExpr :=
+  let cond : IRExpr := parseExpr self node.expression
+  let body : IRExpr := if default then
     parseBlock self node.statement eff
   else
     parseStmt self node.statement #[] eff
   let lName : String := s!"_while_{node.pos}"
-  let recurse : Any := { tag := "App", fn := default /- cross-file: varExpr -/, args := #[], type := TyUnit, effect := Pure }
-  let lBody : Any := { tag := "IfThenElse", cond := cond, «then» := seq body recurse, else_ := default /- cross-file: litUnit -/, type := TyUnit, effect := default /- cross-file: combineEffects -/ }
-  { tag := "Let", name := lName, value := default, body := default, type := TyUnit, effect := default }
+  let recurse : IRExpr := { tag := "App", fn := varExpr lName, args := #[], type := TyUnit, effect := Pure }
+  let lBody : IRExpr := { tag := "IfThenElse", cond := cond, «then» := seq body recurse, else_ := litUnit, type := TyUnit, effect := combineEffects #[cond.effect, body.effect] }
+  { tag := "Let", name := lName, value := default, body := default, type := TyUnit, effect := body.effect }
 
-def ParserCtx.parseExpr (self : ParserCtxState) (node : Any) : Any :=
-  let ty : Any := default /- cross-file: mapType -/
+def ParserCtx.parseExpr (self : ParserCtxState) (node : String) : IRExpr :=
+  let ty : IRType := default /- cross-file: mapType -/
   if default then
-    let v : Float := default /- cross-file: Number -/
+    let v : Float := Number node.text
     if (Number.isInteger v) && (v >= 0) then
       { tag := "LitNat", value := v, type := TyNat, effect := Pure }
     else
       { tag := "LitFloat", value := v, type := TyFloat, effect := Pure }
   else
     if (default) || (default) then
-      default /- cross-file: litStr -/
+      litStr node.text
     else
       if default then
         parseTemplate self node
       else
         if node.kind == ts.SyntaxKind.TrueKeyword then
-          default /- cross-file: litBool -/
+          litBool true
         else
           if node.kind == ts.SyntaxKind.FalseKeyword then
-            default /- cross-file: litBool -/
+            litBool false
           else
             if (node.kind == ts.SyntaxKind.NullKeyword) || (node.kind == ts.SyntaxKind.UndefinedKeyword) then
-              { tag := "LitNull", type := default /- cross-file: TyOption -/, effect := Pure }
+              { tag := "LitNull", type := TyOption TyUnit, effect := Pure }
             else
               if default then
-                default /- cross-file: varExpr -/
+                varExpr (if node.text == "undefined" then
+                  "none"
+                else
+                  node.text) ty
               else
                 if node.kind == ts.SyntaxKind.ThisKeyword then
-                  default /- cross-file: varExpr -/
+                  varExpr "self" ty
                 else
                   if default then
                     parsePropAccess self node ty
                   else
                     if default then
-                      let obj : Any := parseExpr self node.expression
-                      let index : Any := parseExpr self node.argumentExpression
+                      let obj : IRExpr := parseExpr self node.expression
+                      let index : IRExpr := parseExpr self node.argumentExpression
                       if default then
-                        { tag := "App", fn := default /- cross-file: varExpr -/, args := #[obj, index], type := default /- cross-file: TyOption -/, effect := Pure }
+                        { tag := "App", fn := varExpr "Array.get?", args := #[obj, index], type := TyOption ty, effect := Pure }
                       else
                         { tag := "IndexAccess", obj := obj, index := index, type := ty, effect := Pure }
                     else
@@ -718,19 +721,19 @@ def ParserCtx.parseExpr (self : ParserCtxState) (node : Any) : Any :=
                           else
                             if default then
                               if node.operatorToken.kind == ts.SyntaxKind.InstanceOfKeyword then
-                                let expr : Any := parseExpr self node.left
-                                let testTy : Any := default /- cross-file: mapType -/
-                                { tag := "IsType", expr := expr, testType := testTy, type := TyBool, effect := default }
+                                let expr : IRExpr := parseExpr self node.left
+                                let testTy : IRType := default /- cross-file: mapType -/
+                                { tag := "IsType", expr := expr, testType := testTy, type := TyBool, effect := expr.effect }
                               else
                                 if node.operatorToken.kind == ts.SyntaxKind.InKeyword then
-                                  let key : Any := parseExpr self node.left
-                                  let obj : Any := parseExpr self node.right
-                                  { tag := "App", fn := default /- cross-file: varExpr -/, args := #[obj, key], type := TyBool, effect := Pure }
+                                  let key : IRExpr := parseExpr self node.left
+                                  let obj : IRExpr := parseExpr self node.right
+                                  { tag := "App", fn := varExpr "AssocMap.contains", args := #[obj, key], type := TyBool, effect := Pure }
                                 else
                                   if node.operatorToken.kind == ts.SyntaxKind.CommaToken then
-                                    let left : Any := parseExpr self node.left
-                                    let right : Any := parseExpr self node.right
-                                    { tag := "Sequence", stmts := #[left, right], type := default, effect := default /- cross-file: combineEffects -/ }
+                                    let left : IRExpr := parseExpr self node.left
+                                    let right : IRExpr := parseExpr self node.right
+                                    { tag := "Sequence", stmts := #[left, right], type := right.type, effect := combineEffects #[left.effect, right.effect] }
                                   else
                                     parseBinary self node ty
                             else
@@ -741,29 +744,29 @@ def ParserCtx.parseExpr (self : ParserCtxState) (node : Any) : Any :=
                                   parsePostfix self node
                                 else
                                   if default then
-                                    let cond : Any := parseExpr self node.condition
-                                    let then_ : Any := parseExpr self node.whenTrue
-                                    let else_ : Any := parseExpr self node.whenFalse
-                                    { tag := "IfThenElse", cond := cond, «then» := then_, else_ := else_, type := default, effect := default /- cross-file: combineEffects -/ }
+                                    let cond : IRExpr := parseExpr self node.condition
+                                    let then_ : IRExpr := parseExpr self node.whenTrue
+                                    let else_ : IRExpr := parseExpr self node.whenFalse
+                                    { tag := "IfThenElse", cond := cond, «then» := then_, else_ := else_, type := then_.type, effect := combineEffects #[cond.effect, then_.effect, else_.effect] }
                                   else
                                     if default then
                                       parseObjLit self node ty
                                     else
                                       if default then
-                                        let elems : Array Any := node.elements.map (fun e =>
+                                        let elems : Array IRExpr := node.elements.map (fun e =>
                                           if default then
                                             parseExpr self e.expression
                                           else
                                             parseExpr self e)
-                                        { tag := "ArrayLit", elems := elems, type := default /- cross-file: TyArray -/, effect := default /- cross-file: combineEffects -/ }
+                                        { tag := "ArrayLit", elems := elems, type := TyArray (Option.getD (elems.getD 0 default.bind (fun _oc => some _oc.type)) TyUnit), effect := combineEffects (Array.map (fun e => e.effect) elems) }
                                       else
                                         if default then
-                                          let inner : Any := parseExpr self node.expression
+                                          let inner : IRExpr := parseExpr self node.expression
                                           { tag := "Await", expr := inner, type := ty, effect := Async }
                                         else
                                           if (default) || (default) then
-                                            let inner : Any := parseExpr self node.expression
-                                            { tag := "Cast", expr := inner, targetType := ty, type := ty, effect := default }
+                                            let inner : IRExpr := parseExpr self node.expression
+                                            { tag := "Cast", expr := inner, targetType := ty, type := ty, effect := inner.effect }
                                           else
                                             if default then
                                               parseExpr self node.expression
@@ -775,51 +778,51 @@ def ParserCtx.parseExpr (self : ParserCtxState) (node : Any) : Any :=
                                                   parseExpr self node.expression
                                                 else
                                                   if default then
-                                                    let inner : Any := parseExpr self node.expression
-                                                    if default /- cross-file: isPure -/ then
-                                                      default /- cross-file: litUnit -/
+                                                    let inner : IRExpr := parseExpr self node.expression
+                                                    if isPure inner.effect then
+                                                      litUnit
                                                     else
-                                                      seq inner (default /- cross-file: litUnit -/)
+                                                      seq inner (litUnit)
                                                   else
                                                     if default then
                                                       parseExpr self node.expression
                                                     else
                                                       if default then
-                                                        let inner : Any := parseExpr self node.expression
-                                                        { tag := "App", fn := default /- cross-file: varExpr -/, args := #[inner], type := TyString, effect := Pure }
+                                                        let inner : IRExpr := parseExpr self node.expression
+                                                        { tag := "App", fn := varExpr "TSLean.typeOf", args := #[inner], type := TyString, effect := Pure }
                                                       else
                                                         if default then
                                                           let template : TemplateLiteral := node.template
                                                           if default then
-                                                            default /- cross-file: litStr -/
+                                                            litStr template.text
                                                           else
                                                             if default then
                                                               parseTemplate self template
                                                             else
-                                                              default /- cross-file: holeExpr -/
+                                                              holeExpr ty
                                                         else
                                                           if default then
-                                                            default /- cross-file: litBool -/
+                                                            litBool true
                                                           else
                                                             if default then
-                                                              default /- cross-file: litStr -/
+                                                              litStr node.text
                                                             else
                                                               if node.kind == ts.SyntaxKind.ObjectLiteralExpression then
                                                                 parseObjLit self node ty
                                                               else
-                                                                default /- cross-file: holeExpr -/
+                                                                holeExpr ty
 
-def ParserCtx.parsePropAccess (self : ParserCtxState) (node : Any) (ty : Any) : Any :=
-  let obj : Any := parseExpr self node.expression
+def ParserCtx.parsePropAccess (self : ParserCtxState) (node : String) (ty : IRType) : IRExpr :=
+  let obj : IRExpr := parseExpr self node.expression
   let field : String := node.name.text
   if node.expression.kind == ts.SyntaxKind.ThisKeyword then
-    { tag := "FieldAccess", obj := default /- cross-file: varExpr -/, field := field, type := ty, effect := Pure }
+    { tag := "FieldAccess", obj := varExpr "self" obj.type, field := field, type := ty, effect := Pure }
   else
     if default then
       let fullName : String := s!"{node.expression.text}.{field}"
       let global : Option GlobalTx := default /- cross-file: lookupGlobal -/
       if global then
-        default /- cross-file: varExpr -/
+        varExpr global.leanExpr ty
       else
         let sym : Option Symbol := self.checker.getSymbolAtLocation node.expression
         if sym && (sym.flags &&& ts.SymbolFlags.Enum) then
@@ -830,174 +833,174 @@ def ParserCtx.parsePropAccess (self : ParserCtxState) (node : Any) (ty : Any) : 
     else
       ()
     if node.questionDotToken then
-      let fieldAccess : Any := { tag := "FieldAccess", obj := default /- cross-file: varExpr -/, field := field, type := ty, effect := Pure }
-      let lambdaBody : String := if default == "Option" then
+      let fieldAccess : IRExpr := { tag := "FieldAccess", obj := varExpr "_oc" obj.type, field := field, type := ty, effect := Pure }
+      let lambdaBody : String := if ty.tag == "Option" then
         fieldAccess
       else
-        { tag := "App", fn := default /- cross-file: varExpr -/, args := #[fieldAccess], type := default /- cross-file: TyOption -/, effect := Pure }
-      let accessor : Any := { tag := "Lambda", params := #[{ name := "_oc", type := default }], body := lambdaBody, type := default /- cross-file: TyFn -/, effect := Pure }
-      { tag := "App", fn := default, args := #[accessor], type := default /- cross-file: TyOption -/, effect := default }
+        { tag := "App", fn := varExpr "some", args := #[fieldAccess], type := TyOption ty, effect := Pure }
+      let accessor : IRExpr := { tag := "Lambda", params := #[{ name := "_oc", type := obj.type }], body := lambdaBody, type := TyFn #[obj.type] (TyOption ty), effect := Pure }
+      { tag := "App", fn := default, args := #[accessor], type := TyOption ty, effect := obj.effect }
     else
       { tag := "FieldAccess", obj := obj, field := field, type := ty, effect := Pure }
 
-def ParserCtx.parseCall (self : ParserCtxState) (node : Any) (ty : Any) : StateT ParserCtxState IO Any :=
+def ParserCtx.parseCall (self : ParserCtxState) (node : String) (ty : IRType) : StateT ParserCtxState IO IRExpr :=
   do
     if default then
       let fullName : String := node.expression.getText self.sf
       let global : Option GlobalTx := default /- cross-file: lookupGlobal -/
       if global then
-        let args : Array Any := node.arguments.map (fun a => parseExpr self a)
+        let args : Array IRExpr := node.arguments.map (fun a => parseExpr self a)
         do
           if global.maxArgs.isSome then
             let args := args.extract 0 global.maxArgs
           else
-            let eff : Any := if global.io then
+            let eff : Effect := if global.io then
               IO
             else
               Pure
-            pure { tag := "App", fn := default /- cross-file: varExpr -/, args := args, type := ty, effect := default /- cross-file: combineEffects -/ }
+            pure { tag := "App", fn := varExpr global.leanExpr (TyFn (Array.map (fun a => a.type) args) ty eff), args := args, type := ty, effect := combineEffects #[eff, Array.map (fun a => a.effect) args] }
       else
         pure (parseMethodCall self node node.expression ty)
     else do
         if default then
           let global : Option GlobalTx := default /- cross-file: lookupGlobal -/
           if global then
-            let args : Array Any := node.arguments.map (fun a => parseExpr self a)
+            let args : Array IRExpr := node.arguments.map (fun a => parseExpr self a)
             do
               if global.maxArgs.isSome then
                 let args := args.extract 0 global.maxArgs
               else
-                let eff : Any := if global.io then
+                let eff : Effect := if global.io then
                   IO
                 else
                   Pure
-                pure { tag := "App", fn := default /- cross-file: varExpr -/, args := args, type := ty, effect := default /- cross-file: combineEffects -/ }
+                pure { tag := "App", fn := varExpr global.leanExpr (TyFn (Array.map (fun a => a.type) args) ty eff), args := args, type := ty, effect := combineEffects #[eff, Array.map (fun a => a.effect) args] }
           else
             pure ()
         else
-          let fn : Any := parseExpr self node.expression
-          let args : Array Any := node.arguments.map (fun a => parseExpr self a)
-          pure { tag := "App", fn := fn, args := args, type := ty, effect := default /- cross-file: combineEffects -/ }
+          let fn : IRExpr := parseExpr self node.expression
+          let args : Array IRExpr := node.arguments.map (fun a => parseExpr self a)
+          pure { tag := "App", fn := fn, args := args, type := ty, effect := combineEffects #[fn.effect, Array.map (fun a => a.effect) args] }
 
-def ParserCtx.parseMethodCall (self : ParserCtxState) (node : Any) (acc : Any) (ty : Any) : Any :=
-  let obj : Any := parseExpr self acc.expression
+def ParserCtx.parseMethodCall (self : ParserCtxState) (node : String) (acc : String) (ty : IRType) : IRExpr :=
+  let obj : IRExpr := parseExpr self acc.expression
   let method : String := acc.name.text
-  let args : Array Any := node.arguments.map (fun a => parseExpr self a)
-  let allEff : Any := default /- cross-file: combineEffects -/
+  let args : Array IRExpr := node.arguments.map (fun a => parseExpr self a)
+  let allEff : Effect := combineEffects #[obj.effect, Array.map (fun a => a.effect) args]
   let storageTarget : Bool := isStorageAccess self acc.expression
   if storageTarget then
     let fn : String := s!"Storage.{method}"
-    { tag := "App", fn := default /- cross-file: varExpr -/, args := #[obj, args], type := ty, effect := Async }
+    { tag := "App", fn := varExpr fn, args := #[obj, args], type := ty, effect := Async }
   else
     { tag := "App", fn := default, args := args, type := ty, effect := allEff }
 
-def ParserCtx.isStorageAccess (self : ParserCtxState) (node : Any) : Bool :=
+def ParserCtx.isStorageAccess (self : ParserCtxState) (node : String) : Bool :=
   let text : String := node.getText self.sf
   ((text.includes ".storage") || (text == "storage")) || (text.includes "this.state.storage")
 
-def ParserCtx.parseNew (self : ParserCtxState) (node : NewExpression) (ty : Any) : Any :=
+def ParserCtx.parseNew (self : ParserCtxState) (node : NewExpression) (ty : IRType) : IRExpr :=
   let name : String := node.expression.getText self.sf
-  let args : Array Any := Array.map (fun a => parseExpr self a) (Option.getD node.arguments #[])
+  let args : Array IRExpr := Array.map (fun a => parseExpr self a) (Option.getD node.arguments #[])
   if name == "Map" then
-    default /- cross-file: varExpr -/
+    varExpr "AssocMap.empty" ty
   else
     if name == "Set" then
-      default /- cross-file: varExpr -/
+      varExpr "AssocSet.empty" ty
     else
       if name == "Array" then
         { tag := "ArrayLit", elems := #[], type := ty, effect := Pure }
       else
         if (name == "Error") || (name.endsWith "Error") then
-          { tag := "App", fn := default /- cross-file: varExpr -/, args := if args.size > 0 then
+          { tag := "App", fn := varExpr "TSError.typeError", args := if args.size > 0 then
             #[args.getD 0 default]
           else
-            #[default /- cross-file: litStr -/], type := ty, effect := Pure }
+            #[litStr "error"], type := ty, effect := Pure }
         else
           if name == "Response" then
-            { tag := "App", fn := default /- cross-file: varExpr -/, args := args, type := ty, effect := Pure }
+            { tag := "App", fn := varExpr "mkResponse", args := args, type := ty, effect := Pure }
           else
             if name == "Promise" then
-              default /- cross-file: holeExpr -/
+              holeExpr ty
             else
               if name == "URL" then
-                { tag := "App", fn := default /- cross-file: varExpr -/, args := args, type := ty, effect := Pure }
+                { tag := "App", fn := varExpr "URL.parse", args := args, type := ty, effect := Pure }
               else
-                { tag := "CtorApp", ctor := name, args := args, type := ty, effect := default /- cross-file: combineEffects -/ }
+                { tag := "CtorApp", ctor := name, args := args, type := ty, effect := combineEffects (Array.map (fun a => a.effect) args) }
 
-def ParserCtx.parseLambda (self : ParserCtxState) (node : ArrowFunction) : Any :=
-  let params : Array Any := parseParams self node.parameters
-  let eff : Any := default /- cross-file: inferNodeEffect -/
-  let body : Any := if default then
+def ParserCtx.parseLambda (self : ParserCtxState) (node : ArrowFunction) : IRExpr :=
+  let params : Array IRParam := parseParams self node.parameters
+  let eff : Effect := default /- cross-file: inferNodeEffect -/
+  let body : IRExpr := if default then
     parseBlock self node.body eff
   else
     parseExpr self node.body
   let sig : Signature := self.checker.getSignatureFromDeclaration node
-  let ret : Any := if sig then
+  let ret : IRType := if sig then
     default /- cross-file: mapType -/
   else
-    default
-  { tag := "Lambda", params := params, body := body, type := default /- cross-file: TyFn -/, effect := eff }
+    body.type
+  { tag := "Lambda", params := params, body := body, type := TyFn (Array.map (fun p => p.type) params) ret eff, effect := eff }
 
-def ParserCtx.parseBinary (self : ParserCtxState) (node : Any) (ty : Any) : Any :=
+def ParserCtx.parseBinary (self : ParserCtxState) (node : String) (ty : IRType) : IRExpr :=
   let op : BinaryOperator := node.operatorToken.kind
   if (op == ts.SyntaxKind.EqualsToken) || (isCompoundAssign op) then
-    let target : Any := parseExpr self node.left
-    let rhs : Any := parseExpr self node.right
-    let val : Any := if isCompoundAssign op then
+    let target : IRExpr := parseExpr self node.left
+    let rhs : IRExpr := parseExpr self node.right
+    let val : IRExpr := if isCompoundAssign op then
       mkBinOp (compoundOp op) target rhs
     else
       rhs
-    { tag := "Assign", target := target, value := val, type := TyUnit, effect := default /- cross-file: stateEffect -/ }
+    { tag := "Assign", target := target, value := val, type := TyUnit, effect := stateEffect TyUnit }
   else
-    let left : Any := parseExpr self node.left
-    let right : Any := parseExpr self node.right
+    let left : IRExpr := parseExpr self node.left
+    let right : IRExpr := parseExpr self node.right
     let irOp : String := tsBinOp op
     if !irOp then
-      default /- cross-file: holeExpr -/
+      holeExpr ty
     else
-      { tag := "BinOp", op := irOp, left := left, right := right, type := ty, effect := default /- cross-file: combineEffects -/ }
+      { tag := "BinOp", op := irOp, left := left, right := right, type := ty, effect := combineEffects #[left.effect, right.effect] }
 
-def ParserCtx.parsePrefix (self : ParserCtxState) (node : PrefixUnaryExpression) (ty : Any) : Any :=
-  let operand : Any := parseExpr self node.operand
+def ParserCtx.parsePrefix (self : ParserCtxState) (node : PrefixUnaryExpression) (ty : IRType) : IRExpr :=
+  let operand : IRExpr := parseExpr self node.operand
   match node.operator with
-    | _ => { tag := "UnOp", op := "Not", operand := operand, type := TyBool, effect := default }
-    | _ => { tag := "UnOp", op := "Neg", operand := operand, type := default, effect := default }
-    | _ => { tag := "UnOp", op := "BitNot", operand := operand, type := ty, effect := default }
-    | _ => { tag := "Assign", target := operand, value := mkBinOp "Add" operand (default /- cross-file: litNat -/), type := TyUnit, effect := default /- cross-file: stateEffect -/ }
-    | _ => { tag := "Assign", target := operand, value := mkBinOp "Sub" operand (default /- cross-file: litNat -/), type := TyUnit, effect := default /- cross-file: stateEffect -/ }
+    | _ => { tag := "UnOp", op := "Not", operand := operand, type := TyBool, effect := operand.effect }
+    | _ => { tag := "UnOp", op := "Neg", operand := operand, type := operand.type, effect := operand.effect }
+    | _ => { tag := "UnOp", op := "BitNot", operand := operand, type := ty, effect := operand.effect }
+    | _ => { tag := "Assign", target := operand, value := mkBinOp "Add" operand (litNat 1), type := TyUnit, effect := stateEffect TyUnit }
+    | _ => { tag := "Assign", target := operand, value := mkBinOp "Sub" operand (litNat 1), type := TyUnit, effect := stateEffect TyUnit }
     | _ => operand
 
-def ParserCtx.parsePostfix (self : ParserCtxState) (node : PostfixUnaryExpression) : Any :=
-  let operand : Any := parseExpr self node.operand
+def ParserCtx.parsePostfix (self : ParserCtxState) (node : PostfixUnaryExpression) : IRExpr :=
+  let operand : IRExpr := parseExpr self node.operand
   if node.operator == ts.SyntaxKind.PlusPlusToken then
-    { tag := "Assign", target := operand, value := mkBinOp "Add" operand (default /- cross-file: litNat -/), type := TyUnit, effect := default /- cross-file: stateEffect -/ }
+    { tag := "Assign", target := operand, value := mkBinOp "Add" operand (litNat 1), type := TyUnit, effect := stateEffect TyUnit }
   else
-    { tag := "Assign", target := operand, value := mkBinOp "Sub" operand (default /- cross-file: litNat -/), type := TyUnit, effect := default /- cross-file: stateEffect -/ }
+    { tag := "Assign", target := operand, value := mkBinOp "Sub" operand (litNat 1), type := TyUnit, effect := stateEffect TyUnit }
 
-def ParserCtx.parseObjLit (self : ParserCtxState) (node : ObjectLiteralExpression) (ty : Any) : Any :=
+def ParserCtx.parseObjLit (self : ParserCtxState) (node : ObjectLiteralExpression) (ty : IRType) : IRExpr :=
   default
 
-def ParserCtx.parseTemplate (self : ParserCtxState) (node : TemplateExpression) : Any :=
+def ParserCtx.parseTemplate (self : ParserCtxState) (node : TemplateExpression) : IRExpr :=
   default
 
 -- // ─── Helpers ──────────────────────────────────────────────────────────────────
-def seq (a : Any) (b : Any) : Any :=
-  if default == "LitUnit" then
+def seq (a : IRExpr) (b : IRExpr) : IRExpr :=
+  if b.tag == "LitUnit" then
     a
   else
-    if default == "LitUnit" then
+    if a.tag == "LitUnit" then
       b
     else
       if default == "Sequence" then
-        { tag := "Sequence", stmts := #[default, b], type := default, effect := default /- cross-file: combineEffects -/ }
+        { tag := "Sequence", stmts := #[default, b], type := default, effect := combineEffects #[default, default] }
       else
-        { tag := "Sequence", stmts := #[a, b], type := default, effect := default /- cross-file: combineEffects -/ }
+        { tag := "Sequence", stmts := #[a, b], type := default, effect := combineEffects #[default, default] }
 
-def mkBinOp (op : Any) (left : Any) (right : Any) : Any :=
-  { tag := "BinOp", op := op, left := left, right := right, type := default, effect := Pure }
+def mkBinOp (op : BinOp) (left : IRExpr) (right : IRExpr) : IRExpr :=
+  { tag := "BinOp", op := op, left := left, right := right, type := left.type, effect := Pure }
 
-partial def branchReturns (e : Any) : Bool :=
-  if (default == "Return") || (default == "Throw") then
+partial def branchReturns (e : IRExpr) : Bool :=
+  if (e.tag == "Return") || (default == "Throw") then
     true
   else
     if default == "Sequence" then
@@ -1011,8 +1014,8 @@ partial def branchReturns (e : Any) : Bool :=
         else
           false
 
-def exprToPat (e : Any) : Any :=
-  if default == "LitString" then
+def exprToPat (e : IRExpr) : IRPattern :=
+  if e.tag == "LitString" then
     { tag := "PString", value := default }
   else
     if default == "LitNat" then
@@ -1032,7 +1035,7 @@ def exprToPat (e : Any) : Any :=
 def isCompoundAssign (kind : SyntaxKind) : Bool :=
   (((((((kind == ts.SyntaxKind.PlusEqualsToken) || (kind == ts.SyntaxKind.MinusEqualsToken)) || (kind == ts.SyntaxKind.AsteriskEqualsToken)) || (kind == ts.SyntaxKind.SlashEqualsToken)) || (kind == ts.SyntaxKind.PercentEqualsToken)) || (kind == ts.SyntaxKind.AmpersandEqualsToken)) || (kind == ts.SyntaxKind.BarEqualsToken)) || (kind == ts.SyntaxKind.CaretEqualsToken)
 
-def compoundOp (kind : SyntaxKind) : Any :=
+def compoundOp (kind : SyntaxKind) : BinOp :=
   match kind with
     | _ => "Add"
     | _ => "Sub"
@@ -1073,11 +1076,11 @@ def cap (s : String) : String :=
     s
 
 def fileToModuleName (filePath : String) : String :=
-  let base : Any := default
-  let parts : Any := default
+  let base : String := default
+  let parts : String := default
   "TSLean.Generated." ++ (default)
 
-def leadingComment (node : Any) (sf : Any) : Option String :=
+def leadingComment (node : String) (sf : String) : Option String :=
   let ranges : Option (Array CommentRange) := default
   if !(ranges.bind (fun _oc => _oc.size)) then
     none
@@ -1085,11 +1088,11 @@ def leadingComment (node : Any) (sf : Any) : Option String :=
     String.intercalate "\n" (Array.map (fun r => default) ranges)
 
 /-- Extract JSDoc comment text (/** ... *\/) from a node. Strips @param/@returns/@throws tags — these use a different Lean 4 syntax. Returns just the summary description. -/
-def jsdocComment (node : Any) (sf : Any) : Option String :=
+def jsdocComment (node : String) (sf : String) : Option String :=
   default
 
 /-- Check if a statement has a const/let/var with an interface/object type that acts as index signature -/
-def hasIndexSignature (node : Any) (checker : Any) : Bool :=
+def hasIndexSignature (node : String) (checker : String) : Bool :=
   if (!(default)) && (!(default)) then
     false
   else

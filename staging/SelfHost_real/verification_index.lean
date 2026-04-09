@@ -27,37 +27,37 @@ structure ProofObligation where
 
 structure VerificationResult where
   mk ::
-  obligations : Array Any
+  obligations : Array ProofObligation
   leanCode : String
   deriving Repr, BEq, Inhabited
 
 -- // ─── Public API ───────────────────────────────────────────────────────────────
-def generateVerification (mod : Any) : VerificationResult :=
+def generateVerification (mod : IRModule) : VerificationResult :=
   default
 
 -- // ─── Collection ───────────────────────────────────────────────────────────────
-partial def collectDecl (d : Any) (acc : Array Any) : Unit :=
+partial def collectDecl (d : IRDecl) (acc : Array ProofObligation) : Unit :=
   default
 
-partial def collectExpr (e : Any) (fn : String) (acc : Array Any) : Unit :=
+partial def collectExpr (e : IRExpr) (fn : String) (acc : Array ProofObligation) : Unit :=
   default
 
-partial def exprSummary (e : Any) : String :=
-  match default with
+partial def exprSummary (e : IRExpr) : String :=
+  match e.tag with
     | "Var" => default
     | "FieldAccess" => ((exprSummary default) ++ ".") ++ default
-    | "LitNat" => default /- cross-file: String -/
+    | "LitNat" => String default
     | "LitString" => serialize default
     | _ => "_"
 
 -- // ─── Emission ─────────────────────────────────────────────────────────────────
-def emitObligation (o : Any) : String :=
-  let safeName : String := default.replace "/[^a-zA-Z0-9_]/g" "_"
-  match default with
-    | "ArrayBounds" => String.intercalate "\n" #[s!"-- Array bounds safety for `{default}` accessing {default}", s!"theorem {safeName}_idx_in_bounds", "    (arr : Array α) (idx : Nat) (h : idx < arr.size) :", "    arr[idx]! = arr[⟨idx, h⟩] := by", "  simp [Array.get!_eq_getElem]"]
-    | "DivisionSafe" => String.intercalate "\n" #[s!"-- Division safety for `{default}` divisor: {default}", s!"theorem {safeName}_divisor_nonzero", "    (n d : Float) (h : d ≠ 0) : n / d = n / d := rfl"]
-    | "OptionIsSome" => String.intercalate "\n" #[s!"-- Option safety for `{default}` accessing {default}", s!"theorem {safeName}_val_is_some", "    {α : Type} (opt : Option α) (h : opt.isSome) :", "    opt.get!.isSome := by cases opt <;> simp_all"]
-    | "InvariantPreserved" => String.intercalate "\n" #[s!"-- Invariant preserved by `{default}`", s!"theorem {safeName}_invariant_preserved", "    (s : σ) (h : invariant s) : ∃ s', invariant s' := ⟨s, h⟩"]
-    | "TerminationBy" => s!"-- termination_by {default} -- for `{default}`"
+def emitObligation (o : ProofObligation) : String :=
+  let safeName : String := o.funcName.replace "/[^a-zA-Z0-9_]/g" "_"
+  match o.kind with
+    | "ArrayBounds" => String.intercalate "\n" #[s!"-- Array bounds safety for `{o.funcName}` accessing {o.detail}", s!"theorem {safeName}_idx_in_bounds", "    (arr : Array α) (idx : Nat) (h : idx < arr.size) :", "    arr[idx]! = arr[⟨idx, h⟩] := by", "  simp [Array.get!_eq_getElem]"]
+    | "DivisionSafe" => String.intercalate "\n" #[s!"-- Division safety for `{o.funcName}` divisor: {o.detail}", s!"theorem {safeName}_divisor_nonzero", "    (n d : Float) (h : d ≠ 0) : n / d = n / d := rfl"]
+    | "OptionIsSome" => String.intercalate "\n" #[s!"-- Option safety for `{o.funcName}` accessing {o.detail}", s!"theorem {safeName}_val_is_some", "    {α : Type} (opt : Option α) (h : opt.isSome) :", "    opt.get!.isSome := by cases opt <;> simp_all"]
+    | "InvariantPreserved" => String.intercalate "\n" #[s!"-- Invariant preserved by `{o.funcName}`", s!"theorem {safeName}_invariant_preserved", "    (s : σ) (h : invariant s) : ∃ s', invariant s' := ⟨s, h⟩"]
+    | "TerminationBy" => s!"-- termination_by {o.detail} -- for `{o.funcName}`"
 
 end TSLean.Generated.Index

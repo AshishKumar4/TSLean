@@ -237,12 +237,25 @@ class Gen {
     'AssocMap', 'Request', 'Response', 'URL', 'Headers',
   ]);
 
-  /** Convert IR type to Lean, mapping TS any/TSAny→String. */
+  // Known cross-file IR types that should map to String when not locally defined
+  private static CROSS_FILE_IR_TYPES = new Set([
+    'IRModule', 'IRDecl', 'IRExpr', 'IRType', 'IRParam', 'IRCase', 'IRPattern',
+    'IRImport', 'IRField', 'IRNode', 'DoStmt',
+    'ProofObligation', 'ProjectResult', 'ProjectOptions',
+    'TranspileResult', 'FileResult',
+  ]);
+
+  /** Convert IR type to Lean, mapping TS any/TSAny→String and cross-file IR types→String. */
   private typeToLean(t: IRType, parens = false): string {
     let result = irTypeToLean(t, parens);
     // TS any/unknown → String (TSAny and Any both become String in Lean)
     result = result.replace(/\bTSAny\b/g, 'String');
     result = result.replace(/\bAny\b/g, 'String');
+    // Cross-file IR types → String (only when not defined locally)
+    if (t.tag === 'TypeRef' && Gen.CROSS_FILE_IR_TYPES.has(t.name) &&
+        !this.definedNames.has(t.name) && !this.structFields.has(t.name)) {
+      return 'String';
+    }
     return result;
   }
 
