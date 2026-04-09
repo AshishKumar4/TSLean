@@ -111,36 +111,27 @@ theorem safety_of_inv_inductive (σ : Type) [inst : TransitionSystem σ]
 
 /-! ## DSL syntax macros -/
 
--- Note: `veil_state` cannot easily replicate `structure ... where` syntax
--- via macro because structFields is not a public parser category.
--- Instead, users define the structure normally and use the other macros.
--- The DSL provides `veil_action`, `veil_relation`, `veil_safety` for
--- generating the correct Prop-valued definitions.
+/-! ## DSL syntax macros
 
-/-- Declare a functional action: post = f(pre).
-    Usage: `veil_action increment (s : MyState) := { s with count := s.count + 1 }`
-    Generates: `def increment (pre post : MyState) : Prop := post = ...` -/
-syntax "veil_action " ident " (" ident " : " ident ") " " := " term : command
+Users define the state structure normally, then use these macros to declare
+actions, safety properties, and invariants in a uniform way. -/
 
+-- Functional action: post = f(pre)
+syntax "veil_action" ident "(" ident ":" ident ")" "where" term : command
 macro_rules
-  | `(command| veil_action $actName ($s : $stTy) := $body) =>
-    `(def $actName (pre post : $stTy) : Prop :=
-        post = (fun ($s : $stTy) => $body) pre)
+  | `(veil_action $n ($s : $ty) where $body) =>
+    `(def $n (pre post : $ty) : Prop := post = (fun ($s : $ty) => $body) pre)
 
-/-- Declare a relational action with explicit pre/post.
-    Usage: `veil_relation guarded_inc (pre post : S) := pre.x < 10 ∧ post = ...` -/
-syntax "veil_relation " ident " (" ident " " ident " : " ident ") " " := " term : command
-
+-- Relational action: two-state predicate
+syntax "veil_relation" ident "(" ident ident ":" ident ")" "where" term : command
 macro_rules
-  | `(command| veil_relation $name ($pre $post : $stTy) := $body) =>
-    `(def $name ($pre $post : $stTy) : Prop := $body)
+  | `(veil_relation $n ($pre $post : $ty) where $body) =>
+    `(def $n ($pre $post : $ty) : Prop := $body)
 
-/-- Declare a safety property.
-    Usage: `veil_safety bounded (s : S) := s.count ≤ s.max` -/
-syntax "veil_safety " ident " (" ident " : " ident ") " " := " term : command
-
+-- Safety property
+syntax "veil_safety" ident "(" ident ":" ident ")" "where" term : command
 macro_rules
-  | `(command| veil_safety $name ($s : $stTy) := $body) =>
-    `(def $name ($s : $stTy) : Prop := $body)
+  | `(veil_safety $n ($s : $ty) where $body) =>
+    `(def $n ($s : $ty) : Prop := $body)
 
 end TSLean.Veil.DSL
