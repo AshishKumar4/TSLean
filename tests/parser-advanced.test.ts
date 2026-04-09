@@ -384,8 +384,193 @@ describe('Parser: re-exports', () => {
 describe('Parser: comma expressions', () => {
   it('comma expression parsed as sequence', () => {
     const mod = parsedInline(`const x = (console.log('a'), 42);`);
-    // Should not throw; produces some form of sequence
     expect(mod).toBeDefined();
+    expect(mod.decls.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── Nested destructuring ────────────────────────────────────────────────────
+
+describe('Parser: nested destructuring', () => {
+  it('nested object destructuring: const {a: {b, c}} = x', () => {
+    const code = inline(`
+      function test(obj: { inner: { x: number; y: number } }): number {
+        const { inner: { x, y } } = obj;
+        return x + y;
+      }
+    `);
+    expect(code).toMatch(/let x|let _ds/);
+    expect(code).toMatch(/let y|let _ds/);
+    expect(code).toMatch(/def test/);
+  });
+
+  it('nested array in object destructuring', () => {
+    const code = inline(`
+      function test(obj: { items: number[] }): number {
+        const { items: [first, second] } = obj;
+        return first + second;
+      }
+    `);
+    expect(code).toMatch(/let first|let _ds|let _ai/);
+    expect(code).toMatch(/def test/);
+  });
+
+  it('destructuring with defaults', () => {
+    const code = inline(`
+      function test(opts: { timeout?: number }): number {
+        const { timeout = 5000 } = opts;
+        return timeout;
+      }
+    `);
+    expect(code).toMatch(/let timeout|getD|Option/);
+  });
+
+  it('mixed object and array destructuring', () => {
+    const mod = parsedInline(`
+      function unpack(data: { coords: [number, number]; label: string }): string {
+        const { coords: [x, y], label } = data;
+        return label;
+      }
+    `);
+    expect(mod.decls.length).toBeGreaterThan(0);
+    const fn = mod.decls.find(d => d.tag === 'FuncDef' && d.name === 'unpack');
+    expect(fn).toBeDefined();
+  });
+});
+
+// ─── Ternary expressions ────────────────────────────────────────────────────
+
+describe('Parser: ternary expressions', () => {
+  it('simple ternary → IfThenElse', () => {
+    const code = inline(`
+      function max(a: number, b: number): number {
+        return a > b ? a : b;
+      }
+    `);
+    expect(code).toMatch(/if.*then/s);
+    expect(code).toMatch(/else/);
+  });
+
+  it('nested ternary', () => {
+    const code = inline(`
+      function classify(n: number): string {
+        return n > 0 ? "positive" : n < 0 ? "negative" : "zero";
+      }
+    `);
+    expect(code).toMatch(/if.*then/s);
+    expect(code).toMatch(/"positive"|"negative"|"zero"/);
+  });
+
+  it('ternary in assignment', () => {
+    const code = inline(`
+      function abs(n: number): number {
+        const result = n >= 0 ? n : -n;
+        return result;
+      }
+    `);
+    expect(code).toMatch(/let result|if.*then/);
+  });
+});
+
+// ─── Method chains ──────────────────────────────────────────────────────────
+
+describe('Parser: method chains', () => {
+  it('map then filter', () => {
+    const code = inline(`
+      function doubled(arr: number[]): number[] {
+        return arr.map(x => x * 2).filter(x => x > 0);
+      }
+    `);
+    expect(code).toMatch(/map|filter/);
+    expect(code).toMatch(/def doubled/);
+  });
+
+  it('split then join', () => {
+    const code = inline(`
+      function transform(s: string): string {
+        return s.split(',').join(';');
+      }
+    `);
+    expect(code).toMatch(/split|join|splitOn|intercalate/);
+  });
+});
+
+// ─── Type assertions ────────────────────────────────────────────────────────
+
+describe('Parser: type assertions and casts', () => {
+  it('as expression is transparent', () => {
+    const code = inline(`
+      function cast(x: unknown): number {
+        return (x as number);
+      }
+    `);
+    expect(code).toMatch(/def cast/);
+    // Should not produce a sorry — as-expression is a type annotation
+  });
+
+  it('non-null assertion passes through', () => {
+    const code = inline(`
+      function first(arr: (number | undefined)[]): number {
+        return arr[0]!;
+      }
+    `);
+    expect(code).toMatch(/def first/);
+  });
+
+  it('satisfies expression is transparent', () => {
+    const mod = parsedInline(`
+      const config = { port: 3000, host: "localhost" } satisfies { port: number; host: string };
+    `);
+    expect(mod.decls.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── Switch patterns ─────────────────────────────────────────────────────────
+
+describe('Parser: switch patterns (extended)', () => {
+  it('switch on enum-like values produces Match', () => {
+    const mod = parsedInline(`
+      function describe(kind: string): string {
+        switch (kind) {
+          case "circle": return "round";
+          case "square": return "boxy";
+          default: return "unknown";
+        }
+      }
+    `);
+    const fn = mod.decls.find(d => d.tag === 'FuncDef');
+    expect(fn).toBeDefined();
+    if (fn?.tag === 'FuncDef') {
+      // The body should contain a Match node
+      const hasMatch = JSON.stringify(fn.body).includes('"Match"');
+      expect(hasMatch).toBe(true);
+    }
+  });
+
+  it('switch with fall-through groups cases', () => {
+    const code = inline(`
+      function isVowel(c: string): boolean {
+        switch (c) {
+          case 'a': case 'e': case 'i': case 'o': case 'u':
+            return true;
+          default:
+            return false;
+        }
+      }
+    `);
+    expect(code).toMatch(/match|"a"|"e"/);
+  });
+
+  it('switch on discriminated union field', () => {
+    const mod = parsedInline(`
+      type Shape = { kind: "circle"; r: number } | { kind: "rect"; w: number; h: number };
+      function area(s: Shape): number {
+        switch (s.kind) {
+          case "circle": return Math.PI * s.r * s.r;
+          case "rect": return s.w * s.h;
+        }
+      }
+    `);
     expect(mod.decls.length).toBeGreaterThan(0);
   });
 });

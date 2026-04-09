@@ -181,6 +181,11 @@ inductive IRExpr where
   | StructLit (name : String) (fields : Array (String × IRExpr)) (node : IRNode)
   | StructUpdate (base : IRExpr) (updates : Array (String × IRExpr)) (node : IRNode)
   | ArrayLit  (elems : Array IRExpr) (node : IRNode)
+  | Cast      (expr : IRExpr) (targetType : IRType) (node : IRNode)
+  | CtorApp   (ctor : String) (args : Array IRExpr) (node : IRNode)
+  | IsType    (expr : IRExpr) (testType : IRType) (node : IRNode)
+  | Await     (expr : IRExpr) (node : IRNode)
+  | LitNull   (node : IRNode)
 
 /-! ## Supporting types -/
 

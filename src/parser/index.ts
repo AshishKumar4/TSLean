@@ -703,36 +703,18 @@ class ParserCtx {
        }
        // Destructuring: const { x, y } = obj  →  let x := obj.x; let y := obj.y; body
        if (decl && ts.isObjectBindingPattern(decl.name) && decl.initializer) {
-         const rhs = this.parseExpr(decl.initializer);
-         // Build a chain of lets for each binding element
-         let body = cont();
-         const elems = [...decl.name.elements].reverse();
-         for (const el of elems) {
-           const propName = el.propertyName
-             ? (ts.isIdentifier(el.propertyName) ? el.propertyName.text : el.propertyName.getText(this.sf))
-             : (ts.isIdentifier(el.name) ? el.name.text : `_el${el.pos}`);
-           const bindName = ts.isIdentifier(el.name) ? el.name.text : `_el${el.pos}`;
-           const ty = mapType(this.checker.getTypeAtLocation(el.name), this.checker);
-           const fieldVal: IRExpr = { tag: 'FieldAccess', obj: rhs, field: propName, type: ty, effect: rhs.effect };
-           body = { tag: 'Let', name: bindName, annot: ty, value: fieldVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
-         }
-         return body;
-       }
+          const rhs = this.parseExpr(decl.initializer);
+          let body = cont();
+          body = this.flattenObjectBinding(decl.name, rhs, body);
+          return body;
+        }
        // Array destructuring: const [a, b] = arr  →  let a := arr[0]!; let b := arr[1]!
        if (decl && ts.isArrayBindingPattern(decl.name) && decl.initializer) {
-         const rhs = this.parseExpr(decl.initializer);
-         let body = cont();
-         const elems = [...decl.name.elements].reverse();
-         elems.forEach((el, revIdx) => {
-           const idx = elems.length - 1 - revIdx;
-           if (ts.isOmittedExpression(el)) return;
-           const bindName = ts.isBindingElement(el) && ts.isIdentifier(el.name) ? el.name.text : `_ai${idx}`;
-           const ty = mapType(this.checker.getTypeAtLocation(el), this.checker);
-           const indexVal: IRExpr = { tag: 'IndexAccess', obj: rhs, index: litNat(idx), type: ty, effect: rhs.effect };
-           body = { tag: 'Let', name: bindName, annot: ty, value: indexVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
-         });
-         return body;
-       }
+          const rhs = this.parseExpr(decl.initializer);
+          let body = cont();
+          body = this.flattenArrayBinding(decl.name, rhs, body);
+          return body;
+        }
      }
 
     // if (CPS early-return)
@@ -915,6 +897,85 @@ class ParserCtx {
     }
 
     return this.parseStmts(stmts, Pure);
+  }
+
+  /**
+   * Flatten an ObjectBindingPattern into nested Let expressions.
+   * Handles nested destructuring: `const {a: {b, c}, d} = x`
+   * → `let a_obj := x.a; let b := a_obj.b; let c := a_obj.c; let d := x.d; body`
+   */
+  private flattenObjectBinding(pattern: ts.ObjectBindingPattern, rhs: IRExpr, body: IRExpr): IRExpr {
+    const elems = [...pattern.elements].reverse();
+    for (const el of elems) {
+      const propName = el.propertyName
+        ? (ts.isIdentifier(el.propertyName) ? el.propertyName.text : el.propertyName.getText(this.sf))
+        : (ts.isIdentifier(el.name) ? el.name.text : `_el${el.pos}`);
+      const ty = mapType(this.checker.getTypeAtLocation(el.name), this.checker);
+      const fieldVal: IRExpr = { tag: 'FieldAccess', obj: rhs, field: propName, type: ty, effect: rhs.effect };
+
+      if (ts.isObjectBindingPattern(el.name)) {
+        // Nested object destructuring: const {a: {b, c}} = x
+        // → let _tmp := x.a; let b := _tmp.b; let c := _tmp.c; ...
+        const tmpName = `_ds_${propName}`;
+        const tmpRef: IRExpr = { tag: 'Var', name: tmpName, type: ty, effect: Pure };
+        body = this.flattenObjectBinding(el.name, tmpRef, body);
+        body = { tag: 'Let', name: tmpName, annot: ty, value: fieldVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
+      } else if (ts.isArrayBindingPattern(el.name)) {
+        // Nested array destructuring: const {a: [b, c]} = x
+        const tmpName = `_ds_${propName}`;
+        const tmpRef: IRExpr = { tag: 'Var', name: tmpName, type: ty, effect: Pure };
+        body = this.flattenArrayBinding(el.name, tmpRef, body);
+        body = { tag: 'Let', name: tmpName, annot: ty, value: fieldVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
+      } else {
+        // Simple binding: const {a} = x → let a := x.a
+        const bindName = ts.isIdentifier(el.name) ? el.name.text : `_el${el.pos}`;
+        // Handle default values: const {a = 42} = x → let a := x.a.getD 42
+        if (el.initializer) {
+          const defaultVal = this.parseExpr(el.initializer);
+          const withDefault: IRExpr = {
+            tag: 'App', fn: varExpr('Option.getD', TyUnit), args: [fieldVal, defaultVal],
+            type: ty, effect: combineEffects([fieldVal.effect, defaultVal.effect])
+          };
+          body = { tag: 'Let', name: bindName, annot: ty, value: withDefault, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
+        } else {
+          body = { tag: 'Let', name: bindName, annot: ty, value: fieldVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
+        }
+      }
+    }
+    return body;
+  }
+
+  /**
+   * Flatten an ArrayBindingPattern into nested Let expressions.
+   * Handles: `const [a, b, c] = arr` → indexed access via arr[0], arr[1], arr[2]
+   * Also handles nested patterns: `const [a, {b, c}] = arr`
+   */
+  private flattenArrayBinding(pattern: ts.ArrayBindingPattern, rhs: IRExpr, body: IRExpr): IRExpr {
+    const elems = [...pattern.elements].reverse();
+    elems.forEach((el, revIdx) => {
+      const idx = elems.length - 1 - revIdx;
+      if (ts.isOmittedExpression(el)) return;
+      const ty = mapType(this.checker.getTypeAtLocation(el), this.checker);
+      const indexVal: IRExpr = { tag: 'IndexAccess', obj: rhs, index: litNat(idx), type: ty, effect: rhs.effect };
+
+      if (ts.isBindingElement(el) && ts.isObjectBindingPattern(el.name)) {
+        // const [, {a, b}] = arr → let _tmp := arr[1]; let a := _tmp.a; ...
+        const tmpName = `_ds_${idx}`;
+        const tmpRef: IRExpr = { tag: 'Var', name: tmpName, type: ty, effect: Pure };
+        body = this.flattenObjectBinding(el.name, tmpRef, body);
+        body = { tag: 'Let', name: tmpName, annot: ty, value: indexVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
+      } else if (ts.isBindingElement(el) && ts.isArrayBindingPattern(el.name)) {
+        // const [[a, b], c] = arr → nested array destructuring
+        const tmpName = `_ds_${idx}`;
+        const tmpRef: IRExpr = { tag: 'Var', name: tmpName, type: ty, effect: Pure };
+        body = this.flattenArrayBinding(el.name, tmpRef, body);
+        body = { tag: 'Let', name: tmpName, annot: ty, value: indexVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
+      } else {
+        const bindName = ts.isBindingElement(el) && ts.isIdentifier(el.name) ? el.name.text : `_ai${idx}`;
+        body = { tag: 'Let', name: bindName, annot: ty, value: indexVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
+      }
+    });
+    return body;
   }
 
   private parseTry(node: ts.TryStatement, rest: ReadonlyArray<ts.Statement>, eff: Effect): IRExpr {
