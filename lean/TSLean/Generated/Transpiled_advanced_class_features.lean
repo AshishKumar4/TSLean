@@ -33,7 +33,7 @@ inductive Direction where
 structure AnimalState where
   mk ::
   name : String
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def Animal.init (self : AnimalState) (name : String) : StateT AnimalState IO Unit :=
   do
@@ -49,7 +49,8 @@ def Animal.describe (self : AnimalState) : String :=
 structure DogState where
   mk ::
   breed : String
-  deriving Repr, BEq
+  name : String
+  deriving Repr, BEq, Inhabited
 
 def Dog.init (self : DogState) (name : String) (breed : String) : StateT DogState IO Unit :=
   do
@@ -70,7 +71,7 @@ def Cat.sound (self : CatState) : String :=
 structure CircleState where
   mk ::
   radius : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def Circle.init (self : CircleState) (radius : Float) : StateT CircleState IO Unit :=
   do

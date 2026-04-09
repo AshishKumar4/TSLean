@@ -36,7 +36,7 @@ structure User where
   mk ::
   id : String
   name : String
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def userTag (u : User) : String :=
   ((("<user id=\"" ++ u.id) ++ "\">") ++ u.name) ++ "</user>"

@@ -15,12 +15,12 @@ abbrev StringMap := AssocMap String String
 structure NumberDict where
   mk ::
   size : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 structure Env where
   mk ::
   NODE_ENV : String
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def getFromMap (m : StringMap) (key : String) : Option String :=
   m.getD key default

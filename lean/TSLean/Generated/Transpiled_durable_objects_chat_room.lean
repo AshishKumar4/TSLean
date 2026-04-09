@@ -21,7 +21,7 @@ structure ChatMessage where
   userId : String
   content : String
   timestamp : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 -- State for ChatRoomDO
 structure ChatRoomDOState where
@@ -29,7 +29,7 @@ structure ChatRoomDOState where
   sessions : AssocMap String String
   messages : Array ChatMessage
   nextId : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 namespace ChatRoomDO
 

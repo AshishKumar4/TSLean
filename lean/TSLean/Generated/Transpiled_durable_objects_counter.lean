@@ -18,7 +18,7 @@ namespace TSLean.Generated.Counter
 structure CounterDOState where
   mk ::
   count : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 namespace CounterDO
 

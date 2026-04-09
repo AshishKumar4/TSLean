@@ -18,14 +18,14 @@ structure RequestRecord where
   mk ::
   timestamp : Float
   count : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 -- State for RateLimiterDO
 structure RateLimiterDOState where
   mk ::
   windowMs : Float
   maxRequests : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 namespace RateLimiterDO
 

@@ -96,7 +96,8 @@ class Gen {
           if (fields) {
             const accessed = collectFieldAccesses(d.body, 'self');
             for (const [fname, ftype] of accessed) {
-              if (!fields.some(f => f.name === fname) && !fname.startsWith('_')) {
+              const isExcluded = fname.startsWith('_') || fname === 'state' || fname === 'storage' || fname === 'env' || fname === 'config' || (ftype.tag === 'TypeRef' && ['DurableObjectState','Env','CompilerHost'].includes(ftype.name));
+                if (!fields.some(f => f.name === fname) && !isExcluded) {
                 fields.push({ name: fname, type: ftype });
               }
             }
@@ -113,7 +114,8 @@ class Gen {
               if (fields) {
                 const accessed = collectFieldAccesses(inner.body, 'self');
                 for (const [fname, ftype] of accessed) {
-                  if (!fields.some(f => f.name === fname) && !fname.startsWith('_')) {
+                  const isExcluded = fname.startsWith('_') || fname === 'state' || fname === 'storage' || fname === 'env' || fname === 'config' || (ftype.tag === 'TypeRef' && ['DurableObjectState','Env','CompilerHost'].includes(ftype.name));
+                if (!fields.some(f => f.name === fname) && !isExcluded) {
                     fields.push({ name: fname, type: ftype });
                   }
                 }
@@ -311,27 +313,18 @@ class Gen {
     this.emit(`structure ${d.name}${tp}${ext} where`);
     this.ind++;
     this.emit(`mk ::`);
-    // Include parent fields when struct extends another (inheritance)
-    if (d.extends_) {
-      const parentName = d.extends_ + 'State';
-      const parentFields = this.structFields.get(parentName);
-      if (parentFields) {
-        for (const pf of parentFields) {
-          // Only add if not already in child's fields
-          if (!d.fields.some(f => f.name === pf.name)) {
-            this.emit(`${pf.name} : ${irTypeToLean(pf.type)}`);
-          }
-        }
-      }
-    }
-    for (const f of d.fields) {
+    // Use enriched field list from registry (includes inherited fields discovered
+    // from method body analysis in collectStructInfo).
+    const enrichedFields = this.structFields.get(d.name) ?? d.fields;
+    for (const f of enrichedFields) {
       // Strip leading underscore from private field names (TS _radius → Lean radius)
       const fieldName = (f.name.startsWith('_') && f.name.length > 1 && /[a-zA-Z]/.test(f.name[1]))
         ? f.name.slice(1) : f.name;
       this.emit(`${fieldName} : ${irTypeToLean(f.type)}`);
     }
     this.ind--;
-    if (d.deriving?.length) this.emit(`  deriving ${d.deriving.join(', ')}`);
+    // Always derive Repr, BEq, Inhabited for compilability (default needs Inhabited)
+    this.emit(`  deriving ${DEFAULT_DERIVING}`);
   }
 
   private emitInductive(d: Extract<IRDecl, { tag: 'InductiveDef' }>): void {
@@ -1228,15 +1221,23 @@ function isSimpleValue(s: string): boolean {
          t === 'default' || t === 'none' || t === '#[]';
 }
 
-/** Collect all field names accessed on a given variable in an expression tree. */
+/** Collect all FIELD names (not method calls) accessed on a given variable.
+ *  self.field → collected; self.method() → NOT collected (it's a method call). */
 function collectFieldAccesses(expr: IRExpr, varName: string): Map<string, IRType> {
   const fields = new Map<string, IRType>();
+  const methodCalls = new Set<string>();
+
   function walk(e: IRExpr): void {
     if (!e || typeof e !== 'object') return;
+    // Detect method calls: App(FieldAccess(self, method), args) → skip the field
+    if (e.tag === 'App' && e.fn.tag === 'FieldAccess' &&
+        e.fn.obj.tag === 'Var' && e.fn.obj.name === varName) {
+      methodCalls.add(e.fn.field);
+    }
+    // Collect field accesses
     if (e.tag === 'FieldAccess' && e.obj.tag === 'Var' && e.obj.name === varName) {
       fields.set(e.field, e.type);
     }
-    // Recurse into all child expressions
     for (const v of Object.values(e)) {
       if (v && typeof v === 'object') {
         if (Array.isArray(v)) {
@@ -1248,13 +1249,13 @@ function collectFieldAccesses(expr: IRExpr, varName: string): Map<string, IRType
               }
             }
           }
-        } else if ('tag' in v) {
-          walk(v as IRExpr);
-        }
+        } else if ('tag' in v) walk(v as IRExpr);
       }
     }
   }
   walk(expr);
+  // Remove method calls from field set
+  for (const m of methodCalls) fields.delete(m);
   return fields;
 }
 

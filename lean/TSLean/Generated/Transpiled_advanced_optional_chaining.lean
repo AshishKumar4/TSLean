@@ -14,7 +14,7 @@ structure Config where
   host : Option (Option String)
   port : Option (Option Float)
   db : Option (Option String)
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def getHost (config : Option Config) : String :=
   Option.getD (config.bind (fun _oc => _oc.host)) "localhost"

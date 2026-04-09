@@ -21,13 +21,13 @@ structure AuthSession where
   createdAt : Float
   expiresAt : Float
   roles : Array String
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 -- State for AuthDO
 structure AuthDOState where
   mk ::
   TOKEN_TTL : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 namespace AuthDO
 

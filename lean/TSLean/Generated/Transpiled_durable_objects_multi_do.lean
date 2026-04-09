@@ -21,20 +21,20 @@ structure RPCEnvelope where
   method : String
   params : Any
   timestamp : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 structure RPCResponse where
   mk ::
   id : String
   result : Option Any
   error : Option (Option String)
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 -- State for CoordinatorDO
 structure CoordinatorDOState where
   mk ::
   nodes : AssocMap String String
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 namespace CoordinatorDO
 

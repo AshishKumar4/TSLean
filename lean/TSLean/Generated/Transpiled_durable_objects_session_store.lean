@@ -20,13 +20,13 @@ structure Session where
   data : String
   createdAt : Float
   expiresAt : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 -- State for SessionStoreDO
 structure SessionStoreDOState where
   mk ::
   TTL_MS : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 namespace SessionStoreDO
 

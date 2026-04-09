@@ -22,7 +22,7 @@ def processValue (x : StringOrNumber) : String :=
 structure AnimalState where
   mk ::
   name : String
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def Dog.bark (self : DogState) : IO Unit :=
   do
@@ -46,12 +46,12 @@ def makeSound (animal : AnimalState) : Unit :=
 structure HasName where
   mk ::
   name : String
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 structure HasAge where
   mk ::
   age : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def describeEntity (entity : HasName) : String :=
   if AssocMap.contains entity "name" then

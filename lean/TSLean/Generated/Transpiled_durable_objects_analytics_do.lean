@@ -21,7 +21,7 @@ structure Metric where
   min : Float
   max : Float
   lastSeen : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 namespace AnalyticsDO
 

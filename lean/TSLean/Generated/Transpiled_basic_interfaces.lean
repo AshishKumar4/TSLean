@@ -13,19 +13,19 @@ structure Point where
   mk ::
   x : Float
   y : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 structure Rectangle where
   mk ::
   topLeft : Point
   bottomRight : Point
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 structure Named where
   mk ::
   name : String
   description : Option (Option String)
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def distance (p1 : Point) (p2 : Point) : Float :=
   let dx : Float := p2.x - p1.x

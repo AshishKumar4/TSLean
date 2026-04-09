@@ -22,7 +22,7 @@ structure Pair (A : Type) (B : Type) where
   mk ::
   first : A
   second : B
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def makePair {A : Type} {B : Type} (a : A) (b : B) : Pair A B :=
   { first := a, second := b }

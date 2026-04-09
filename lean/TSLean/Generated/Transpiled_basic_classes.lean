@@ -14,7 +14,7 @@ structure CounterState where
   mk ::
   count : Float
   step : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def Counter.init (self : CounterState) (step : Float := 1) : StateT CounterState IO Unit :=
   do
@@ -39,7 +39,7 @@ def Counter.getCount (self : CounterState) : Float :=
 structure StackState (T : Type) where
   mk ::
   items : Array T
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def Stack.push {T : Type} (self : StackState T) (item : T) : Unit :=
   let _ := self.items.push item; ()
@@ -61,7 +61,7 @@ structure BankAccountState where
   mk ::
   balance : Float
   owner : String
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def BankAccount.init (self : BankAccountState) (owner : String) (initial : Float := 0) : StateT BankAccountState IO Unit :=
   do

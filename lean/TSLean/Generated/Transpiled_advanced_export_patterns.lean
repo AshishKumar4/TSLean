@@ -14,14 +14,14 @@ structure Config where
   host : String
   port : Float
   debug : Option Bool
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 structure ApiResult (T : Type) where
   mk ::
   data : T
   status : Float
   message : String
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def createConfig (host : String) (port : Float) : Config :=
   { host := host, port := port, debug := false }

@@ -22,7 +22,7 @@ structure QueueItem where
   attempts : Float
   maxAttempts : Float
   nextRetryAt : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 namespace QueueProcessorDO
 
