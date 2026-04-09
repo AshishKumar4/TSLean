@@ -631,8 +631,14 @@ class Gen {
         const inner = '  '.repeat(this.ind + depth + 1);
         let then_ = this.genExpr(e.then, ctx, depth + 1);
         let else_ = this.genExpr(e.else_, ctx, depth + 1);
-        // When then/else branch starts with `do`, put it on the same line as then/else
-        // to avoid Lean parsing `do` as a separate command.
+
+        // In monadic context (do blocks), wrap pure branch values in `pure (...)`
+        // so the if/else returns the right monad type.
+        if (!isPure(ctx)) {
+          if (!looksMonadic(then_)) then_ = `pure (${then_.trim()})`;
+          if (!looksMonadic(else_)) else_ = `pure (${else_.trim()})`;
+        }
+
         const thenJoin = then_.trimStart().startsWith('do') ? ' ' : `\n${inner}`;
         const elseJoin = else_.trimStart().startsWith('do') ? ' ' : `\n${inner}`;
         return `if ${cond} then${thenJoin}${then_}\n${indent}else${elseJoin}${else_}`;
@@ -1084,6 +1090,16 @@ function defaultForType(t: IRType): string {
     case 'Tuple':   return t.elems.length === 0 ? '()' : `(${t.elems.map(defaultForType).join(', ')})`;
     default:        return 'default';  // Lean's `default` requires Inhabited instance
   }
+}
+
+/** Check if a generated string looks like a monadic expression (already in the monad).
+ *  Pure values like `mkResponse ...` need `pure (...)` wrapping in do blocks. */
+function looksMonadic(s: string): boolean {
+  const t = s.trimStart();
+  return t.startsWith('do') || t.startsWith('pure ') || t.startsWith('return ') ||
+         t.startsWith('let ') || t.startsWith('modify ') || t.startsWith('throw ') ||
+         t.startsWith('tryCatch ') || t === '()' || t === 'default' ||
+         t.startsWith('pure default') || t.startsWith('pure ()');
 }
 
 function needsParens(e: IRExpr): boolean {
