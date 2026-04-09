@@ -572,7 +572,11 @@ class Gen {
         // Emit type-appropriate default instead of sorry
         return defaultForType(e.type);
       }
-      case 'Var':       return sanitize(e.name);
+      case 'Var': {
+        // If the name is a quoted string literal (from stdlib mapping), emit as-is
+        if (e.name.startsWith('"') && e.name.endsWith('"')) return e.name;
+        return sanitize(e.name);
+      }
 
       case 'FieldAccess': {
         // Pattern 3: Strip `.state` prefix in DO methods.
@@ -792,6 +796,8 @@ class Gen {
           }
           return `${f.name} := ${val}`;
         }).join(', ');
+        // Empty struct literal → default (needs Inhabited instance)
+        if (!fieldStrs) return 'default';
         return `{ ${fieldStrs} }`;
       }
 
