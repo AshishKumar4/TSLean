@@ -339,8 +339,14 @@ class Gen {
       }
     } else {
       const bodyStr = this.genExpr(d.body, d.effect);
-      // Pure function with void return — discard non-Unit body
-      if (d.retType.tag === 'Unit' && !['()', 'sorry', 'default', 'pure default'].includes(bodyStr.trim()) &&
+      // When return type is IO/Promise but effect is Pure, wrap in `do { pure body }`
+      const retIsMonadic = retSig.startsWith('IO ') || retSig.startsWith('StateT ') || retSig.startsWith('ExceptT ');
+      if (retIsMonadic) {
+        this.emit('do');
+        this.ind++;
+        this.emit(`pure (${bodyStr})`);
+        this.ind--;
+      } else if (d.retType.tag === 'Unit' && !['()', 'sorry', 'default', 'pure default'].includes(bodyStr.trim()) &&
           !bodyStr.includes('let ') && !bodyStr.includes('if ') && !bodyStr.includes('match ')) {
         this.emit(`let _ := ${bodyStr}; ()`);
       } else {

@@ -39,11 +39,12 @@ def ChatRoomDO.init : ChatRoomDOState :=
   { sessions := default, messages := #[], nextId := (0 : Float) }
 
 def ChatRoomDO.fetch (self : ChatRoomDOState) (request : Request) : IO Response :=
-  let url : URL := URL.parse request.url
-  if (url.pathname == "/history") && (request.method == "GET") then
-    mkResponse ("<serialized>") ({ headers := default })
-  else
-    mkResponse "Not Found" ({ status := 404 })
+  do
+    pure (let url : URL := URL.parse request.url
+    if (url.pathname == "/history") && (request.method == "GET") then
+      mkResponse ("<serialized>") ({ headers := default })
+    else
+      mkResponse "Not Found" ({ status := 404 }))
 
 def ChatRoomDO.webSocketMessage (self : ChatRoomDOState) (ws : WebSocket) (message : String) : StateT ChatRoomDOState IO Unit :=
   pure default
