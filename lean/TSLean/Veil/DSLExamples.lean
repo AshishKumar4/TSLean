@@ -202,9 +202,10 @@ theorem dequeue_ok (pre post : State) (_ : pre.capacity > 0)
 
 theorem assu_inv : isInvariant (σ := State) TransitionSystem.assumptions := by
   intro s hr; induction hr with
-  | init s ⟨_, hcap⟩ => exact hcap
+  | init s hi => exact hi.2
   | step s s' _ hn ih =>
-    rcases hn with ⟨_, _, hcap⟩ | ⟨_, _, hcap⟩ <;> omega
+    simp only [TransitionSystem.assumptions]
+    rcases hn with ⟨_, _, hcap⟩ | ⟨_, _, hcap⟩ <;> rw [hcap] <;> exact ih
 
 theorem safety_holds : isInvariant (σ := State) TransitionSystem.safe :=
   safe_of_invInductive assu_inv
@@ -215,8 +216,8 @@ theorem safety_holds : isInvariant (σ := State) TransitionSystem.safe :=
 -- Bonus: use the DSL combinator directly
 theorem safety_direct : ∀ s, reachable s → not_over_capacity s :=
   safety_of_inv_inductive State
-    assu_inv
-    (fun s ha hi => ⟨by omega, hi.2⟩)
+    (fun s hr => assu_inv s hr)
+    (fun s hassu ⟨hsz, hcap⟩ => ⟨by omega, hcap⟩)
     (fun s s' ha hi hn => next2_preserves enqueue_ok dequeue_ok ha hi hn)
     (fun s _ hi => hi.1)
 

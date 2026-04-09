@@ -68,6 +68,8 @@ import TSLean.Generated.FullProject.Backend.Router
 
 -- Veil Transition Systems
 import TSLean.Veil.Core
+import TSLean.Veil.DSL
+import TSLean.Veil.DSLExamples
 import TSLean.Veil.AuthDO
 import TSLean.Veil.ChatRoomDO
 import TSLean.Veil.CounterDO
