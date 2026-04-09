@@ -62,7 +62,7 @@ def RateLimiterDO.checkRateLimit (self : RateLimiterDOState) (clientId : String)
     if total >= self.maxRequests then
       pure false
     else do
-        let _ := valid.push ({ timestamp := now, count := 1 })
+        let _ := valid.push { timestamp := now, count := 1 }
         do
           pure default
           return true

@@ -65,6 +65,9 @@ class Gen {
       this.emit('');
     }
 
+    // Emit missing state structs (referenced in method signatures but not defined)
+    this.emitMissingStateStructs(mod.decls);
+
     for (const d of mod.decls) { this.emitDecl(d); this.emit(''); }
 
     if (ns && ns !== 'T' && ns !== 'Test') {
@@ -138,6 +141,56 @@ class Gen {
       ty = ty.replace(new RegExp(`\\b${cls}\\b`, 'g'), state);
     }
     return ty;
+  }
+
+  /** Match a variable name to a known struct type for `default` type annotations.
+   *  Heuristic: "metric" → "Metric", "session" → "Session", etc. */
+  private inferTypeForDefault(varName: string): string | null {
+    const capitalized = varName.charAt(0).toUpperCase() + varName.slice(1);
+    if (this.structFields.has(capitalized)) return capitalized;
+    // Try common suffixes: "existingMetric" → "Metric"
+    for (const [name] of this.structFields) {
+      if (name === 'default' || name.endsWith('State')) continue;
+      if (varName.toLowerCase().endsWith(name.toLowerCase())) return name;
+    }
+    return null;
+  }
+
+  /** Emit structure definitions for State types that are referenced but not defined. */
+  private emitMissingStateStructs(decls: IRDecl[]): void {
+    const definedTypes = new Set<string>();
+    const referencedTypes = new Set<string>();
+    for (const d of decls) {
+      if (d.tag === 'StructDef') definedTypes.add(d.name);
+      if (d.tag === 'FuncDef') {
+        for (const p of d.params) {
+          if (p.type.tag === 'TypeRef') referencedTypes.add(p.type.name);
+        }
+        if (d.retType.tag === 'TypeRef') referencedTypes.add(d.retType.name);
+      }
+      if (d.tag === 'Namespace') {
+        for (const inner of d.decls) {
+          if (inner.tag === 'FuncDef') {
+            for (const p of inner.params) {
+              if (p.type.tag === 'TypeRef') referencedTypes.add(p.type.name);
+            }
+            if (inner.retType.tag === 'TypeRef') referencedTypes.add(inner.retType.name);
+          }
+        }
+      }
+    }
+    for (const name of referencedTypes) {
+      if (!definedTypes.has(name) && name.endsWith('State')) {
+        this.emit(`-- Auto-generated empty state struct for ${name}`);
+        this.emit(`structure ${name} where`);
+        this.ind++;
+        this.emit(`mk ::`);
+        this.ind--;
+        this.emit(`  deriving ${DEFAULT_DERIVING}`);
+        this.emit('');
+        this.structFields.set(name, []);
+      }
+    }
   }
 
   // ─── Import resolver (Fix 1 + Fix 5) ───────────────────────────────────────
@@ -324,8 +377,10 @@ class Gen {
       this.emit(`${fieldName} : ${irTypeToLean(f.type)}`);
     }
     this.ind--;
-    // Always derive Repr, BEq, Inhabited for compilability (default needs Inhabited)
-    this.emit(`  deriving ${DEFAULT_DERIVING}`);
+    // Branded types (single val field) also need DecidableEq for use as map keys
+    const isBranded = enrichedFields.length === 1 && enrichedFields[0].name === 'val';
+    const deriving = isBranded ? `${DEFAULT_DERIVING}, DecidableEq` : DEFAULT_DERIVING;
+    this.emit(`  deriving ${deriving}`);
   }
 
   private emitInductive(d: Extract<IRDecl, { tag: 'InductiveDef' }>): void {
@@ -625,7 +680,8 @@ class Gen {
           'concat': 'append',
           'indexOf': 'indexOf?',
           'slice': 'extract',
-          'join': 'foldl (· ++ ·) ""',   // Array.join with separator
+          'split': isString ? 'splitOn' : 'split',  // String.splitOn, Array doesn't have split
+          'join': isString ? 'intercalate' : 'foldl (· ++ ·) ""',  // String.intercalate, Array.join with separator
           // Type-dependent mappings:
           'length': isString ? 'length' : 'size',   // String.length, Array.size
           'size': isString ? 'length' : 'size',
@@ -656,6 +712,15 @@ class Gen {
           if (knownFields) {
             if (!knownFields.some(f => f.name === mappedField)) return 'default';
           }
+        }
+        // String/Any types don't have arbitrary fields — emit default
+        const isStringType = e.obj.type.tag === 'String' ||
+          (e.obj.type.tag === 'TypeRef' && e.obj.type.name === 'String');
+        const isAnyType = e.obj.type.tag === 'TypeRef' && e.obj.type.name === 'Any';
+        const stringMethods = ['length', 'size', 'includes', 'trim',
+          'toLower', 'toUpper', 'startsWith', 'endsWith', 'splitOn', 'replace'];
+        if ((isStringType || isAnyType) && !stringMethods.includes(mappedField)) {
+          return 'default';
         }
         return `${obj}.${mappedField}`;
       }
@@ -688,7 +753,38 @@ class Gen {
           const args = e.args.map(a => this.genP(a, ctx, depth));
           return `${method} self ${args.join(' ')}`.trim();
         }
+        // Rewrite method calls on known types to Lean function-call style
+        if (e.fn.tag === 'FieldAccess') {
+          const obj = this.genExpr(e.fn.obj, ctx, depth);
+          const method = e.fn.field;
+          const isStr = e.fn.obj.type.tag === 'String';
+          const isArr = e.fn.obj.type.tag === 'Array';
+          const args = e.args.map(a => this.genP(a, ctx, depth));
+          // String methods → Lean function-style calls
+          if (isStr && method === 'split')
+            return args.length > 0 ? `${obj}.splitOn ${args[0]}` : `${obj}.splitOn ""`;
+          if (isStr && method === 'replace' && args.length >= 2)
+            return `${obj}.replace ${args[0]} ${args[1]}`;
+          if (isStr && method === 'startsWith' && args.length > 0)
+            return `${obj}.startsWith ${args[0]}`;
+          if (isStr && method === 'endsWith' && args.length > 0)
+            return `${obj}.endsWith ${args[0]}`;
+          if (isStr && method === 'includes' && args.length > 0)
+            return `${obj}.includes ${args[0]}`;
+          // Array.join(sep) → String.intercalate sep arr
+          if (isArr && method === 'join' && args.length > 0)
+            return `String.intercalate ${args[0]} ${obj}`;
+          // Array.push → let _ := arr.push val (handled downstream)
+          if (isArr && method === 'push' && args.length > 0)
+            return `${obj}.push ${args[0]}`;
+        }
         const fn   = this.genExpr(e.fn, ctx, depth);
+        // AssocMap.contains on a non-map struct type → true (field existence is static)
+        if (fn === 'AssocMap.contains' && e.args.length >= 1 &&
+            e.args[0].type.tag === 'TypeRef' && e.args[0].type.name !== 'Map' &&
+            !e.args[0].type.name.includes('AssocMap')) {
+          return 'true';
+        }
         // Unresolved functions emit default
         if (fn === 'sorry' || fn === 'default') return 'default';
         // TS compiler API calls have no Lean equivalent
@@ -733,6 +829,12 @@ class Gen {
         // use := instead of ← (no monadic bind needed for pure expressions)
         const isPureValue = m.startsWith('#[') || m.startsWith('{') || m === 'default' ||
           m.startsWith('"') || /^\d/.test(m) || m === 'true' || m === 'false' || m === 'none';
+        // When monad is `pure default`, Lean can't infer the type — add annotation
+        // by matching variable name to known struct types (heuristic for storage.get)
+        if (m === 'pure default' || (isPureValue && m === 'default')) {
+          const typeAnn = this.inferTypeForDefault(e.name);
+          if (typeAnn) return `let ${e.name} : ${typeAnn} := default\n${indent}${body}`;
+        }
         const op = isPureValue ? ':=' : '←';
         return `let ${e.name} ${op} ${m}\n${indent}${body}`;
       }
@@ -897,16 +999,13 @@ class Gen {
         return inner;
       }
       case 'IsType': {
-        // instanceof / type guard — approximated with a decidable check.
-        // In Lean 4 there is no runtime type inspection for opaque types, so we emit a sorry
-        // that signals a proof obligation: the caller must supply the type proof.
+        // instanceof / type guard — no runtime type inspection in Lean 4, so emit sorry
+        // as a proof obligation: the caller must supply evidence of the type relationship.
         const typeName = e.testType.tag === 'TypeRef' ? e.testType.name
                        : e.testType.tag === 'Structure' ? e.testType.name
                        : irTypeToLean(e.testType);
         const expr = this.genExpr(e.expr, ctx, depth);
-        // Emit as a decision procedure stub
-        // IsType check: approximate with equality (always true, type-safe)
-        return `true`;  // instanceof check approximated as Bool
+        return `(sorry : Bool) /- ${expr} matches ${typeName} -/`;
       }
 
       case 'Return': {
@@ -1123,10 +1222,13 @@ class Gen {
     }
     const l = this.genP(e.left, ctx, depth);
     const r = this.genP(e.right, ctx, depth);
-    // Comparison on Any type (String) with numbers: no Ord instance → default
-    if ((e.op === 'Lt' || e.op === 'Le' || e.op === 'Gt' || e.op === 'Ge') &&
-        (e.left.type.tag === 'TypeRef' && e.left.type.name === 'Any')) {
-      return 'default';
+    // Comparison on Any type: no Ord/OfNat instance → default
+    const isAnyL = (e.left.type.tag === 'TypeRef' && e.left.type.name === 'Any') ||
+      (e.left.tag === 'TypeNarrow' && e.left.expr.type.tag === 'TypeRef' && e.left.expr.type.name === 'Any');
+    const isAnyR = (e.right.type.tag === 'TypeRef' && e.right.type.name === 'Any') ||
+      (e.right.tag === 'TypeNarrow' && e.right.expr.type.tag === 'TypeRef' && e.right.expr.type.name === 'Any');
+    if ((e.op === 'Lt' || e.op === 'Le' || e.op === 'Gt' || e.op === 'Ge') && (isAnyL || isAnyR)) {
+      return '(sorry : Bool)';
     }
     const op = translateBinOp(e.op, e.left.type);
     return `${l} ${op} ${r}`;

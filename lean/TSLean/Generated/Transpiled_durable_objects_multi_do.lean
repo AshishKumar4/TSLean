@@ -48,12 +48,12 @@ def CoordinatorDO.fetch (self : CoordinatorDOState) (request : Request) : IO Res
     let url : URL := URL.parse request.url
     do
       if (request.method == "POST") && (url.pathname == "/rpc") then
-        let envelope ← request.toJson
+        let envelope : RPCEnvelope := default
         let response ← handleRPC self envelope
-        pure (mkResponse (serialize response) ({ headers := default }))
+        pure (mkResponse ("<serialized>") ({ headers := default }))
       else
         if (request.method == "GET") && (url.pathname == "/topology") then
-          let topology : Array __object := Array.ofList (self.nodes.entries).map (fun _p890 => { id := id, lastSeen := node.lastSeen })
+          let topology : Array String := #[]
           pure (mkResponse ("<serialized>") ({ headers := default }))
         else
           pure (mkResponse "Not Found" ({ status := 404 }))
@@ -64,9 +64,9 @@ def CoordinatorDO.handleRPC (self : CoordinatorDOState) (envelope : RPCEnvelope)
     let method : String := envelope.method
     let params : Any := envelope.params
     match method with
-      | "ping" => pure { id := id, result := default }
-      | "broadcast" => pure { id := id, result := default }
-      | _ => pure { id := id, error := default }
+      | "ping" => pure { id := id, result := default, error := default }
+      | "broadcast" => pure { id := id, result := default, error := default }
+      | _ => pure { id := id, result := default, error := default }
 
 end
 end CoordinatorDO

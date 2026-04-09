@@ -14,6 +14,11 @@ open TSLean TSLean.WebAPI TSLean.DO
 
 namespace TSLean.Generated.AnalyticsDo
 
+-- Auto-generated empty state struct for AnalyticsDOState
+structure AnalyticsDOState where
+  mk ::
+  deriving Repr, BEq, Inhabited
+
 structure Metric where
   mk ::
   count : Float
@@ -42,7 +47,7 @@ def AnalyticsDO.fetch (self : AnalyticsDOState) (request : Request) : IO Respons
       else do
           if (request.method == "GET") && (url.pathname == "/count") then
             let name : String := Option.getD (url.searchParams.get "event") ""
-            let metric ← pure default
+            let metric : Metric := default
             pure (mkResponse ("<serialized>") ({ headers := default }))
           else
             if (request.method == "DELETE") && (url.pathname == "/reset") then do
@@ -53,16 +58,13 @@ def AnalyticsDO.fetch (self : AnalyticsDOState) (request : Request) : IO Respons
 
 def AnalyticsDO.trackEvent (self : AnalyticsDOState) (event : String) : IO Unit :=
   do
-    let key : String := s!"metric:{event.name}"
-    let existing ← pure default
-    let value : Float := Option.getD event.value 1
-    let updated : Metric := if existing then
-      pure ({ count := existing.count + 1, sum := existing.sum + value, min := min existing.min value, max := max existing.max value, lastSeen := event.timestamp })
-    else
-      pure ({ count := 1, sum := value, min := value, max := value, lastSeen := event.timestamp })
-    do
-      pure default
-      let total := 0
+    let key : String := s!"metric:{(default : String)}"
+    let existing : Option Metric := none
+    let value : Float := 1
+    let updated : Metric := match existing with
+      | some m => { count := m.count + 1, sum := m.sum + value, min := min m.min value, max := max m.max value, lastSeen := default }
+      | none => { count := 1, sum := value, min := value, max := value, lastSeen := default }
+    pure ()
 
 end
 end AnalyticsDO

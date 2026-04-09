@@ -14,6 +14,11 @@ open TSLean TSLean.WebAPI TSLean.DO
 
 namespace TSLean.Generated.QueueProcessor
 
+-- Auto-generated empty state struct for QueueProcessorDOState
+structure QueueProcessorDOState where
+  mk ::
+  deriving Repr, BEq, Inhabited
+
 structure QueueItem where
   mk ::
   id : String
@@ -37,15 +42,15 @@ def QueueProcessorDO.fetch (self : QueueProcessorDOState) (request : Request) : 
     do
       if (request.method == "POST") && (url.pathname == "/enqueue") then
         let body ← request.toJson
-        let id ← enqueue self body.payload (Option.getD body.maxAttempts 3)
+        let id ← enqueue self default (3)
         pure (mkResponse ("<serialized>") ({ headers := default }))
       else do
           if (request.method == "POST") && (url.pathname == "/process") then
-            let processed ← processNext self
+            let processed ← StateT.run' (processNext self) self
             pure (mkResponse ("<serialized>") ({ headers := default }))
           else do
               if (request.method == "GET") && (url.pathname == "/size") then
-                let ids := #[]
+                let ids : Array String := #[]
                 pure (mkResponse ("<serialized>") ({ headers := default }))
               else
                 pure (mkResponse "Not Found" ({ status := 404 }))
@@ -54,9 +59,7 @@ def QueueProcessorDO.enqueue (self : QueueProcessorDOState) (payload : Any) (max
   do
     let id : String := "uuid-stub"
     let item : QueueItem := { id := id, payload := payload, enqueuedAt := 0, attempts := 0, maxAttempts := maxAttempts, nextRetryAt := 0 }
-    do
-      pure default
-      let ids := #[]
+    pure default
 
 def QueueProcessorDO.processNext (self : QueueProcessorDOState) : StateT QueueProcessorDOState IO Bool :=
   do

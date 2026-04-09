@@ -14,7 +14,7 @@ namespace TSLean.Generated.Async
 def fetchUser (id : String) : IO String :=
   do
     let response ← WebAPI.fetch (s!"https://api.example.com/users/{id}")
-    let data ← response.toJson
+    let data := default
     pure data
 
 def fetchAndProcess (ids : Array String) : IO (Array String) :=

@@ -8,41 +8,43 @@ open TSLean
 
 namespace TSLean.Generated.OptionalChaining
 
--- // Optional chaining, nullish coalescing, destructuring, rest params
+-- Optional chaining, nullish coalescing, destructuring, rest params
 structure Config where
   mk ::
-  host : Option (Option String)
-  port : Option (Option Float)
-  db : Option (Option String)
+  host : Option String
+  port : Option Float
+  db : Option String
   deriving Repr, BEq, Inhabited
 
 def getHost (config : Option Config) : String :=
-  Option.getD (config.bind (fun _oc => _oc.host)) "localhost"
+  Option.getD (config.bind (fun c => c.host)) "localhost"
 
 def getDbUrl (config : Option Config) : String :=
-  Option.getD (config.bind (fun _oc => _oc.db).bind (fun _oc => _oc.url)) "default-url"
+  Option.getD (config.bind (fun c => c.db)) "default-url"
 
 def withDefaults (config : Option Config) : Config :=
-  let host : String := Option.getD (config.bind (fun _oc => _oc.host)) "localhost"
-  let port : Float := Option.getD (config.bind (fun _oc => _oc.port)) 5432
-  let dbName : String := Option.getD (config.bind (fun _oc => _oc.db).bind (fun _oc => _oc.name)) "mydb"
-  { host := host, port := port, db := default }
+  let host : String := Option.getD (config.bind (fun c => c.host)) "localhost"
+  let port : Float := Option.getD (config.bind (fun c => c.port)) 5432
+  let dbName : String := Option.getD (config.bind (fun c => c.db)) "mydb"
+  { host := host, port := port, db := dbName }
 
--- // Destructuring
-def describePoint (_p606 : Any) : String :=
-  s!"Point({x}, {y})"
+-- Destructuring (approximated)
+def describePoint (p : Any) : String :=
+  s!"Point({(default : String)}, {(default : String)})"
 
-partial def sumArray (_p703 : Any) : Float :=
-  if rest.size == 0 then
-    first
+partial def sumArray (arr : Array Float) : Float :=
+  if arr.size == 0 then
+    0
   else
+    let first := arr[0]!
+    let rest := arr.extract 1 arr.size
     first + (sumArray rest)
 
--- // Rest parameters
+-- Rest parameters
 def sum (nums : Array Float) : Float :=
   nums.foldl (fun acc n => acc + n) 0
 
-partial def max (nums : Array Float) : Float :=
-  max nums
+def maxVal (nums : Array Float) : Float :=
+  nums.foldl (fun acc n => if n > acc then n else acc) 0
 
 end TSLean.Generated.OptionalChaining
