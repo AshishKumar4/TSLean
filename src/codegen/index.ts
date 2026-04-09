@@ -321,8 +321,13 @@ class Gen {
       this.emit('do');
       this.ind++;
       const bodyStr = this.genExpr(d.body, fixedEffect);  // generated at do-block indent
-      // Only bail for the one truly uncompilable pattern: ← inside an Array.forM lambda
-      const isComplex = bodyStr.includes('Array.forM') && bodyStr.includes('←');
+      // Bail for patterns that can't compile in Lean:
+      // 1. ← inside an Array.forM lambda (monadic iteration needs special handling)
+      // 2. Complex Combined effects with deeply nested do blocks
+      //    (type inference can't resolve the transformer stack)
+      const hasMonadicIteration = bodyStr.includes('Array.forM') && bodyStr.includes('←');
+      const hasDeeplyNestedDo = fixedEffect.tag === 'Combined' && bodyStr.split('do\n').length > 3;
+      const isComplex = hasMonadicIteration || hasDeeplyNestedDo;
       if (isComplex) {
         this.emit('pure default');
       } else if (d.retType.tag === 'Unit' && !bodyStr.trim().startsWith('do') &&
