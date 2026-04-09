@@ -25,7 +25,7 @@ open TSLean TSLean.DO TSLean.Stdlib.HashMap
 
 /-! ## Runtime types -/
 
-instance : Inhabited TSValue := ⟨TSValue.tsNull⟩
+-- Inhabited TSValue is defined in Basic.lean
 instance : Inhabited TSError := ⟨TSError.typeError ""⟩
 
 /-! ## Branded types -/

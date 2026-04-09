@@ -143,13 +143,40 @@ def String.set!' (s : String) (i : Nat) (c : Char) : String :=
     let after := String.Pos.Raw.extract s ⟨i + 1⟩ ⟨s.length⟩
     before ++ String.singleton c ++ after
 
-/-- `Any` type: maps from TypeScript `any`/`unknown`. Uses `String` as a
-    serializable approximation (actual values serialized as JSON strings). -/
-abbrev Any := String
+/-! ## TSValue — dynamic type for any/unknown ─────────────────────────────── -/
+
+/-- Opaque representation of a dynamically-typed TypeScript value.
+    Used when the transpiler cannot resolve a static type (TS `any`/`unknown`).
+    Backed by `String` — values are serialised as JSON strings at the boundary. -/
+abbrev TSAny := String
+
+instance : Inhabited TSAny := ⟨""⟩
+instance : BEq TSAny := inferInstance
+instance : Repr TSAny := inferInstance
+instance : ToString TSAny := inferInstance
+
+/-- Legacy alias — the codegen now emits `TSAny` for `any`/`unknown`. -/
+abbrev Any := TSAny
+
+instance : Inhabited TSValue := ⟨TSValue.tsNull⟩
+instance : BEq TSValue where
+  beq a b := match a, b with
+    | .tsNull, .tsNull | .tsUndef, .tsUndef => true
+    | .tsBool a, .tsBool b => a == b
+    | .tsNum a, .tsNum b => a == b
+    | .tsStr a, .tsStr b => a == b
+    | _, _ => false
+instance : ToString TSValue where
+  toString v := match v with
+    | .tsNull => "null"
+    | .tsUndef => "undefined"
+    | .tsBool b => toString b
+    | .tsNum n => toString n
+    | .tsStr s => s!"\"{s}\""
+    | .tsArray _ => "[...]"
+    | .tsObject _ => "{...}"
 
 /-- Runtime type check (stub — always returns "object"). -/
 def typeOf {α : Type} (_ : α) : String := "object"
-
-instance : Inhabited Any := ⟨""⟩
 
 end TSLean
