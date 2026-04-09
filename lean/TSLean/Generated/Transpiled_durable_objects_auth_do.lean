@@ -70,7 +70,7 @@ def AuthDO.handleLogin (self : AuthDOState) (creds : String) : IO Response :=
     if (!creds.username) || (!creds.password) then
       pure (mkResponse ("<serialized>") ({ status := 401 }))
     else
-      let token : String := _uuid_stub_
+      let token : String := "uuid-stub"
       let session : AuthSession := { userId := creds.username, token := token, createdAt := 0, expiresAt := (0) + self.TOKEN_TTL, roles := #["user"] }
       do
         pure default

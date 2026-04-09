@@ -42,7 +42,7 @@ def SessionStoreDO.fetch (self : SessionStoreDOState) (request : Request) : IO R
     do
       if (request.method == "POST") && (url.pathname == "/create") then
         let body ← request.toJson
-        let id ← createSession self body.userId (Option.getD body.data {  })
+        let id ← createSession self body.userId (Option.getD body.data default)
         pure (mkResponse ("<serialized>") ({ headers := default }))
       else do
           if ((request.method == "GET") && (url.pathname == "/get")) && sessionId then
@@ -60,7 +60,7 @@ def SessionStoreDO.fetch (self : SessionStoreDOState) (request : Request) : IO R
 
 def SessionStoreDO.createSession (self : SessionStoreDOState) (userId : String) (data : String) : IO String :=
   do
-    let id : String := _uuid_stub_
+    let id : String := "uuid-stub"
     let now : Float := 0
     let session : Session := { userId := userId, data := data, createdAt := now, expiresAt := now + self.TTL_MS }
     do

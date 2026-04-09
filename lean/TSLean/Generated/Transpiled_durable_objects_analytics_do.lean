@@ -28,7 +28,7 @@ namespace AnalyticsDO
 mutual
 
 def AnalyticsDO.init : AnalyticsDOState :=
-  {  }
+  default
 
 def AnalyticsDO.fetch (self : AnalyticsDOState) (request : Request) : IO Response :=
   do
@@ -62,7 +62,7 @@ def AnalyticsDO.trackEvent (self : AnalyticsDOState) (event : String) : IO Unit 
       pure ({ count := 1, sum := value, min := value, max := value, lastSeen := event.timestamp })
     do
       pure default
-      let total ← 0
+      let total := 0
 
 end
 end AnalyticsDO
