@@ -263,17 +263,11 @@ class Gen {
     'TranspileResult', 'FileResult',
   ]);
 
-  /** Convert IR type to Lean, mapping TS any/TSAny→String and cross-file IR types→String. */
+  /** Convert IR type to Lean, mapping TS any/unknown → TSAny. */
   private typeToLean(t: IRType, parens = false): string {
     let result = irTypeToLean(t, parens);
-    // TS any/unknown → String (TSAny and Any both become String in Lean)
-    result = result.replace(/\bTSAny\b/g, 'String');
-    result = result.replace(/\bAny\b/g, 'String');
-    // Cross-file IR types → String (only when not defined locally)
-    if (t.tag === 'TypeRef' && Gen.CROSS_FILE_IR_TYPES.has(t.name) &&
-        !this.definedNames.has(t.name) && !this.structFields.has(t.name)) {
-      return 'String';
-    }
+    // TS any/unknown → TSAny (defined as abbrev TSAny := String in Runtime.Basic)
+    result = result.replace(/\bAny\b/g, 'TSAny');
     return result;
   }
 
@@ -641,7 +635,7 @@ class Gen {
     if (!isPure(fixedEffect)) {
       this.emit('do');
       this.ind++;
-      const bodyStr = this.genExpr(d.body, fixedEffect);  // generated at do-block indent
+      const bodyStr = this.genExpr(d.body, fixedEffect, this.ind);  // generated at do-block indent
       // Bail for patterns that can't compile in Lean:
       // 1. ← inside an Array.forM lambda (monadic iteration needs special handling)
       // 2. Complex Combined effects with deeply nested do blocks
@@ -668,11 +662,11 @@ class Gen {
         this.ind++;
         // Pass IO as ctx (not Pure) so IfThenElse branches get `pure` wrapping
         const ioCtx: Effect = { tag: 'IO' };
-        const bodyStr = this.genExpr(d.body, ioCtx);
+        const bodyStr = this.genExpr(d.body, ioCtx, this.ind);
         this.emit(bodyStr);
         this.ind--;
       } else {
-        const bodyStr = this.genExpr(d.body, d.effect);
+        const bodyStr = this.genExpr(d.body, d.effect, this.ind);
         // Bail for bodies that reference TS-only APIs or imperative iteration
         if (bodyStr.includes('Array.forM') || bodyStr.includes('Array.mapM') ||
             bodyStr.includes('ts.create') || bodyStr.includes('base.getSource') ||
@@ -682,7 +676,25 @@ class Gen {
             !bodyStr.includes('let ') && !bodyStr.includes('if ') && !bodyStr.includes('match ')) {
           this.emit(`let _ := ${bodyStr}; ()`);
         } else {
-          this.emit(bodyStr);
+          // In Lean 4, a function body with `let` followed by more statements
+          // needs `do` wrapping (otherwise Lean parses `let` as a top-level command).
+          // Similarly, `if` after `let` needs to be in the same `do` block.
+          const lines = bodyStr.split('\n').filter(l => l.trim());
+          const needsDo = lines.length > 1 && !bodyStr.trimStart().startsWith('do') && (
+            bodyStr.includes('\nlet ') ||
+            bodyStr.includes('\n  let ') ||
+            /\blet .+\n.*\bif /.test(bodyStr) ||
+            /\blet .+\n.*\blet /.test(bodyStr) ||
+            /\blet .+\n.*\bmatch /.test(bodyStr)
+          );
+          if (needsDo) {
+            this.emit('do');
+            this.ind++;
+            this.emit(bodyStr);
+            this.ind--;
+          } else {
+            this.emit(bodyStr);
+          }
         }
       }
     }
