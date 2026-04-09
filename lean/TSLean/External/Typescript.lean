@@ -288,9 +288,19 @@ structure CompilerOptions where
   deriving Repr, Inhabited
 
 -- ─── ts.CompilerHost ───────────────────────────────────────────────────────────
+-- The TS compiler host abstracts file system access.  In our Lean model,
+-- actual file I/O is opaque, so we provide the shape needed by the
+-- transpiled parser code (which creates hosts via `makeAmbientHost`).
 
 structure CompilerHost where
-  dummy : Unit := ()
+  /-- Return the current working directory. -/
+  getCurrentDirectory : IO String := pure "."
+  /-- The newline sequence for the platform. -/
+  getNewLine : String := "\n"
+  /-- Check if a file exists on disk. -/
+  fileExists : String → Bool := fun _ => false
+  /-- Read a file's contents. Returns empty string if not found. -/
+  readFile : String → Option String := fun _ => none
   deriving Inhabited
 
 -- ─── ts.Program ────────────────────────────────────────────────────────────────

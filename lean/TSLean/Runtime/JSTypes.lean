@@ -107,20 +107,46 @@ theorem size_empty : (JSSet.empty : JSSet T).size = 0 := by
 end JSSet
 
 -- ─── RegExp ────────────────────────────────────────────────────────────────────
--- Simplified regular expression stub — enough for the transpiled code to type-check.
+-- Opaque stub for JavaScript regular expressions.
+-- Regex matching is a JS runtime operation with no pure Lean equivalent,
+-- so `test` and `exec` use `sorry` — this is intentional, not a proof gap.
 
 structure RegExp where
-  source : String
-  flags  : String := ""
+  pattern : String
+  flags   : String := ""
   deriving Repr, BEq, Inhabited
 
 namespace RegExp
 
-def test (_ : RegExp) (_ : String) : Bool := true  -- stub
+/-- Create a RegExp from a pattern string (JS: `new RegExp(pattern, flags)`). -/
+def mk' (pattern : String) (flags : String := "") : RegExp :=
+  { pattern, flags }
 
-def exec (_ : RegExp) (_ : String) : Option (Array String) := none  -- stub
+/-- Test whether the regex matches the string (JS: `re.test(s)`).
+    Opaque — regex semantics are a JS runtime operation. -/
+opaque test (re : RegExp) (s : String) : Bool
+
+/-- Execute the regex against the string, returning capture groups (JS: `re.exec(s)`).
+    Opaque — regex semantics are a JS runtime operation. -/
+opaque exec (re : RegExp) (s : String) : Option (Array String)
+
+/-- Global replacement (JS: `s.replace(re, replacement)`).
+    Opaque — regex replacement is a JS runtime operation. -/
+opaque replace (re : RegExp) (s : String) (replacement : String) : String
+
+/-- Match all occurrences (JS: `s.matchAll(re)`). -/
+opaque matchAll (re : RegExp) (s : String) : Array (Array String)
 
 end RegExp
+
+-- ─── String.test ───────────────────────────────────────────────────────────────
+-- JS idiom: `"pattern".test(s)` or `someRegex.test(s)`
+-- In transpiled code, `str.test(s)` becomes `(RegExp.mk' str).test s`.
+
+/-- Test whether a pattern (as a string) matches the input.
+    Wraps the string in a RegExp and delegates to `RegExp.test`. -/
+def String.testRegex (pattern : String) (s : String) : Bool :=
+  RegExp.test (RegExp.mk' pattern) s
 
 -- ─── JSON ──────────────────────────────────────────────────────────────────────
 
