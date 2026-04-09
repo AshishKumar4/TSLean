@@ -332,8 +332,9 @@ class ParserCtx {
     const fieldName = node.name?.getText(this.sf) ?? 'unknown';
     const sig  = this.checker.getSignatureFromDeclaration(node);
     const ret  = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
-    const self: IRParam = { name: 'self', type: TyRef(className) };
-    const body = node.body ? this.parseBlock(node.body, Pure) : { tag: 'FieldAccess' as const, obj: varExpr('self', TyRef(className)), field: fieldName, type: ret, effect: Pure };
+    // Use stateType not className — the struct is e.g. DogState, not Dog
+    const self: IRParam = { name: 'self', type: TyRef(stateType) };
+    const body = node.body ? this.parseBlock(node.body, Pure) : { tag: 'FieldAccess' as const, obj: varExpr('self', TyRef(stateType)), field: fieldName, type: ret, effect: Pure };
     return { tag: 'FuncDef', name: `get_${fieldName}`, typeParams: [], params: [self], retType: ret, effect: Pure, body };
   }
 
@@ -341,18 +342,16 @@ class ParserCtx {
   private parseSetter(node: ts.SetAccessorDeclaration, className: string, stateType: string): IRDecl | null {
     const fieldName = node.name?.getText(this.sf) ?? 'unknown';
     const params    = this.parseParams(node.parameters);
-    const self: IRParam = { name: 'self', type: TyRef(className) };
+    // Use stateType for self and return — the struct is e.g. CircleState, not Circle
+    const self: IRParam = { name: 'self', type: TyRef(stateType) };
     const valType = params[0]?.type ?? TyUnit;
     const valName = params[0]?.name ?? 'v';
-    const retType = TyRef(className);
-    // Emit `{ self with fieldName := v }` — Lean 4 record update syntax.
-    // We use a StructLit that the codegen recognises as a "with-update" when it has
-    // exactly one field and a `_base` field pointing to `self`.
+    const retType = TyRef(stateType);
     const body: IRExpr = {
       tag: 'StructLit',
-      typeName: className,
+      typeName: stateType,
       fields: [
-        { name: '_base', value: varExpr('self', TyRef(className)) },
+        { name: '_base', value: varExpr('self', TyRef(stateType)) },
         { name: fieldName, value: varExpr(valName, valType) },
       ],
       type: retType, effect: Pure,

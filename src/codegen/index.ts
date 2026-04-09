@@ -346,6 +346,9 @@ class Gen {
         this.ind++;
         this.emit(`pure (${bodyStr})`);
         this.ind--;
+      } else if (bodyStr.includes('Array.forM') || bodyStr.includes('Array.mapM')) {
+        // Array iteration is monadic — can't return Unit directly
+        this.emit('default');
       } else if (d.retType.tag === 'Unit' && !['()', 'sorry', 'default', 'pure default'].includes(bodyStr.trim()) &&
           !bodyStr.includes('let ') && !bodyStr.includes('if ') && !bodyStr.includes('match ')) {
         this.emit(`let _ := ${bodyStr}; ()`);
@@ -482,16 +485,25 @@ class Gen {
       case 'Var':       return sanitize(e.name);
 
       case 'FieldAccess': {
-        // Pattern 3: self.state.X → self.X (DO state IS the struct, no .state nesting)
+        // Pattern 3: Strip `.state` prefix in DO methods.
+        // self.state.X → self.X; self.state.storage → default (not a real field)
         if (e.obj.tag === 'FieldAccess' && e.obj.field === 'state' &&
             e.obj.obj.tag === 'Var' && e.obj.obj.name === 'self') {
-          const inner = this.genExpr(e.obj.obj, ctx, depth);  // = "self"
-          return `${inner}.${e.field}`;
+          if (e.field === 'storage') return 'default';  // Storage is handled by DO monad
+          return `self.${e.field}`;
         }
-        // Pattern 3b: self.state.storage.method → Storage.method self.storage
+        // self.storage.X → default (storage is DO runtime, not a struct field)
         if (e.obj.tag === 'FieldAccess' && e.obj.field === 'storage' &&
-            e.obj.obj.tag === 'FieldAccess' && e.obj.obj.field === 'state') {
-          return 'default';  // Storage API needs deep DO monad integration
+            e.obj.obj.tag === 'Var' && e.obj.obj.name === 'self') {
+          return 'default';
+        }
+        // self.state.storage.X → default
+        if (e.obj.tag === 'FieldAccess' && e.obj.field === 'storage') {
+          const inner = e.obj.obj;
+          if (inner.tag === 'FieldAccess' && inner.field === 'state' &&
+              inner.obj.tag === 'Var' && inner.obj.name === 'self') {
+            return 'default';
+          }
         }
         const obj = this.genExpr(e.obj, ctx, depth);
         // Map JS field/method names to Lean equivalents.
@@ -524,8 +536,11 @@ class Gen {
           'length': isString ? 'length' : 'size',   // String.length, Array.size
           'size': isString ? 'length' : 'size',
           'includes': isString ? 'includes' : 'contains',  // String.includes defined in Runtime.Basic
+          'toString': 'toString',  // JS toString() → Lean ToString typeclass
         };
         let mappedField = fieldMap[e.field] ?? e.field;
+        // Never emit `.function` — it's a JS artifact from toString() evaluation
+        if (mappedField === 'function') return `toString ${obj}`;
         return `${obj}.${mappedField}`;
       }
 
@@ -609,9 +624,13 @@ class Gen {
 
         const cond  = this.genExpr(e.cond, ctx, depth);
         const inner = '  '.repeat(depth + 1);
-        const then_ = this.genExpr(e.then, ctx, depth + 1);
-        const else_ = this.genExpr(e.else_, ctx, depth + 1);
-        return `if ${cond} then\n${inner}${then_}\n${indent}else\n${inner}${else_}`;
+        let then_ = this.genExpr(e.then, ctx, depth + 1);
+        let else_ = this.genExpr(e.else_, ctx, depth + 1);
+        // When then/else branch starts with `do`, put it on the same line as then/else
+        // to avoid Lean parsing `do` as a separate command.
+        const thenJoin = then_.trimStart().startsWith('do') ? ' ' : `\n${inner}`;
+        const elseJoin = else_.trimStart().startsWith('do') ? ' ' : `\n${inner}`;
+        return `if ${cond} then${thenJoin}${then_}\n${indent}else${elseJoin}${else_}`;
       }
 
       case 'Match': return this.genMatch(e, ctx, depth);

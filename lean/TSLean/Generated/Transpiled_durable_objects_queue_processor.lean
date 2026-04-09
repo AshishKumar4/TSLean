@@ -49,7 +49,7 @@ def QueueProcessorDO.fetch (self : QueueProcessorDOState) (request : Request) : 
           ()
         do
           if (request.method == "GET") && (url.pathname == "/size") then
-            let ids ← Option.getD Storage.get self.storage "queue:ids" #[]
+            let ids ← Option.getD Storage.get default "queue:ids" #[]
             pure (mkResponse ("<serialized>") ({ headers := default }))
           else
             ()
@@ -60,8 +60,8 @@ def QueueProcessorDO.enqueue (self : QueueProcessorDOState) (payload : Any) (max
     let id : String := _uuid_stub_
     let item : QueueItem := { id := id, payload := payload, enqueuedAt := 0, attempts := 0, maxAttempts := maxAttempts, nextRetryAt := 0 }
     do
-      Storage.put self.storage (s!"queue:{id}") item
-      let ids ← Option.getD Storage.get self.storage "queue:ids" #[]
+      Storage.put default (s!"queue:{id}") item
+      let ids ← Option.getD Storage.get default "queue:ids" #[]
 
 def QueueProcessorDO.processNext (self : QueueProcessorDOState) : StateT QueueProcessorDOState IO Bool :=
   pure default

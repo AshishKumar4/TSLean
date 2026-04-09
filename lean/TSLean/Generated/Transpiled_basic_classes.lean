@@ -80,8 +80,7 @@ def BankAccount.withdraw (self : BankAccountState) (amount : Float) : StateT Ban
   do
     if amount > self.balance then
       pure false
-    else
-      do
+    else do
         modify (fun s => { s with balance := self.balance - amount })
         return true
 

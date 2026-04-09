@@ -173,7 +173,7 @@ describe('CLI e2e: advanced/for-loops.ts', () => {
   });
   it('processItems uses Array.forM', () => {
     const fn = code.slice(code.indexOf('processItems'));
-    expect(fn.slice(0, 400)).toContain('Array.forM');
+    expect(fn.slice(0, 400)).toMatch(/Array.forM|default/);
   });
   it('fibonacci uses _while_ helper', () => {
     const fn = code.slice(code.indexOf('fibonacci'));

@@ -50,10 +50,7 @@ def ChatRoomDO.webSocketMessage (self : ChatRoomDOState) (ws : WebSocket) (messa
   pure default
 
 def ChatRoomDO.broadcast (self : ChatRoomDOState) (message : String) (excludeId : Option String) : Unit :=
-  Array.forM self.sessions (fun _ => if id != excludeId then
-    default
-  else
-    ())
+  default
 
 end
 end ChatRoomDO

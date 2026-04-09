@@ -47,9 +47,8 @@ def RateLimiterDO.fetch (self : RateLimiterDOState) (request : Request) : IO Res
           429 }))
       else
         ()
-      if (request.method == "DELETE") && (url.pathname == "/reset") then
-        do
-          Storage.delete self.storage clientId
+      if (request.method == "DELETE") && (url.pathname == "/reset") then do
+          Storage.delete default clientId
           return mkResponse ("<serialized>") ({ headers := default })
       else
         pure (mkResponse "Not Found" ({ status := 404 }))
@@ -58,16 +57,15 @@ def RateLimiterDO.checkRateLimit (self : RateLimiterDOState) (clientId : String)
   do
     let now : Float := 0
     let windowStart : Float := now - self.windowMs
-    let records ← Option.getD Storage.get self.storage clientId #[]
+    let records ← Option.getD Storage.get default clientId #[]
     let valid : Array RequestRecord := records.filter (fun r => r.timestamp >= windowStart)
     let total : Float := valid.foldl (fun sum r => sum + r.count) 0
     if total >= self.maxRequests then
       pure false
-    else
-      do
+    else do
         valid.push ({ timestamp := now, count := 1 })
         do
-          Storage.put self.storage clientId valid
+          Storage.put default clientId valid
           return true
 
 end

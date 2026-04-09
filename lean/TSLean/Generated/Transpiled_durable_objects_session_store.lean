@@ -55,8 +55,7 @@ def SessionStoreDO.fetch (self : SessionStoreDOState) (request : Request) : IO R
             pure (mkResponse ("<serialized>") ({ headers := default }))
         else
           ()
-        if ((request.method == "DELETE") && (url.pathname == "/destroy")) && sessionId then
-          do
+        if ((request.method == "DELETE") && (url.pathname == "/destroy")) && sessionId then do
             destroySession self sessionId
             return mkResponse ("<serialized>") ({ headers := default })
         else
@@ -68,25 +67,24 @@ def SessionStoreDO.createSession (self : SessionStoreDOState) (userId : String) 
     let now : Float := 0
     let session : Session := { userId := userId, data := data, createdAt := now, expiresAt := now + self.TTL_MS }
     do
-      Storage.put self.storage (s!"session:{id}") session
+      Storage.put default (s!"session:{id}") session
       return id
 
 def SessionStoreDO.getSession (self : SessionStoreDOState) (id : String) : IO (Option Session) :=
   do
-    let session ← Storage.get self.storage (s!"session:{id}")
+    let session ← Storage.get default (s!"session:{id}")
     if !session then
       pure none
     else
-      if (0) > session.expiresAt then
-        do
-          Storage.delete self.storage (s!"session:{id}")
+      if (0) > session.expiresAt then do
+          Storage.delete default (s!"session:{id}")
           return none
       else
         pure session
 
 def SessionStoreDO.destroySession (self : SessionStoreDOState) (id : String) : IO Unit :=
   do
-    Storage.delete self.storage (s!"session:{id}")
+    Storage.delete default (s!"session:{id}")
 
 end
 end SessionStoreDO

@@ -60,7 +60,7 @@ def Dog.init (self : DogState) (name : String) (breed : String) : StateT DogStat
 def Dog.sound (self : DogState) : String :=
   "woof"
 
-def get_fullDescription (self : Dog) : String :=
+def get_fullDescription (self : DogState) : String :=
   s!"{self.name} ({self.breed})"
 
 def Cat.sound (self : CatState) : String :=
@@ -76,13 +76,13 @@ def Circle.init (self : CircleState) (radius : Float) : StateT CircleState IO Un
   do
     modify (fun s => { s with _radius := radius })
 
-def get_radius (self : Circle) : Float :=
+def get_radius (self : CircleState) : Float :=
   self._radius
 
-def set_radius (self : Circle) (value : Float) : Circle :=
+def set_radius (self : CircleState) (value : Float) : CircleState :=
   { self with radius := value }
 
-def get_area (self : Circle) : Float :=
+def get_area (self : CircleState) : Float :=
   (3.14159265358979 * self._radius) * self._radius
 
 def Circle.fromDiameter (d : Float) : Circle :=

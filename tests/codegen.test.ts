@@ -339,3 +339,493 @@ describe('generateLean – Map/Set type emission', () => {
     expect(code).toContain('AssocSet String');
   });
 });
+
+// ─── Comprehensive expression coverage ────────────────────────────────────────
+// Tests for every IRExpr node type to ensure complete codegen coverage.
+
+describe('generateLean – expression coverage', () => {
+  /** Helper: wraps an expression in a function def and extracts the body. */
+  function expr(e: IRExpr, eff: import('../src/ir/types.js').Effect = Pure): string {
+    const code = generateLean(mod([{
+      tag: 'FuncDef', name: 'f', typeParams: [], params: [], retType: e.type, effect: eff, body: e,
+    }]));
+    const idx = code.indexOf(':=\n') + 3;
+    return code.slice(idx).trimStart();
+  }
+
+  // ─── Bindings ───────────────────────────────────────────────────────────────
+
+  it('Let → let name := value in body', () => {
+    const code = expr({
+      tag: 'Let', name: 'x', annot: TyNat, value: litNat(42),
+      body: varExpr('x', TyNat), type: TyNat, effect: Pure,
+    });
+    expect(code).toContain('let x');
+    expect(code).toContain(':= 42');
+  });
+
+  it('Let with recursive lambda → let rec', () => {
+    const loopBody: IRExpr = {
+      tag: 'App', fn: varExpr('loop', TyUnit), args: [litNat(0)], type: TyUnit, effect: Pure,
+    };
+    const code = expr({
+      tag: 'Let', name: 'loop', value: {
+        tag: 'Lambda', params: [{ name: 'n', type: TyNat }], body: loopBody, type: TyUnit, effect: Pure,
+      }, body: { tag: 'App', fn: varExpr('loop', TyUnit), args: [litNat(0)], type: TyUnit, effect: Pure },
+      type: TyUnit, effect: Pure,
+    });
+    expect(code).toContain('let rec loop');
+  });
+
+  it('Bind → let name ← monad in body', () => {
+    const code = expr({
+      tag: 'Bind', name: 'result', monad: varExpr('fetch', TyString),
+      body: varExpr('result', TyString), type: TyString, effect: Async,
+    }, Async);
+    expect(code).toContain('let result ←');
+  });
+
+  it('MultiLet → nested let bindings', () => {
+    const code = expr({
+      tag: 'MultiLet',
+      bindings: [
+        { name: 'a', type: TyNat, value: litNat(1) },
+        { name: 'b', type: TyNat, value: litNat(2) },
+      ],
+      body: { tag: 'BinOp', op: 'Add', left: varExpr('a', TyNat), right: varExpr('b', TyNat), type: TyNat, effect: Pure },
+      type: TyNat, effect: Pure,
+    });
+    expect(code).toContain('let a');
+    expect(code).toContain('let b');
+    // a should come before b
+    expect(code.indexOf('let a')).toBeLessThan(code.indexOf('let b'));
+  });
+
+  // ─── Functions ──────────────────────────────────────────────────────────────
+
+  it('Lambda → fun params => body', () => {
+    const code = expr({
+      tag: 'Lambda', params: [{ name: 'x', type: TyNat }],
+      body: varExpr('x', TyNat), type: TyNat, effect: Pure,
+    });
+    expect(code).toContain('fun x =>');
+  });
+
+  it('App → fn arg1 arg2', () => {
+    const code = expr({
+      tag: 'App', fn: varExpr('add', TyNat),
+      args: [litNat(1), litNat(2)], type: TyNat, effect: Pure,
+    });
+    expect(code).toContain('add 1 2');
+  });
+
+  it('App with zero args → just function name', () => {
+    const code = expr({
+      tag: 'App', fn: varExpr('getTime', TyNat), args: [], type: TyNat, effect: Pure,
+    });
+    expect(code).toContain('getTime');
+  });
+
+  it('TypeApp → fn (Type)', () => {
+    const code = expr({
+      tag: 'TypeApp', fn: varExpr('identity', TyNat),
+      typeArgs: [TyNat], type: TyNat, effect: Pure,
+    });
+    expect(code).toContain('identity (Nat)');
+  });
+
+  // ─── Access ─────────────────────────────────────────────────────────────────
+
+  it('FieldAccess → obj.field', () => {
+    const code = expr({
+      tag: 'FieldAccess', obj: varExpr('point', TyRef('Point')), field: 'x',
+      type: TyFloat, effect: Pure,
+    });
+    expect(code).toContain('point.x');
+  });
+
+  it('IndexAccess → obj.getD idx default', () => {
+    const code = expr({
+      tag: 'IndexAccess', obj: varExpr('arr', TyArray(TyNat)), index: litNat(0),
+      type: TyNat, effect: Pure,
+    });
+    expect(code).toContain('arr.getD 0 default');
+  });
+
+  // ─── Monadic ────────────────────────────────────────────────────────────────
+
+  it('Pure_ → pure value', () => {
+    const code = expr({
+      tag: 'Pure_', value: litNat(42), type: TyNat, effect: Pure,
+    });
+    expect(code).toContain('pure 42');
+  });
+
+  it('StateGet → get', () => {
+    const code = expr({ tag: 'StateGet', type: TyRef('S'), effect: stateEffect(TyRef('S')) },
+      stateEffect(TyRef('S')));
+    expect(code).toContain('get');
+  });
+
+  it('StateSet → set value', () => {
+    const code = expr({
+      tag: 'StateSet', value: varExpr('newState', TyRef('S')),
+      type: TyUnit, effect: stateEffect(TyRef('S')),
+    }, stateEffect(TyRef('S')));
+    expect(code).toContain('set newState');
+  });
+
+  it('Await → inner expression (await is erased in Lean)', () => {
+    const code = expr({
+      tag: 'Await', expr: varExpr('fetchData', TyString),
+      type: TyString, effect: Async,
+    }, Async);
+    expect(code).toContain('fetchData');
+  });
+
+  // ─── Error handling ─────────────────────────────────────────────────────────
+
+  it('TryCatch in effectful context → tryCatch body handler', () => {
+    const code = expr({
+      tag: 'TryCatch',
+      body: varExpr('riskyOp', TyString),
+      errName: 'e',
+      handler: litStr('fallback'),
+      type: TyString, effect: exceptEffect(TyString),
+    }, exceptEffect(TyString));
+    expect(code).toContain('tryCatch');
+    expect(code).toContain('fun e =>');
+  });
+
+  it('TryCatch in pure context → default', () => {
+    const code = expr({
+      tag: 'TryCatch', body: litStr('ok'), errName: 'e', handler: litStr('err'),
+      type: TyString, effect: Pure,
+    });
+    expect(code).toContain('default');
+  });
+
+  // ─── Type operations ────────────────────────────────────────────────────────
+
+  it('Cast branded type → constructor', () => {
+    const code = expr({
+      tag: 'Cast', expr: litStr('user-123'), targetType: TyRef('UserId'),
+      type: TyRef('UserId'), effect: Pure,
+    });
+    expect(code).toContain('UserId.mk');
+  });
+
+  it('Cast from branded to String → .val', () => {
+    const code = expr({
+      tag: 'Cast', expr: varExpr('uid', TyRef('UserId')), targetType: TyString,
+      type: TyString, effect: Pure,
+    });
+    expect(code).toContain('.val');
+  });
+
+  it('IsType → True.intro (type-safe approximation)', () => {
+    const code = expr({
+      tag: 'IsType', expr: varExpr('x', TyRef('Shape')), testType: TyRef('Circle'),
+      type: TyBool, effect: Pure,
+    });
+    expect(code).toContain('True.intro');
+  });
+
+  it('TypeNarrow → inner expression (type narrowing is erased)', () => {
+    const code = expr({
+      tag: 'TypeNarrow', expr: varExpr('x', TyRef('Shape')),
+      narrowedType: TyRef('Circle'), narrowKind: 'instanceof',
+      type: TyRef('Circle'), effect: Pure,
+    });
+    expect(code).toContain('x');
+  });
+
+  // ─── Structural operations ──────────────────────────────────────────────────
+
+  it('StructUpdate → { base with field := val }', () => {
+    const code = expr({
+      tag: 'StructUpdate',
+      base: varExpr('pt', TyRef('Point')),
+      fields: [{ name: 'x', value: litNat(10) }],
+      type: TyRef('Point'), effect: Pure,
+    });
+    expect(code).toContain('{ pt with x := 10 }');
+  });
+
+  it('CtorApp → Constructor arg1 arg2', () => {
+    const code = expr({
+      tag: 'CtorApp', ctor: 'Shape.Circle', args: [{ tag: 'LitFloat', value: 5.0, type: TyFloat, effect: Pure }],
+      type: TyRef('Shape'), effect: Pure,
+    });
+    expect(code).toContain('Shape.Circle');
+  });
+
+  it('CtorApp with zero args → Constructor', () => {
+    const code = expr({
+      tag: 'CtorApp', ctor: 'Color.Red', args: [],
+      type: TyRef('Color'), effect: Pure,
+    });
+    expect(code).toContain('Color.Red');
+  });
+
+  it('OptChain → inner expression', () => {
+    const code = expr({
+      tag: 'OptChain', expr: varExpr('x', TyOption(TyNat)),
+      type: TyOption(TyNat), effect: Pure,
+    });
+    expect(code).toContain('x');
+  });
+
+  // ─── Sequences and do-notation ──────────────────────────────────────────────
+
+  it('Sequence in pure context → semicolon-free', () => {
+    const code = expr({
+      tag: 'Sequence',
+      stmts: [litNat(1), litNat(2), litNat(3)],
+      type: TyNat, effect: Pure,
+    });
+    expect(code).toContain('1');
+    expect(code).toContain('3');
+  });
+
+  it('Sequence in IO context → do-block', () => {
+    const code = expr({
+      tag: 'Sequence',
+      stmts: [varExpr('doSomething', TyUnit), varExpr('doMore', TyUnit)],
+      type: TyUnit, effect: IO,
+    }, IO);
+    expect(code).toContain('do');
+  });
+
+  it('DoBlock with DoLet and DoExpr', () => {
+    const code = expr({
+      tag: 'DoBlock',
+      stmts: [
+        { tag: 'DoLet', name: 'y', value: litNat(5) },
+        { tag: 'DoExpr', expr: varExpr('sideEffect', TyUnit) },
+        { tag: 'DoReturn', value: varExpr('y', TyNat) },
+      ],
+      type: TyNat, effect: Async,
+    }, Async);
+    expect(code).toContain('let y := 5');
+    expect(code).toContain('sideEffect');
+    expect(code).toContain('return y');
+  });
+
+  // ─── Labels and jumps ───────────────────────────────────────────────────────
+
+  it('Labeled → body (label is erased)', () => {
+    const code = expr({
+      tag: 'Labeled', label: 'outer', body: litNat(42),
+      type: TyNat, effect: Pure,
+    });
+    expect(code).toContain('42');
+  });
+
+  it('Break → comment', () => {
+    const code = expr({
+      tag: 'Break', type: TyUnit, effect: Pure,
+    });
+    expect(code).toContain('break');
+  });
+
+  it('Continue → comment', () => {
+    const code = expr({
+      tag: 'Continue', type: TyUnit, effect: Pure,
+    });
+    expect(code).toContain('continue');
+  });
+
+  // ─── Generators ─────────────────────────────────────────────────────────────
+
+  it('YieldExpr → yield value', () => {
+    const code = expr({
+      tag: 'YieldExpr', value: litNat(42), type: TyNat, effect: Pure,
+    });
+    expect(code).toContain('yield 42');
+  });
+
+  it('YieldExpr without value → yield ()', () => {
+    const code = expr({
+      tag: 'YieldExpr', type: TyUnit, effect: Pure,
+    });
+    expect(code).toContain('yield ()');
+  });
+});
+
+// ─── Declaration coverage ─────────────────────────────────────────────────────
+
+describe('generateLean – declaration coverage', () => {
+  it('VarDecl immutable → def name : Type := val', () => {
+    const code = generateLean(mod([{
+      tag: 'VarDecl', name: 'maxRetries', type: TyNat, value: litNat(3), mutable: false,
+    }]));
+    expect(code).toContain('def maxRetries : Nat := 3');
+  });
+
+  it('VarDecl mutable → IO.Ref', () => {
+    const code = generateLean(mod([{
+      tag: 'VarDecl', name: 'counter', type: TyNat, value: litNat(0), mutable: true,
+    }]));
+    expect(code).toContain('IO.Ref');
+    expect(code).toContain('IO.mkRef');
+  });
+
+  it('TheoremDef → theorem name : stmt := by proof', () => {
+    const code = generateLean(mod([{
+      tag: 'TheoremDef', name: 'add_comm', statement: '∀ a b : Nat, a + b = b + a', proof: 'omega',
+    }]));
+    expect(code).toContain('theorem add_comm');
+    expect(code).toContain('∀ a b : Nat');
+    expect(code).toContain('by');
+    expect(code).toContain('omega');
+  });
+
+  it('ClassDecl → class Name where methods', () => {
+    const code = generateLean(mod([{
+      tag: 'ClassDecl', name: 'Serializable', typeParams: ['T'],
+      methods: [{ name: 'serialize', type: { tag: 'Function', params: [TyRef('T')], ret: TyString, effect: Pure } }],
+    }]));
+    expect(code).toContain('class Serializable');
+    expect(code).toContain('serialize :');
+  });
+
+  it('InstanceDef → instance : TypeClass Type where', () => {
+    const code = generateLean(mod([{
+      tag: 'InstanceDef', typeClass: 'ToString', typeArgs: [TyRef('Point')],
+      methods: [{
+        tag: 'FuncDef', name: 'toString', typeParams: [], params: [{ name: 'p', type: TyRef('Point') }],
+        retType: TyString, effect: Pure, body: litStr('Point(...)'),
+      }],
+    }]));
+    expect(code).toContain('instance : ToString Point');
+    expect(code).toContain('toString');
+  });
+
+  it('RawLean → emitted verbatim', () => {
+    const code = generateLean(mod([{ tag: 'RawLean', code: '#check Nat.add_comm' }]));
+    expect(code).toContain('#check Nat.add_comm');
+  });
+
+  it('SectionDecl → section ... end', () => {
+    const code = generateLean(mod([{
+      tag: 'SectionDecl', name: 'Helpers', decls: [{
+        tag: 'FuncDef', name: 'aux', typeParams: [], params: [], retType: TyUnit, effect: Pure, body: litUnit(),
+      }],
+    }]));
+    expect(code).toContain('section Helpers');
+    expect(code).toContain('end Helpers');
+  });
+
+  it('SectionDecl unnamed → section ... end', () => {
+    const code = generateLean(mod([{
+      tag: 'SectionDecl', decls: [{
+        tag: 'VarDecl', name: 'x', type: TyNat, value: litNat(1), mutable: false,
+      }],
+    }]));
+    expect(code).toContain('section');
+    expect(code).toContain('end');
+  });
+
+  it('AttributeDecl → attribute [attr] target', () => {
+    const code = generateLean(mod([{ tag: 'AttributeDecl', attr: 'simp', target: 'add_zero' }]));
+    expect(code).toContain('attribute [simp] add_zero');
+  });
+
+  it('DeriveDecl → deriving instance Class for Type', () => {
+    const code = generateLean(mod([{ tag: 'DeriveDecl', typeName: 'Point', classes: ['Repr', 'BEq'] }]));
+    expect(code).toContain('deriving instance Repr, BEq for Point');
+  });
+
+  it('FuncDef with docComment → /-- ... -/', () => {
+    const code = generateLean(mod([{
+      tag: 'FuncDef', name: 'greet', typeParams: [],
+      params: [{ name: 'name', type: TyString }],
+      retType: TyString, effect: Pure, body: litStr('hello'),
+      docComment: 'Greet someone by name.',
+    }]));
+    expect(code).toContain('/-- Greet someone by name. -/');
+  });
+
+  it('FuncDef with where_ → where block', () => {
+    const code = generateLean(mod([{
+      tag: 'FuncDef', name: 'main', typeParams: [], params: [], retType: TyNat, effect: Pure,
+      body: { tag: 'App', fn: varExpr('helper', TyNat), args: [], type: TyNat, effect: Pure },
+      where_: [{
+        tag: 'FuncDef', name: 'helper', typeParams: [], params: [], retType: TyNat, effect: Pure, body: litNat(42),
+      }],
+    }]));
+    expect(code).toContain('where');
+    expect(code).toContain('helper');
+  });
+
+  it('FuncDef with isPartial → partial def', () => {
+    const code = generateLean(mod([{
+      tag: 'FuncDef', name: 'loop', typeParams: [], params: [],
+      retType: TyUnit, effect: Pure, body: litUnit(), isPartial: true,
+    }]));
+    expect(code).toContain('partial def loop');
+  });
+});
+
+// ─── Pattern coverage ─────────────────────────────────────────────────────────
+
+describe('generateLean – pattern coverage', () => {
+  function matchExpr(patterns: import('../src/ir/types.js').IRCase[]): string {
+    const code = generateLean(mod([{
+      tag: 'FuncDef', name: 'f', typeParams: [], params: [],
+      retType: TyNat, effect: Pure,
+      body: { tag: 'Match', scrutinee: varExpr('x', TyNat), cases: patterns, type: TyNat, effect: Pure },
+    }]));
+    return code;
+  }
+
+  it('PVar → name',   () => expect(matchExpr([{ pattern: { tag: 'PVar', name: 'n' }, body: litNat(0) }])).toContain('| n'));
+  it('PWild → _',     () => expect(matchExpr([{ pattern: { tag: 'PWild' }, body: litNat(0) }])).toContain('| _'));
+  it('PLit number',   () => expect(matchExpr([{ pattern: { tag: 'PLit', value: 42 }, body: litNat(0) }])).toContain('| 42'));
+  it('PLit string',   () => expect(matchExpr([{ pattern: { tag: 'PLit', value: 'hello' }, body: litNat(0) }])).toContain('| "hello"'));
+  it('PString',       () => expect(matchExpr([{ pattern: { tag: 'PString', value: 'circle' }, body: litNat(0) }])).toContain('| "circle"'));
+  it('PNone → .none', () => expect(matchExpr([{ pattern: { tag: 'PNone' }, body: litNat(0) }])).toContain('.none'));
+  it('PSome → .some', () => expect(matchExpr([{ pattern: { tag: 'PSome', inner: { tag: 'PVar', name: 'v' } }, body: litNat(0) }])).toContain('.some v'));
+
+  it('PTuple → (a, b)', () => {
+    const code = matchExpr([{
+      pattern: { tag: 'PTuple', elems: [{ tag: 'PVar', name: 'a' }, { tag: 'PVar', name: 'b' }] },
+      body: litNat(0),
+    }]);
+    expect(code).toContain('(a, b)');
+  });
+
+  it('PStruct → { field := pat }', () => {
+    const code = matchExpr([{
+      pattern: { tag: 'PStruct', fields: [{ name: 'x', pattern: { tag: 'PVar', name: 'vx' } }] },
+      body: litNat(0),
+    }]);
+    expect(code).toContain('x := vx');
+  });
+
+  it('POr → pat1 | pat2', () => {
+    const code = matchExpr([{
+      pattern: { tag: 'POr', pats: [{ tag: 'PLit', value: 1 }, { tag: 'PLit', value: 2 }] },
+      body: litNat(0),
+    }]);
+    expect(code).toContain('1 | 2');
+  });
+
+  it('PAs → pattern as name', () => {
+    const code = matchExpr([{
+      pattern: { tag: 'PAs', pattern: { tag: 'PVar', name: 'x' }, name: 'whole' },
+      body: litNat(0),
+    }]);
+    expect(code).toContain('x as whole');
+  });
+
+  it('match with guard', () => {
+    const code = matchExpr([{
+      pattern: { tag: 'PVar', name: 'n' },
+      guard: { tag: 'BinOp', op: 'Gt', left: varExpr('n', TyNat), right: litNat(0), type: TyBool, effect: Pure },
+      body: litNat(1),
+    }]);
+    expect(code).toContain('if');
+  });
+});
