@@ -634,11 +634,11 @@ class Gen {
         let then_ = this.genExpr(e.then, ctx, depth + 1);
         let else_ = this.genExpr(e.else_, ctx, depth + 1);
 
-        // In monadic context (do blocks), wrap pure branch values in `pure (...)`
-        // so the if/else returns the right monad type.
-        if (!isPure(ctx)) {
-          if (!looksMonadic(then_)) then_ = `pure (${then_.trim()})`;
-          if (!looksMonadic(else_)) else_ = `pure (${else_.trim()})`;
+        // In monadic context at top level (depth=0 in a do block), wrap pure branch
+        // values in `pure (...)`. Don't wrap inside nested expressions (struct fields etc).
+        if (!isPure(ctx) && depth <= 1) {
+          if (!looksMonadic(then_) && !isSimpleValue(then_)) then_ = `pure (${then_.trim()})`;
+          if (!looksMonadic(else_) && !isSimpleValue(else_)) else_ = `pure (${else_.trim()})`;
         }
 
         const thenJoin = then_.trimStart().startsWith('do') ? ' ' : `\n${inner}`;
@@ -1101,6 +1101,15 @@ function defaultForType(t: IRType): string {
 
 /** Check if a generated string looks like a monadic expression (already in the monad).
  *  Pure values like `mkResponse ...` need `pure (...)` wrapping in do blocks. */
+/** Check if a string is a simple value (number, string literal, boolean, default).
+ *  These should NOT get `pure` wrapping even in monadic context. */
+function isSimpleValue(s: string): boolean {
+  const t = s.trim();
+  return /^\d+$/.test(t) || /^\(?\d+\s*:\s*Float\)?$/.test(t) ||
+         t.startsWith('"') || t === 'true' || t === 'false' ||
+         t === 'default' || t === 'none' || t === '#[]';
+}
+
 function looksMonadic(s: string): boolean {
   const t = s.trimStart();
   return t.startsWith('do') || t.startsWith('pure ') || t.startsWith('return ') ||

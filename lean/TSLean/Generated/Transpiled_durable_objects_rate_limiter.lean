@@ -42,9 +42,9 @@ def RateLimiterDO.fetch (self : RateLimiterDOState) (request : Request) : IO Res
       if (request.method == "POST") && (url.pathname == "/check") then
         let allowed ← checkRateLimit self clientId
         pure (mkResponse ("<serialized>") ({ headers := default, status := if allowed then
-          pure (200)
+          200
         else
-          pure (429) }))
+          429 }))
       else
         ()
       if (request.method == "DELETE") && (url.pathname == "/reset") then do
