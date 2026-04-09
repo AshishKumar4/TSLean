@@ -819,6 +819,18 @@ class Gen {
             return 'default';
           }
         }
+        // `.tag` on inductive types: inductives don't have fields.
+        // When accessing .tag on an Effect or IRType (which are inductives),
+        // emit a toString/repr call or default string since these are discriminant accesses.
+        const objType = e.obj.type;
+        const isInductiveType = objType.tag === 'Inductive' ||
+          (objType.tag === 'TypeRef' && ['Effect', 'IRType', 'BinOp', 'UnOp'].includes(objType.name));
+        if (isInductiveType && (e.field === 'tag' || e.field === 'effects' ||
+            e.field === 'stateType' || e.field === 'errorType')) {
+          if (e.field === 'tag') return `default`;  // discriminant: use default String
+          return `default`;  // variant-specific field on inductive: opaque
+        }
+
         const obj = this.genExpr(e.obj, ctx, depth);
         // Map JS field/method names to Lean equivalents.
         // Some names differ between String and Array — disambiguate by type.
@@ -1090,9 +1102,15 @@ class Gen {
       case 'StructLit': {
         // If the target type is String/Any (from TS any), can't construct with struct literal syntax
         if (e.type.tag === 'String' ||
-            (e.type.tag === 'TypeRef' && e.type.name === 'Any')) {
+            (e.type.tag === 'TypeRef' && (e.type.name === 'Any' || e.type.name === 'TSAny'))) {
           return 'default';
         }
+        // For known tagged struct types (IRExpr, IRDecl, etc.), wrap non-string field
+        // values in toString to match TSAny field types
+        const knownTaggedStructs = new Set(['IRExpr', 'IRDecl', 'IRPattern', 'DoStmt', 'IRCase']);
+        // Check if ANY field is named 'tag' — signals a discriminated union struct
+        const hasTagField = e.fields.some(f => f.name === 'tag');
+        const isKnownTagged = hasTagField || (e.type.tag === 'TypeRef' && knownTaggedStructs.has(e.type.name));
         // Detect struct-update pattern: one `_base` field + other fields → `{ base with f := v }`
         const baseField = e.fields.find(f => f.name === '_base');
         const realFields = e.fields.filter(f => f.name !== '_base' && f.name !== '_spread' && !f.name.startsWith('_computed') && !f.name.startsWith('_computed'));
@@ -1102,11 +1120,27 @@ class Gen {
           return `{ ${base} with ${updates} }`;
         }
         // Nested struct values containing `{`: hoist to a let binding or use default
+        // For known tagged structs, fields other than tag/type/effect are TSAny (String),
+        // so wrap non-string values in toString.
+        const stringFields = new Set(['tag', 'name', 'field', 'op', 'errName', 'annot',
+          'target', 'code', 'attr', 'typeName', 'statement', 'proof', 'docComment', 'comment',
+          'ctor', 'value', 'pattern']);
+        const structTypeFields = new Set(['type', 'retType', 'targetType', 'body']);
         const fieldStrs = e.fields.filter(f => f.name !== '_spread' && !f.name.startsWith('_computed')).map(f => {
-          const val = this.genExpr(f.value, ctx, depth);
+          let val = this.genExpr(f.value, ctx, depth);
           const fname = sanitize(f.name);
           if (val.includes('{') && !val.startsWith('"') && !val.startsWith('#[')) {
             return `${fname} := default`;
+          }
+          // For known tagged types: wrap typed values destined for TSAny fields.
+          // Fields like 'type', 'effect', 'retType' keep their real types.
+          // All other fields are TSAny (String) and need toString wrapping.
+          if (isKnownTagged && !structTypeFields.has(f.name) && f.name !== 'effect') {
+            const valType = f.value.type?.tag;
+            const isAlreadyString = val.startsWith('"') || valType === 'String';
+            if (!isAlreadyString && f.name !== 'tag') {
+              val = `toString ${val.includes(' ') ? `(${val})` : val}`;
+            }
           }
           return `${fname} := ${val}`;
         }).join(', ');
