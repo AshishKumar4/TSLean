@@ -16,7 +16,7 @@ def processValue (x : StringOrNumber) : String :=
   if (TSLean.typeOf x) == "string" then
     x.toUpper
   else
-    x.toString
+    x.function toString() { [native code] }
 
 -- State for Animal
 structure AnimalState where

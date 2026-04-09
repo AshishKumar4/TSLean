@@ -60,9 +60,9 @@ def AnalyticsDO.trackEvent (self : AnalyticsDOState) (event : String) : IO Unit 
     let existing ← Storage.get default key
     let value : Float := Option.getD event.value 1
     let updated : Metric := if existing then
-      { count := existing.count + 1, sum := existing.sum + value, min := min existing.min value, max := max existing.max value, lastSeen := event.timestamp }
+      pure ({ count := existing.count + 1, sum := existing.sum + value, min := min existing.min value, max := max existing.max value, lastSeen := event.timestamp })
     else
-      { count := 1, sum := value, min := value, max := value, lastSeen := event.timestamp }
+      pure ({ count := 1, sum := value, min := value, max := value, lastSeen := event.timestamp })
     do
       Storage.put default key updated
       let total ← Option.getD Storage.get default "total:events" 0

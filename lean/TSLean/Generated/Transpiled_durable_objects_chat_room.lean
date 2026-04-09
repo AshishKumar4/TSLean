@@ -42,9 +42,9 @@ def ChatRoomDO.fetch (self : ChatRoomDOState) (request : Request) : IO Response 
   do
     let url : URL := URL.parse request.url
     if (url.pathname == "/history") && (request.method == "GET") then
-      mkResponse ("<serialized>") ({ headers := default })
+      pure (mkResponse ("<serialized>") ({ headers := default }))
     else
-      mkResponse "Not Found" ({ status := 404 })
+      pure (mkResponse "Not Found" ({ status := 404 }))
 
 def ChatRoomDO.webSocketMessage (self : ChatRoomDOState) (ws : WebSocket) (message : String) : StateT ChatRoomDOState IO Unit :=
   do

@@ -23,7 +23,7 @@ def fetchAndProcess (ids : Array String) : IO (Array String) :=
 
 def delay (ms : Float) : IO Unit :=
   do
-    default
+    pure default
 
 def withRetry {T : Type} [Inhabited T] (op : Unit → IO T) (maxRetries : Float) : StateT Unit (ExceptT String IO) T :=
   do

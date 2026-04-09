@@ -74,7 +74,7 @@ structure CircleState where
 
 def Circle.init (self : CircleState) (radius : Float) : StateT CircleState IO Unit :=
   do
-    modify (fun s => { s with _radius := radius })
+    modify (fun s => { s with radius := radius })
 
 def get_radius (self : CircleState) : Float :=
   self.radius

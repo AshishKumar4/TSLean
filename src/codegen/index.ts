@@ -341,7 +341,9 @@ class Gen {
       if (retIsMonadic) {
         this.emit('do');
         this.ind++;
-        const bodyStr = this.genExpr(d.body, d.effect);  // generated at do-block indent
+        // Pass IO as ctx (not Pure) so IfThenElse branches get `pure` wrapping
+        const ioCtx: Effect = { tag: 'IO' };
+        const bodyStr = this.genExpr(d.body, ioCtx);
         this.emit(bodyStr);
         this.ind--;
       } else {
@@ -536,13 +538,13 @@ class Gen {
           'length': isString ? 'length' : 'size',   // String.length, Array.size
           'size': isString ? 'length' : 'size',
           'includes': isString ? 'includes' : 'contains',  // String.includes defined in Runtime.Basic
-          'toString': 'toString',  // JS toString() → Lean ToString typeclass
+          // toString: use standalone function, not dot notation (String.toString doesn't exist)
         };
-        let mappedField = fieldMap[e.field] ?? e.field;
-        // Never emit `.function` — it's a JS artifact from toString() evaluation
-        if (mappedField === 'function') return `toString ${obj}`;
+        let mappedField = (e.field && fieldMap[e.field]) ?? e.field ?? 'default';
+        if (typeof mappedField !== 'string') mappedField = String(mappedField);
+        // toString: use standalone function, not dot notation
+        if (mappedField === 'toString' || mappedField === 'function') return `toString ${obj}`;
         // Strip leading underscore from private field names (TS _radius → Lean radius)
-        // But only if the field starts with _ followed by a letter
         if (mappedField.startsWith('_') && mappedField.length > 1 && /[a-zA-Z]/.test(mappedField[1])) {
           mappedField = mappedField.slice(1);
         }
@@ -723,8 +725,13 @@ class Gen {
 
       case 'Assign': {
         const val = this.genExpr(e.value, ctx, depth);
-        if (e.target.tag === 'FieldAccess' && e.target.obj.tag === 'Var' && e.target.obj.name === 'self')
-          return `modify (fun s => { s with ${e.target.field} := ${val} })`;
+        if (e.target.tag === 'FieldAccess' && e.target.obj.tag === 'Var' && e.target.obj.name === 'self') {
+          // Strip leading underscore from field name (TS _radius → Lean radius)
+          let field = e.target.field;
+          if (field.startsWith('_') && field.length > 1 && /[a-zA-Z]/.test(field[1]))
+            field = field.slice(1);
+          return `modify (fun s => { s with ${field} := ${val} })`;
+        }
         if (e.target.tag === 'Var')
           return `let ${e.target.name} := ${val}`;
         return `-- assign: ${this.genExpr(e.target, ctx, depth)} := ${val}`;
@@ -1098,7 +1105,8 @@ function looksMonadic(s: string): boolean {
   const t = s.trimStart();
   return t.startsWith('do') || t.startsWith('pure ') || t.startsWith('return ') ||
          t.startsWith('let ') || t.startsWith('modify ') || t.startsWith('throw ') ||
-         t.startsWith('tryCatch ') || t === '()' || t === 'default' ||
+         t.startsWith('tryCatch ') || t.startsWith('if ') || t.startsWith('match ') ||
+         t === '()' || t === 'default' ||
          t.startsWith('pure default') || t.startsWith('pure ()');
 }
 
