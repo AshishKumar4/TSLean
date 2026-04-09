@@ -127,4 +127,10 @@ def tryCatchDefault [Monad m] [MonadExcept TSError m] (action : m α) (default :
 -- String helpers matching JS APIs (for transpiler codegen)
 def String.includes (s sub : String) : Bool := (s.splitOn sub).length > 1
 
+/-- `Any` type: maps from TypeScript `any`/`unknown`. Uses `String` as a
+    serializable approximation (actual values serialized as JSON strings). -/
+abbrev Any := String
+
+instance : Inhabited Any := ⟨""⟩
+
 end TSLean
