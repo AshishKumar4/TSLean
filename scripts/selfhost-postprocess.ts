@@ -121,7 +121,7 @@ if (baseName === 'ir_types') {
     [/def isPure \(e : Effect\) : Bool :=\n\s+default == "Pure"/,
      `def isPure : Effect → Bool\n  | .Pure => true\n  | _ => false`],
     // dedup: foldl with dedup instead of Set mutation
-    [/def dedup \(effects : Array Effect\) : Array Effect :=[\s\S]*?true\) effects/,
+    [/def dedup \(effects : Array Effect\) : Array Effect :=[\s\S]*?\) effects/,
      `def dedup (effects : Array Effect) : Array Effect :=\n  effects.foldl (fun acc e => if acc.any (· == e) then acc else acc.push e) #[]`],
     // combineEffects: flatten Combined, remove Pure, dedup
     [/def combineEffects \(effects : Array Effect\) : Effect :=[\s\S]*?Effect\.Combined deduped/,
@@ -1119,8 +1119,10 @@ code = code.replace(/e\.tag == "[^"]+"/g, '(sorry : Bool)');
           if (k < lines.length) {
             const nextLine = lines[k];
             const nextIndent = nextLine.search(/\S/);
-            // If next non-empty line is deeper AND is match/if, body is broken
-            if (nextIndent > bodyIndent && (nextLine.trim().startsWith('match ') || nextLine.trim().startsWith('if '))) {
+            // If next non-empty line is deeper AND is match/if/let/(expr), body is broken
+            if (nextIndent > bodyIndent && (nextLine.trim().startsWith('match ') ||
+                nextLine.trim().startsWith('if ') || nextLine.trim().startsWith('let ') ||
+                nextLine.trim().startsWith('(') || nextLine.trim().startsWith('sorry'))) {
               // Replace entire body with sorry
               result.push(`  sorry /- ${funcName}: let-then-match/if pattern -/`);
               result.push('');
@@ -1146,6 +1148,11 @@ code = code.replace(/e\.tag == "[^"]+"/g, '(sorry : Bool)');
 // ─── Fix FINAL-B: let X := sorry / else pattern ─────────────────────────────
 code = code.replace(/let \w+ := sorry\n(\s+)else/gm, 'sorry\n$1else');
 code = code.replace(/let \w+ := sorry\n(\s+)if /gm, 'sorry\n$1if ');
+
+// `if s then` where s is a String param → `if !s.isEmpty then`
+code = code.replace(/if s then/g, 'if !s.isEmpty then');
+// `(sorry) + ".lean"` → `sorry ++ ".lean"` (can't add String to sorry)
+code = code.replace(/\(sorry\) \+ "/g, 'sorry ++ "');
 
 // ─── Fix FINAL-B2: IO Unit functions with 3+ sorries → `do pure ()` ────────
 {
@@ -1238,7 +1245,17 @@ code = code.replace(/sorry \/\-[^/]*-\/\) (\w+\.\w+)\n/g, 'default\n');
         // Field access on sorry/default chained
         if (/sorry\.\w+|default\.\w+/.test(pLines[k]) && !pLines[k].includes(':=')) bodyProblems++;
       }
-      if (hasApi || bodyProblems >= 2) {
+      // Match on TSAny with dot-constructors or all-wildcard match arms
+      let hasTsEnumMatch = false;
+      let allWildcardArms = 0;
+      for (let k = i+1; k < Math.min(i+80, pLines.length); k++) {
+        const bi = pLines[k].search(/\S/);
+        if (bi >= 0 && bi <= dm[1].length && pLines[k].trim() !== '' && k > i+1) break;
+        if (/\| \.\w+(?:Token|Keyword|Statement|Expression|Declaration)\b/.test(pLines[k]))
+          hasTsEnumMatch = true;
+        if (/^\s+\| _ =>/.test(pLines[k])) allWildcardArms++;
+      }
+      if (hasApi || hasTsEnumMatch || allWildcardArms >= 3 || bodyProblems >= 1) {
         pOut.push(`  sorry /- ${dm[2]}: TS API body -/`);
         pOut.push('');
         pSkip = true;
@@ -1288,6 +1305,31 @@ code = code.replace(
     if (/^sorry\s+\/[-*]/.test(t2)) { skip2 = true; }
   }
   code = result2.join('\n');
+}
+
+// ─── Fix Y: orphan `let x := <simple>` before unrelated expression ──────────
+// Pattern: `let seen := #[]\n    Array.filter (...)` where the Array.filter
+// is not the body of the let. Remove the orphan let line.
+{
+  const lines = code.split('\n');
+  const result: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trimStart();
+    const nextTrimmed = (i + 1 < lines.length) ? lines[i + 1].trimStart() : '';
+    // Detect: `let x := <simple>` followed by `Array.filter/Array.map/Array.forM`
+    // where the next line is at SAME or LESS indent (not a let-body continuation)
+    if (/^let \w+ := (#\[\]|\[\]|""|0|false|true|none|default|AssocMap\.empty)$/.test(trimmed) &&
+        /^(Array\.|sorry|if |match |let |pure |return )/.test(nextTrimmed)) {
+      const thisIndent = lines[i].search(/\S/);
+      const nextIndent = (i + 1 < lines.length) ? lines[i + 1].search(/\S/) : 0;
+      if (nextIndent <= thisIndent + 2) {
+        // Skip this orphan let — it's not used
+        continue;
+      }
+    }
+    result.push(lines[i]);
+  }
+  code = result.join('\n');
 }
 
 // Write output
