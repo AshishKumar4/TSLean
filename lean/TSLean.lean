@@ -8,6 +8,7 @@ import TSLean.Runtime.BrandedTypes
 import TSLean.Runtime.Validation
 import TSLean.Runtime.WebAPI
 import TSLean.Runtime.Inhabited
+import TSLean.Runtime.JSTypes
 
 -- Stdlib
 import TSLean.Stdlib.Array
