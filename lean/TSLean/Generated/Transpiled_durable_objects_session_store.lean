@@ -44,22 +44,19 @@ def SessionStoreDO.fetch (self : SessionStoreDOState) (request : Request) : IO R
         let body ← request.toJson
         let id ← createSession self body.userId (Option.getD body.data {  })
         pure (mkResponse ("<serialized>") ({ headers := default }))
-      else
-        pure ()
-      do
-        if ((request.method == "GET") && (url.pathname == "/get")) && sessionId then
-          let session ← getSession self sessionId
-          if !session then
-            pure (mkResponse ("<serialized>") ({ status := 404, headers := default }))
+      else do
+          if ((request.method == "GET") && (url.pathname == "/get")) && sessionId then
+            let session ← getSession self sessionId
+            if !session then
+              pure (mkResponse ("<serialized>") ({ status := 404, headers := default }))
+            else
+              pure (mkResponse ("<serialized>") ({ headers := default }))
           else
-            pure (mkResponse ("<serialized>") ({ headers := default }))
-        else
-          pure ()
-        if ((request.method == "DELETE") && (url.pathname == "/destroy")) && sessionId then do
-            destroySession self sessionId
-            return mkResponse ("<serialized>") ({ headers := default })
-        else
-          pure (mkResponse "Not Found" ({ status := 404 }))
+            if ((request.method == "DELETE") && (url.pathname == "/destroy")) && sessionId then do
+                destroySession self sessionId
+                return mkResponse ("<serialized>") ({ headers := default })
+            else
+              pure (mkResponse "Not Found" ({ status := 404 }))
 
 def SessionStoreDO.createSession (self : SessionStoreDOState) (userId : String) (data : String) : IO String :=
   do
@@ -67,24 +64,24 @@ def SessionStoreDO.createSession (self : SessionStoreDOState) (userId : String) 
     let now : Float := 0
     let session : Session := { userId := userId, data := data, createdAt := now, expiresAt := now + self.TTL_MS }
     do
-      Storage.put default (s!"session:{id}") session
+      pure default
       return id
 
 def SessionStoreDO.getSession (self : SessionStoreDOState) (id : String) : IO (Option Session) :=
   do
-    let session ← Storage.get default (s!"session:{id}")
+    let session ← pure default
     if !session then
       pure none
     else
       if (0) > session.expiresAt then do
-          Storage.delete default (s!"session:{id}")
+          pure default
           return none
       else
         pure session
 
 def SessionStoreDO.destroySession (self : SessionStoreDOState) (id : String) : IO Unit :=
   do
-    Storage.delete default (s!"session:{id}")
+    pure default
 
 end
 end SessionStoreDO

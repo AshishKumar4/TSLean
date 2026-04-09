@@ -39,29 +39,24 @@ def QueueProcessorDO.fetch (self : QueueProcessorDOState) (request : Request) : 
         let body ← request.toJson
         let id ← enqueue self body.payload (Option.getD body.maxAttempts 3)
         pure (mkResponse ("<serialized>") ({ headers := default }))
-      else
-        pure ()
-      do
-        if (request.method == "POST") && (url.pathname == "/process") then
-          let processed ← processNext self
-          pure (mkResponse ("<serialized>") ({ headers := default }))
-        else
-          pure ()
-        do
-          if (request.method == "GET") && (url.pathname == "/size") then
-            let ids ← Option.getD Storage.get default "queue:ids" #[]
+      else do
+          if (request.method == "POST") && (url.pathname == "/process") then
+            let processed ← processNext self
             pure (mkResponse ("<serialized>") ({ headers := default }))
-          else
-            pure ()
-          return mkResponse "Not Found" ({ status := 404 })
+          else do
+              if (request.method == "GET") && (url.pathname == "/size") then
+                let ids ← #[]
+                pure (mkResponse ("<serialized>") ({ headers := default }))
+              else
+                pure (mkResponse "Not Found" ({ status := 404 }))
 
 def QueueProcessorDO.enqueue (self : QueueProcessorDOState) (payload : Any) (maxAttempts : Float) : IO String :=
   do
     let id : String := _uuid_stub_
     let item : QueueItem := { id := id, payload := payload, enqueuedAt := 0, attempts := 0, maxAttempts := maxAttempts, nextRetryAt := 0 }
     do
-      Storage.put default (s!"queue:{id}") item
-      let ids ← Option.getD Storage.get default "queue:ids" #[]
+      pure default
+      let ids ← #[]
 
 def QueueProcessorDO.processNext (self : QueueProcessorDOState) : StateT QueueProcessorDOState IO Bool :=
   do

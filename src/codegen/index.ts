@@ -690,11 +690,9 @@ class Gen {
         // TS compiler API calls have no Lean equivalent
         if (fn.startsWith('ts.') || fn.startsWith('path.') || fn.startsWith('fs.') || fn.startsWith('process.'))
           return 'default';
-        // Storage operations: emit as pure function calls on the state
-        if (fn.startsWith('Storage.')) {
-          const args = e.args.map(a => this.genP(a, ctx, depth));
-          return `${fn} ${args.join(' ')}`;
-        }
+        // Storage operations → pure default in monadic context
+        // (Storage API needs deep DO monad integration that we can't express simply)
+        if (fn.startsWith('Storage.')) return !isPure(ctx) ? 'pure default' : 'default';
         // serialize on struct literals: use toString on a string representation
         if ((fn === 'serialize' || fn === 'toString') && e.args.some(a => a.tag === 'StructLit')) {
           return `"<serialized>"`;
@@ -1010,7 +1008,16 @@ class Gen {
   private genDoSeq(stmts: IRExpr[], ctx: Effect, depth: number): string {
     const ind = '  '.repeat(this.ind + depth + 1);
     const lines = ['do'];
-    for (const s of stmts) {
+
+    // Pre-process: chain sequential IfThenElse(cond, body, LitUnit) nodes
+    // into a single if-else-if chain. This is the key DO pattern:
+    //   if cond1 then return resp1
+    //   if cond2 then return resp2
+    //   return defaultResp
+    // becomes: if cond1 then ... else if cond2 then ... else ...
+    const processed = this.chainSequentialIfs(stmts);
+
+    for (const s of processed) {
       if (s.tag === 'Bind') {
         lines.push(`${ind}let ${s.name} ← ${this.genExpr(s.monad, ctx, depth + 1)}`);
       } else if (s.tag === 'Let') {
@@ -1026,10 +1033,55 @@ class Gen {
     return lines.join('\n');
   }
 
+  /** Chain sequential if-then-unit statements into a single if-else-if chain.
+   *  Input:  [IfThenElse(c1, b1, ()), IfThenElse(c2, b2, ()), returnDefault]
+   *  Output: [IfThenElse(c1, b1, IfThenElse(c2, b2, returnDefault))] */
+  private chainSequentialIfs(stmts: IRExpr[]): IRExpr[] {
+    // Find runs of IfThenElse where else_ is LitUnit or pure ()
+    const result: IRExpr[] = [];
+    let i = 0;
+    while (i < stmts.length) {
+      const s = stmts[i];
+      if (s.tag === 'IfThenElse' && isEmptyElse(s.else_) && i + 1 < stmts.length) {
+        // Start of an if-chain. Collect all consecutive if-then-() patterns.
+        const chain: Array<{ cond: IRExpr; then: IRExpr }> = [{ cond: s.cond, then: s.then }];
+        i++;
+        while (i < stmts.length && stmts[i].tag === 'IfThenElse' && isEmptyElse((stmts[i] as any).else_)) {
+          const next = stmts[i] as Extract<IRExpr, { tag: 'IfThenElse' }>;
+          chain.push({ cond: next.cond, then: next.then });
+          i++;
+        }
+        // The remaining statement (if any) becomes the final else
+        const finalElse: IRExpr = i < stmts.length ? stmts[i] : { tag: 'LitUnit', type: s.type, effect: s.effect };
+        if (i < stmts.length) i++;  // consume the final else statement
+
+        // Build the chained if-else-if from right to left
+        let chained: IRExpr = finalElse;
+        for (let j = chain.length - 1; j >= 0; j--) {
+          chained = {
+            tag: 'IfThenElse',
+            cond: chain[j].cond,
+            then: chain[j].then,
+            else_: chained,
+            type: s.type,
+            effect: s.effect,
+          };
+        }
+        result.push(chained);
+      } else {
+        result.push(s);
+        i++;
+      }
+    }
+    return result;
+  }
+
   private genBinOp(e: Extract<IRExpr, { tag: 'BinOp' }>, ctx: Effect, depth: number): string {
     if (e.op === 'NullCoalesce') {
       const l = this.genP(e.left, ctx, depth);
       const r = this.genP(e.right, ctx, depth);
+      // When left is default/pure default (from Storage stub), use the fallback directly
+      if (l === 'default' || l === '(pure default)' || l === 'pure default') return r;
       return `Option.getD ${l} ${r}`;
     }
     // Equality with none/null: use Option.isNone/isSome instead of ==
@@ -1275,6 +1327,13 @@ function collectFieldAccesses(expr: IRExpr, varName: string): Map<string, IRType
   // Remove method calls from field set
   for (const m of methodCalls) fields.delete(m);
   return fields;
+}
+
+/** Check if an else branch is "empty" (LitUnit, pure (), or trivial). */
+function isEmptyElse(e: IRExpr): boolean {
+  if (e.tag === 'LitUnit') return true;
+  if (e.tag === 'Pure_' && e.value.tag === 'LitUnit') return true;
+  return false;
 }
 
 function looksMonadic(s: string): boolean {
