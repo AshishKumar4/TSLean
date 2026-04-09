@@ -70,6 +70,7 @@ import TSLean.Generated.FullProject.Backend.Router
 import TSLean.Veil.Core
 import TSLean.Veil.DSL
 import TSLean.Veil.DSLExamples
+import TSLean.Veil.DSLAdoption
 import TSLean.Veil.AuthDO
 import TSLean.Veil.ChatRoomDO
 import TSLean.Veil.CounterDO
