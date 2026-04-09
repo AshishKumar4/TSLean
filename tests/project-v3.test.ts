@@ -57,9 +57,9 @@ describe('Project v3: content quality', () => {
     const auth = files[Object.keys(files).find(k => k.includes('AuthDo.lean'))!];
     expect(auth).toBeDefined();
     // Should have def register, login, verify with actual bodies
-    expect(auth).toMatch(/def register/);
-    expect(auth).toMatch(/def login/);
-    expect(auth).toMatch(/def verify/);
+    expect(auth).toMatch(/def.*register/);
+    expect(auth).toMatch(/def.*login/);
+    expect(auth).toMatch(/def.*verify/);
     // Verify there are actual expressions, not just `sorry` everywhere
     const lines = auth.split('\n').filter(l => l.trim().length > 0);
     const sorrys = lines.filter(l => l.trim() === 'sorry').length;
@@ -70,7 +70,7 @@ describe('Project v3: content quality', () => {
     const chat = files[Object.keys(files).find(k => k.includes('ChatRoomDo.lean'))!];
     expect(chat).toBeDefined();
     expect(chat).toContain('structure Message');
-    expect(chat).toMatch(/def fetch/);
+    expect(chat).toMatch(/def.*fetch/);
   });
 
   it('Types.lean has UserId and User structures', () => {

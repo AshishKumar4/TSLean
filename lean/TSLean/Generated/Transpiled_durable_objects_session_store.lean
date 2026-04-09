@@ -35,7 +35,7 @@ mutual
 def SessionStoreDO.init : SessionStoreDOState :=
   { TTL_MS := (0 : Float) }
 
-def fetch (self : SessionStoreDOState) (request : Request) : IO Response :=
+def SessionStoreDO.fetch (self : SessionStoreDOState) (request : Request) : IO Response :=
   do
     let url : URL := URL.parse request.url
     let sessionId : Option String := url.searchParams.get "sessionId"
@@ -62,7 +62,7 @@ def fetch (self : SessionStoreDOState) (request : Request) : IO Response :=
         else
           pure (mkResponse "Not Found" ({ status := 404 }))
 
-def createSession (self : SessionStoreDOState) (userId : String) (data : String) : IO String :=
+def SessionStoreDO.createSession (self : SessionStoreDOState) (userId : String) (data : String) : IO String :=
   do
     let id : String := crypto.randomUUID
     let now : Float := 0
@@ -71,7 +71,7 @@ def createSession (self : SessionStoreDOState) (userId : String) (data : String)
       Storage.put self.state.storage (s!"session:{id}") session
       return id
 
-def getSession (self : SessionStoreDOState) (id : String) : IO (Option Session) :=
+def SessionStoreDO.getSession (self : SessionStoreDOState) (id : String) : IO (Option Session) :=
   do
     let session ← Storage.get self.state.storage (s!"session:{id}")
     if !session then
@@ -84,7 +84,7 @@ def getSession (self : SessionStoreDOState) (id : String) : IO (Option Session) 
       else
         pure session
 
-def destroySession (self : SessionStoreDOState) (id : String) : IO Unit :=
+def SessionStoreDO.destroySession (self : SessionStoreDOState) (id : String) : IO Unit :=
   do
     Storage.delete self.state.storage (s!"session:{id}")
 

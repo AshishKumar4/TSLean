@@ -446,7 +446,10 @@ class ParserCtx {
     const self: IRParam = { name: 'self', type: selfType };
     const allParams = isStatic ? params : [self, ...params];
     const body = node.body ? this.parseBlock(node.body, eff) : holeExpr(ret);
-    return { tag: 'FuncDef', name: isStatic ? `${className}.${name}` : name, typeParams: tps, params: allParams, retType: ret, effect: eff, body };
+    // All methods get ClassName.methodName prefix to avoid collisions
+    // when multiple classes in the same file have methods with the same name.
+    const fullName = `${className}.${name}`;
+    return { tag: 'FuncDef', name: fullName, typeParams: tps, params: allParams, retType: ret, effect: eff, body };
   }
 
   // ─── Interface ─────────────────────────────────────────────────────────────

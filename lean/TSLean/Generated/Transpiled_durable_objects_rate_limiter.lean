@@ -34,7 +34,7 @@ mutual
 def RateLimiterDO.init : RateLimiterDOState :=
   { windowMs := (0 : Float), maxRequests := (0 : Float) }
 
-def fetch (self : RateLimiterDOState) (request : Request) : IO Response :=
+def RateLimiterDO.fetch (self : RateLimiterDOState) (request : Request) : IO Response :=
   do
     let url : URL := URL.parse request.url
     let clientId : String := Option.getD (url.searchParams.get "clientId") "default"
@@ -54,7 +54,7 @@ def fetch (self : RateLimiterDOState) (request : Request) : IO Response :=
       else
         pure (mkResponse "Not Found" ({ status := 404 }))
 
-def checkRateLimit (self : RateLimiterDOState) (clientId : String) : IO Bool :=
+def RateLimiterDO.checkRateLimit (self : RateLimiterDOState) (clientId : String) : IO Bool :=
   do
     let now : Float := 0
     let windowStart : Float := now - self.windowMs

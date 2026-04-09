@@ -86,9 +86,9 @@ describe('Project output: Backend/AuthDo.lean cross-file imports', () => {
   it('imports Shared.Validators',    () => expect(code).toContain('import TSLean.Generated.Shared.Validators'));
   it('imports DO Http',              () => expect(code).toContain('import TSLean.DurableObjects.Http'));
   it('StoredUser structure emitted', () => expect(code).toContain('structure StoredUser'));
-  it('register function defined',    () => expect(code).toMatch(/def register/));
-  it('login function defined',       () => expect(code).toMatch(/def login/));
-  it('verify function defined',      () => expect(code).toMatch(/def verify/));
+  it('register function defined',    () => expect(code).toMatch(/def.*register/));
+  it('login function defined',       () => expect(code).toMatch(/def.*login/));
+  it('verify function defined',      () => expect(code).toMatch(/def.*verify/));
   it('content not empty stub',       () => expect(code.split('\n').length).toBeGreaterThan(20));
 });
 

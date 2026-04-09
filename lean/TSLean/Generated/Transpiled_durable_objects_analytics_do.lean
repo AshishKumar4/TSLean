@@ -30,7 +30,7 @@ mutual
 def AnalyticsDO.init : AnalyticsDOState :=
   {  }
 
-def fetch (self : AnalyticsDOState) (request : Request) : IO Response :=
+def AnalyticsDO.fetch (self : AnalyticsDOState) (request : Request) : IO Response :=
   do
     let url : URL := URL.parse request.url
     do
@@ -55,7 +55,7 @@ def fetch (self : AnalyticsDOState) (request : Request) : IO Response :=
         else
           pure (mkResponse "Not Found" ({ status := 404 }))
 
-def trackEvent (self : AnalyticsDOState) (event : String) : IO Unit :=
+def AnalyticsDO.trackEvent (self : AnalyticsDOState) (event : String) : IO Unit :=
   do
     let key : String := s!"metric:{event.name}"
     let existing ← Storage.get self.state.storage key

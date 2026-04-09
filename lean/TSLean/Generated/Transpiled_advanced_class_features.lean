@@ -39,10 +39,10 @@ def Animal.init (self : AnimalState) (name : String) : StateT AnimalState IO Uni
   do
     modify (fun s => { s with name := name })
 
-def sound (self : AnimalState) : String :=
+def Animal.sound (self : AnimalState) : String :=
   ""
 
-def describe (self : AnimalState) : String :=
+def Animal.describe (self : AnimalState) : String :=
   (s!"{self.name} says ") ++ (sound self)
 
 -- State for Dog
@@ -57,13 +57,13 @@ def Dog.init (self : DogState) (name : String) (breed : String) : StateT DogStat
       default
       modify (fun s => { s with breed := breed })
 
-def sound (self : DogState) : String :=
+def Dog.sound (self : DogState) : String :=
   "woof"
 
 def get_fullDescription (self : Dog) : String :=
   s!"{self.name} ({self.breed})"
 
-def sound (self : CatState) : String :=
+def Cat.sound (self : CatState) : String :=
   "meow"
 
 -- State for Circle

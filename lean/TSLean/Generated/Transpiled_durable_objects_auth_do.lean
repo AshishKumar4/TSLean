@@ -36,7 +36,7 @@ mutual
 def AuthDO.init : AuthDOState :=
   { TOKEN_TTL := (0 : Float) }
 
-def fetch (self : AuthDOState) (request : Request) : IO Response :=
+def AuthDO.fetch (self : AuthDOState) (request : Request) : IO Response :=
   do
     let url : URL := URL.parse request.url
     do
@@ -69,7 +69,7 @@ def fetch (self : AuthDOState) (request : Request) : IO Response :=
             ()
           return mkResponse "Not Found" ({ status := 404 })
 
-def handleLogin (self : AuthDOState) (creds : String) : IO Response :=
+def AuthDO.handleLogin (self : AuthDOState) (creds : String) : IO Response :=
   do
     if (!creds.username) || (!creds.password) then
       pure (mkResponse ("<serialized>") ({ status := 401 }))
@@ -80,11 +80,11 @@ def handleLogin (self : AuthDOState) (creds : String) : IO Response :=
         Storage.put self.state.storage (s!"token:{token}") session
         return mkResponse ("<serialized>") ({ headers := default })
 
-def logout (self : AuthDOState) (token : String) : IO Unit :=
+def AuthDO.logout (self : AuthDOState) (token : String) : IO Unit :=
   do
     Storage.delete self.state.storage (s!"token:{token}")
 
-def authenticate (self : AuthDOState) (token : String) : IO (Option AuthSession) :=
+def AuthDO.authenticate (self : AuthDOState) (token : String) : IO (Option AuthSession) :=
   do
     let session ← Storage.get self.state.storage (s!"token:{token}")
     if !session then

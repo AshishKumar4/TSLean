@@ -43,7 +43,7 @@ mutual
 def CoordinatorDO.init : CoordinatorDOState :=
   { nodes := default }
 
-def fetch (self : CoordinatorDOState) (request : Request) : IO Response :=
+def CoordinatorDO.fetch (self : CoordinatorDOState) (request : Request) : IO Response :=
   do
     let url : URL := URL.parse request.url
     do
@@ -59,7 +59,7 @@ def fetch (self : CoordinatorDOState) (request : Request) : IO Response :=
       else
         pure (mkResponse "Not Found" ({ status := 404 }))
 
-def handleRPC (self : CoordinatorDOState) (envelope : RPCEnvelope) : IO RPCResponse :=
+def CoordinatorDO.handleRPC (self : CoordinatorDOState) (envelope : RPCEnvelope) : IO RPCResponse :=
   do
     let id : String := envelope.id
     let method : String := envelope.method

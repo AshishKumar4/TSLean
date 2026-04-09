@@ -131,6 +131,9 @@ def String.includes (s sub : String) : Bool := (s.splitOn sub).length > 1
     serializable approximation (actual values serialized as JSON strings). -/
 abbrev Any := String
 
+/-- Runtime type check (stub — always returns "object"). -/
+def typeOf {α : Type} (_ : α) : String := "object"
+
 instance : Inhabited Any := ⟨""⟩
 
 end TSLean

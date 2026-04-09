@@ -215,7 +215,7 @@ describe('Parser: class inheritance', () => {
       }
     `);
     expect(code).toMatch(/structure Dog|structure Animal/);
-    expect(code).toMatch(/def bark/);
+    expect(code).toMatch(/def.*bark/);
   });
 
   it('child class has own state struct', () => {
@@ -250,8 +250,8 @@ describe('Parser: static methods', () => {
         increment(): void { this.n++; }
       }
     `);
-    expect(code).toMatch(/def increment/);
-    const fn = code.slice(code.indexOf('def increment'));
+    expect(code).toMatch(/def.*increment/);
+    const fn = code.slice(code.search(/def.*increment/));
     expect(fn.slice(0, 100)).toContain('self');
   });
 });

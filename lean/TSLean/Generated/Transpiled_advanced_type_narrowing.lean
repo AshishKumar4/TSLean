@@ -10,7 +10,7 @@ open TSLean
 namespace TSLean.Generated.TypeNarrowing
 
 -- // Type narrowing: typeof, instanceof, in, discriminated by value
-abbrev StringOrNumber := StringOrNumber
+abbrev StringOrNumber := String
 
 def processValue (x : StringOrNumber) : String :=
   if (TSLean.typeOf x) == "string" then
@@ -24,12 +24,12 @@ structure AnimalState where
   name : String
   deriving Repr, BEq
 
-def bark (self : DogState) : IO Unit :=
+def Dog.bark (self : DogState) : IO Unit :=
   do
     let _ := IO.println "woof"
     pure ()
 
-def meow (self : CatState) : IO Unit :=
+def Cat.meow (self : CatState) : IO Unit :=
   do
     let _ := IO.println "meow"
     pure ()

@@ -38,17 +38,17 @@ mutual
 def ChatRoomDO.init : ChatRoomDOState :=
   { sessions := default, messages := #[], nextId := (0 : Float) }
 
-def fetch (self : ChatRoomDOState) (request : Request) : IO Response :=
+def ChatRoomDO.fetch (self : ChatRoomDOState) (request : Request) : IO Response :=
   let url : URL := URL.parse request.url
   if (url.pathname == "/history") && (request.method == "GET") then
     mkResponse ("<serialized>") ({ headers := default })
   else
     mkResponse "Not Found" ({ status := 404 })
 
-def webSocketMessage (self : ChatRoomDOState) (ws : WebSocket) (message : String) : StateT ChatRoomDOState IO Unit :=
+def ChatRoomDO.webSocketMessage (self : ChatRoomDOState) (ws : WebSocket) (message : String) : StateT ChatRoomDOState IO Unit :=
   pure default
 
-def broadcast (self : ChatRoomDOState) (message : String) (excludeId : Option String) : Unit :=
+def ChatRoomDO.broadcast (self : ChatRoomDOState) (message : String) (excludeId : Option String) : Unit :=
   Array.forM self.sessions (fun _ => if id != excludeId then
     default
   else

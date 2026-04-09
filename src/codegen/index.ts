@@ -272,7 +272,13 @@ class Gen {
 
   private emitTypeAlias(d: Extract<IRDecl, { tag: 'TypeAlias' }>): void {
     if (d.comment) this.emitComment(d.comment);
-    this.emit(`abbrev ${d.name}${fmtTPs(d.typeParams)} := ${irTypeToLean(d.body)}`);
+    const bodyStr = irTypeToLean(d.body);
+    // Self-referencing alias (type X = X): emit as String (compilable fallback)
+    if (bodyStr === d.name) {
+      this.emit(`abbrev ${d.name}${fmtTPs(d.typeParams)} := String`);
+    } else {
+      this.emit(`abbrev ${d.name}${fmtTPs(d.typeParams)} := ${bodyStr}`);
+    }
   }
 
   private emitFunc(d: Extract<IRDecl, { tag: 'FuncDef' }>): void {
@@ -552,7 +558,10 @@ class Gen {
         const v    = this.genExpr(e.value, ctx, depth);
         const body = this.genExpr(e.body, ctx, depth);
         const ann  = e.annot ? ` : ${irTypeToLean(e.annot)}` : '';
-        return `let ${e.name}${ann} := ${v}\n${indent}${body}`;
+        // Self-referencing let (loop helpers): use `let rec` for recursive bindings
+        const isRecursive = e.value.tag === 'Lambda' && bodyContainsVarRef(e.value.body, e.name);
+        const kw = isRecursive ? 'let rec' : 'let';
+        return `${kw} ${e.name}${ann} := ${v}\n${indent}${body}`;
       }
 
       case 'Bind': {
@@ -1049,8 +1058,11 @@ function bodyContainsAnyVarRef(expr: IRExpr, names: Set<string>, selfName: strin
   function check(e: IRExpr): boolean {
     if (!e || typeof e !== 'object') return false;
     if (e.tag === 'Var' && names.has(e.name) && e.name !== selfName) return true;
-    if (e.tag === 'FieldAccess' && e.obj.tag === 'Var' && e.obj.name === 'self' && names.has(e.field))
-      return true;
+    if (e.tag === 'FieldAccess' && e.obj.tag === 'Var' && e.obj.name === 'self') {
+      // Check if field matches any name (plain or ClassName.method)
+      if (names.has(e.field)) return true;
+      for (const n of names) if (n.endsWith(`.${e.field}`)) return true;
+    }
     // Recurse into ALL child expression fields
     for (const [_k, v] of Object.entries(e)) {
       if (v && typeof v === 'object') {

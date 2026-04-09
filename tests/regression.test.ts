@@ -304,7 +304,7 @@ describe('Bug #4 regression: DO constructor synthesises clean state struct', () 
     `;
     const code = pipeline(src, 'store.ts');
     // The fetch method (not init) should have a self parameter
-    const fetchFn = sectionOf(code, 'def fetch');
+    const fetchFn = sectionOf(code, 'fetch');
     expect(fetchFn).toContain('self');
   });
 

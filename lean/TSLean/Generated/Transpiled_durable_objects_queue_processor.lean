@@ -31,7 +31,7 @@ mutual
 def QueueProcessorDO.init : QueueProcessorDOState :=
   {  }
 
-def fetch (self : QueueProcessorDOState) (request : Request) : IO Response :=
+def QueueProcessorDO.fetch (self : QueueProcessorDOState) (request : Request) : IO Response :=
   do
     let url : URL := URL.parse request.url
     do
@@ -55,7 +55,7 @@ def fetch (self : QueueProcessorDOState) (request : Request) : IO Response :=
             ()
           return mkResponse "Not Found" ({ status := 404 })
 
-def enqueue (self : QueueProcessorDOState) (payload : Any) (maxAttempts : Float) : IO String :=
+def QueueProcessorDO.enqueue (self : QueueProcessorDOState) (payload : Any) (maxAttempts : Float) : IO String :=
   do
     let id : String := crypto.randomUUID
     let item : QueueItem := { id := id, payload := payload, enqueuedAt := 0, attempts := 0, maxAttempts := maxAttempts, nextRetryAt := 0 }
@@ -63,7 +63,7 @@ def enqueue (self : QueueProcessorDOState) (payload : Any) (maxAttempts : Float)
       Storage.put self.state.storage (s!"queue:{id}") item
       let ids ← Option.getD Storage.get self.state.storage "queue:ids" #[]
 
-def processNext (self : QueueProcessorDOState) : StateT QueueProcessorDOState IO Bool :=
+def QueueProcessorDO.processNext (self : QueueProcessorDOState) : StateT QueueProcessorDOState IO Bool :=
   pure default
 
 end
