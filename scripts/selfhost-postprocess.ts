@@ -650,6 +650,14 @@ code = code.replace(/default \/\-[^/]*-\/\.\w+/g, 'default');
 // Also: `sorry /- comment -/.field` → `default`
 code = code.replace(/sorry \/\-[^/]*-\/\.\w+/g, 'default');
 
+// ─── Fix M2: Tuple literal for Array String → #[...] ────────────────────────
+// Pattern: `def X : Array String := ("a", "b", "c")`
+// Tuples are not Arrays. Convert to array literal.
+code = code.replace(
+  /: Array String := \(("[^"]*"(?:, "[^"]*")*)\)/g,
+  (_, items) => `: Array String := #[${items}]`
+);
+
 // ─── Fix N: Truthiness on non-Bool types ────────────────────────────────────
 // Pattern: `if x.size then` — .size returns Nat, not Bool
 code = code.replace(/if (\w+)\.size then/g, 'if $1.size > 0 then');
@@ -913,6 +921,14 @@ code = code.replace(/Array\.filter Boolean/g, 'Array.filter (· != "")');
 code = code.replace(
   /def DO_LEAN_IMPORTS : \(String × .*?\) :=/g,
   'def DO_LEAN_IMPORTS : Array String :='
+);
+// Also fix the tuple value to Array literal: ("a", "b") → #["a", "b"]
+code = code.replace(
+  /def DO_LEAN_IMPORTS : Array String := \(("[^"]+")(?:, ("[^"]+"))+\)/g,
+  (match) => {
+    const strings = match.match(/"[^"]+"/g) || [];
+    return `def DO_LEAN_IMPORTS : Array String := #[${strings.join(', ')}]`;
+  }
 );
 
 // Write output
