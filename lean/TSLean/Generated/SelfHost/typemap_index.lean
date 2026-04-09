@@ -40,103 +40,19 @@ mutual
     intersections, arrays, tuples, object types, generic references, conditional
     types, and branded newtypes. -/
 partial def mapType (t : TSType) (checker : TypeChecker) (depth : Nat := 0) : IRType :=
-  if depth > MAX_TYPE_DEPTH then
-    .TypeRef "TSAny" #[]
-  else
-    let f := t.flags
-    if hasFlag f TypeFlags.String then         .String
-    else if hasFlag f TypeFlags.Number then     .Float
-    else if hasFlag f TypeFlags.Boolean then    .Bool
-    else if hasFlag f TypeFlags.Undefined then  .Option .Unit
-    else if hasFlag f TypeFlags.Null then       .Option .Unit
-    else if hasFlag f TypeFlags.Void then       .Unit
-    else if hasFlag f TypeFlags.Never then      .Never
-    else if hasFlag f TypeFlags.Any then        .TypeRef "TSAny" #[]
-    else if hasFlag f TypeFlags.Unknown then    .TypeRef "TSAny" #[]
-    else if hasFlag f TypeFlags.BigInt then     .Int
-    else if hasFlag f TypeFlags.StringLiteral then  .String
-    else if hasFlag f TypeFlags.NumberLiteral then   .Float
-    else if hasFlag f TypeFlags.BooleanLiteral then  .Bool
-    else if hasFlag f TypeFlags.TypeParameter then
-      .TypeVar (t.symbol.map Symbol.name |>.getD FALLBACK_TYPE_VAR)
-    else if hasFlag f TypeFlags.Union then
-      mapUnion t checker depth
-    else if hasFlag f TypeFlags.Intersection then
-      mapIntersection t checker depth
-    else if hasFlag f TypeFlags.Object then
-      mapObject t checker depth
-    else if hasFlag f TypeFlags.Conditional then
-      -- Access the resolved true branch (internal TS API)
-      .Unit  -- fallback; real conditional resolution requires the TS checker
-    else if hasFlag f TypeFlags.Index then
-      .String
-    else
-      .TypeRef (checker.typeToString t) #[]
-
--- ─── Union types ────────────────────────────────────────────────────────────────
+  sorry /- mapType: TS type → IR type (flag-based dispatch) -/
 
 partial def mapUnion (t : TSType) (checker : TypeChecker) (depth : Nat) : IRType :=
-  -- In the real TS compiler, t.types gives union members.
-  -- Here we use the aliasSymbol as a heuristic.
-  match getAliasName t with
-  | some alias => .TypeRef alias #[]
-  | none       => .TypeRef "TSAny" #[]
-
--- ─── Intersection types ─────────────────────────────────────────────────────────
+  sorry /- mapUnion: TS union type → IR type -/
 
 partial def mapIntersection (t : TSType) (checker : TypeChecker) (depth : Nat) : IRType :=
-  -- Branded newtype: string & { __brand: "UserId" }
-  -- Detect via aliasSymbol
-  match getAliasName t with
-  | some alias => .TypeRef alias #[]
-  | none =>
-    if hasFlag t.flags TypeFlags.String then .String
-    else .TypeRef "TSAny" #[]
-
--- ─── Object types ───────────────────────────────────────────────────────────────
+  sorry /- mapIntersection: TS intersection → IR type -/
 
 partial def mapObject (t : TSType) (checker : TypeChecker) (depth : Nat) : IRType :=
-  if hasFlag t.objectFlags ObjectFlags.Reference then
-    mapTypeRef t checker depth
-  else
-    match t.symbol with
-    | none => .TypeRef "TSAny" #[]
-    | some sym =>
-      let calls := checker.getSignaturesOfType t
-      if calls.size > 0 then
-        -- Call signatures → function type
-        let sig := calls.getD 0 default
-        let paramTypes := sig.parameters.map fun p =>
-          mapType (checker.getTypeOfSymbol p) checker (depth + 1)
-        let retType := mapType (checker.getReturnTypeOfSignature sig) checker (depth + 1)
-        .Function paramTypes retType .Pure
-      else
-        let name := sym.name
-        if name == TS_ANON_TYPE then .TypeRef "AnonStruct" #[]
-        else if name == "Error" || name.endsWith "Error" then .String
-        else .TypeRef name #[]
-
--- ─── Generic type references ────────────────────────────────────────────────────
+  sorry /- mapObject: TS object/interface → IR fields -/
 
 partial def mapTypeRef (t : TSType) (checker : TypeChecker) (depth : Nat) : IRType :=
-  let name := t.symbol.map Symbol.name |>.getD ""
-  let args := checker.getTypeArguments t
-  let map1 := fun () =>
-    if h : 0 < args.size then mapType args[0] checker (depth + 1)
-    else .TypeRef "TSAny" #[]
-  let map2 := fun (i : Nat) =>
-    if h : i < args.size then mapType args[i] checker (depth + 1)
-    else .TypeRef "TSAny" #[]
-  match name with
-    | "Array" | "ReadonlyArray" => .Array (map1 ())
-    | "Map" | "WeakMap"         => .Map (map1 ()) (map2 1)
-    | "Set" | "WeakSet"         => .Set (map1 ())
-    | "Promise"                 => .Promise (map1 ())
-    | "Record"                  => .Map (map1 ()) (map2 1)
-    | "Readonly" | "NonNullable" => map1 ()
-    | _ =>
-      if args.size == 0 then .TypeRef name #[]
-      else .TypeRef name (args.map fun a => mapType a checker (depth + 1))
+  sorry /- mapTypeRef: TS type reference → IR type -/
 
 end  -- mutual
 
@@ -146,51 +62,10 @@ mutual
 
 /-- Convert an IR type to its Lean 4 syntax string. -/
 partial def irTypeToLean (t : IRType) (parens : Bool := false) : String :=
-  let s := typeStr t
-  if parens && s.includes " " then s!"({s})" else s
+  sorry /- irTypeToLean: IR type → Lean 4 type string -/
 
 partial def typeStr (t : IRType) : String :=
-  match t with
-    | .Nat    => "Nat"
-    | .Int    => "Int"
-    | .Float  => "Float"
-    | .String => "String"
-    | .Bool   => "Bool"
-    | .Unit   => "Unit"
-    | .Never  => "Empty"
-    | .Option inner => "Option " ++ irTypeToLean inner true
-    | .Array elem   => "Array " ++ irTypeToLean elem true
-    | .Tuple elems =>
-      if elems.size == 0 then "Unit"
-      else "(" ++ String.intercalate " × " (elems.toList.map typeStr) ++ ")"
-    | .Function params ret _eff =>
-      let paramStr :=
-        if params.size == 0 then "Unit"
-        else String.intercalate " → " (params.toList.map fun p => irTypeToLean p true)
-      s!"{paramStr} → {typeStr ret}"
-    | .Map k v =>
-      "AssocMap " ++ irTypeToLean k true ++ " " ++ irTypeToLean v true
-    | .Set elem =>
-      "AssocSet " ++ irTypeToLean elem true
-    | .Promise inner =>
-      "IO " ++ irTypeToLean inner true
-    | .Result ok err =>
-      "Except " ++ irTypeToLean err true ++ " " ++ irTypeToLean ok true
-    | .TypeRef name args =>
-      -- Filter out TS-only utility types that don't map to Lean
-      if name == "Partial" || name == "Required" || name == "Pick" || name == "Omit" then
-        "TSAny"
-      else if args.size == 0 then name
-      else s!"{name} {String.intercalate " " (args.toList.map fun a => irTypeToLean a true)}"
-    | .TypeVar name    => name
-    | .Structure name _ => name
-    | .Inductive name _ _ => name
-    | .Dependent param paramType body =>
-      s!"({param} : {typeStr paramType}) → {typeStr body}"
-    | .Subtype base refinement =>
-      "{x : " ++ typeStr base ++ " // " ++ refinement ++ "}"
-    | .Universe level =>
-      if level == 0 then "Prop" else s!"Type {level}"
+  sorry /- typeStr: IR type → type string -/
 
 end  -- mutual irTypeToLean/typeStr
 
@@ -209,21 +84,8 @@ structure StructField where
     Handles optional fields (`?`), readonly modifiers, and resolves types
     via the type checker. -/
 def extractStructFields (node : Node) (checker : TypeChecker) : Array StructField :=
-  node.members.filterMap fun m =>
-    if isPropertySignature m || isPropertyDeclaration m then
-      let name := m.name.map Node.text |>.getD ""
-      let sym  := m.name.bind (checker.getSymbolAtLocation ·)
-      let ty   := match sym with
-        | some s => mapType (checker.getTypeOfSymbol s) checker
-        | none   => .TypeRef "TSAny" #[]
-      let opt  := m.questionDotToken.isSome
-      let isMut := !(m.modifiers.any fun mod => mod.kind == .ReadonlyKeyword)
-      some { name, type := if opt then .Option ty else ty, optional := opt, mutable := isMut }
-    else none
+  sorry /- extractStructFields: TS node → struct field array -/
 
--- ─── Discriminated union detection ──────────────────────────────────────────────
-
--- Result of detecting a discriminated union in a TypeScript union type.
 structure DiscriminantInfo where
   mk ::
   /-- The field name used as the discriminant (e.g. "kind"). -/
@@ -237,26 +99,11 @@ structure DiscriminantInfo where
     Returns the first field for which every union member has a unique
     string literal value. -/
 def detectDiscriminatedUnion (t : TSType) (checker : TypeChecker) : Option DiscriminantInfo :=
-  -- Without access to the union's member types (they require UnionType.types),
-  -- we fall back to checking the aliasSymbol for a discriminant heuristic.
-  DISCRIMINANT_FIELDS.findSome? fun field =>
-    -- A real implementation would iterate t.types and check each member
-    -- for a string-literal property named `field`. Here we stub it.
-    none
+  sorry /- detectDiscriminatedUnion: check if type is discriminated union -/
 
 def tryField (types : Array TSType) (field : String) (checker : TypeChecker) : Option DiscriminantInfo :=
-  -- Iterate types; for each, check if `field` property is a string literal.
-  -- If all have unique literals, return DiscriminantInfo.
-  let variants := types.filterMap fun t =>
-    match t.symbol with
-    | none => none
-    | some _ => some ("_", #[])  -- stub: real impl reads property types
-  if variants.size == types.size then
-    some { field, variants }
-  else
-    none
+  sorry /- tryField: check if a field discriminates the union -/
 
-/-- Extract type parameter names from a TypeScript declaration. -/
 def extractTypeParams (node : Node) : Array String :=
   node.typeParameters.map fun tp => tp.name.map Node.text |>.getD "T"
 
