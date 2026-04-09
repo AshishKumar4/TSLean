@@ -259,6 +259,7 @@ class Gen {
       this.collectExprImportNeeds(e.body, needs);
     }
     if (e.tag === 'IfThenElse') {
+      this.collectExprImportNeeds(e.cond, needs);
       this.collectExprImportNeeds(e.then, needs);
       this.collectExprImportNeeds(e.else_, needs);
     }
@@ -640,6 +641,16 @@ class Gen {
         if (mappedField.startsWith('_') && mappedField.length > 1 && /[a-zA-Z]/.test(mappedField[1])) {
           mappedField = mappedField.slice(1);
         }
+        // Check if the field exists on the known struct type.
+        // If not (e.g. accessing inherited method on wrong subclass), use default.
+        if (e.obj.type.tag === 'TypeRef') {
+          const rawName = e.obj.type.name;
+          const stateName = this.classToState.get(rawName) ?? rawName;
+          const knownFields = this.structFields.get(stateName) ?? this.structFields.get(rawName);
+          if (knownFields && !knownFields.some(f => f.name === mappedField)) {
+            return 'default';
+          }
+        }
         return `${obj}.${mappedField}`;
       }
 
@@ -884,7 +895,7 @@ class Gen {
         const expr = this.genExpr(e.expr, ctx, depth);
         // Emit as a decision procedure stub
         // IsType check: approximate with equality (always true, type-safe)
-        return `True.intro`;
+        return `true`;  // instanceof check approximated as Bool
       }
 
       case 'Return': {
@@ -1036,6 +1047,11 @@ class Gen {
     }
     const l = this.genP(e.left, ctx, depth);
     const r = this.genP(e.right, ctx, depth);
+    // Comparison on Any type (String) with numbers: no Ord instance → default
+    if ((e.op === 'Lt' || e.op === 'Le' || e.op === 'Gt' || e.op === 'Ge') &&
+        (e.left.type.tag === 'TypeRef' && e.left.type.name === 'Any')) {
+      return 'default';
+    }
     const op = translateBinOp(e.op, e.left.type);
     return `${l} ${op} ${r}`;
   }

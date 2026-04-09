@@ -4,8 +4,9 @@
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
+import TSLean.Stdlib.HashMap
 
-open TSLean
+open TSLean TSLean.Stdlib.HashMap
 
 namespace TSLean.Generated.TypeNarrowing
 
@@ -35,10 +36,10 @@ def Cat.meow (self : CatState) : IO Unit :=
     pure ()
 
 def makeSound (animal : AnimalState) : Unit :=
-  if True.intro then
+  if true then
     animal.bark
   else
-    if True.intro then
+    if true then
       animal.meow
     else
       ()
