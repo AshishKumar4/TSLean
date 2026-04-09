@@ -141,6 +141,21 @@ class Gen {
     }
   }
 
+  // Known Lean built-in types that don't need cross-file resolution
+  private static BUILTIN_TYPES = new Set([
+    'Nat', 'Int', 'Float', 'String', 'Bool', 'Unit', 'Empty', 'Any', 'TSAny', 'Char', 'IO',
+    'Option', 'Array', 'List', 'Except', 'Prop', 'Type',
+    'AssocMap', 'Request', 'Response', 'URL', 'Headers',
+  ]);
+
+  /** Convert IR type to Lean, mapping TS any→String and known cross-file types→String. */
+  private typeToLean(t: IRType, parens = false): string {
+    let result = irTypeToLean(t, parens);
+    // TS any/unknown → String (not Lean's Any which is Type 1)
+    result = result.replace(/\bAny\b/g, 'String');
+    return result;
+  }
+
   /** Resolve a type name through the class→state mapping.
    *  e.g. "Circle" → "CircleState" if CircleState is a known struct. */
   private resolveType(ty: string): string {
@@ -386,7 +401,7 @@ class Gen {
       const rawName = (f.name.startsWith('_') && f.name.length > 1 && /[a-zA-Z]/.test(f.name[1]))
         ? f.name.slice(1) : f.name;
       const fieldName = sanitize(rawName);
-      this.emit(`${fieldName} : ${irTypeToLean(f.type)}`);
+      this.emit(`${fieldName} : ${this.typeToLean(f.type)}`);
     }
     this.ind--;
     // Branded types (single val field) also need DecidableEq for use as map keys
@@ -407,7 +422,7 @@ class Gen {
         this.emit(`  | ${c.name}`);
       } else {
         const fs = c.fields.map(f => {
-          let tyStr = f.name ? irTypeToLean(f.type) : irTypeToLean(f.type);
+          let tyStr = f.name ? this.typeToLean(f.type) : this.typeToLean(f.type);
           // Fix recursive self-references: if field type is a bare TypeRef matching
           // the inductive name, apply all type params (e.g. Tree → Tree T)
           if (f.type && f.type.tag === 'TypeRef' && f.type.name === d.name && f.type.args.length === 0 && tpArgs) {
@@ -423,7 +438,7 @@ class Gen {
 
   private emitTypeAlias(d: Extract<IRDecl, { tag: 'TypeAlias' }>): void {
     if (d.comment) this.emitComment(d.comment);
-    const bodyStr = irTypeToLean(d.body);
+    const bodyStr = this.typeToLean(d.body);
     // Self-referencing alias (type X = X): emit as String (compilable fallback)
     if (bodyStr === d.name) {
       this.emit(`abbrev ${d.name}${fmtTPs(d.typeParams)} := String`);
@@ -456,7 +471,7 @@ class Gen {
     }).join(' ');
     const tp = d.typeParams.length > 0 ? ` ${tpStr}` : '';
     const params  = d.params.map(p => this.fmtParam(p, d.effect)).join(' ');
-    const retLean = this.resolveType(irTypeToLean(d.retType));
+    const retLean = this.resolveType(this.typeToLean(d.retType));
     const retSig  = this.resolveType(this.retSig(fixedEffect, retLean));
     const ps = params ? ` ${params}` : '';
     // Detect self-recursive functions for `partial def` (avoids termination checker rejection)
@@ -534,8 +549,8 @@ class Gen {
       case 'Pure':   return retLean;
       case 'IO':     return alreadyIO ? retLean : `IO ${w(retLean)}`;
       case 'Async':  return alreadyIO ? retLean : `IO ${w(retLean)}`;
-      case 'State':  return `StateT ${w(irTypeToLean(eff.stateType))} IO ${w(effectiveRet)}`;
-      case 'Except': return `ExceptT ${w(irTypeToLean(eff.errorType))} IO ${w(effectiveRet)}`;
+      case 'State':  return `StateT ${w(this.typeToLean(eff.stateType))} IO ${w(effectiveRet)}`;
+      case 'Except': return `ExceptT ${w(this.typeToLean(eff.errorType))} IO ${w(effectiveRet)}`;
       case 'Combined': {
         const ms = monadString(eff);
         if (ms === 'IO' && alreadyIO) return retLean;
@@ -545,14 +560,14 @@ class Gen {
   }
 
   private fmtParam(p: IRParam, eff: Effect): string {
-    const ty = this.resolveType(irTypeToLean(p.type));
+    const ty = this.resolveType(this.typeToLean(p.type));
     if (p.implicit) return `{${p.name} : ${ty}}`;
     if (p.default_) return `(${p.name} : ${ty} := ${this.genExpr(p.default_, eff)})`;
     return `(${p.name} : ${ty})`;
   }
 
   private emitVarDecl(d: Extract<IRDecl, { tag: 'VarDecl' }>): void {
-    const ty  = irTypeToLean(d.type);
+    const ty  = this.typeToLean(d.type);
     const val = this.genExpr(d.value, Pure);
     if (d.mutable) {
       // Mutable vars use IO.Ref; emit as an IO action creating a ref
@@ -565,7 +580,7 @@ class Gen {
 
   private emitInstance(d: Extract<IRDecl, { tag: 'InstanceDef' }>): void {
     if (d.comment) this.emitComment(d.comment);
-    const tArgs = d.typeArgs.map(t => irTypeToLean(t)).join(' ');
+    const tArgs = d.typeArgs.map(t => this.typeToLean(t)).join(' ');
     this.emit(`instance : ${d.typeClass} ${tArgs} where`);
     this.ind++;
     for (const m of d.methods) {
@@ -590,7 +605,7 @@ class Gen {
     if (d.comment) this.emitComment(d.comment);
     this.emit(`class ${d.name}${fmtTPs(d.typeParams)} where`);
     this.ind++;
-    for (const m of d.methods) this.emit(`${m.name} : ${irTypeToLean(m.type)}`);
+    for (const m of d.methods) this.emit(`${m.name} : ${this.typeToLean(m.type)}`);
     this.ind--;
   }
 
@@ -642,6 +657,10 @@ class Gen {
       case 'Var': {
         // If the name is a quoted string literal (from stdlib mapping), emit as-is
         if (e.name.startsWith('"') && e.name.endsWith('"')) return e.name;
+        // Map removed AssocSet ops to Array equivalents
+        if (e.name === 'AssocSet.empty') return '#[]';
+        if (e.name === 'AssocSet.insert') return 'Array.push';
+        if (e.name === 'AssocSet.contains') return 'Array.contains';
         return sanitize(e.name);
       }
 
@@ -728,14 +747,8 @@ class Gen {
         // String/Any types don't have arbitrary fields — emit default
         const isStringType = e.obj.type.tag === 'String' ||
           (e.obj.type.tag === 'TypeRef' && e.obj.type.name === 'String');
-        const isAnyType = e.obj.type.tag === 'TypeRef' && e.obj.type.name === 'Any';
-        // Cross-file types mapped to Any at typemap level — their fields aren't accessible
-        const crossFileTypes = new Set([
-          'IRModule', 'IRDecl', 'IRExpr', 'IRType', 'IRParam', 'IRCase', 'IRPattern',
-          'IRImport', 'IRField', 'Effect', 'BinOp', 'UnOp', 'DoStmt',
-          'ProofObligation', 'ProjectResult', 'ProjectOptions',
-        ]);
-        const isCrossFileType = e.obj.type.tag === 'TypeRef' && crossFileTypes.has(e.obj.type.name);
+        const isAnyType = e.obj.type.tag === 'TypeRef' && (e.obj.type.name === 'Any' || e.obj.type.name === 'TSAny');
+        const isCrossFileType = false; // Any→String mapping handles this
         const stringMethods = ['length', 'size', 'includes', 'trim',
           'toLower', 'toUpper', 'startsWith', 'endsWith', 'splitOn', 'replace'];
         if ((isStringType || isAnyType || isCrossFileType) && !stringMethods.includes(mappedField)) {
@@ -815,7 +828,7 @@ class Gen {
           // Collection methods that need function-call style (Set.add, Map.set, etc.)
           const collectionMethods: Record<string, string> = {
             'set': 'AssocMap.insert', 'get': 'AssocMap.find?', 'has': 'AssocMap.contains',
-            'delete': 'AssocMap.erase', 'add': 'AssocSet.insert',
+            'delete': 'AssocMap.erase', 'add': 'Array.push',
             'keys': 'AssocMap.keys', 'values': 'AssocMap.values',
             'entries': 'AssocMap.toList', 'forEach': 'Array.forM',
           };
@@ -867,14 +880,14 @@ class Gen {
 
       case 'TypeApp': {
         const fn   = this.genExpr(e.fn, ctx, depth);
-        const tArgs = e.typeArgs.map(t => `(${irTypeToLean(t)})`).join(' ');
+        const tArgs = e.typeArgs.map(t => `(${this.typeToLean(t)})`).join(' ');
         return `${fn} ${tArgs}`;
       }
 
       case 'Let': {
         const v    = this.genExpr(e.value, ctx, depth);
         const body = this.genExpr(e.body, ctx, depth);
-        const ann  = e.annot ? ` : ${irTypeToLean(e.annot)}` : '';
+        const ann  = e.annot ? ` : ${this.typeToLean(e.annot)}` : '';
         // Self-referencing let (loop helpers): use `let rec` for recursive bindings
         const isRecursive = e.value.tag === 'Lambda' && bodyContainsVarRef(e.value.body, e.name);
         const kw = isRecursive ? 'let rec' : 'let';
@@ -1063,7 +1076,7 @@ class Gen {
         // as a proof obligation: the caller must supply evidence of the type relationship.
         const typeName = e.testType.tag === 'TypeRef' ? e.testType.name
                        : e.testType.tag === 'Structure' ? e.testType.name
-                       : irTypeToLean(e.testType);
+                       : this.typeToLean(e.testType);
         const expr = this.genExpr(e.expr, ctx, depth);
         return `(sorry : Bool) /- ${expr} matches ${typeName} -/`;
       }
@@ -1109,7 +1122,7 @@ class Gen {
         let result = this.genExpr(e.body, ctx, depth);
         for (const b of [...e.bindings].reverse()) {
           const val = this.genExpr(b.value, ctx, depth);
-          const ann = ` : ${irTypeToLean(b.type)}`;
+          const ann = ` : ${this.typeToLean(b.type)}`;
           result = `let ${b.name}${ann} := ${val}\n${ind}${result}`;
         }
         return result;
@@ -1283,10 +1296,10 @@ class Gen {
     const l = this.genP(e.left, ctx, depth);
     const r = this.genP(e.right, ctx, depth);
     // Comparison on Any type: no Ord/OfNat instance → default
-    const isAnyL = (e.left.type.tag === 'TypeRef' && e.left.type.name === 'Any') ||
-      (e.left.tag === 'TypeNarrow' && e.left.expr.type.tag === 'TypeRef' && e.left.expr.type.name === 'Any');
-    const isAnyR = (e.right.type.tag === 'TypeRef' && e.right.type.name === 'Any') ||
-      (e.right.tag === 'TypeNarrow' && e.right.expr.type.tag === 'TypeRef' && e.right.expr.type.name === 'Any');
+    const isAnyL = (e.left.type.tag === 'TypeRef' && (e.left.type.name === 'Any' || e.left.type.name === 'TSAny')) ||
+      (e.left.tag === 'TypeNarrow' && e.left.expr.type.tag === 'TypeRef' && (e.left.expr.type.name === 'Any' || e.left.expr.type.name === 'TSAny'));
+    const isAnyR = (e.right.type.tag === 'TypeRef' && (e.right.type.name === 'Any' || e.right.type.name === 'TSAny')) ||
+      (e.right.tag === 'TypeNarrow' && e.right.expr.type.tag === 'TypeRef' && (e.right.expr.type.name === 'Any' || e.right.expr.type.name === 'TSAny'));
     if ((e.op === 'Lt' || e.op === 'Le' || e.op === 'Gt' || e.op === 'Ge') && (isAnyL || isAnyR)) {
       return '(sorry : Bool)';
     }

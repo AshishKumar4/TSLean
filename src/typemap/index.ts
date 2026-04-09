@@ -57,7 +57,7 @@ const DISCRIMINANT_FIELDS = ['kind', 'type', 'tag', 'ok', 'hasValue', '_type'];
  * @returns The corresponding IR type.
  */
 export function mapType(t: ts.Type, checker: ts.TypeChecker, depth = 0): IRType {
-  if (depth > MAX_TYPE_DEPTH) return TyRef('Any');
+  if (depth > MAX_TYPE_DEPTH) return TyRef('TSAny');
 
   const f = t.flags;
   if (f & ts.TypeFlags.String)         return TyString;
@@ -67,8 +67,8 @@ export function mapType(t: ts.Type, checker: ts.TypeChecker, depth = 0): IRType 
   if (f & ts.TypeFlags.Null)           return TyOption(TyUnit);
   if (f & ts.TypeFlags.Void)           return TyUnit;
   if (f & ts.TypeFlags.Never)          return TyNever;
-  if (f & ts.TypeFlags.Any)            return TyRef('Any');
-  if (f & ts.TypeFlags.Unknown)        return TyRef('Any');
+  if (f & ts.TypeFlags.Any)            return TyRef('TSAny');
+  if (f & ts.TypeFlags.Unknown)        return TyRef('TSAny');
   if (f & ts.TypeFlags.BigInt)         return TyInt;
   if (f & ts.TypeFlags.StringLiteral)  return TyString;
   if (f & ts.TypeFlags.NumberLiteral)  return TyFloat;
@@ -80,7 +80,7 @@ export function mapType(t: ts.Type, checker: ts.TypeChecker, depth = 0): IRType 
 
   if (checker.isArrayType(t)) {
     const elem = checker.getTypeArguments(t as ts.TypeReference)[0];
-    return TyArray(elem ? mapType(elem, checker, depth + 1) : TyRef('Any'));
+    return TyArray(elem ? mapType(elem, checker, depth + 1) : TyRef('TSAny'));
   }
   if (checker.isTupleType(t)) {
     const args = checker.getTypeArguments(t as ts.TypeReference);
@@ -131,7 +131,7 @@ function mapUnion(t: ts.UnionType, checker: ts.TypeChecker, depth: number): IRTy
     return TyRef(alias);
   }
 
-  return withoutNil.length > 0 ? mapType(withoutNil[0], checker, depth + 1) : TyRef('Any');
+  return withoutNil.length > 0 ? mapType(withoutNil[0], checker, depth + 1) : TyRef('TSAny');
 }
 
 // ─── Intersection types ─────────────────────────────────────────────────────────
@@ -151,7 +151,7 @@ function mapIntersection(t: ts.IntersectionType, checker: ts.TypeChecker, depth:
 
   const concrete = t.types.find(x => !(x.flags & ts.TypeFlags.Object) ||
     (x as ts.ObjectType).getProperties().length > 0);
-  return concrete ? mapType(concrete, checker, depth + 1) : TyRef('Any');
+  return concrete ? mapType(concrete, checker, depth + 1) : TyRef('TSAny');
 }
 
 // ─── Object types ───────────────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
     return mapTypeRef(t as ts.TypeReference, checker, depth);
 
   const sym = t.symbol;
-  if (!sym) return TyRef('Any');
+  if (!sym) return TyRef('TSAny');
 
   // Call signatures → function type
   const calls = checker.getSignaturesOfType(t, ts.SignatureKind.Call);
@@ -188,8 +188,8 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
 function mapTypeRef(t: ts.TypeReference, checker: ts.TypeChecker, depth: number): IRType {
   const name = t.target.symbol?.name ?? '';
   const args = checker.getTypeArguments(t);
-  const map1 = () => args[0] ? mapType(args[0], checker, depth + 1) : TyRef('Any');
-  const map2 = (i: number) => args[i] ? mapType(args[i], checker, depth + 1) : TyRef('Any');
+  const map1 = () => args[0] ? mapType(args[0], checker, depth + 1) : TyRef('TSAny');
+  const map2 = (i: number) => args[i] ? mapType(args[i], checker, depth + 1) : TyRef('TSAny');
 
   switch (name) {
     case 'Array':         case 'ReadonlyArray': return TyArray(map1());
@@ -240,7 +240,7 @@ function typeStr(t: IRType): string {
       return `${paramStr} → ${typeStr(t.ret)}`;
     }
     case 'Map':       return `AssocMap ${irTypeToLean(t.key, true)} ${irTypeToLean(t.value, true)}`;
-    case 'Set':       return `AssocSet ${irTypeToLean(t.elem, true)}`;
+    case 'Set':       return `Array ${irTypeToLean(t.elem, true)}`;
     case 'Promise': {
       // Flatten nested IO: Promise<Promise<T>> → IO T (not IO (IO T))
       const inner = t.inner;
@@ -257,13 +257,8 @@ function typeStr(t: IRType): string {
         'PropertyAccessExpression', 'CallExpression', 'BinaryExpression',
         'ReadableStream', 'ArrayBuffer', 'ArrayBufferView', 'IterableIterator',
         'Generator', 'AsyncGenerator', 'PromiseLike', 'RegExp',
-        'SymbolConstructor', 'PropertyDescriptor', 'PropertyKey',
-        // Cross-file IR types (from src/ir/types.ts) — mapped to Any to avoid universe issues
-        'IRModule', 'IRDecl', 'IRExpr', 'IRType', 'IRParam', 'IRCase', 'IRPattern',
-        'IRImport', 'IRField', 'Effect', 'BinOp', 'UnOp', 'DoStmt',
-        'ProofObligation', 'ProjectResult', 'ProjectOptions',
-        'TranspileResult', 'FileResult']);
-      if (tsOnlyTypes.has(t.name)) return 'Any';
+        'SymbolConstructor', 'PropertyDescriptor', 'PropertyKey']);
+      if (tsOnlyTypes.has(t.name)) return 'TSAny';
       return t.args.length === 0 ? t.name : `${t.name} ${t.args.map(a => irTypeToLean(a, true)).join(' ')}`;
     }
     case 'TypeVar':   return t.name;
@@ -272,7 +267,7 @@ function typeStr(t: IRType): string {
     case 'Dependent': return `(${t.param} : ${typeStr(t.paramType)}) → ${typeStr(t.body)}`;
     case 'Subtype':   return `{x : ${typeStr(t.base)} // ${t.refinement}}`;
     case 'Universe':  return t.level === 0 ? 'Prop' : `Type ${t.level}`;
-    default:          return 'Any';
+    default:          return 'TSAny';
   }
 }
 
