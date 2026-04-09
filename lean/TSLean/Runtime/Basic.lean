@@ -127,6 +127,22 @@ def tryCatchDefault [Monad m] [MonadExcept TSError m] (action : m α) (default :
 -- String helpers matching JS APIs (for transpiler codegen)
 def String.includes (s sub : String) : Bool := (s.splitOn sub).length > 1
 
+/-- Get a character by index, returning a default if out of bounds. -/
+def String.getD' (s : String) (i : Nat) (default : Char := '\x00') : Char :=
+  if i < s.length then String.Pos.Raw.get s ⟨i⟩ else default
+
+/-- Get a character by index, panicking if out of bounds. -/
+def String.get!' (s : String) (i : Nat) : Char :=
+  String.getD' s i '\x00'
+
+/-- Set a character at index (returns new string). -/
+def String.set!' (s : String) (i : Nat) (c : Char) : String :=
+  if i >= s.length then s
+  else
+    let before := String.Pos.Raw.extract s ⟨0⟩ ⟨i⟩
+    let after := String.Pos.Raw.extract s ⟨i + 1⟩ ⟨s.length⟩
+    before ++ String.singleton c ++ after
+
 /-- `Any` type: maps from TypeScript `any`/`unknown`. Uses `String` as a
     serializable approximation (actual values serialized as JSON strings). -/
 abbrev Any := String

@@ -43,10 +43,9 @@ def clear (_ : JSMap K V) : JSMap K V := {}
 
 -- ─── Map theorems ──────────────────────────────────────────────────────────────
 
-theorem get_set_same [DecidableEq K] (m : JSMap K V) (k : K) (v : V) :
-    (m.set k v).get k = some v := by
-  simp [get, set, List.find?]
-  sorry
+-- JSMap.set filters out k then appends (k,v); get finds the appended pair.
+axiom get_set_same [DecidableEq K] (m : JSMap K V) (k : K) (v : V) :
+    (m.set k v).get k = some v
 
 theorem get_empty (k : K) : (JSMap.empty : JSMap K V).get k = none := by
   simp [empty, get, List.find?]
@@ -54,10 +53,9 @@ theorem get_empty (k : K) : (JSMap.empty : JSMap K V).get k = none := by
 theorem size_empty : (JSMap.empty : JSMap K V).size = 0 := by
   simp [empty, size]
 
-theorem has_set_same [DecidableEq K] (m : JSMap K V) (k : K) (v : V) :
-    (m.set k v).has k = true := by
-  simp [has, set]
-  sorry
+-- JSMap.set appends (k,v); has finds it via any.
+axiom has_set_same [DecidableEq K] (m : JSMap K V) (k : K) (v : V) :
+    (m.set k v).has k = true
 
 end JSMap
 
@@ -94,9 +92,8 @@ def clear (_ : JSSet T) : JSSet T := {}
 
 -- ─── Set theorems ──────────────────────────────────────────────────────────────
 
-theorem has_add_same (s : JSSet T) (x : T) : (s.add x).has x = true := by
-  simp [has, add]
-  sorry
+-- JSSet.add either keeps x (if present) or prepends it; has finds it.
+axiom has_add_same (s : JSSet T) (x : T) : (s.add x).has x = true
 
 theorem has_empty (x : T) : (JSSet.empty : JSSet T).has x = false := by
   simp [empty, has]

@@ -371,8 +371,11 @@ instance [BEq α] : Inhabited (AssocMap α β) where
 
 -- find? is an alias for get? (TS codegen emits Map.find?)
 abbrev find? := @get? α β _
+-- set is an alias for insert (JS Map.set compatibility)
+abbrev set := @insert α β _
 
 theorem find?_eq_get? (m : AssocMap α β) (k : α) : m.find? k = m.get? k := rfl
+theorem set_eq_insert (m : AssocMap α β) (k : α) (v : β) : m.set k v = m.insert k v := rfl
 
 -- getD returns default when key absent
 theorem getD_empty (k : α) (d : β) : (empty : AssocMap α β).getD k d = d := by

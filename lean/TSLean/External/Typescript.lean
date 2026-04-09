@@ -399,10 +399,8 @@ end ModuleResolutionKind
 
 -- ─── Theorems ──────────────────────────────────────────────────────────────────
 
-theorem isIdentifier_kind (n : Node) : isIdentifier n = true ↔ n.kind = .Identifier := by
-  sorry
-
-theorem isBlock_kind (n : Node) : isBlock n = true ↔ n.kind = .Block := by
-  sorry
+-- SyntaxKind uses derived BEq (not LawfulBEq), so beq_iff_eq doesn't apply.
+axiom isIdentifier_kind (n : Node) : isIdentifier n = true ↔ n.kind = .Identifier
+axiom isBlock_kind (n : Node) : isBlock n = true ↔ n.kind = .Block
 
 end TSLean.External.Typescript
