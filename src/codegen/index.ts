@@ -372,8 +372,9 @@ class Gen {
     const enrichedFields = this.structFields.get(d.name) ?? d.fields;
     for (const f of enrichedFields) {
       // Strip leading underscore from private field names (TS _radius → Lean radius)
-      const fieldName = (f.name.startsWith('_') && f.name.length > 1 && /[a-zA-Z]/.test(f.name[1]))
+      const rawName = (f.name.startsWith('_') && f.name.length > 1 && /[a-zA-Z]/.test(f.name[1]))
         ? f.name.slice(1) : f.name;
+      const fieldName = sanitize(rawName);
       this.emit(`${fieldName} : ${irTypeToLean(f.type)}`);
     }
     this.ind--;
@@ -737,10 +738,15 @@ class Gen {
       case 'Lambda': {
         const ps = e.params.map(p => p.name).join(' ');
         const lambdaCtx = e.effect ?? ctx;
-        const bodyStr = this.genExpr(e.body, lambdaCtx, depth);
+        const bodyStr = this.genExpr(e.body, lambdaCtx, depth + 1);
+        const bodyIndent = '  '.repeat(this.ind + depth + 1);
         // If the lambda body uses monadic operations (Bind/←), wrap in `do`
         if (!isPure(lambdaCtx) && (bodyStr.includes('←') || bodyStr.includes('let ') && bodyStr.includes(':='))) {
-          return `fun ${ps || '_'} => do\n${indent}  ${bodyStr}`;
+          return `fun ${ps || '_'} => do\n${bodyIndent}${bodyStr}`;
+        }
+        // Multi-line body (if/else, match, let): put on next line for proper indentation
+        if (bodyStr.includes('\n')) {
+          return `fun ${ps || '_'} =>\n${bodyIndent}${bodyStr}`;
         }
         return `fun ${ps || '_'} => ${bodyStr}`;
       }
@@ -887,16 +893,17 @@ class Gen {
         const realFields = e.fields.filter(f => f.name !== '_base' && f.name !== '_spread' && !f.name.startsWith('_computed') && !f.name.startsWith('_computed'));
         if (baseField && realFields.length > 0) {
           const base = this.genExpr(baseField.value, ctx, depth);
-          const updates = realFields.map(f => `${f.name} := ${this.genExpr(f.value, ctx, depth)}`).join(', ');
+          const updates = realFields.map(f => `${sanitize(f.name)} := ${this.genExpr(f.value, ctx, depth)}`).join(', ');
           return `{ ${base} with ${updates} }`;
         }
         // Nested struct values containing `{`: hoist to a let binding or use default
         const fieldStrs = e.fields.filter(f => f.name !== '_spread' && !f.name.startsWith('_computed')).map(f => {
           const val = this.genExpr(f.value, ctx, depth);
+          const fname = sanitize(f.name);
           if (val.includes('{') && !val.startsWith('"') && !val.startsWith('#[')) {
-            return `${f.name} := default`;
+            return `${fname} := default`;
           }
-          return `${f.name} := ${val}`;
+          return `${fname} := ${val}`;
         }).join(', ');
         // Empty struct literal → default (needs Inhabited instance)
         if (!fieldStrs) return 'default';
@@ -1350,6 +1357,8 @@ const LEAN_KWS = new Set([
   'end','open','import','theorem','lemma','example','variable','universe','abbrev',
   'opaque','partial','mutual','private','protected','section','attribute','and','or',
   'not','true','false','Type','Prop',
+  'for','while','repeat','at','try','catch','throw','macro','syntax','tactic',
+  'set_option','derive','extends','override',
 ]);
 
 function sanitize(name: string): string {
