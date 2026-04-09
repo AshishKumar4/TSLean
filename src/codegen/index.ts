@@ -83,8 +83,8 @@ class Gen {
     for (const d of mod.decls) this.collectImportNeeds(d, needed);
 
     // Add user-specified imports (from TS import statements).
-    // Skip TSLean.External.* — these are external JS packages (typescript, fs, path)
-    // that have no Lean equivalent.
+    // Skip TSLean.External.* (external JS packages with no Lean equivalent).
+    // Keep TSLean.Generated.* cross-file imports (needed for project mode).
     for (const imp of mod.imports) {
       if (imp.module.startsWith('TSLean.') && !imp.module.startsWith('TSLean.External.'))
         needed.add(imp.module);
