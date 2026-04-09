@@ -237,10 +237,11 @@ class Gen {
     'AssocMap', 'Request', 'Response', 'URL', 'Headers',
   ]);
 
-  /** Convert IR type to Lean, mapping TS any→String and known cross-file types→String. */
+  /** Convert IR type to Lean, mapping TS any/TSAny→String. */
   private typeToLean(t: IRType, parens = false): string {
     let result = irTypeToLean(t, parens);
-    // TS any/unknown → String (not Lean's Any which is Type 1)
+    // TS any/unknown → String (TSAny and Any both become String in Lean)
+    result = result.replace(/\bTSAny\b/g, 'String');
     result = result.replace(/\bAny\b/g, 'String');
     return result;
   }
@@ -517,7 +518,7 @@ class Gen {
           if (f.type && f.type.tag === 'TypeRef' && f.type.name === d.name && f.type.args.length === 0 && tpArgs) {
             tyStr = `${d.name} ${tpArgs}`;
           }
-          return f.name ? `(${f.name} : ${tyStr})` : `(${tyStr})`;
+          return f.name ? `(${sanitize(f.name)} : ${tyStr})` : `(${tyStr})`;
         }).join(' ');
         this.emit(`  | ${c.name} ${fs}`);
       }
@@ -528,11 +529,42 @@ class Gen {
   private emitTypeAlias(d: Extract<IRDecl, { tag: 'TypeAlias' }>): void {
     if (d.comment) this.emitComment(d.comment);
     const bodyStr = this.typeToLean(d.body);
-    // Self-referencing alias (type X = X): emit as String (compilable fallback)
-    if (bodyStr === d.name) {
-      this.emit(`abbrev ${d.name}${fmtTPs(d.typeParams)} := String`);
+    const tp = fmtTPs(d.typeParams);
+    // Self-referencing alias (type X = X): the TS type is a discriminated union
+    // that the typemap couldn't resolve. Emit as a structure with common fields
+    // (tag + IRNode fields) so field access like `.tag`, `.type` works.
+    if (bodyStr === d.name || bodyStr === 'String' || bodyStr === 'TSAny') {
+      // Check if this is a known IR type with tag+type+effect fields
+      const knownTaggedTypes = new Set(['IRExpr', 'IRDecl', 'IRPattern', 'DoStmt', 'IRCase']);
+      if (knownTaggedTypes.has(d.name)) {
+        this.emit(`structure ${d.name}${tp} where`);
+        this.emit(`  tag : String`);
+        this.emit(`  type : IRType := default`);
+        this.emit(`  effect : Effect := default`);
+        // Add variant-specific fields as optional String
+        const extraFields: Record<string, string[]> = {
+          'IRExpr': ['name', 'value', 'field', 'obj', 'fn', 'args', 'left', 'right', 'op',
+                     'cond', 'then_', 'else_', 'body', 'scrutinee', 'cases', 'stmts',
+                     'params', 'handler', 'target', 'elems', 'fields', 'base', 'updates',
+                     'expr', 'monad', 'index', 'annot', 'targetType', 'errName'],
+          'IRDecl': ['name', 'typeParams', 'params', 'retType', 'body', 'fields', 'ctors',
+                     'decls', 'code', 'extends_', 'methods', 'isPartial', 'attr',
+                     'classes', 'typeName', 'statement', 'proof', 'docComment', 'comment',
+                     'mutable', 'value'],
+          'IRPattern': ['name', 'value', 'ctor', 'args', 'pats', 'pattern', 'fields',
+                        'elems', 'inner'],
+          'DoStmt': ['name', 'value', 'expr'],
+          'IRCase': ['pattern', 'guard', 'body'],
+        };
+        for (const f of extraFields[d.name] ?? []) {
+          this.emit(`  ${f} : String := default`);
+        }
+        this.emit(`  deriving Repr, BEq, Inhabited`);
+      } else {
+        this.emit(`abbrev ${d.name}${tp} := String`);
+      }
     } else {
-      this.emit(`abbrev ${d.name}${fmtTPs(d.typeParams)} := ${bodyStr}`);
+      this.emit(`abbrev ${d.name}${tp} := ${bodyStr}`);
     }
   }
 
@@ -1043,6 +1075,11 @@ class Gen {
       case 'DoBlock': return this.genDoBlock(e.stmts, ctx, depth);
 
       case 'StructLit': {
+        // If the target type is String/Any (from TS any), can't construct with struct literal syntax
+        if (e.type.tag === 'String' ||
+            (e.type.tag === 'TypeRef' && e.type.name === 'Any')) {
+          return 'default';
+        }
         // Detect struct-update pattern: one `_base` field + other fields → `{ base with f := v }`
         const baseField = e.fields.find(f => f.name === '_base');
         const realFields = e.fields.filter(f => f.name !== '_base' && f.name !== '_spread' && !f.name.startsWith('_computed') && !f.name.startsWith('_computed'));
@@ -1513,7 +1550,7 @@ const LEAN_KWS = new Set([
   'opaque','partial','mutual','private','protected','section','attribute','and','or',
   'not','true','false','Type','Prop',
   'for','while','repeat','at','try','catch','throw','macro','syntax','tactic',
-  'set_option','derive','extends','override',
+  'set_option','derive','deriving','extends','override',
 ]);
 
 function sanitize(name: string): string {
