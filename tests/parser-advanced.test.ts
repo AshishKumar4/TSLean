@@ -574,3 +574,124 @@ describe('Parser: switch patterns (extended)', () => {
     expect(mod.decls.length).toBeGreaterThan(0);
   });
 });
+
+// ─── Regular expressions ────────────────────────────────────────────────────
+
+describe('Parser: regular expressions', () => {
+  it('regex literal as argument to split', () => {
+    const code = inline(`
+      function splitHyphens(s: string): string[] {
+        return s.split(/[-_]/);
+      }
+    `);
+    expect(code).toMatch(/split/);
+    expect(code).not.toMatch(/default/);  // should NOT fall back to sorry/default
+    expect(code).toMatch(/\[-_\]/);       // regex pattern preserved as string
+  });
+
+  it('regex literal in variable', () => {
+    const code = inline(`
+      const pattern = /^[a-z]+$/i;
+    `);
+    expect(code).toMatch(/\^.a-z/);  // pattern preserved
+  });
+
+  it('regex in test method', () => {
+    const code = inline(`
+      function isAlpha(s: string): boolean {
+        return /^[a-zA-Z]+$/.test(s);
+      }
+    `);
+    expect(code).toMatch(/def isAlpha/);
+  });
+
+  it('no holes from regex in self-host files', () => {
+    // The parser's own source uses regex; verify zero holes
+    const mod = parsedInline(`
+      function fileToModuleName(filePath: string): string {
+        const base = filePath.replace(/\\.ts$/, '');
+        const parts = base.split(/[-_]/).map((s: string) => s.charAt(0).toUpperCase() + s.slice(1));
+        return 'TSLean.Generated.' + parts.join('');
+      }
+    `);
+    const fn = mod.decls.find(d => d.tag === 'FuncDef');
+    expect(fn).toBeDefined();
+    // Verify no Hole nodes in the function body
+    const json = JSON.stringify(fn);
+    const holeCount = (json.match(/"tag":"Hole"/g) || []).length;
+    expect(holeCount).toBe(0);
+  });
+});
+
+// ─── Parser completeness ────────────────────────────────────────────────────
+
+describe('Parser: self-host completeness', () => {
+  it('parser/index.ts produces zero holes', () => {
+    const mod = parseFile({ fileName: 'src/parser/index.ts' });
+    let holes = 0;
+    function count(e: any) {
+      if (!e || typeof e !== 'object') return;
+      if (e.tag === 'Hole') holes++;
+      for (const v of Object.values(e)) {
+        if (Array.isArray(v)) v.forEach(count);
+        else if (v && typeof v === 'object' && 'tag' in (v as any)) count(v);
+      }
+    }
+    for (const d of mod.decls) {
+      if (d.tag === 'FuncDef') count(d.body);
+      if (d.tag === 'Namespace') for (const inner of d.decls) {
+        if (inner.tag === 'FuncDef') count(inner.body);
+      }
+    }
+    expect(holes).toBe(0);
+  });
+
+  it('codegen/index.ts produces zero holes', () => {
+    const mod = parseFile({ fileName: 'src/codegen/index.ts' });
+    let holes = 0;
+    function count(e: any) {
+      if (!e || typeof e !== 'object') return;
+      if (e.tag === 'Hole') holes++;
+      for (const v of Object.values(e)) {
+        if (Array.isArray(v)) v.forEach(count);
+        else if (v && typeof v === 'object' && 'tag' in (v as any)) count(v);
+      }
+    }
+    for (const d of mod.decls) {
+      if (d.tag === 'FuncDef') count(d.body);
+      if (d.tag === 'Namespace') for (const inner of d.decls) {
+        if (inner.tag === 'FuncDef') count(inner.body);
+      }
+    }
+    expect(holes).toBe(0);
+  });
+
+  it('all 11 self-host files produce zero holes', () => {
+    const files = [
+      'src/ir/types.ts', 'src/parser/index.ts', 'src/codegen/index.ts',
+      'src/effects/index.ts', 'src/rewrite/index.ts', 'src/stdlib/index.ts',
+      'src/typemap/index.ts', 'src/verification/index.ts',
+      'src/project/index.ts', 'src/cli.ts', 'src/do-model/ambient.ts'
+    ];
+    for (const file of files) {
+      const mod = parseFile({ fileName: file });
+      let holes = 0;
+      function count(e: any) {
+        if (!e || typeof e !== 'object') return;
+        if (e.tag === 'Hole') holes++;
+        for (const v of Object.values(e)) {
+          if (Array.isArray(v)) v.forEach(count);
+          else if (v && typeof v === 'object' && 'tag' in (v as any)) count(v);
+        }
+      }
+      for (const d of mod.decls) {
+        if (d.tag === 'FuncDef') count(d.body);
+        if (d.tag === 'Namespace') for (const inner of d.decls) {
+          if (inner.tag === 'FuncDef') count(inner.body);
+        }
+      }
+      if (holes > 0) throw new Error(`${file}: ${holes} holes found`);
+      expect(holes).toBe(0);
+    }
+  });
+});

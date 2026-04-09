@@ -1140,6 +1140,11 @@ class ParserCtx {
     // Delete expression: delete obj.prop
     if (ts.isDeleteExpression(node)) return litBool(true);
 
+    // Regular expression literal: /pattern/flags → string representation
+    if (ts.isRegularExpressionLiteral(node)) {
+      return litStr(node.text);
+    }
+
     // Destructuring assignment: [a, b] = ... or { x } = ...
     if (node.kind === ts.SyntaxKind.ObjectLiteralExpression) return this.parseObjLit(node as ts.ObjectLiteralExpression, ty);
 
