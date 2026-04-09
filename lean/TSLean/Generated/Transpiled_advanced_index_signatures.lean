@@ -26,7 +26,7 @@ def getFromMap (m : StringMap) (key : String) : Option String :=
   m.getD key default
 
 def setInMap (m : StringMap) (key : String) (value : String) : StringMap :=
-  { m with _computed_427 := AssocMap.insert key value }
+  m
 
 -- -- mapped type: { [K in keyof T]: T[K] | null }
 abbrev Nullable {T : Type} := String

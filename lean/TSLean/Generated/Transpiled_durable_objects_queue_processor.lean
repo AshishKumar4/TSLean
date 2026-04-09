@@ -58,7 +58,7 @@ def fetch (self : QueueProcessorDOState) (request : Request) : IO Response :=
 def enqueue (self : QueueProcessorDOState) (payload : Any) (maxAttempts : Float) : IO String :=
   do
     let id : String := crypto.randomUUID
-    let item ← { id := id, payload := payload, enqueuedAt := IO.monoNanosNow, attempts := 0, maxAttempts := maxAttempts, nextRetryAt := IO.monoNanosNow }
+    let item : QueueItem := { id := id, payload := payload, enqueuedAt := 0, attempts := 0, maxAttempts := maxAttempts, nextRetryAt := 0 }
     do
       Storage.put self.state.storage (s!"queue:{id}") item
       let ids ← Option.getD Storage.get self.state.storage "queue:ids" #[]

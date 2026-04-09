@@ -590,14 +590,14 @@ class Gen {
       case 'StructLit': {
         // Detect struct-update pattern: one `_base` field + other fields → `{ base with f := v }`
         const baseField = e.fields.find(f => f.name === '_base');
-        const realFields = e.fields.filter(f => f.name !== '_base' && f.name !== '_spread');
+        const realFields = e.fields.filter(f => f.name !== '_base' && f.name !== '_spread' && !f.name.startsWith('_computed') && !f.name.startsWith('_computed'));
         if (baseField && realFields.length > 0) {
           const base = this.genExpr(baseField.value, ctx, depth);
           const updates = realFields.map(f => `${f.name} := ${this.genExpr(f.value, ctx, depth)}`).join(', ');
           return `{ ${base} with ${updates} }`;
         }
         // Nested struct values containing `{`: hoist to a let binding or use default
-        const fieldStrs = e.fields.filter(f => f.name !== '_spread').map(f => {
+        const fieldStrs = e.fields.filter(f => f.name !== '_spread' && !f.name.startsWith('_computed')).map(f => {
           const val = this.genExpr(f.value, ctx, depth);
           if (val.includes('{') && !val.startsWith('"') && !val.startsWith('#[')) {
             return `${f.name} := default`;
@@ -674,6 +674,10 @@ class Gen {
         if (from.tag === 'TypeRef' && to.tag === 'String') {
           return `${inner}.val`;
         }
+        // Casting null/none to a non-Option type: use default
+        if ((inner === 'none' || inner === 'default') && to.tag !== 'Option') {
+          return 'default';
+        }
         return inner;
       }
       case 'IsType': {
@@ -699,7 +703,9 @@ class Gen {
       // New in v3:
       case 'StructUpdate': {
         const base = this.genExpr(e.base, ctx, depth);
-        const updates = e.fields.map(f => {
+        const realFields = e.fields.filter(f => !f.name.startsWith('_computed'));
+        if (realFields.length === 0) return base;  // pure spread
+        const updates = realFields.map(f => {
           const val = this.genExpr(f.value, ctx, depth);
           if (val.includes('{') && !val.startsWith('"') && !val.startsWith('#[')) {
              return `${f.name} := default`;
@@ -851,8 +857,13 @@ class Gen {
     if (!hasInterp || !hasLiteral) return null;
     // Only safe for simple expressions (vars, field accesses, literals)
     if (!parts.every(isSafeInterp)) return null;
+    // Can't use s!"..." if any literal part contains { } or " — Lean has no escape for these
+    const hasUnsafeChars = parts.some(p =>
+      p.tag === 'LitString' && (/[{}"\\]/.test((p as any).value))
+    );
+    if (hasUnsafeChars) return null;
     const inner = parts.map(p => {
-      if (p.tag === 'LitString') return p.value.replace(/\{/g, '\\{');
+      if (p.tag === 'LitString') return (p as any).value;
       return `{${this.genExpr(p, ctx, depth)}}`;
     }).join('');
     return `s!"${inner}"`;

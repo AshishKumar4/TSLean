@@ -17,7 +17,7 @@ def url (base : String) (path : String) (id : String) : String :=
   s!"{base}/{path}/{id}"
 
 def jsonLike (key : String) (value : String) : String :=
-  s!"\{"{key}": "{value}"}"
+  ((("{\"" ++ key) ++ "\": \"") ++ value) ++ "\"}"
 
 def multipart (a : String) (b : String) (c : Float) : String :=
   s!"{a}-{b}={c}"
@@ -29,7 +29,7 @@ def userUrl (userId : String) : String :=
 
 def logMessage (level : String) (msg : String) : IO String :=
   do
-    let ts : Float := IO.monoNanosNow
+    let ts : Float := 0
     pure (s!"[{level}] {msg} at {ts}")
 
 structure User where
@@ -39,6 +39,6 @@ structure User where
   deriving Repr, BEq
 
 def userTag (u : User) : String :=
-  s!"<user id="{u.id}">{u.name}</user>"
+  ((("<user id=\"" ++ u.id) ++ "\">") ++ u.name) ++ "</user>"
 
 end TSLean.Generated.TemplateLiterals

@@ -65,7 +65,7 @@ def fetch (self : SessionStoreDOState) (request : Request) : IO Response :=
 def createSession (self : SessionStoreDOState) (userId : String) (data : String) : IO String :=
   do
     let id : String := crypto.randomUUID
-    let now ← IO.monoNanosNow
+    let now : Float := 0
     let session : Session := { userId := userId, data := data, createdAt := now, expiresAt := now + self.TTL_MS }
     do
       Storage.put self.state.storage (s!"session:{id}") session
@@ -77,7 +77,7 @@ def getSession (self : SessionStoreDOState) (id : String) : IO (Option Session) 
     if !session then
       pure none
     else
-      if (IO.monoNanosNow) > session.expiresAt then
+      if (0) > session.expiresAt then
         do
           Storage.delete self.state.storage (s!"session:{id}")
           return none

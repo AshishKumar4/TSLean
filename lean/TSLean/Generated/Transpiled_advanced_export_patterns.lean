@@ -29,13 +29,7 @@ def createConfig (host : String) (port : Float) : Config :=
 def makeSuccess {T : Type} (data : T) : ApiResult T :=
   { data := data, status := 200, message := "ok" }
 
-def makeError {T : Type} (message : String) : ApiResult T :=
-  { data := none, status := 500, message := message }
-
-def _ref_createConfig : String → Float → Config := createConfig
-
-def _ref_makeSuccess : T → ApiResult T := makeSuccess
-
-def _ref_makeError : String → ApiResult T := makeError
+def makeError {T : Type} [Inhabited T] (message : String) : ApiResult T :=
+  { data := default, status := 500, message := message }
 
 end TSLean.Generated.ExportPatterns

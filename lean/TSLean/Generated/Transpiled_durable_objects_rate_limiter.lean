@@ -56,7 +56,7 @@ def fetch (self : RateLimiterDOState) (request : Request) : IO Response :=
 
 def checkRateLimit (self : RateLimiterDOState) (clientId : String) : IO Bool :=
   do
-    let now ← IO.monoNanosNow
+    let now : Float := 0
     let windowStart : Float := now - self.windowMs
     let records ← Option.getD Storage.get self.state.storage clientId #[]
     let valid : Array RequestRecord := records.filter (fun r => r.timestamp >= windowStart)

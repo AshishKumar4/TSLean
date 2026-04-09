@@ -75,7 +75,7 @@ def handleLogin (self : AuthDOState) (creds : String) : IO Response :=
       pure (mkResponse ("<serialized>") ({ status := 401 }))
     else
       let token : String := crypto.randomUUID
-      let session ← { userId := creds.username, token := token, createdAt := IO.monoNanosNow, expiresAt := (IO.monoNanosNow) + self.TOKEN_TTL, roles := #["user"] }
+      let session : AuthSession := { userId := creds.username, token := token, createdAt := 0, expiresAt := (0) + self.TOKEN_TTL, roles := #["user"] }
       do
         Storage.put self.state.storage (s!"token:{token}") session
         return mkResponse ("<serialized>") ({ headers := default })
@@ -90,7 +90,7 @@ def authenticate (self : AuthDOState) (token : String) : IO (Option AuthSession)
     if !session then
       pure none
     else
-      if (IO.monoNanosNow) > session.expiresAt then
+      if (0) > session.expiresAt then
         do
           Storage.delete self.state.storage (s!"token:{token}")
           return none

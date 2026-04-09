@@ -233,7 +233,7 @@ class ParserCtx {
           // { fetch } → already defined elsewhere, just reference
           const name = prop.name.text;
           const ty   = mapType(this.checker.getTypeAtLocation(prop.name), this.checker);
-          decls.push({ tag: 'VarDecl', name: `_ref_${name}`, type: ty, value: varExpr(name, ty), mutable: false });
+          // Shorthand property in export default: { createConfig } — just a re-export, skip
         }
       }
       return decls;
