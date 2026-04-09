@@ -44,7 +44,7 @@ def AuthDO.fetch (self : AuthDOState) (request : Request) : IO Response :=
         let creds ← request.toJson
         pure (handleLogin self creds)
       else
-        ()
+        pure ()
       if (request.method == "POST") && (url.pathname == "/logout") then
         let token : Option String := request.headers.get "Authorization".replace "Bearer " ""
         if !token then
@@ -64,7 +64,7 @@ def AuthDO.fetch (self : AuthDOState) (request : Request) : IO Response :=
               else
                 pure (mkResponse ("<serialized>") ({ headers := default }))
           else
-            ()
+            pure ()
           return mkResponse "Not Found" ({ status := 404 })
 
 def AuthDO.handleLogin (self : AuthDOState) (creds : String) : IO Response :=

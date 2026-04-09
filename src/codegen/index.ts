@@ -542,8 +542,9 @@ class Gen {
         };
         let mappedField = (e.field && fieldMap[e.field]) ?? e.field ?? 'default';
         if (typeof mappedField !== 'string') mappedField = String(mappedField);
-        // toString: use standalone function, not dot notation
-        if (mappedField === 'toString' || mappedField === 'function') return `toString ${obj}`;
+        // toString/function: use standalone function, not dot notation.
+        // Also catch JS native code artifacts like "function toString() { [native code] }"
+        if (mappedField === 'toString' || mappedField.startsWith('function')) return `toString ${obj}`;
         // Strip leading underscore from private field names (TS _radius → Lean radius)
         if (mappedField.startsWith('_') && mappedField.length > 1 && /[a-zA-Z]/.test(mappedField[1])) {
           mappedField = mappedField.slice(1);
@@ -634,11 +635,17 @@ class Gen {
         let then_ = this.genExpr(e.then, ctx, depth + 1);
         let else_ = this.genExpr(e.else_, ctx, depth + 1);
 
-        // In monadic context at top level (depth=0 in a do block), wrap pure branch
-        // values in `pure (...)`. Don't wrap inside nested expressions (struct fields etc).
-        if (!isPure(ctx) && depth <= 1) {
-          if (!looksMonadic(then_) && !isSimpleValue(then_)) then_ = `pure (${then_.trim()})`;
-          if (!looksMonadic(else_) && !isSimpleValue(else_)) else_ = `pure (${else_.trim()})`;
+        // In monadic context, ensure both branches return the monad type.
+        if (!isPure(ctx)) {
+          // () in else → pure () (Unit in the monad)
+          if (else_.trim() === '()') else_ = 'pure ()';
+          // Wrap pure values in `pure (...)` — but only at shallow depth
+          // and only for non-monadic, non-simple values
+          if (depth <= 1) {
+            if (!looksMonadic(then_) && !isSimpleValue(then_)) then_ = `pure (${then_.trim()})`;
+            if (!looksMonadic(else_) && !isSimpleValue(else_) && else_.trim() !== 'pure default')
+              else_ = `pure (${else_.trim()})`;
+          }
         }
 
         const thenJoin = then_.trimStart().startsWith('do') ? ' ' : `\n${inner}`;

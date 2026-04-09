@@ -52,7 +52,7 @@ def CoordinatorDO.fetch (self : CoordinatorDOState) (request : Request) : IO Res
         let response ← handleRPC self envelope
         pure (mkResponse (serialize response) ({ headers := default }))
       else
-        ()
+        pure ()
       if (request.method == "GET") && (url.pathname == "/topology") then
         let topology : Array __object := Array.ofList (self.nodes.entries).map (fun _p890 => { id := id, lastSeen := node.lastSeen })
         pure (mkResponse ("<serialized>") ({ headers := default }))

@@ -45,7 +45,7 @@ def SessionStoreDO.fetch (self : SessionStoreDOState) (request : Request) : IO R
         let id ← createSession self body.userId (Option.getD body.data {  })
         pure (mkResponse ("<serialized>") ({ headers := default }))
       else
-        ()
+        pure ()
       do
         if ((request.method == "GET") && (url.pathname == "/get")) && sessionId then
           let session ← getSession self sessionId
@@ -54,7 +54,7 @@ def SessionStoreDO.fetch (self : SessionStoreDOState) (request : Request) : IO R
           else
             pure (mkResponse ("<serialized>") ({ headers := default }))
         else
-          ()
+          pure ()
         if ((request.method == "DELETE") && (url.pathname == "/destroy")) && sessionId then do
             destroySession self sessionId
             return mkResponse ("<serialized>") ({ headers := default })

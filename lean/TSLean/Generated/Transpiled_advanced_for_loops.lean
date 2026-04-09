@@ -20,7 +20,7 @@ def rangeSum (n : Float) : StateT Unit IO Float :=
           let total := total + i
           _loop_116 (i + 1)
       else
-        ()
+        pure ()
       return total
 
 def countDown (n : Float) : StateT Unit IO (Array Float) :=
@@ -49,7 +49,7 @@ def fibonacci (n : Float) : StateT Unit IO Float :=
           let tmp := b
           _while_719
       else
-        ()
+        pure ()
       return a
 
 def findFirst {T : Type} (items : Array T) (pred : T → Bool) : Option T :=

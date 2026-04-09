@@ -40,14 +40,14 @@ def AnalyticsDO.fetch (self : AnalyticsDOState) (request : Request) : IO Respons
           trackEvent self event
           return mkResponse ("<serialized>") ({ headers := default })
       else
-        ()
+        pure ()
       do
         if (request.method == "GET") && (url.pathname == "/count") then
           let name : String := Option.getD (url.searchParams.get "event") ""
           let metric ← Storage.get default (s!"metric:{name}")
           pure (mkResponse ("<serialized>") ({ headers := default }))
         else
-          ()
+          pure ()
         if (request.method == "DELETE") && (url.pathname == "/reset") then do
             Storage.deleteAll default
             return mkResponse ("<serialized>") ({ headers := default })

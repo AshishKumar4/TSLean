@@ -40,19 +40,19 @@ def QueueProcessorDO.fetch (self : QueueProcessorDOState) (request : Request) : 
         let id ← enqueue self body.payload (Option.getD body.maxAttempts 3)
         pure (mkResponse ("<serialized>") ({ headers := default }))
       else
-        ()
+        pure ()
       do
         if (request.method == "POST") && (url.pathname == "/process") then
           let processed ← processNext self
           pure (mkResponse ("<serialized>") ({ headers := default }))
         else
-          ()
+          pure ()
         do
           if (request.method == "GET") && (url.pathname == "/size") then
             let ids ← Option.getD Storage.get default "queue:ids" #[]
             pure (mkResponse ("<serialized>") ({ headers := default }))
           else
-            ()
+            pure ()
           return mkResponse "Not Found" ({ status := 404 })
 
 def QueueProcessorDO.enqueue (self : QueueProcessorDOState) (payload : Any) (maxAttempts : Float) : IO String :=

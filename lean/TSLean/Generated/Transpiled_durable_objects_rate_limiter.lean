@@ -46,7 +46,7 @@ def RateLimiterDO.fetch (self : RateLimiterDOState) (request : Request) : IO Res
         else
           429 }))
       else
-        ()
+        pure ()
       if (request.method == "DELETE") && (url.pathname == "/reset") then do
           Storage.delete default clientId
           return mkResponse ("<serialized>") ({ headers := default })
