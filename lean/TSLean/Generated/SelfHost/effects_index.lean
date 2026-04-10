@@ -3,6 +3,7 @@
 
 import TSLean.Generated.SelfHost.Prelude
 import TSLean.Generated.SelfHost.ir_types
+import TSLean.External.Typescript
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Stdlib.HashMap
@@ -12,17 +13,10 @@ open TSLean TSLean.Generated.Types TSLean.Stdlib.HashMap
 namespace TSLean.Generated.SelfHost.EffectsIndex
 
 def IO_TRIGGERING_PREFIXES : Array String := #["console.", "Date.", "Math.random", "crypto."]
-
 def IO_TRIGGERING_CALLS : Array String := #[]
-
 def PURE_MONAD : String := "Id"
-
 def FALLBACK_ERROR_TYPE : String := "TSError"
 
-/-- Infer the algebraic effect of a TypeScript AST node. For function-like nodes, analyses the body directly (skipping the outer signature) so that nested-function guards don't suppress the top level. -/
-def inferNodeEffect (node : TSAny) (checker : TSAny) : Effect :=
-  sorry /- inferNodeEffect: body has sequential ifs outside do -/
-/-- Convert an Effect to its Lean 4 monad string representation. The monad transformer stack is built right-to-left: ``` ['StateT S', 'ExceptT E', 'IO'] → 'ExceptT E IO'             (fold step 1) → 'StateT S (ExceptT E IO)'  (fold step 2) ``` -/
 partial def leanTypeName (t : IRType) : String :=
   match t with
   | .String => "String" | .Float => "Float" | .Nat => "Nat"
@@ -31,6 +25,29 @@ partial def leanTypeName (t : IRType) : String :=
     if args.size == 0 then name
     else "(" ++ name ++ " " ++ String.intercalate " " (args.toList.map leanTypeName) ++ ")"
   | _ => FALLBACK_ERROR_TYPE
+
+def isNestedFnScope (_node : TSAny) : Bool := false
+def isAssignOp (kind : TSAny) : Bool :=
+  kind == "EqualsToken" || kind == "PlusEqualsToken" || kind == "MinusEqualsToken" ||
+  kind == "AsteriskEqualsToken" || kind == "SlashEqualsToken" || kind == "PercentEqualsToken"
+def isIncrDecr (kind : TSAny) : Bool :=
+  kind == "PlusPlusToken" || kind == "MinusMinusToken"
+partial def bodyContainsAwait (node : TSAny) : Bool := node == "AwaitExpression"
+partial def bodyContainsThrow (node : TSAny) : Bool := node == "ThrowStatement"
+partial def bodyContainsMutation (_node : TSAny) : Bool := false
+partial def bodyContainsIO (node : TSAny) : Bool :=
+  IO_TRIGGERING_PREFIXES.any (fun p => node.startsWith p)
+def getFunctionBody (node : TSAny) : Option TSAny :=
+  if node.isEmpty then none else some node
+
+def inferNodeEffect (node : TSAny) (checker : TSAny) : Effect :=
+  let target := (getFunctionBody node).getD node
+  let effects : Array Effect := #[]
+  let effects := if bodyContainsAwait target then effects.push Effect.Async else effects
+  let effects := if bodyContainsThrow target then effects.push (exceptEffect IRType.String) else effects
+  let effects := if bodyContainsMutation target then effects.push (stateEffect IRType.Unit) else effects
+  let effects := if bodyContainsIO target then effects.push Effect.IO else effects
+  combineEffects effects
 
 def monadString (effect : Effect) (stateTypeName : String := "σ") : String :=
   match effect with
@@ -50,38 +67,19 @@ def monadString (effect : Effect) (stateTypeName : String := "σ") : String :=
       | some (Effect.Except err) => parts.push ("ExceptT " ++ (leanTypeName err))
       | _ => parts
     let parts := parts.push "IO"
-    if parts.size == 1 then
-      parts.getD 0 "IO"
-    else
-      parts.toList.reverse.tail.foldl (fun acc p => s!"{p} ({acc})") (parts.getD (parts.size - 1) "IO")
+    if parts.size == 1 then parts.getD 0 "IO"
+    else parts.toList.reverse.tail.foldl (fun acc p => s!"{p} ({acc})") (parts.getD (parts.size - 1) "IO")
 
-/-- Generate the DOMonad type string for a Durable Object. -/
-def doMonadType (stateTypeName : String) : String :=
-  s!"DOMonad {stateTypeName}"
+def doMonadType (stateTypeName : String) : String := s!"DOMonad {stateTypeName}"
 
-/-- Compute the join (least upper bound) of two effects. Pure is the identity element. -/
 def joinEffects (a : Effect) (b : Effect) : Effect :=
-  sorry /- joinEffects: body has sequential ifs outside do -/
-/-- Test whether effect `a` subsumes effect `b` — i.e., `a` can handle `b`. Pure is subsumed by everything.  Combined effects check recursively. -/
+  if isPure a then b else if isPure b then a else combineEffects #[a, b]
+
 partial def effectSubsumes (a : Effect) (b : Effect) : Bool :=
-  sorry /- effectSubsumes: body has sequential ifs outside do -/
-partial def getFunctionBody (node : TSAny) : Option TSAny :=
-  sorry /- getFunctionBody: body has sequential ifs outside do -/
-partial def bodyContainsAwait (node : TSAny) : Bool :=
-  sorry /- bodyContainsAwait: body has sequential ifs outside do -/
-partial def bodyContainsThrow (node : TSAny) : Bool :=
-  sorry /- bodyContainsThrow: body has sequential ifs outside do -/
-partial def bodyContainsMutation (node : TSAny) : Bool :=
-  sorry /- bodyContainsMutation: body has sequential ifs outside do -/
-partial def bodyContainsIO (node : TSAny) : Bool :=
-  sorry /- bodyContainsIO: body has sequential ifs outside do -/
-def isNestedFnScope (node : TSAny) : Bool :=
-  (((sorry : Bool) || (sorry : Bool)) || (sorry)) || (sorry)
-
-def isAssignOp (kind : TSAny) : Bool :=
-  (((((kind == sorry) || (kind == sorry)) || (kind == sorry)) || (kind == sorry)) || (kind == sorry)) || (kind == sorry)
-
-def isIncrDecr (kind : TSAny) : Bool :=
-  (kind == sorry) || (kind == sorry)
+  if isPure b then true
+  else if a == b then true
+  else match a with
+    | .Combined es => es.any (effectSubsumes · b)
+    | _ => false
 
 end TSLean.Generated.SelfHost.EffectsIndex

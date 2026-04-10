@@ -35,7 +35,9 @@ let code = fs.readFileSync(inputFile, 'utf-8');
     let instances = '\n';
     for (const name of typeNames) {
       if (!after.includes(`instance : Inhabited ${name}`)) {
-        instances += `instance : Inhabited ${name} := ⟨sorry⟩\n`;
+        // Use concrete defaults instead of sorry
+        const defaultVal = name === 'Effect' ? '.Pure' : name === 'IRType' ? '.Unit' : 'sorry';
+        instances += `instance : Inhabited ${name} := ⟨${defaultVal}⟩\n`;
         instances += `instance : BEq ${name} := ⟨fun _ _ => false⟩\n`;
         instances += `instance : Repr ${name} := ⟨fun _ _ => .text s!"${name}"⟩\n`;
       }
@@ -44,6 +46,10 @@ let code = fs.readFileSync(inputFile, 'utf-8');
     code = before + mutual + instances + after;
   }
 }
+
+// Step 1b: Fix Inhabited instances — replace sorry with concrete defaults
+code = code.replace(/instance : Inhabited Effect := ⟨sorry⟩/g, 'instance : Inhabited Effect := ⟨.Pure⟩');
+code = code.replace(/instance : Inhabited IRType := ⟨sorry⟩/g, 'instance : Inhabited IRType := ⟨.Unit⟩');
 
 // Step 2: Fix pattern : IRPattern → TSAny
 code = code.replace(/pattern : IRPattern/g, 'pattern : TSAny := default');

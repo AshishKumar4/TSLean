@@ -76,10 +76,10 @@ end
 instance : ToString Effect := ⟨fun _ => "Effect"⟩
 instance : ToString IRType := ⟨fun _ => "IRType"⟩
 
-instance : Inhabited Effect := ⟨sorry⟩
+instance : Inhabited Effect := ⟨.Pure⟩
 instance : BEq Effect := ⟨fun _ _ => false⟩
 instance : Repr Effect := ⟨fun _ _ => .text s!"Effect"⟩
-instance : Inhabited IRType := ⟨sorry⟩
+instance : Inhabited IRType := ⟨.Unit⟩
 instance : BEq IRType := ⟨fun _ _ => false⟩
 instance : Repr IRType := ⟨fun _ _ => .text s!"IRType"⟩
 

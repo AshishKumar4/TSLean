@@ -58,8 +58,12 @@ def lookupGlobal (name : String) : Option GlobalTx :=
   GLOBALS.get? name
 
 -- // ─── Binary operator translation ──────────────────────────────────────────────
+def isStringType : IRType → Bool
+  | .String => true
+  | _ => false
+
 def translateBinOp (op : String) (lhsType : IRType) : String :=
-  if (op == "Add") && ((sorry : String) == "String") then
+  if (op == "Add") && (isStringType lhsType) then
       "++"
     else
       match op with
@@ -85,6 +89,13 @@ def translateBinOp (op : String) (lhsType : IRType) : String :=
         | "NullCoalesce" => "NullCoalesce"
         | _ => op
 
-def typeObjKind (t : IRType) : ObjKind :=
-  sorry /- typeObjKind: body has sequential ifs outside do -/
+def typeObjKind : IRType → ObjKind
+  | .String => ObjKind.String
+  | .Array _ => ObjKind.Array
+  | .Map _ _ => ObjKind.Map
+  | .Set _ => ObjKind.Set
+  | .TypeRef name _ => if name == "Map" || name == "AssocMap" then ObjKind.Map
+    else if name == "Set" || name == "AssocSet" then ObjKind.Set
+    else ObjKind.Unknown
+  | _ => ObjKind.Unknown
 end TSLean.Generated.SelfHost.StdlibIndex
