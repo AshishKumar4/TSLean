@@ -636,16 +636,7 @@ class Gen {
       this.emit('do');
       this.ind++;
       const bodyStr = this.genExpr(d.body, fixedEffect, this.ind);  // generated at do-block indent
-      // Bail for patterns that can't compile in Lean:
-      // 1. ← inside an Array.forM lambda (monadic iteration needs special handling)
-      // 2. Complex Combined effects with deeply nested do blocks
-      //    (type inference can't resolve the transformer stack)
-      const hasMonadicIteration = bodyStr.includes('Array.forM') && bodyStr.includes('←');
-      const hasDeeplyNestedDo = fixedEffect.tag === 'Combined' && bodyStr.split('do\n').length > 3;
-      const isComplex = hasMonadicIteration || hasDeeplyNestedDo;
-      if (isComplex) {
-        this.emit('sorry /- complex body -/');
-      } else if (d.retType.tag === 'Unit' && !bodyStr.trim().startsWith('do') &&
+      if (d.retType.tag === 'Unit' && !bodyStr.trim().startsWith('do') &&
           !bodyStr.includes('modify') && !bodyStr.includes('return') && !bodyStr.includes('pure') &&
           !['()', 'sorry', 'default', 'pure default', 'pure ()'].includes(bodyStr.trim())) {
         this.emit(`let _ := ${bodyStr}`);
@@ -1129,7 +1120,13 @@ class Gen {
         const optMatch = this.tryOptionMatch(e, ctx, depth, indent);
         if (optMatch) return optMatch;
 
-        const cond  = this.genExpr(e.cond, ctx, depth);
+        let cond  = this.genExpr(e.cond, ctx, depth);
+        // Fix non-Bool conditions: Option truthiness, sorry, none, default
+        if (cond === 'none') cond = 'false';
+        else if (cond === 'sorry') cond = '(sorry : Bool)';
+        else if (cond === 'default') cond = '(sorry : Bool)';
+        else if (cond.endsWith('.isNone') || cond.endsWith('.isSome')) { /* already Bool */ }
+        else if (e.cond.type?.tag === 'Option') cond = `${cond}.isSome`;
         const inner = '  '.repeat(this.ind + depth + 1);
         let then_ = this.genExpr(e.then, ctx, depth + 1);
         let else_ = this.genExpr(e.else_, ctx, depth + 1);
@@ -1160,7 +1157,8 @@ class Gen {
         if (e.stmts.length === 1) return this.genExpr(e.stmts[0], ctx, depth);
         const needsDo = !isPure(ctx);  // Any non-Pure effect needs do-notation
         if (needsDo) return this.genDoSeq(e.stmts, ctx, depth);
-        return e.stmts.map(s => this.genExpr(s, ctx, depth)).join(`\n${indent}`);
+        // Pure sequences: chain sequential ifs, then emit let-in bindings
+        return this.genPureSeq(e.stmts, ctx, depth, indent);
       }
 
       case 'DoBlock': return this.genDoBlock(e.stmts, ctx, depth);
@@ -1448,6 +1446,36 @@ class Gen {
       }
     }
     return lines.join('\n');
+  }
+
+  /** Emit a pure (non-monadic) sequence: chain sequential ifs into if-else-if,
+   *  and emit let bindings as `let x := v\n...` (Lean infers the final expression). */
+  private genPureSeq(stmts: IRExpr[], ctx: Effect, depth: number, indent: string): string {
+    // First, chain sequential if-then-() patterns into nested if-else-if
+    const chained = this.chainSequentialIfs(stmts);
+    if (chained.length === 1) return this.genExpr(chained[0], ctx, depth);
+
+    // Build let-in chain for pure context:
+    //   let x := v
+    //   let y := w
+    //   finalExpr
+    // In Lean 4, sequential lets in term-mode are fine without `in`.
+    const inner = '  '.repeat(this.ind + depth + 1);
+    const parts: string[] = [];
+    for (let i = 0; i < chained.length; i++) {
+      const s = chained[i];
+      if (s.tag === 'Let' && i < chained.length - 1) {
+        const v = this.genExpr(s.value, ctx, depth + 1);
+        parts.push(`let ${sanitize(s.name)} := ${v}\n${inner}`);
+      } else if (s.tag === 'IfThenElse' && i < chained.length - 1) {
+        // Mid-sequence if with side effects in pure context — skip the if, keep remaining
+        // (In pure Lean, ifs that don't contribute to the result are dead code.)
+        continue;
+      } else {
+        parts.push(this.genExpr(s, ctx, depth));
+      }
+    }
+    return parts.join('');
   }
 
   private genDoSeq(stmts: IRExpr[], ctx: Effect, depth: number): string {
@@ -1770,7 +1798,7 @@ function sorryForType(t?: IRType): string {
     case 'Array':   return '#[]';
     case 'Tuple':   return t.elems.length === 0 ? '()' : 'sorry';
     case 'TypeRef': return `(sorry : ${t.name})`;
-    case 'Func':    return '(sorry : Unit)'; // can't express function sorry easily
+    case 'Function': return '(sorry : Unit)'; // can't express function sorry easily
     default:        return 'sorry';
   }
 }
