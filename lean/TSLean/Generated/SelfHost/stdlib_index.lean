@@ -86,5 +86,16 @@ def translateBinOp (op : String) (lhsType : IRType) : String :=
         | _ => op
 
 def typeObjKind (t : IRType) : ObjKind :=
-  sorry /- typeObjKind: body has sequential ifs outside do -/
+  match t with
+  | .String => .String
+  | .Array _ => .Array
+  | .Map _ _ => .Map
+  | .Set _ => .Set
+  | .TypeRef name _ =>
+    if name == "String" then .String
+    else if name == "Array" then .Array
+    else if name == "Map" || name == "HashMap" then .Map
+    else if name == "Set" || name == "HashSet" then .Set
+    else .Unknown
+  | _ => .Unknown
 end TSLean.Generated.SelfHost.StdlibIndex

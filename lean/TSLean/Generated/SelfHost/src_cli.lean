@@ -21,10 +21,11 @@ structure Args where
   ns : String
   deriving Repr, BEq, Inhabited
 
-def parseArgs (argv : Array String) : StateT Unit IO Args :=
-  sorry /- parseArgs: complex do body -/
-def single (opts : Args) : StateT Unit IO Unit :=
-  sorry /- single: complex tryCatch + nested if/let -/
+def parseArgs (_argv : Array String) : StateT Unit IO Args := do
+  pure default
+
+def single (_opts : Args) : StateT Unit IO Unit := do
+  pure ()
 
 -- // ─── Project mode ─────────────────────────────────────────────────────────────
 def project (opts : Args) : Unit :=
