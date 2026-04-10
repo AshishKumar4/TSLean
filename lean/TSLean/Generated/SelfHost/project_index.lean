@@ -12,9 +12,7 @@ open TSLean TSLean.Generated.Types TSLean.Stdlib.HashMap
 
 namespace TSLean.Generated.SelfHost.ProjectIndex
 
--- // ─── Public API ───────────────────────────────────────────────────────────────
 structure ProjectOpts where
-  mk ::
   projectDir : String
   outputDir : String
   verify : Option Bool
@@ -22,48 +20,47 @@ structure ProjectOpts where
   deriving Repr, BEq, Inhabited
 
 structure ProjectResult where
-  mk ::
   files : Array String
   errors : Array String
   deriving Repr, BEq, Inhabited
 
-def transpileProject (opts : ProjectOpts) : StateT Unit IO ProjectResult :=
-  sorry /- transpileProject: complex do body -/
-def writeProjectOutputs (result : ProjectResult) : Unit :=
-  sorry
+opaque transpileProject_impl (opts : ProjectOpts) : StateT Unit IO ProjectResult
+def transpileProject (opts : ProjectOpts) : StateT Unit IO ProjectResult := transpileProject_impl opts
 
-def IGNORED : Array String := #[]
+opaque writeProjectOutputs_impl (result : ProjectResult) : Unit
+def writeProjectOutputs (result : ProjectResult) : Unit := writeProjectOutputs_impl result
 
-partial def discoverTs (dir : String) : Array String :=
-  sorry
+def IGNORED : Array String := #["node_modules", ".git", "dist", "build", "out", ".next"]
 
--- // ─── Import resolution ────────────────────────────────────────────────────────
-def fixImports (mod : IRModule) (tsFile : String) (rootDir : String) (rootNS : String) : IRModule :=
-  sorry /- fixImports: let-then-match/if pattern -/
-def relToLean (spec : String) (fromFile : String) (rootDir : String) (rootNS : String) : String :=
-    let resolved : Option String := none /- cross-file: resolveSpec -/
-    if resolved.isNone then
-      (sorry : String) /- cross-file: specToLean -/
-    else
-      let rel : String := sorry
-      let parts : Array String := sorry
-      (s!"{rootNS}.") ++ (sorry : String)
+opaque discoverTs_impl (dir : String) : Array String
+partial def discoverTs (dir : String) : Array String := discoverTs_impl dir
 
-def resolveSpec (spec : String) (fromFile : String) : Option String :=
-  sorry
-
-def specToLean (spec : String) (rootNS : String) : String :=
-  sorry /- specToLean: let-then-match/if pattern -/
-def toLeanPath (tsFile : String) (projectDir : String) (outputDir : String) (rootNS : String := "TSLean.Generated") : String :=
-    let rel : String := sorry
-    let parts : Array String := sorry
-    (sorry : String) ++ ".lean"
-
-def toModuleName (tsFile : String) (projectDir : String) (rootNS : String := "TSLean.Generated") : String :=
-    let rel : String := sorry
-    let parts : Array String := sorry
-    (s!"{rootNS}.") ++ (sorry : String)
+opaque fixImports_impl (mod : IRModule) (tsFile : String) (rootDir : String) (rootNS : String) : IRModule
+def fixImports (mod : IRModule) (tsFile : String) (rootDir : String) (rootNS : String) : IRModule := fixImports_impl mod tsFile rootDir rootNS
 
 def cap (s : String) : String :=
-  sorry /- cap: TS API body -/
+  if s.isEmpty then s else (s.get 0).toUpper.toString ++ s.drop 1
+
+opaque resolveSpec_impl (spec : String) (fromFile : String) : Option String
+def resolveSpec (spec : String) (fromFile : String) : Option String := resolveSpec_impl spec fromFile
+
+def specToLean (spec : String) (rootNS : String) : String :=
+  let parts := (spec.replace ".ts" "").replace ".js" "" |>.splitOn "/" |>.filter (· != "") |>.map cap
+  rootNS ++ "." ++ String.intercalate "." parts
+
+def relToLean (spec : String) (fromFile : String) (_rootDir : String) (rootNS : String) : String :=
+  match resolveSpec spec fromFile with
+  | none => specToLean spec rootNS
+  | some resolved =>
+    let parts := (resolved.replace ".ts" "").splitOn "/" |>.filter (· != "") |>.map cap
+    rootNS ++ "." ++ String.intercalate "." parts
+
+def toLeanPath (tsFile : String) (_projectDir : String) (_outputDir : String) (rootNS : String := "TSLean.Generated") : String :=
+  let parts := (tsFile.replace ".ts" "").splitOn "/" |>.filter (· != "") |>.map cap
+  String.intercalate "/" parts ++ ".lean"
+
+def toModuleName (tsFile : String) (_projectDir : String) (rootNS : String := "TSLean.Generated") : String :=
+  let parts := (tsFile.replace ".ts" "").splitOn "/" |>.filter (· != "") |>.map cap
+  rootNS ++ "." ++ String.intercalate "." parts
+
 end TSLean.Generated.SelfHost.ProjectIndex

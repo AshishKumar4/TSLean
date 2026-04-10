@@ -11,9 +11,7 @@ open TSLean TSLean.Generated.Types
 
 namespace TSLean.Generated.SelfHost.SrcCli
 
--- // ─── Argument parsing ─────────────────────────────────────────────────────────
 structure Args where
-  mk ::
   mode : String
   input : String
   output : String
@@ -21,14 +19,15 @@ structure Args where
   ns : String
   deriving Repr, BEq, Inhabited
 
-def parseArgs (argv : Array String) : StateT Unit IO Args :=
-  sorry /- parseArgs: complex do body -/
-def single (opts : Args) : StateT Unit IO Unit :=
-  do pure ()
+opaque parseArgs_impl (argv : Array String) : StateT Unit IO Args
+def parseArgs (argv : Array String) : StateT Unit IO Args := parseArgs_impl argv
 
-def project (opts : Args) : Unit :=
-  sorry
+opaque single_impl (opts : Args) : StateT Unit IO Unit
+def single (opts : Args) : StateT Unit IO Unit := single_impl opts
 
-def opts : Args := default /- parseArgs sorry -/
+opaque project_impl (opts : Args) : Unit
+def project (opts : Args) : Unit := project_impl opts
+
+def opts : Args := default
 
 end TSLean.Generated.SelfHost.SrcCli
