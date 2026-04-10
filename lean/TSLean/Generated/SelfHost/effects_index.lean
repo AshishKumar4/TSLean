@@ -19,7 +19,10 @@ def PURE_MONAD : String := "Id"
 
 def FALLBACK_ERROR_TYPE : String := "TSError"
 
-/-- Map an IR type to its Lean 4 name for use in monad signatures. -/
+/-- Infer the algebraic effect of a TypeScript AST node. For function-like nodes, analyses the body directly (skipping the outer signature) so that nested-function guards don't suppress the top level. -/
+def inferNodeEffect (node : TSAny) (checker : TSAny) : Effect :=
+  sorry /- inferNodeEffect: body has sequential ifs outside do -/
+/-- Convert an Effect to its Lean 4 monad string representation. The monad transformer stack is built right-to-left: ``` ['StateT S', 'ExceptT E', 'IO'] → 'ExceptT E IO'             (fold step 1) → 'StateT S (ExceptT E IO)'  (fold step 2) ``` -/
 partial def leanTypeName (t : IRType) : String :=
   match t with
   | .String => "String" | .Float => "Float" | .Nat => "Nat"
@@ -29,64 +32,56 @@ partial def leanTypeName (t : IRType) : String :=
     else "(" ++ name ++ " " ++ String.intercalate " " (args.toList.map leanTypeName) ++ ")"
   | _ => FALLBACK_ERROR_TYPE
 
-/-- Infer the algebraic effect of a TypeScript AST node. -/
-def inferNodeEffect (_node : TSAny) (_checker : TSAny) : Effect :=
-  -- Requires TS compiler API runtime access; stub returns Pure
-  Effect.Pure
-
-/-- Convert an Effect to its Lean 4 monad string representation. -/
-partial def monadString (effect : Effect) (stateTypeName : String := "σ") : String :=
+def monadString (effect : Effect) (stateTypeName : String := "σ") : String :=
   match effect with
   | .Pure => PURE_MONAD
   | .IO => "IO"
   | .Async => "IO"
-  | .State st => "StateT " ++ leanTypeName st ++ " IO"
-  | .Except et => "ExceptT " ++ leanTypeName et ++ " IO"
-  | .Combined effects =>
-    let se := effects.find? (fun e => match e with | .State _ => true | _ => false)
-    let ee := effects.find? (fun e => match e with | .Except _ => true | _ => false)
+  | .State st => ("StateT " ++ (leanTypeName st)) ++ " IO"
+  | .Except err => ("ExceptT " ++ (leanTypeName err)) ++ " IO"
+  | .Combined es =>
+    let se := es.find? (fun e => match e with | Effect.State _ => true | _ => false)
+    let ee := es.find? (fun e => match e with | Effect.Except _ => true | _ => false)
     let parts : Array String := #[]
     let parts := match se with
-      | some (.State st) => parts.push ("StateT " ++ leanTypeName st)
-      | _ => if effects.any (fun e => match e with | .State _ => true | _ => false)
-             then parts.push ("StateT " ++ stateTypeName) else parts
+      | some (Effect.State st) => parts.push ("StateT " ++ (leanTypeName st))
+      | _ => parts
     let parts := match ee with
-      | some (.Except et) => parts.push ("ExceptT " ++ leanTypeName et)
-      | _ => if effects.any (fun e => match e with | .Except _ => true | _ => false)
-             then parts.push ("ExceptT " ++ FALLBACK_ERROR_TYPE) else parts
+      | some (Effect.Except err) => parts.push ("ExceptT " ++ (leanTypeName err))
+      | _ => parts
     let parts := parts.push "IO"
-    if parts.size == 1 then parts.getD 0 "IO"
-    else parts.foldr (fun outer inner =>
-      outer ++ " " ++ (if inner.contains ' ' then "(" ++ inner ++ ")" else inner)) ""
+    if parts.size == 1 then
+      parts.getD 0 "IO"
+    else
+      parts.toList.reverse.tail.foldl (fun acc p => s!"{p} ({acc})") (parts.getD (parts.size - 1) "IO")
 
+/-- Generate the DOMonad type string for a Durable Object. -/
 def doMonadType (stateTypeName : String) : String :=
   s!"DOMonad {stateTypeName}"
 
+/-- Compute the join (least upper bound) of two effects. Pure is the identity element. -/
 def joinEffects (a : Effect) (b : Effect) : Effect :=
-  match a with
-  | .Pure => b
-  | _ => match b with
-    | .Pure => a
-    | _ => combineEffects #[a, b]
-
+  sorry /- joinEffects: body has sequential ifs outside do -/
+/-- Test whether effect `a` subsumes effect `b` — i.e., `a` can handle `b`. Pure is subsumed by everything.  Combined effects check recursively. -/
 partial def effectSubsumes (a : Effect) (b : Effect) : Bool :=
-  match b with
-  | .Pure => true
-  | _ => if a == b then true
-         else match a with
-              | .Combined effects => effects.any (effectSubsumes · b)
-              | _ => false
+  sorry /- effectSubsumes: body has sequential ifs outside do -/
+partial def getFunctionBody (node : TSAny) : Option TSAny :=
+  sorry /- getFunctionBody: body has sequential ifs outside do -/
+partial def bodyContainsAwait (node : TSAny) : Bool :=
+  sorry /- bodyContainsAwait: body has sequential ifs outside do -/
+partial def bodyContainsThrow (node : TSAny) : Bool :=
+  sorry /- bodyContainsThrow: body has sequential ifs outside do -/
+partial def bodyContainsMutation (node : TSAny) : Bool :=
+  sorry /- bodyContainsMutation: body has sequential ifs outside do -/
+partial def bodyContainsIO (node : TSAny) : Bool :=
+  sorry /- bodyContainsIO: body has sequential ifs outside do -/
+def isNestedFnScope (node : TSAny) : Bool :=
+  (((sorry : Bool) || (sorry : Bool)) || (sorry)) || (sorry)
 
--- TS compiler API traversal stubs (require runtime AST access)
-partial def getFunctionBody (_node : TSAny) : Option TSAny := none
-partial def bodyContainsAwait (_node : TSAny) : Bool := false
-partial def bodyContainsThrow (_node : TSAny) : Bool := false
-partial def bodyContainsMutation (_node : TSAny) : Bool := false
-partial def bodyContainsIO (_node : TSAny) : Bool := false
+def isAssignOp (kind : TSAny) : Bool :=
+  (((((kind == sorry) || (kind == sorry)) || (kind == sorry)) || (kind == sorry)) || (kind == sorry)) || (kind == sorry)
 
--- TS SyntaxKind-based checks (require runtime enum values)
-def isNestedFnScope (_node : TSAny) : Bool := false
-def isAssignOp (_kind : TSAny) : Bool := false
-def isIncrDecr (_kind : TSAny) : Bool := false
+def isIncrDecr (kind : TSAny) : Bool :=
+  (kind == sorry) || (kind == sorry)
 
 end TSLean.Generated.SelfHost.EffectsIndex

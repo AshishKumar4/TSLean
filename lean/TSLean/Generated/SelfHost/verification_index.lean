@@ -34,21 +34,26 @@ structure VerificationResult where
 
 -- // ─── Public API ───────────────────────────────────────────────────────────────
 def generateVerification (mod : IRModule) : VerificationResult :=
-  default
+  sorry
 
 -- // ─── Collection ───────────────────────────────────────────────────────────────
--- collectDecl/collectExpr traverse IR trees accumulating proof obligations.
--- Uses .tag field on IRDecl/IRExpr structures to dispatch.
-partial def collectDecl (_d : IRDecl) (_acc : Array ProofObligation) : Unit := ()
-partial def collectExpr (_e : IRExpr) (_fn : String) (_acc : Array ProofObligation) : Unit := ()
+partial def collectDecl (d : IRDecl) (acc : Array ProofObligation) : Unit :=
+  sorry
+
+partial def collectExpr (e : IRExpr) (fn : String) (acc : Array ProofObligation) : Unit :=
+  sorry
+
+partial def exprSummary (e : IRExpr) : String :=
+  sorry /- match e.tag -/ 
+-- (match on tag removed — patterns handled by sorry above)
 
 def emitObligation (o : ProofObligation) : String :=
-  let safeName := o.funcName.replace " " "_"
-  match o.kind with
-  | .ArrayBounds => "\n".intercalate ["-- Array bounds safety", s!"theorem {safeName}_idx_in_bounds", "    (arr : Array α) (idx : Nat) (h : idx < arr.size) :", "    arr[idx]! = arr[⟨idx, h⟩] := by", "  simp [Array.get!_eq_getElem]"]
-  | .DivisionSafe => "\n".intercalate ["-- Division safety", s!"theorem {safeName}_divisor_nonzero", "    (n d : Float) (h : d ≠ 0) : n / d = n / d := rfl"]
-  | .OptionIsSome => "\n".intercalate ["-- Option safety", s!"theorem {safeName}_val_is_some", "    {α : Type} (opt : Option α) (h : opt.isSome) :", "    opt.get!.isSome := by cases opt <;> simp_all"]
-  | .InvariantPreserved => "\n".intercalate ["-- Invariant preserved", s!"theorem {safeName}_invariant_preserved", "    (s : σ) (h : invariant s) : ∃ s', invariant s' := ⟨s, h⟩"]
-  | .TerminationBy => s!"-- termination_by {o.detail} -- for `{o.funcName}`"
+    let safeName := o.funcName.replace "/" "_"
+    match o.kind with
+      | .ArrayBounds => String.intercalate "\n" [s!"-- Array bounds safety for `{o.funcName}` accessing {o.detail}", s!"theorem {safeName}_idx_in_bounds", "    (arr : Array α) (idx : Nat) (h : idx < arr.size) :", "    arr[idx]! = arr[⟨idx, h⟩] := by", "  simp [Array.get!_eq_getElem]"]
+      | .DivisionSafe => String.intercalate "\n" [s!"-- Division safety for `{o.funcName}` divisor: {o.detail}", s!"theorem {safeName}_divisor_nonzero", "    (n d : Float) (h : d ≠ 0) : n / d = n / d := rfl"]
+      | .OptionIsSome => String.intercalate "\n" [s!"-- Option safety for `{o.funcName}` accessing {o.detail}", s!"theorem {safeName}_val_is_some", "    {α : Type} (opt : Option α) (h : opt.isSome) :", "    opt.get!.isSome := by cases opt <;> simp_all"]
+      | .InvariantPreserved => String.intercalate "\n" [s!"-- Invariant preserved by `{o.funcName}`", s!"theorem {safeName}_invariant_preserved", "    (s : σ) (h : invariant s) : ∃ s', invariant s' := ⟨s, h⟩"]
+      | .TerminationBy => s!"-- termination_by {o.detail} -- for `{o.funcName}`"
 
 end TSLean.Generated.SelfHost.VerificationIndex

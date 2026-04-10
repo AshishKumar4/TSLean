@@ -19,79 +19,42 @@ def TS_ANON_TYPE : String := "__type"
 
 def DISCRIMINANT_FIELDS : Array String := #["kind", "type", "tag", "ok", "hasValue", "_type"]
 
--- TS compiler types that have no Lean equivalent → mapped to TSAny
-private def tsOnlyTypes : Array String := #[
-  "CompilerHost", "SourceFile", "Program", "TypeChecker",
-  "Node", "Statement", "Declaration", "Expression",
-  "FunctionDeclaration", "ClassDeclaration", "InterfaceDeclaration",
-  "TypeAliasDeclaration", "VariableStatement", "ModuleDeclaration",
-  "EnumDeclaration", "PropertyAccessExpression", "CallExpression",
-  "BinaryExpression", "ReadableStream", "ArrayBuffer",
-  "ArrayBufferView", "IterableIterator", "Generator",
-  "AsyncGenerator", "PromiseLike", "RegExp",
-  "SymbolConstructor", "PropertyDescriptor", "PropertyKey"]
-
-mutual
+/-- Map a TypeScript compiler type to an IR type. Handles primitives, unions, intersections, arrays, tuples, object types, generic references, conditional types, and branded newtypes. -/
+partial def mapType (t : TSAny) (checker : TSAny) (depth : Float := 0) : IRType :=
+  sorry /- mapType: body has sequential ifs outside do -/
+def mapUnion (t : TSAny) (checker : TSAny) (depth : Float) : IRType :=
+  sorry /- mapUnion: body has sequential ifs outside do -/
+def mapIntersection (t : TSAny) (checker : TSAny) (depth : Float) : IRType :=
+  sorry /- mapIntersection: body has sequential ifs outside do -/
+def mapObject (t : TSAny) (checker : TSAny) (depth : Float) : IRType :=
+  sorry /- mapObject: body has sequential ifs outside do -/
+def mapTypeRef (t : TSAny) (checker : TSAny) (depth : Float) : IRType :=
+  sorry /- mapTypeRef: body has sequential ifs outside do -/
+/-- Convert an IR type to its Lean 4 syntax string. -/
 partial def typeStr (t : IRType) : String :=
-  match t with
-  | .Nat => "Nat"
-  | .Int => "Int"
-  | .Float => "Float"
-  | .String => "String"
-  | .Bool => "Bool"
-  | .Unit => "Unit"
-  | .Never => "Empty"
-  | .Option inner => "Option " ++ irTypeToLean inner true
-  | .Array elem => "Array " ++ irTypeToLean elem true
-  | .Tuple elems =>
-    if elems.size == 0 then "Unit"
-    else "(" ++ " × ".intercalate (elems.toList.map typeStr) ++ ")"
-  | .Function params ret _eff =>
-    let paramStr := if params.size == 0 then "Unit"
-                    else " → ".intercalate (params.toList.map (irTypeToLean · true))
-    paramStr ++ " → " ++ typeStr ret
-  | .Map key value => "AssocMap " ++ irTypeToLean key true ++ " " ++ irTypeToLean value true
-  | .Set elem => "Array " ++ irTypeToLean elem true
-  | .Promise inner =>
-    match inner with
-    | .Promise inner2 => "IO " ++ irTypeToLean inner2 true
-    | _ => "IO " ++ irTypeToLean inner true
-  | .Result ok err => "Except " ++ irTypeToLean err true ++ " " ++ irTypeToLean ok true
-  | .TypeRef name args =>
-    if tsOnlyTypes.contains name then "TSAny"
-    else if args.size == 0 then name
-    else name ++ " " ++ " ".intercalate (args.toList.map (irTypeToLean · true))
-  | .TypeVar name => name
-  | .Structure name _fields => name
-  | .Inductive name _tps _ctors => name
-  | .Dependent param paramType body =>
-    "(" ++ param ++ " : " ++ typeStr paramType ++ ") → " ++ typeStr body
-  | .Subtype base refinement => "{x : " ++ typeStr base ++ " // " ++ refinement ++ "}"
-  | .Universe level => if level == 0 then "Prop" else "Type " ++ toString level
+  sorry /- typeStr: body has sequential ifs outside do -/
+def irTypeToLean (t : IRType) (parens : Bool := false) : String :=
+    let s := typeStr t
+    if parens && (s.includes " ") then
+      s!"({s})"
+    else
+      s
 
-partial def irTypeToLean (t : IRType) (parens : Bool := false) : String :=
-  let s := typeStr t
-  if parens && s.contains ' ' then s!"({s})" else s
-end
-
--- TS compiler API dependent functions (require TypeChecker runtime)
-partial def mapType (_t : TSAny) (_checker : TSAny) (_depth : Float := 0) : IRType := default
-def mapUnion (_t : TSAny) (_checker : TSAny) (_depth : Float) : IRType := default
-def mapIntersection (_t : TSAny) (_checker : TSAny) (_depth : Float) : IRType := default
-def mapObject (_t : TSAny) (_checker : TSAny) (_depth : Float) : IRType := default
-def mapTypeRef (_t : TSAny) (_checker : TSAny) (_depth : Float) : IRType := default
-
+-- // ─── Struct field extraction ────────────────────────────────────────────────────
 -- A single field extracted from a TypeScript interface or class declaration.
 structure StructField where
   mk ::
   name : String
   type : IRType
   optional : Bool
-  mutable : Bool
+  mutable_ : Bool
   deriving Repr, BEq, Inhabited
 
-def extractStructFields (_node : TSAny) (_checker : TSAny) : Array StructField := default
+/-- Extract struct fields from a TypeScript interface or class declaration. Handles optional fields (`?`), readonly modifiers, and resolves types via the type checker. -/
+def extractStructFields (node : TSAny) (checker : TSAny) : Array StructField :=
+  sorry
 
+-- // ─── Discriminated union detection ──────────────────────────────────────────────
 -- Result of detecting a discriminated union in a TypeScript union type.
 structure DiscriminantInfo where
   mk ::
@@ -99,12 +62,19 @@ structure DiscriminantInfo where
   variants : Array String
   deriving Repr, BEq, Inhabited
 
-def detectDiscriminatedUnion (_t : TSAny) (_checker : TSAny) : Option DiscriminantInfo := default
-def tryField (_types : Array ObjectType) (_field : String) (_checker : TSAny) : Option DiscriminantInfo := default
+/-- Detect whether a TypeScript union type is a discriminated union. Checks each known discriminant field name in priority order.  Returns the first field for which every union member has a unique string literal value. -/
+def detectDiscriminatedUnion (t : TSAny) (checker : TSAny) : Option DiscriminantInfo :=
+  sorry
 
-def extractTypeParams (_node : TSAny) : Array String := #[]
+def tryField (types : Array TSAny) (field : String) (checker : TSAny) : Option DiscriminantInfo :=
+  sorry
 
-/-- Access the aliasSymbol.name on a TypeScript type. -/
-def getAliasName (_t : TSAny) : Option String := none
+/-- Extract type parameter names from a TypeScript declaration. -/
+def extractTypeParams (node : TSAny) : Array String :=
+  sorry
+
+/-- Access the `aliasSymbol.name` on a TypeScript type. This property is not in the public TS API typings but is stable across TypeScript versions (4.x–5.x).  It gives the user-defined alias name for union and intersection types. -/
+def getAliasName (t : TSAny) : Option String :=
+  none
 
 end TSLean.Generated.SelfHost.TypemapIndex

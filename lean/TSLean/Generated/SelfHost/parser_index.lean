@@ -12,90 +12,12 @@ import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Stdlib.HashMap
 
-set_option linter.unusedVariables false
-
 open TSLean TSLean.Generated.Types TSLean.Stdlib.HashMap TSLean.DO
 
 namespace TSLean.Generated.SelfHost.ParserIndex
 
--- Pure utility functions (no TS compiler dependency)
-
--- Capitalize first character of a string
-def capStr (s : String) : String :=
-  if s.isEmpty then s
-  else String.mk (s.toList.head!.toUpper :: s.toList.tail!)
-
--- Convert a file path to a Lean module name: "src/foo/bar.ts" → "Foo.Bar"
-def fileToModuleName (filePath : String) : String :=
-  let noExt := if filePath.endsWith ".ts" then filePath.dropRight 3
-               else if filePath.endsWith ".tsx" then filePath.dropRight 4
-               else filePath
-  let parts := noExt.splitOn "/"
-  -- Drop leading src/ if present, capitalize each part
-  let parts := if parts.head? == some "src" then parts.tail! else parts
-  ".".intercalate (parts.map capStr)
-
--- Sequence two IR expressions (continuation-passing style)
-def seq (a : IRExpr) (b : IRExpr) : IRExpr :=
-  { tag := "Sequence", stmts := default,
-    type := b.type, effect := combineEffects #[a.effect, b.effect] }
-
--- Construct a binary operation expression
-def mkBinOp (op : BinOp) (left : IRExpr) (right : IRExpr) : IRExpr :=
-  { tag := "BinOp", op := repr op |>.pretty,
-    left := default, right := default,
-    type := left.type, effect := combineEffects #[left.effect, right.effect] }
-
--- Check if all branches of an expression end with a return
-partial def branchReturns (e : IRExpr) : Bool :=
-  match e.tag with
-  | "Return" => true
-  | "Throw" => true
-  | "IfThenElse" => true  -- both branches checked at runtime
-  | "Match" => true       -- all cases checked at runtime
-  | "Sequence" => true    -- last stmt checked at runtime
-  | "DoBlock" => true
-  | _ => false
-
--- Convert an expression to a pattern (for match arm LHS)
-def exprToPat (e : IRExpr) : IRPattern :=
-  match e.tag with
-  | "Var" => .PVar e.name
-  | "LitString" => .PString e.value
-  | "LitNat" | "LitInt" | "LitFloat" | "LitBool" => .PLit e.value
-  | "LitNull" => .PNone
-  | "Hole" => .PWild
-  | _ => .PWild
-
--- Check if a TS syntax kind represents a compound assignment (+=, -=, etc.)
-def isCompoundAssign (_kind : TSAny) : Bool :=
-  -- At runtime, checks kind against PlusEqualsToken, MinusEqualsToken, etc.
-  false
-
--- Map compound assignment operator to its binary operator
-def compoundOp (_kind : TSAny) : BinOp :=
-  -- PlusEquals → Add, MinusEquals → Sub, etc.
-  .Add
-
--- Map a TS binary operator syntax kind to its string name
-def tsBinOp (_kind : TSAny) : String :=
-  -- At runtime, dispatches on TS SyntaxKind enum
-  "Add"
-
--- Get leading comment from a TS node
-def leadingComment (_node : TSAny) (_sf : TSAny) : Option String :=
-  none
-
--- Get JSDoc comment from a TS node
-def jsdocComment (_node : TSAny) (_sf : TSAny) : Option String :=
-  none
-
--- Check if a type has an index signature
-def hasIndexSignature (_node : TSAny) (_checker : TSAny) : Bool :=
-  false
-
--- Public API
-
+-- // ─── Public API ───────────────────────────────────────────────────────────────
+-- Options for parsing a single TypeScript file into IR.
 structure ParseOptions where
   mk ::
   fileName : String
@@ -103,10 +25,9 @@ structure ParseOptions where
   extraFiles : Option (Option (AssocMap String String))
   deriving Inhabited
 
-/-- Parse a TypeScript source file into an IR module. Requires TS compiler API. -/
-def parseFile (_opts : ParseOptions) : ExceptT String IO IRModule := do
-  pure default
-
+/-- Parse a TypeScript source file into a fully-typed IR module. Creates a `ts.Program` with type checking, resolves all types and effects, and produces an `IRModule` ready for the rewrite and codegen passes. -/
+def parseFile (opts : TSAny) : ExceptT String IO IRModule :=
+  sorry /- parseFile: complex do body -/
 structure ParserCtxState where
   mk ::
   imports : Array IRImport
@@ -115,114 +36,146 @@ structure ParserCtxState where
   checker : TSAny
   deriving Repr, BEq, Inhabited
 
-def ParserCtx.init (_self : ParserCtxState) (_checker : TSAny) (_sf : TSAny) (_needsDO : Bool) : Unit := ()
+def ParserCtx.init (self : ParserCtxState) (checker : TSAny) (sf : TSAny) (needsDO : Bool) : Unit :=
+  ()
 
-def ParserCtx.parseModule (_self : ParserCtxState) : IRModule := default
+def ParserCtx.parseModule (self : ParserCtxState) : IRModule :=
+  sorry
 
-def ParserCtx.collectImport (_self : ParserCtxState) (_node : TSAny) : Unit := ()
+def ParserCtx.collectImport (self : ParserCtxState) (node : TSAny) : Unit :=
+  sorry
 
--- TS module specifier to Lean import path conversion (requires runtime resolution)
-def ParserCtx.tsModToLean (_self : ParserCtxState) (_spec : String) : String := default
+def ParserCtx.tsModToLean (self : ParserCtxState) (spec : String) : String :=
+  sorry /- tsModToLean: TS API body -/
 
--- Statement parser: dispatches on TS SyntaxKind
-def ParserCtx.parseStatement (_self : ParserCtxState) (_stmt : TSAny) : String := default
+def ParserCtx.parseStatement (self : ParserCtxState) (stmt : TSAny) : String :=
+  sorry /- ParserCtx: body has sequential ifs outside do -/
+def ParserCtx.parseExportDecl (self : ParserCtxState) (node : TSAny) : Option (Array IRDecl) :=
+  sorry /- parseExportDecl: TS API body -/
 
--- Export declaration parser
-def ParserCtx.parseExportDecl (_self : ParserCtxState) (_node : TSAny) : Option (Array IRDecl) := none
+def ParserCtx.parseExportAssignment (self : ParserCtxState) (node : TSAny) : Option (Array IRDecl) :=
+  sorry
 
-def ParserCtx.parseExportAssignment (_self : ParserCtxState) (_node : TSAny) : Option (Array IRDecl) := none
+def ParserCtx.parseFnDecl (self : ParserCtxState) (node : TSAny) : IRDecl :=
+  sorry /- parseFnDecl: TS API body -/
 
--- Function declaration parser: extracts params, return type, body, effect
-def ParserCtx.parseFnDecl (_self : ParserCtxState) (_node : TSAny) : IRDecl := default
+def ParserCtx.parseParams (self : ParserCtxState) (params : Array TSAny) : Array IRParam :=
+  sorry
 
--- Parameter list parser
-def ParserCtx.parseParams (_self : ParserCtxState) (_params : Array TSAny) : Array IRParam := default
+def ParserCtx.parseClassDecl (self : ParserCtxState) (node : TSAny) : Array IRDecl :=
+  sorry
 
-def ParserCtx.parseClassDecl (_self : ParserCtxState) (_node : TSAny) : Array IRDecl := default
+def ParserCtx.parseGetter (self : ParserCtxState) (node : TSAny) (className : String) (stateType : String) : String :=
+  sorry /- ParserCtx.parseGetter: TS API body -/
+def ParserCtx.parseSetter (self : ParserCtxState) (node : TSAny) (className : String) (stateType : String) : String :=
+  sorry /- ParserCtx.parseSetter: TS API body -/
+def ParserCtx.isDOClass (self : ParserCtxState) (node : TSAny) : Bool :=
+  sorry /- isDOClass: TS API body -/
 
--- Getter/setter parsers for class members
-def ParserCtx.parseGetter (_self : ParserCtxState) (_node : TSAny) (_className : String) (_stateType : String) : String := default
+def ParserCtx.classStateFields (self : ParserCtxState) (node : TSAny) : Array String :=
+  sorry
 
-def ParserCtx.parseSetter (_self : ParserCtxState) (_node : TSAny) (_className : String) (_stateType : String) : String := default
+def ParserCtx.parseCtor (self : ParserCtxState) (node : TSAny) (className : String) (stateType : String) (isDO : Bool) : String :=
+  sorry /- ParserCtx: body has sequential ifs outside do -/
+def ParserCtx.parseMethod (self : ParserCtxState) (node : TSAny) (className : String) (stateType : String) (isDO : Bool) : String :=
+  sorry /- parseMethod: TS API body -/
 
--- Check if a class extends DurableObject
-def ParserCtx.isDOClass (_self : ParserCtxState) (_node : TSAny) : Bool := false
+def ParserCtx.parseInterface (self : ParserCtxState) (node : TSAny) : String :=
+  sorry
 
-def ParserCtx.classStateFields (_self : ParserCtxState) (_node : TSAny) : Array String := default
+def ParserCtx.parseTypeAlias (self : ParserCtxState) (node : TSAny) : String :=
+  sorry /- ParserCtx: body has sequential ifs outside do -/
+def ParserCtx.parseEnum (self : ParserCtxState) (node : TSAny) : String :=
+  sorry /- ParserCtx.parseEnum: TS API body -/
+def ParserCtx.parseVarStmt (self : ParserCtxState) (node : TSAny) : Array IRDecl :=
+  sorry
 
--- Constructor parser
-def ParserCtx.parseCtor (_self : ParserCtxState) (_node : TSAny) (_className : String) (_stateType : String) (_isDO : Bool) : String := default
+def ParserCtx.parseNamespace (self : ParserCtxState) (node : TSAny) : IRDecl :=
+  sorry
 
--- Method parser
-def ParserCtx.parseMethod (_self : ParserCtxState) (_node : TSAny) (_className : String) (_stateType : String) (_isDO : Bool) : String := default
+def ParserCtx.parseBlock (self : ParserCtxState) (block : TSAny) (eff : Effect) : IRExpr :=
+  sorry /- parseBlock: TS API body -/
 
-def ParserCtx.parseInterface (_self : ParserCtxState) (_node : TSAny) : String := default
+def ParserCtx.parseStmts (self : ParserCtxState) (stmts : Array TSAny) (eff : Effect) : IRExpr :=
+  sorry /- parseStmts: recursive -/
 
--- Type alias parser
-def ParserCtx.parseTypeAlias (_self : ParserCtxState) (_node : TSAny) : String := default
+def ParserCtx.parseStmt (self : ParserCtxState) (stmt : TSAny) (rest : Array TSAny) (eff : Effect) : IRExpr :=
+  sorry /- ParserCtx.parseStmt: TS API body -/
+def ParserCtx.parseIf (self : ParserCtxState) (stmt : TSAny) (rest : Array TSAny) (eff : Effect) : IRExpr :=
+  sorry /- ParserCtx: complex do body -/
+def ParserCtx.parseSwitch (self : ParserCtxState) (node : TSAny) : IRExpr :=
+  sorry /- ParserCtx: complex do body -/
+def ParserCtx.parseSwitchCaseBody (self : ParserCtxState) (cl : TSAny) (allClauses : Array TSAny) : IRExpr :=
+  sorry /- ParserCtx: complex do body -/
+def ParserCtx.flattenObjectBinding (self : ParserCtxState) (pattern : TSAny) (rhs : IRExpr) (body : IRExpr) : IRExpr :=
+  sorry /- ParserCtx.flattenObjectBinding: TS API body -/
+def ParserCtx.flattenArrayBinding (self : ParserCtxState) (pattern : TSAny) (rhs : IRExpr) (body : IRExpr) : IRExpr :=
+  sorry
 
--- Enum parser
-def ParserCtx.parseEnum (_self : ParserCtxState) (_node : TSAny) : String := default
+def ParserCtx.parseTry (self : ParserCtxState) (node : TSAny) (rest : Array TSAny) (eff : Effect) : IRExpr :=
+  sorry /- ParserCtx.parseTry: TS API body -/
+def ParserCtx.parseFor (self : ParserCtxState) (node : TSAny) (eff : Effect) : IRExpr :=
+  sorry /- ParserCtx.parseFor: let-then-match/if pattern -/
+def ParserCtx.parseWhile (self : ParserCtxState) (node : TSAny) (eff : Effect) : IRExpr :=
+  sorry /- ParserCtx.parseWhile: TS API body -/
+def ParserCtx.parseExpr (self : ParserCtxState) (node : TSAny) : IRExpr :=
+  sorry /- ParserCtx: body has sequential ifs outside do -/
+def ParserCtx.parsePropAccess (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr :=
+  sorry /- ParserCtx: body has sequential ifs outside do -/
+def ParserCtx.parseCall (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr :=
+  sorry /- ParserCtx: complex do body -/
+def ParserCtx.parseMethodCall (self : ParserCtxState) (node : TSAny) (acc : TSAny) (ty : IRType) : IRExpr :=
+  sorry /- ParserCtx.parseMethodCall: TS API body -/
+def ParserCtx.isStorageAccess (self : ParserCtxState) (node : TSAny) : Bool :=
+  sorry /- ParserCtx.isStorageAccess: let-then-match/if pattern -/
+def ParserCtx.parseNew (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr :=
+  sorry /- ParserCtx: body has sequential ifs outside do -/
+def ParserCtx.parseLambda (self : ParserCtxState) (node : TSAny) : IRExpr :=
+  sorry /- ParserCtx.parseLambda: TS API body -/
+def ParserCtx.parseBinary (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr :=
+  sorry /- ParserCtx: body has sequential ifs outside do -/
+def ParserCtx.parsePrefix (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr :=
+  sorry /- ParserCtx.parsePrefix: TS API body -/
+def ParserCtx.parsePostfix (self : ParserCtxState) (node : TSAny) : IRExpr :=
+  sorry /- ParserCtx.parsePostfix: TS API body -/
+def ParserCtx.parseObjLit (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr :=
+  sorry
 
-def ParserCtx.parseVarStmt (_self : ParserCtxState) (_node : TSAny) : Array IRDecl := default
+def ParserCtx.parseTemplate (self : ParserCtxState) (node : TSAny) : IRExpr :=
+  sorry
 
-def ParserCtx.parseNamespace (_self : ParserCtxState) (_node : TSAny) : IRDecl := default
+-- // ─── Helpers ──────────────────────────────────────────────────────────────────
+def seq (a : IRExpr) (b : IRExpr) : IRExpr :=
+  sorry /- seq: body has sequential ifs outside do -/
+def mkBinOp (op : BinOp) (left : IRExpr) (right : IRExpr) : IRExpr :=
+  sorry /- mkBinOp: TS API body -/
+partial def branchReturns (e : IRExpr) : Bool :=
+  sorry /- branchReturns: body has sequential ifs outside do -/
+def exprToPat (e : IRExpr) : IRPattern :=
+  sorry /- exprToPat: body has sequential ifs outside do -/
+def isCompoundAssign (kind : TSAny) : Bool :=
+  (((((((kind == sorry) || (kind == sorry)) || (kind == sorry)) || (kind == sorry)) || (kind == sorry)) || (kind == sorry)) || (kind == sorry)) || (kind == sorry)
 
--- Block and statement parsers (require runtime AST traversal)
-def ParserCtx.parseBlock (_self : ParserCtxState) (_block : TSAny) (_eff : Effect) : IRExpr := default
+def compoundOp (kind : TSAny) : BinOp :=
+  sorry /- compoundOp: TS API body -/
+def tsBinOp (kind : TSAny) : String :=
+  sorry /- tsBinOp: TS API body -/
+def cap (s : String) : String :=
+  sorry /- cap: TS API body -/
+def fileToModuleName (filePath : String) : String :=
+    let base : String := sorry
+    let parts : Array String := sorry
+    "TSLean.Generated." ++ (sorry)
 
-def ParserCtx.parseStmts (_self : ParserCtxState) (_stmts : Array TSAny) (_eff : Effect) : IRExpr := default
+def leadingComment (node : TSAny) (sf : TSAny) : Option String :=
+  sorry /- leadingComment: TS API body -/
 
-def ParserCtx.parseStmt (_self : ParserCtxState) (_stmt : TSAny) (_rest : Array TSAny) (_eff : Effect) : StateT ParserCtxState IO IRExpr := do
-  pure default
+/-- Extract JSDoc comment text (/** ... *\/) from a node. Strips @param/@returns/@throws tags — these use a different Lean 4 syntax. Returns just the summary description. -/
+def jsdocComment (node : TSAny) (sf : TSAny) : Option String :=
+  sorry
 
--- Control flow parsers
-def ParserCtx.parseIf (_self : ParserCtxState) (_stmt : TSAny) (_rest : Array TSAny) (_eff : Effect) : IRExpr := default
-
-def ParserCtx.parseSwitch (_self : ParserCtxState) (_node : TSAny) : StateT ParserCtxState IO IRExpr := do
-  pure default
-
-def ParserCtx.parseSwitchCaseBody (_self : ParserCtxState) (_cl : TSAny) (_allClauses : Array TSAny) : StateT ParserCtxState IO IRExpr := do
-  pure default
-
--- Destructuring pattern parsers
-def ParserCtx.flattenObjectBinding (_self : ParserCtxState) (_pattern : TSAny) (_rhs : IRExpr) (_body : IRExpr) : StateT ParserCtxState IO IRExpr := do
-  pure default
-
-def ParserCtx.flattenArrayBinding (_self : ParserCtxState) (_pattern : TSAny) (_rhs : IRExpr) (_body : IRExpr) : IRExpr := default
-
-def ParserCtx.parseTry (_self : ParserCtxState) (_node : TSAny) (_rest : Array TSAny) (_eff : Effect) : IRExpr := default
-
--- Loop parsers
-def ParserCtx.parseFor (_self : ParserCtxState) (_node : TSAny) (_eff : Effect) : IRExpr := default
-
-def ParserCtx.parseWhile (_self : ParserCtxState) (_node : TSAny) (_eff : Effect) : IRExpr := default
-
--- Expression parsers
-def ParserCtx.parseExpr (_self : ParserCtxState) (_node : TSAny) : IRExpr := default
-
-def ParserCtx.parsePropAccess (_self : ParserCtxState) (_node : TSAny) (_ty : IRType) : IRExpr := default
-
-def ParserCtx.parseCall (_self : ParserCtxState) (_node : TSAny) (_ty : IRType) : StateT ParserCtxState IO IRExpr := do
-  pure default
-
-def ParserCtx.parseMethodCall (_self : ParserCtxState) (_node : TSAny) (_acc : TSAny) (_ty : IRType) : IRExpr := default
-
--- Check if a node represents a storage access (e.g. this.state.storage.get)
-def ParserCtx.isStorageAccess (_self : ParserCtxState) (_node : TSAny) : Bool := false
-
-def ParserCtx.parseNew (_self : ParserCtxState) (_node : NewExpression) (_ty : IRType) : IRExpr := default
-
-def ParserCtx.parseLambda (_self : ParserCtxState) (_node : TSAny) : IRExpr := default
-
-def ParserCtx.parseBinary (_self : ParserCtxState) (_node : TSAny) (_ty : IRType) : IRExpr := default
-
-def ParserCtx.parsePrefix (_self : ParserCtxState) (_node : PrefixUnaryExpression) (_ty : IRType) : IRExpr := default
-
-def ParserCtx.parsePostfix (_self : ParserCtxState) (_node : PostfixUnaryExpression) : IRExpr := default
-
-def ParserCtx.parseObjLit (_self : ParserCtxState) (_node : ObjectLiteralExpression) (_ty : IRType) : IRExpr := default
-
-def ParserCtx.parseTemplate (_self : ParserCtxState) (_node : TemplateExpression) : IRExpr := default
+/-- Check if a statement has a const/let/var with an interface/object type that acts as index signature -/
+def hasIndexSignature (node : TSAny) (checker : TSAny) : Bool :=
+  sorry /- hasIndexSignature: TS API body -/
 
 end TSLean.Generated.SelfHost.ParserIndex

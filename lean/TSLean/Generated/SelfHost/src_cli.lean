@@ -21,16 +21,14 @@ structure Args where
   ns : String
   deriving Repr, BEq, Inhabited
 
-def parseArgs (_argv : Array String) : StateT Unit IO Args := do
-  pure default
+def parseArgs (argv : Array String) : StateT Unit IO Args :=
+  sorry /- parseArgs: complex do body -/
+def single (opts : Args) : StateT Unit IO Unit :=
+  do pure ()
 
-def single (_opts : Args) : StateT Unit IO Unit := do
-  pure ()
-
--- // ─── Project mode ─────────────────────────────────────────────────────────────
 def project (opts : Args) : Unit :=
-  default
+  sorry
 
-def opts : Args := default /- parseArgs default -/
+def opts : Args := default /- parseArgs sorry -/
 
 end TSLean.Generated.SelfHost.SrcCli
