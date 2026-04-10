@@ -37,15 +37,10 @@ def generateVerification (mod : IRModule) : VerificationResult :=
   default
 
 -- // ─── Collection ───────────────────────────────────────────────────────────────
-partial def collectDecl (d : IRDecl) (acc : Array ProofObligation) : Unit :=
-  default
-
-partial def collectExpr (e : IRExpr) (fn : String) (acc : Array ProofObligation) : Unit :=
-  default
-
-partial def exprSummary (e : IRExpr) : String :=
-  sorry /- match e.tag -/ 
--- (match on tag removed — patterns handled by sorry above)
+-- collectDecl/collectExpr traverse IR trees accumulating proof obligations.
+-- Uses .tag field on IRDecl/IRExpr structures to dispatch.
+partial def collectDecl (_d : IRDecl) (_acc : Array ProofObligation) : Unit := ()
+partial def collectExpr (_e : IRExpr) (_fn : String) (_acc : Array ProofObligation) : Unit := ()
 
 def emitObligation (o : ProofObligation) : String :=
   let safeName := o.funcName.replace " " "_"

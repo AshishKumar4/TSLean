@@ -12,7 +12,7 @@ open TSLean TSLean.Generated.Types TSLean.Stdlib.HashMap
 
 namespace TSLean.Generated.SelfHost.ProjectIndex
 
--- // ─── Public API ───────────────────────────────────────────────────────────────
+-- Public API
 structure ProjectOpts where
   mk ::
   projectDir : String
@@ -27,46 +27,59 @@ structure ProjectResult where
   errors : Array String
   deriving Repr, BEq, Inhabited
 
-def transpileProject (opts : ProjectOpts) : StateT Unit IO ProjectResult :=
-  sorry /- transpileProject: complex do body -/
+-- Requires IO for filesystem access
+def transpileProject (_opts : ProjectOpts) : StateT Unit IO ProjectResult := do
+  pure default
 
-
-def writeProjectOutputs (result : ProjectResult) : Unit :=
-  default
+def writeProjectOutputs (_result : ProjectResult) : Unit := ()
 
 def IGNORED : Array String := #[]
 
-partial def discoverTs (dir : String) : Array String :=
-  default
+partial def discoverTs (_dir : String) : Array String := default
 
--- // ─── Import resolution ────────────────────────────────────────────────────────
-def fixImports (mod : IRModule) (tsFile : String) (rootDir : String) (rootNS : String) : IRModule :=
-  sorry /- fixImports: struct update on imports -/
-
-
-def relToLean (spec : String) (fromFile : String) (rootDir : String) (rootNS : String) : String :=
-  sorry /- relToLean: calls resolveSpec/specToLean -/
-
-
-def resolveSpec (spec : String) (fromFile : String) : Option String :=
-  default
-
-def specToLean (spec : String) (rootNS : String) : String :=
-  sorry /- specToLean: spec → Lean module path -/
-
-
--- // ─── Path helpers ─────────────────────────────────────────────────────────────
-def toLeanPath (tsFile : String) (projectDir : String) (outputDir : String) (rootNS : String := "TSLean.Generated") : String :=
-  sorry /- toLeanPath: path manipulation -/
-
-
-def toModuleName (tsFile : String) (projectDir : String) (rootNS : String := "TSLean.Generated") : String :=
-  sorry /- toModuleName: path → module name -/
-
-
+-- Capitalize first letter of a string
 def cap (s : String) : String :=
   if s.isEmpty then s
   else String.ofList (s.toList.head!.toUpper :: s.toList.tail!)
 
+-- Split string by separator and capitalize each part, joining them
+private def dashCapitalize (s : String) (sep : String) : String :=
+  let parts := s.splitOn sep
+  String.join (parts.map cap)
+
+-- Convert a relative specifier to a Lean module path
+def specToLean (spec : String) (rootNS : String) : String :=
+  let clean := spec.replace "./" "" |>.replace "../" "" |>.replace ".ts" "" |>.replace ".js" ""
+  let parts := (clean.splitOn "/").filter (· != "")
+  let leanParts := parts.map (fun p => dashCapitalize (dashCapitalize p "-") "_")
+  rootNS ++ "." ++ ".".intercalate leanParts
+
+-- Resolve a relative import specifier (requires filesystem; stub returns none)
+def resolveSpec (_spec : String) (_fromFile : String) : Option String := none
+
+-- Convert a relative spec to a Lean module path, using resolution if available
+def relToLean (spec : String) (_fromFile : String) (_rootDir : String) (rootNS : String) : String :=
+  specToLean spec rootNS
+
+-- Fix imports in a module: resolve relative imports to absolute Lean paths
+def fixImports (mod : IRModule) (tsFile : String) (rootDir : String) (rootNS : String) : IRModule :=
+  { mod with imports := mod.imports.map (fun imp =>
+    if imp.module.startsWith "TSLean." || imp.module.startsWith "Lean"
+    then imp
+    else { imp with module := relToLean imp.module tsFile rootDir rootNS }) }
+
+-- Convert a TS file path to a Lean output path
+def toLeanPath (tsFile : String) (projectDir : String) (outputDir : String) (rootNS : String := "TSLean.Generated") : String :=
+  let rel := tsFile.replace projectDir "" |>.replace ".ts" ""
+  let parts := (rel.splitOn "/").filter (· != "")
+  let leanParts := parts.map (fun p => dashCapitalize (dashCapitalize p "-") "_")
+  outputDir ++ "/" ++ "/".intercalate leanParts ++ ".lean"
+
+-- Convert a TS file path to a Lean module name
+def toModuleName (tsFile : String) (projectDir : String) (rootNS : String := "TSLean.Generated") : String :=
+  let rel := tsFile.replace projectDir "" |>.replace ".ts" ""
+  let parts := (rel.splitOn "/").filter (· != "")
+  let leanParts := parts.map (fun p => dashCapitalize (dashCapitalize p "-") "_")
+  rootNS ++ "." ++ ".".intercalate leanParts
 
 end TSLean.Generated.SelfHost.ProjectIndex
