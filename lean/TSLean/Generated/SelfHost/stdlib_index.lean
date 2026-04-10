@@ -57,9 +57,23 @@ def GLOBALS : AssocMap String GlobalTx := default
 def lookupGlobal (name : String) : Option GlobalTx :=
   GLOBALS.get? name
 
+def typeObjKind (t : IRType) : ObjKind :=
+  match t with
+  | .String => .String
+  | .Array _ => .Array
+  | .Map _ _ => .Map
+  | .Set _ => .Set
+  | .TypeRef name _ =>
+    if name == "String" then .String
+    else if name == "Array" then .Array
+    else if name == "Map" || name == "HashMap" then .Map
+    else if name == "Set" || name == "HashSet" then .Set
+    else .Unknown
+  | _ => .Unknown
+
 -- // ─── Binary operator translation ──────────────────────────────────────────────
 def translateBinOp (op : String) (lhsType : IRType) : String :=
-  if (op == "Add") && ((sorry : Bool)) then
+  if (op == "Add") && (typeObjKind lhsType == .String) then
       "++"
     else
       match op with
@@ -84,18 +98,4 @@ def translateBinOp (op : String) (lhsType : IRType) : String :=
         | "Concat" => "++"
         | "NullCoalesce" => "NullCoalesce"
         | _ => op
-
-def typeObjKind (t : IRType) : ObjKind :=
-  match t with
-  | .String => .String
-  | .Array _ => .Array
-  | .Map _ _ => .Map
-  | .Set _ => .Set
-  | .TypeRef name _ =>
-    if name == "String" then .String
-    else if name == "Array" then .Array
-    else if name == "Map" || name == "HashMap" then .Map
-    else if name == "Set" || name == "HashSet" then .Set
-    else .Unknown
-  | _ => .Unknown
 end TSLean.Generated.SelfHost.StdlibIndex

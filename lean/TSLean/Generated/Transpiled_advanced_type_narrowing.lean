@@ -47,10 +47,10 @@ def Cat.meow (self : CatState) : IO Unit :=
     pure ()
 
 def makeSound (animal : AnimalState) : Unit :=
-  if (sorry : Bool) /- animal matches Dog -/ then
+  if (false : Bool) /- animal matches Dog — instanceof not available in Lean -/ then
     default
   else
-    if (sorry : Bool) /- animal matches Cat -/ then
+    if (false : Bool) /- animal matches Cat — instanceof not available in Lean -/ then
       default
     else
       ()
