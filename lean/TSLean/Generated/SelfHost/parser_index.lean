@@ -58,8 +58,7 @@ def ParserCtx.parseExportAssignment (self : ParserCtxState) (node : TSAny) : Opt
 def ParserCtx.parseFnDecl (self : ParserCtxState) (node : TSAny) : IRDecl :=
   sorry /- ParserCtx.parseFnDecl: parser body -/
 def ParserCtx.parseParams (self : ParserCtxState) (params : Array TSAny) : Array IRParam :=
-  sorry
-
+  sorry /- ParserCtx: body has sequential ifs outside do -/
 def ParserCtx.parseClassDecl (self : ParserCtxState) (node : TSAny) : Array IRDecl :=
   default
 
@@ -69,8 +68,7 @@ def ParserCtx.parseSetter (self : ParserCtxState) (node : TSAny) (className : St
   sorry /- ParserCtx.parseSetter: parser body -/
 
 def ParserCtx.isDOClass (self : ParserCtxState) (node : TSAny) : Bool :=
-  (sorry) || (sorry)
-
+  sorry /- isDOClass: TS API field chains -/
 def ParserCtx.classStateFields (self : ParserCtxState) (node : TSAny) : Array String :=
   default
 
@@ -85,7 +83,8 @@ def ParserCtx.parseInterface (self : ParserCtxState) (node : TSAny) : String :=
 def ParserCtx.parseTypeAlias (self : ParserCtxState) (node : TSAny) : String :=
   sorry /- ParserCtx.parseTypeAlias: parser body -/
 def ParserCtx.parseEnum (self : ParserCtxState) (node : TSAny) : String :=
-  sorry /- ParserCtx: complex do body -/
+  sorry /- ParserCtx.parseEnum: parser body -/
+
 def ParserCtx.parseVarStmt (self : ParserCtxState) (node : TSAny) : Array IRDecl :=
   default
 
@@ -110,37 +109,38 @@ def ParserCtx.flattenObjectBinding (self : ParserCtxState) (pattern : TSAny) (rh
   do sorry /- ParserCtx.flattenObjectBinding: parser body -/
 
 def ParserCtx.flattenArrayBinding (self : ParserCtxState) (pattern : TSAny) (rhs : IRExpr) (body : IRExpr) : IRExpr :=
-  sorry /- ParserCtx.flattenArrayBinding: parser body -/
+  default
+
 def ParserCtx.parseTry (self : ParserCtxState) (node : TSAny) (rest : Array TSAny) (eff : Effect) : IRExpr :=
   sorry /- ParserCtx.parseTry: parser body -/
-
 def ParserCtx.parseFor (self : ParserCtxState) (node : TSAny) (eff : Effect) : IRExpr :=
   sorry /- ParserCtx.parseFor: parser body -/
+
 def ParserCtx.parseWhile (self : ParserCtxState) (node : TSAny) (eff : Effect) : IRExpr :=
   sorry /- ParserCtx.parseWhile: parser body -/
-
 def ParserCtx.parseExpr (self : ParserCtxState) (node : TSAny) : IRExpr :=
-  sorry /- ParserCtx.parseExpr: parser body -/
-def ParserCtx.parsePropAccess (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr :=
   sorry /- ParserCtx: body has sequential ifs outside do -/
+def ParserCtx.parsePropAccess (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr :=
+  sorry /- ParserCtx.parsePropAccess: parser body -/
 def ParserCtx.parseCall (self : ParserCtxState) (node : TSAny) (ty : IRType) : StateT ParserCtxState IO IRExpr :=
-  do sorry /- ParserCtx.parseCall: parser body -/
-
-def ParserCtx.parseMethodCall (self : ParserCtxState) (node : TSAny) (acc : TSAny) (ty : IRType) : IRExpr :=
   sorry /- ParserCtx: complex do body -/
+def ParserCtx.parseMethodCall (self : ParserCtxState) (node : TSAny) (acc : TSAny) (ty : IRType) : IRExpr :=
+  sorry /- ParserCtx.parseMethodCall: parser body -/
 def ParserCtx.isStorageAccess (self : ParserCtxState) (node : TSAny) : Bool :=
   sorry /- ParserCtx.isStorageAccess: parser body -/
+
 def ParserCtx.parseNew (self : ParserCtxState) (node : NewExpression) (ty : IRType) : IRExpr :=
-  sorry /- ParserCtx: body has sequential ifs outside do -/
+  sorry /- ParserCtx.parseNew: parser body -/
 def ParserCtx.parseLambda (self : ParserCtxState) (node : TSAny) : IRExpr :=
   sorry /- ParserCtx.parseLambda: parser body -/
+
 def ParserCtx.parseBinary (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr :=
-  sorry /- ParserCtx: body has sequential ifs outside do -/
+  sorry /- ParserCtx.parseBinary: parser body -/
 def ParserCtx.parsePrefix (self : ParserCtxState) (node : PrefixUnaryExpression) (ty : IRType) : IRExpr :=
   sorry /- ParserCtx.parsePrefix: parser body -/
+
 def ParserCtx.parsePostfix (self : ParserCtxState) (node : PostfixUnaryExpression) : IRExpr :=
   sorry /- ParserCtx.parsePostfix: parser body -/
-
 def ParserCtx.parseObjLit (self : ParserCtxState) (node : ObjectLiteralExpression) (ty : IRType) : IRExpr :=
   default
 

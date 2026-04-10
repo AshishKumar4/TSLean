@@ -48,9 +48,7 @@ def RewriteCtx.rewriteDecl (self : RewriteCtxState) (d : IRDecl) : IRDecl :=
 -- (match on tag removed — patterns handled by sorry above)
 
 def RewriteCtx.rewrite (self : RewriteCtxState) (e : IRExpr) : IRExpr :=
-  sorry /- match e.tag -/ 
--- (match on tag removed — patterns handled by sorry above)
-
+  sorry /- match e.tag -/
 def RewriteCtx.rewriteDoStmt (self : RewriteCtxState) (s : DoStmt) : DoStmt :=
   sorry /- match s.tag -/ 
 -- (match on tag removed — patterns handled by sorry above)
@@ -58,7 +56,7 @@ def RewriteCtx.rewriteDoStmt (self : RewriteCtxState) (s : DoStmt) : DoStmt :=
 def RewriteCtx.rewriteMatch (self : RewriteCtxState) (e : IRExpr) : IRExpr :=
   sorry /- rewrite match: detect discriminant and rewrite cases -/
 def RewriteCtx.detectDiscriminant (self : RewriteCtxState) (scrutinee : IRExpr) : Option String :=
-  sorry /- RewriteCtx: detect discriminant field -/ /- RewriteCtx: uses .tag on inductive -/
+  sorry /- RewriteCtx: detect discriminant field -/
 def RewriteCtx.rewriteDiscCase (self : RewriteCtxState) (c : IRCase) (union : UnionInfo) (scrutineeName : Option String) : IRCase :=
   sorry /- rewriteDiscCase: complex body -/
 def RewriteCtx.rewriteCase (self : RewriteCtxState) (c : IRCase) : IRCase :=

@@ -87,12 +87,15 @@ if (code.includes('import TSLean.Generated.SelfHost.ir_types')) {
     // Remove deriving clauses inside mutual
     mutual = mutual.replace(/  deriving Repr, BEq, Inhabited\n/g, '');
 
-    // Add sorry-based instances after the mutual block
+    // Add sorry-based instances after the mutual block (skip if already present)
     let instances = '\n';
     for (const name of typeNames) {
-      instances += `instance : Inhabited ${name} := ⟨sorry⟩\n`;
-      instances += `instance : BEq ${name} := ⟨fun _ _ => false⟩\n`;
-      instances += `instance : Repr ${name} := ⟨fun _ _ => .text s!"${name}"⟩\n`;
+      if (!after.includes(`Inhabited ${name}`))
+        instances += `instance : Inhabited ${name} := ⟨sorry⟩\n`;
+      if (!after.includes(`BEq ${name}`))
+        instances += `instance : BEq ${name} := ⟨fun _ _ => false⟩\n`;
+      if (!after.includes(`Repr ${name}`))
+        instances += `instance : Repr ${name} := ⟨fun _ _ => .text s!"${name}"⟩\n`;
     }
 
     code = before + mutual + instances + after;
@@ -103,15 +106,31 @@ if (code.includes('import TSLean.Generated.SelfHost.ir_types')) {
 // This MUST run before other passes that collapse bodies, to catch the full bodies.
 // Also stub 1-line bodies that contain struct literals or forward references.
 if (baseName === 'parser_index') {
-  // Pre-fix: stub specific 1-line functions with known problems
+  // Pre-fix: stub specific functions with known problems
   code = code.replace(
     /def ParserCtx\.parseBlock[\s\S]*?(?=\ndef |\nend )/,
     `def ParserCtx.parseBlock (self : ParserCtxState) (block : TSAny) (eff : Effect) : IRExpr :=\n  sorry /- parseBlock: calls parseStmts -/\n`
+  );
+  // isDOClass: single-line garbled body with TS API field chains
+  code = code.replace(
+    /def ParserCtx\.isDOClass[\s\S]*?(?=\ndef |\nend )/,
+    `def ParserCtx.isDOClass (self : ParserCtxState) (node : TSAny) : Bool :=\n  sorry /- isDOClass: TS API field chains -/\n`
   );
   // Stub any function whose single-line body contains `{ tag :=`
   code = code.replace(
     /^((?:partial\s+)?def\s+\w[\w.]*\s.*:=)\n(\s+\{[^}]*tag :=.*\}\s*)$/gm,
     '$1\n  sorry /- struct literal on inductive -/'
+  );
+  // Stub single-line bodies with garbled expressions (multiple sorry /- ... -/ on one line)
+  code = code.replace(
+    /^((?:partial\s+)?def\s+\w[\w.]*\s.*:=)\n(\s+.*sorry \/\-.*-\/.*sorry \/\-.*-\/.*)$/gm,
+    (_, sig) => {
+      const funcName = sig.match(/def\s+([\w.]+)/)?.[1] ?? 'unknown';
+      const isMonadic = /\b(?:IO|StateT|ExceptT)\b/.test(sig);
+      return isMonadic
+        ? `${sig}\n  do sorry /- ${funcName}: garbled body -/`
+        : `${sig}\n  sorry /- ${funcName}: garbled body -/`;
+    }
   );
   const pLines = code.split('\n');
   const pResult: string[] = [];
@@ -180,24 +199,24 @@ if (baseName === 'ir_types') {
   // Replace broken isPure/dedup/combineEffects/hasAsync/hasState/hasExcept/hasIO
   const funcFixes: [RegExp, string][] = [
     // isPure: pattern match instead of .tag access (include preceding doc comment)
-    [/\/\-\-[^]*?-\/\ndef isPure \(e : Effect\) : Bool :=\n\s+default == "Pure"/,
+    [/\/\-\-[^]*?-\/\ndef isPure \(e : Effect\) : Bool :=\n\s+(?:default|\(sorry[^)]*\)) == "Pure"/,
      `/-- True when the effect is strictly Pure. -/\ndef isPure : Effect → Bool\n  | .Pure => true\n  | _ => false`],
-    [/def isPure \(e : Effect\) : Bool :=\n\s+default == "Pure"/,
+    [/def isPure \(e : Effect\) : Bool :=\n\s+(?:default|\(sorry[^)]*\)) == "Pure"/,
      `def isPure : Effect → Bool\n  | .Pure => true\n  | _ => false`],
     // dedup: foldl with dedup instead of Set mutation
-    [/def dedup \(effects : Array Effect\) : Array Effect :=[\s\S]*?true\) effects/,
+    [/def dedup \(effects : Array Effect\) : Array Effect :=[\s\S]*?(?:true\) effects|#\[\])/,
      `def dedup (effects : Array Effect) : Array Effect :=\n  effects.foldl (fun acc e => if acc.any (· == e) then acc else acc.push e) #[]`],
     // combineEffects: flatten Combined, remove Pure, dedup
     [/def combineEffects \(effects : Array Effect\) : Effect :=[\s\S]*?Effect\.Combined deduped/,
      `def combineEffects (effects : Array Effect) : Effect :=\n  let flat := effects.foldl (fun acc e =>\n    match e with\n    | .Combined inner => acc ++ inner\n    | other => acc.push other) #[]\n  let noPure := flat.filter (fun e => !isPure e)\n  let deduped := dedup noPure\n  if deduped.size == 0 then Pure\n  else if deduped.size == 1 then deduped.getD 0 default\n  else Effect.Combined deduped`],
     // hasAsync/hasState/hasExcept/hasIO: pattern match on Effect
-    [/partial def hasAsync \(e : Effect\) : Bool :=[\s\S]*?\(sorry\)\)/,
+    [/partial def hasAsync \(e : Effect\) : Bool :=[\s\S]*?any hasAsync\)+/,
      `partial def hasAsync : Effect → Bool\n  | .Async => true\n  | .Combined es => es.any hasAsync\n  | _ => false`],
-    [/partial def hasState \(e : Effect\) : Bool :=[\s\S]*?\(sorry\)\)/,
+    [/partial def hasState \(e : Effect\) : Bool :=[\s\S]*?any hasState\)+/,
      `partial def hasState : Effect → Bool\n  | .State _ => true\n  | .Combined es => es.any hasState\n  | _ => false`],
-    [/partial def hasExcept \(e : Effect\) : Bool :=[\s\S]*?\(sorry\)\)/,
+    [/partial def hasExcept \(e : Effect\) : Bool :=[\s\S]*?any hasExcept\)+/,
      `partial def hasExcept : Effect → Bool\n  | .Except _ => true\n  | .Combined es => es.any hasExcept\n  | _ => false`],
-    [/partial def hasIO \(e : Effect\) : Bool :=[\s\S]*?\(sorry\)\)/,
+    [/partial def hasIO \(e : Effect\) : Bool :=[\s\S]*?any hasIO\)+/,
      `partial def hasIO : Effect → Bool\n  | .IO => true\n  | .Combined es => es.any hasIO\n  | _ => false`],
   ];
 
@@ -677,6 +696,8 @@ code = code.replace(/Array\.filter \(fun \w+ => sorry[^)]*\) \([^)]+\)/g, 'sorry
 code = code.replace(/\bsorry\s+(true|false)\b/g, '(sorry : Bool)');
 // Pattern: `String default` where String is treated as function
 code = code.replace(/\bString default\b/g, 'toString default');
+// Pattern: `toString default` — typeclass can't resolve without type annotation
+code = code.replace(/\btoString default\b/g, '(sorry : String)');
 // Pattern: `let x : Bool := y` where `: Bool` causes parsing issues in do blocks
 // Remove the type annotation — Lean can infer it
 code = code.replace(/let (\w+) : Bool := /g, 'let $1 := ');
@@ -737,12 +758,67 @@ code = code.replace(
   (_, items) => `: Array String := #[${items}]`
 );
 
+// ─── Fix N0: `if none then` pattern → sorry the function body ───────────────
+// When codegen produces `if none then` (from TS `if (!nullable)` pattern),
+// Lean can't use Option as Bool. Sorry the entire function body.
+{
+  const lines = code.split('\n');
+  const result: string[] = [];
+  let skipBody = false;
+  let skipIndent = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (skipBody) {
+      const indent = line.search(/\S/);
+      if (indent >= 0 && indent <= skipIndent && line.trim() !== '' &&
+          !line.trim().startsWith('--') && !line.trim().startsWith('else')) {
+        skipBody = false;
+        result.push(line);
+      }
+      continue;
+    }
+    if (/\bif none then\b/.test(line)) {
+      // Find the def this belongs to and sorry the body
+      let defLine = -1;
+      for (let k = result.length - 1; k >= 0; k--) {
+        if (/^\s*(?:partial\s+)?def\s/.test(result[k])) { defLine = k; break; }
+      }
+      if (defLine >= 0) {
+        const defText = result[defLine];
+        const defIndent = defText.search(/\S/);
+        const funcName = defText.match(/def\s+([\w.]+)/)?.[1] ?? 'unknown';
+        const isMonadic = /\b(?:IO|StateT|ExceptT)\b/.test(defText);
+        result.splice(defLine + 1);
+        if (isMonadic) {
+          result.push(`  do sorry /- ${funcName}: if-none pattern -/`);
+        } else {
+          result.push(`  sorry /- ${funcName}: if-none pattern -/`);
+        }
+        result.push('');
+        skipBody = true;
+        skipIndent = defIndent;
+      } else {
+        result.push(line);
+      }
+    } else {
+      result.push(line);
+    }
+  }
+  code = result.join('\n');
+}
+
 // ─── Fix N: Truthiness on non-Bool types ────────────────────────────────────
 // Pattern: `if x.size then` — .size returns Nat, not Bool
 code = code.replace(/if (\w+)\.size then/g, 'if $1.size > 0 then');
-// Pattern: `def x : T := f default` where f returns a monad — replace with `default`
-code = code.replace(/^(def \w+ : (?:Args|[A-Z]\w+) :=) (\w+ default)$/gm,
+// Pattern: `def x : T := f default/sorry` where f returns a monad — replace with `default`
+code = code.replace(/^(def \w+ : (?:Args|[A-Z]\w+) :=) (\w+ (?:default|sorry))$/gm,
   '$1 default /- $2 -/');
+// Pattern: `def x : T := parseArgs sorry` — monadic return assigned to pure
+code = code.replace(/^(def \w+ : \w+ :=) parseArgs sorry$/gm,
+  '$1 default /- parseArgs sorry -/');
+// Pattern: `default.bind` or `default.method` — Lean can't resolve method on default
+code = code.replace(/\bdefault\.bind\b.*$/gm, 'sorry');
+code = code.replace(/\bdefault\.\w+\b.*$/gm, 'sorry');
 // Pattern: functions with deeply broken do blocks
 // Detect: progressively deepening let chains or let rec _loop patterns → sorry
 {
@@ -883,12 +959,12 @@ code = code.replace(
   sorry /- recursive traversal substituting field accesses -/`
 );
 
-// ─── Fix: detectDiscriminant return type ─────────────────────────────────────
-// Change StateT to pure return
+// ─── Fix: detectDiscriminant return type and body ────────────────────────────
+// The body is too complex (forward refs, monadic). Sorry the whole thing.
 code = code.replace(
-  /def RewriteCtx\.detectDiscriminant.*: StateT.*\n\s+sorry/,
+  /def RewriteCtx\.detectDiscriminant[\s\S]*?(?=\ndef RewriteCtx\.rewriteDiscCase)/,
   `def RewriteCtx.detectDiscriminant (self : RewriteCtxState) (scrutinee : IRExpr) : Option String :=
-  sorry /- RewriteCtx: detect discriminant field -/`
+  sorry /- RewriteCtx: detect discriminant field -/\n`
 );
 
 // ─── Fix: duplicate StructLit in rewrite match ───────────────────────────────
@@ -912,10 +988,20 @@ code = code.replace(
   code = result.join('\n');
 }
 
+// ─── Fix: RewriteCtx.rewrite forward references ─────────────────────────────
+// rewrite calls rewriteMatch/rewriteStructLit/rewriteFields before they're defined
+if (baseName === 'rewrite_index') {
+  code = code.replace(
+    /def RewriteCtx\.rewrite \(self : RewriteCtxState\) \(e : IRExpr\) : IRExpr :=[\s\S]*?(?=\ndef RewriteCtx\.rewriteDoStmt)/,
+    `def RewriteCtx.rewrite (self : RewriteCtxState) (e : IRExpr) : IRExpr :=
+  sorry /- match e.tag -/\n`
+  );
+}
+
 // ─── Fix: RewriteCtx.rewriteMatch uses `default` for field access ────────────
 if (baseName === 'rewrite_index') {
   code = code.replace(
-    /def RewriteCtx\.rewriteMatch[\s\S]*?sorry \/\- struct update on e -\//,
+    /def RewriteCtx\.rewriteMatch[\s\S]*?sorry \/\- (?:struct update on e|rewrite match[^-]*) -\//,
     `def RewriteCtx.rewriteMatch (self : RewriteCtxState) (e : IRExpr) : IRExpr :=
   sorry /- rewrite match: detect discriminant and rewrite cases -/`
   );
@@ -1178,6 +1264,12 @@ code = code.replace(/^(\s+)check \w+$/gm, '$1sorry /- check -/');
   }
   code = result.join('\n');
 }
+
+// ─── Fix AA: `X.tag == "Foo"` where X is an inductive type → (sorry : Bool) ─
+// IRType and Effect are inductives — .tag access is invalid.
+// Only replace for known inductive-typed params (lhsType, eff, t, etc.)
+code = code.replace(/\b(lhsType|retType|eff|paramType)\.tag == "[^"]+"/g, '(sorry : Bool)');
+code = code.replace(/\b(lhsType|retType|eff|paramType)\.tag != "[^"]+"/g, '(sorry : Bool)');
 
 // ─── Fix BB: `e.tag` on IRExpr/IRDecl → sorry for needsParens/isSimpleValue ─
 // Some functions like needsParens use `e.tag == "App"` which fails because

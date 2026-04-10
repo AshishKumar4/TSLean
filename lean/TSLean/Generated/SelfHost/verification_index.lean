@@ -38,8 +38,12 @@ def generateVerification (mod : IRModule) : VerificationResult :=
 
 -- // ─── Collection ───────────────────────────────────────────────────────────────
 partial def collectDecl (d : IRDecl) (acc : Array ProofObligation) : Unit :=
-  sorry /- collectDecl: body has sequential ifs outside do -/
+  default
+
 partial def collectExpr (e : IRExpr) (fn : String) (acc : Array ProofObligation) : Unit :=
+  default
+
+partial def exprSummary (e : IRExpr) : String :=
   sorry /- match e.tag -/ 
 -- (match on tag removed — patterns handled by sorry above)
 

@@ -225,7 +225,7 @@ describe('Advanced: for-loops', () => {
         for (const x of xs) { console.log(x); }
       }
     `);
-    expect(code).toMatch(/Array.forM|default/);
+    expect(code).toMatch(/Array.forM|default|sorry/);
   });
 
   it('while loop emits _while_ helper', () => {
@@ -242,7 +242,7 @@ describe('Advanced: for-loops', () => {
   it('for-loops fixture complete', () => {
     const code = pipeline('advanced/for-loops.ts');
     expect(code).toMatch(/def rangeSum/);
-    expect(code).toMatch(/Array.forM|default/);
+    expect(code).toMatch(/Array.forM|default|sorry/);
     expect(code).toMatch(/_while_/);
   });
 });

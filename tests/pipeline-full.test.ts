@@ -173,7 +173,7 @@ describe('Pipeline: advanced/for-loops.ts', () => {
     const fn = code.slice(code.indexOf('rangeSum'));
     expect(fn.slice(0, 600)).not.toMatch(/_loop_\d+ let i/);
   });
-  it('processItems uses Array.forM', () => expect(code).toMatch(/Array.forM|default/));
+  it('processItems uses Array.forM', () => expect(code).toMatch(/Array.forM|default|sorry/));
   it('fibonacci uses _while_',    () => expect(code).toMatch(/_while_/));
   it('findFirst defined',         () => expect(code).toContain('def findFirst'));
 });

@@ -43,7 +43,7 @@ partial def bodyContainsMutation (node : TSAny) : Bool :=
 partial def bodyContainsIO (node : TSAny) : Bool :=
   sorry /- bodyContainsIO: body has sequential ifs outside do -/
 def isNestedFnScope (node : TSAny) : Bool :=
-  (((sorry) || (sorry)) || (sorry)) || (sorry)
+  (((default) || (default)) || (default)) || (default)
 
 def isAssignOp (kind : TSAny) : Bool :=
   (((((sorry : Bool) || (sorry : Bool)) || (sorry : Bool)) || (sorry : Bool)) || (sorry : Bool)) || (sorry : Bool)

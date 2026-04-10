@@ -59,7 +59,7 @@ def lookupGlobal (name : String) : Option GlobalTx :=
 
 -- // ─── Binary operator translation ──────────────────────────────────────────────
 def translateBinOp (op : String) (lhsType : IRType) : String :=
-  if (op == "Add") && (default == "String") then
+  if (op == "Add") && ((sorry : Bool)) then
       "++"
     else
       match op with

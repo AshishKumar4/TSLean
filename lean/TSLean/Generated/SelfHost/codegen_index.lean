@@ -22,7 +22,7 @@ def DEFAULT_DERIVING : String := "Repr, BEq, Inhabited"
 
 
 def generateLean (mod : IRModule) : String :=
-  sorry
+  default
 
 -- State for Gen
 structure GenState where
