@@ -300,11 +300,9 @@ function serializeNode(
   if (n.propertyName && isNode(n.propertyName))
     result.propertyName = serializeNode(n.propertyName, checker, sf, depth + 1);
 
-  // Heritage clauses
+  // Heritage clauses and union types
   if (typeof n.token === 'number') result.token = n.token;
-  if (n.types && Array.isArray(n.types) && n !== node)
-    result.types = serializeArray(n.types, checker, sf, depth);
-  else if (n.types && Array.isArray(n.types) && ts.isHeritageClause(node))
+  if (n.types && Array.isArray(n.types))
     result.types = serializeArray(n.types, checker, sf, depth);
 
   // Leading comments

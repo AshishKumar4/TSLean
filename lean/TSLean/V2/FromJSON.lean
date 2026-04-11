@@ -463,12 +463,68 @@ private partial def lowerClassDecl (j : Json) : Array LeanDecl :=
     else none
   #[.Structure name #[] fields none DEFAULT_DERIVING none]
 
+private def hasDiscriminantField (j : Json) : Bool :=
+  let members := fieldArr j "members"
+  members.any fun m =>
+    let fname := (fieldNode m "name").map nodeText |>.getD ""
+    let isDiscriminant := fname == "kind" || fname == "tag" || fname == "type"
+    let hasLiteralType := match fieldNode m "type" with
+      | some tn => nodeKind tn == "LiteralType"
+      | none => false
+    isDiscriminant && hasLiteralType
+
+private partial def lowerDiscriminatedUnion (name : String) (tyParams : Array LeanTyParam)
+    (variants : Array Json) : Array LeanDecl :=
+  let ctors := variants.map fun v =>
+    let members := fieldArr v "members"
+    let discMember := members.find? fun m =>
+      let fname := (fieldNode m "name").map nodeText |>.getD ""
+      fname == "kind" || fname == "tag" || fname == "type"
+    let ctorName := match discMember with
+      | some dm =>
+        let litType := fieldNode dm "type"
+        let litText := litType.bind fun lt => (fieldNode lt "literal").map nodeText
+        (litText.getD "Unknown").capitalize
+      | none => "Unknown"
+    let fields := members.filterMap fun m =>
+      let fname := (fieldNode m "name").map nodeText |>.getD ""
+      if fname == "kind" || fname == "tag" || fname == "type" then none
+      else
+        let fty := match fieldNode m "type" with
+          | some tn => mapTypeNode tn | none => mapResolvedType m
+        some (some fname, fty)
+    LeanCtor.mk ctorName fields
+  #[.Inductive name tyParams ctors DEFAULT_DERIVING none]
+
 private partial def lowerTypeAliasDecl (j : Json) : Array LeanDecl :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
   let tyParams := extractTypeParams j
-  let body := match fieldNode j "type" with | some tn => mapTypeNode tn | none => .TyName "Unit"
-  #[.Abbrev name tyParams body none]
+  -- Check for discriminated union pattern: type X = {kind:'A',...} | {kind:'B',...}
+  let typeNode := fieldNode j "type"
+  match typeNode with
+  | some tn =>
+    if nodeKind tn == "UnionType" then
+      let types := fieldArr tn "types"
+      -- Check for discriminated union: {kind:'A',...} | {kind:'B',...}
+      let isDiscriminated := types.size > 0 && types.all fun t =>
+        nodeKind t == "TypeLiteral" && hasDiscriminantField t
+      -- Check for string enum: 'a' | 'b' | 'c'
+      let isStringEnum := types.size > 0 && types.all fun t =>
+        nodeKind t == "LiteralType"
+      if isDiscriminated then
+        lowerDiscriminatedUnion name tyParams types
+      else if isStringEnum then
+        let ctors := types.map fun t =>
+          let text := (fieldNode t "literal").map nodeText |>.getD "Unknown"
+          LeanCtor.mk text.capitalize #[]
+        #[.Inductive name tyParams ctors DEFAULT_DERIVING none]
+      else
+        #[.Abbrev name tyParams (mapTypeNode tn) none]
+    else
+      #[.Abbrev name tyParams (mapTypeNode tn) none]
+  | none => #[.Abbrev name tyParams (.TyName "Unit") none]
 
+/-- Check if a TypeLiteral has a discriminant field (kind/tag/type with string literal). -/
 private partial def lowerEnumDecl (j : Json) : Array LeanDecl :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
   let ctors := (fieldArr j "members").map fun m =>
