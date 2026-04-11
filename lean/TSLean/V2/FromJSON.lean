@@ -612,7 +612,12 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
   else if kind == "SatisfiesExpression" || kind == "NonNullExpression" then
     (fieldNode j "expression").map re |>.getD "default"
   else if kind == "ParenthesizedExpression" then
-    "(" ++ ((fieldNode j "expression").map re |>.getD "default") ++ ")"
+    let inner := (fieldNode j "expression").map re |>.getD "default"
+    let innerKind := (fieldNode j "expression").map nodeKind |>.getD ""
+    -- Strip source-level parens for ternary/if expressions (TS normalizes them in IR)
+    -- but keep parens for other compound expressions that need them
+    if innerKind == "ConditionalExpression" then inner
+    else "(" ++ inner ++ ")"
   else if kind == "BinaryExpression" then
     let leftJ := fieldNode j "left"
     let rightJ := fieldNode j "right"
@@ -670,20 +675,27 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     let obj := (fieldNode j "expression").map re |>.getD "default"
     let field := (fieldNode j "name").map nodeText |>.getD ""
     -- Optional chaining: obj?.field → obj.bind (fun _oc => some _oc.field)
-    let hasQuestionDot := (fieldNode j "questionDotToken").isSome
-    if hasQuestionDot then
-      obj ++ ".bind (fun _oc => some _oc." ++ field ++ ")"
-    else
-    -- .tag on inductive/union type aliases → (sorry : String)
-    -- Matches TS IR lowerer's isInductiveType check for Effect, IRType, BinOp, UnOp
-    let isInductiveTagAccess := field == "tag" && match fieldNode j "expression" with
-      | some objJ =>
-        let alias := resolvedType objJ |>.bind (fun rt => getField rt "aliasName" |>.bind getStr)
-        match alias with
-        | some n => n == "IRType" || n == "Effect" || n == "BinOp" || n == "UnOp"
-        | none => false
-      | none => false
-    if isInductiveTagAccess then "(sorry : String)"
+     -- When .tag is on an inductive type, render as (sorry : String) matching TS lowerer
+     let hasQuestionDot := (fieldNode j "questionDotToken").isSome
+     let checkInductiveAlias := fun (objJ : Json) =>
+       let alias := resolvedType objJ |>.bind (fun rt => getField rt "aliasName" |>.bind getStr)
+       match alias with
+       | some n => n == "IRType" || n == "Effect" || n == "BinOp" || n == "UnOp"
+       | none => false
+     if hasQuestionDot then
+       let isTagOnInductive := field == "tag" && match fieldNode j "expression" with
+         | some objJ => checkInductiveAlias objJ | none => false
+       if isTagOnInductive then
+         obj ++ ".bind (fun _oc => some (sorry : String))"
+       else
+         obj ++ ".bind (fun _oc => some _oc." ++ field ++ ")"
+     else
+     -- .tag on inductive/union type aliases → (sorry : String)
+     -- Matches TS IR lowerer's isInductiveType check for Effect, IRType, BinOp, UnOp
+     let isInductiveTagAccess := field == "tag" && match fieldNode j "expression" with
+       | some objJ => checkInductiveAlias objJ
+       | none => false
+     if isInductiveTagAccess then "(sorry : String)"
     else
     -- Discriminated union field substitution: s.radius → radius
     match substFieldAccess ctx obj field with
