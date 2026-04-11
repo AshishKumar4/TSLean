@@ -635,6 +635,23 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
         obj ++ "." ++ mapped
   else if kind == "CallExpression" then
     let fnJ := fieldNode j "expression"
+    -- this.method(args) → method self args (matches TS lowerApp self-method rewriting)
+    let isSelfMethodCall := match fnJ with
+      | some fnNode =>
+        nodeKind fnNode == "PropertyAccessExpression" &&
+        ((fieldNode fnNode "expression").map nodeKind |>.getD "") == "ThisKeyword"
+      | none => false
+    if isSelfMethodCall then
+      let methodName := match fnJ with
+        | some fnNode => (fieldNode fnNode "name").map nodeText |>.getD "default"
+        | none => "default"
+      let args := (fieldArr j "arguments").map fun a =>
+        if nodeKind a == "SpreadElement" then
+          (fieldNode a "expression").map re |>.getD "default"
+        else parenIfCompoundExpr a (re a)
+      let allArgs := #["self"] ++ args
+      methodName ++ " " ++ String.intercalate " " allArgs.toList
+    else
     -- For method calls with args, wrap multi-arg call objects in parens
     -- (matches TS lowerMethodCall using lowerExprP for obj)
     let fn := match fnJ with
