@@ -240,7 +240,7 @@ private def isStringOptionalField (name : String) : Bool :=
 private def wrapConditionIsSome (j : Json) (rendered : String) : String :=
   if nodeKind j == "PropertyAccessExpression" then
     let fieldName := (fieldNode j "name").map nodeText |>.getD ""
-    if isStringOptionalField fieldName then rendered ++ ".isSome"
+    if isStringOptionalField fieldName && !rendered.endsWith ".isSome" then rendered ++ ".isSome"
     else rendered
   else rendered
 
@@ -665,9 +665,9 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       let right := match rightJ with
         | some rj => parenIfCompoundExpr rj right | none => right
       "Option.getD " ++ left ++ " " ++ right
-    -- Assignment: x = y → let x := y (rendered as statement context)
+    -- Assignment: x = y → let x := y; () (rendered as inline expression)
     else if opKind == "FirstAssignment" || opKind == "EqualsToken" then
-      "let " ++ left ++ " := " ++ right
+      "let " ++ left ++ " := " ++ right ++ "; ()"
     -- Compound +=: merge LHS into s!"..." when RHS is safe template
     else if opKind == "FirstCompoundAssignment" || opKind == "PlusEqualsToken" then
       let rj := rightJ.getD default
@@ -1413,6 +1413,36 @@ private partial def lowerBlockStmtR (reg : UnionRegistry) (paramTypes : Array (S
       .Let lname none (.Lit rval) (.Lit "()") false
     else
       exprJ.map (fun e => .Lit (renderExpr e)) |>.getD (.Lit "()")
+  else if kind == "VariableStatement" then
+    -- Terminal VariableStatement: let x := val; ()
+    let declList := fieldNode j "declarationList"
+    let decls := declList.map (fieldArr · "declarations") |>.getD #[]
+    if decls.size > 0 then
+      let d := decls.getD 0 default
+      let name := (fieldNode d "name").map nodeText |>.getD "_"
+      let initJ := fieldNode d "initializer"
+      let isAwait := match initJ with
+        | some init => nodeKind init == "AwaitExpression" | none => false
+      let tyNode := fieldNode d "type"
+      let tyMapped := tyNode.map mapTypeNode
+      let isOptionTy := match tyMapped with
+        | some (.TyApp (.TyName "Option") _) => true | _ => false
+      let defaultVal := if isOptionTy then "none" else "default"
+      let val := if isAwait then
+          (initJ.bind (fieldNode · "expression")).map renderExpr |>.getD defaultVal
+        else initJ.map renderExpr |>.getD defaultVal
+      if isAwait then .Bind name (.Lit val) (.Lit "()")
+      else
+        let hasExplicitType := (fieldNode d "type").isSome
+        let isNewExpr := match initJ with
+          | some init => nodeKind init == "NewExpression" | none => false
+        let ty := if hasExplicitType then (fieldNode d "type").map mapTypeNode
+          else if isNewExpr then
+            initJ.bind fun init =>
+              (fieldNode init "expression").map fun c => .TyName (nodeText c)
+          else none
+        .Let name ty (.Lit val) (.Lit "()") false
+    else .Lit (renderExpr j)
   else if kind == "ContinueStatement" || kind == "BreakStatement" then .Lit "()"
   else .Lit (renderExpr j)
 
@@ -1625,6 +1655,25 @@ private partial def lowerMethodStmtsM (reg : UnionRegistry) (paramTypes : Array 
             else none
            .Let dname ty (.Lit val) cont false
       else lowerMethodStmtsM reg paramTypes rest.toArray isMutating
+    -- Chain variable reassignment: x = expr → Let x value ((); <rest of stmts>)
+    -- Skip this-assignments (this.field = expr) which go through modify path
+    else if kind == "ExpressionStatement" && !isThisAssignment s then
+      let exprJ := fieldNode s "expression"
+      let isAssign := match exprJ with
+        | some e => nodeKind e == "BinaryExpression" &&
+          let opKind := (fieldNode e "operatorToken").map nodeKind |>.getD ""
+          opKind == "FirstAssignment" || opKind == "EqualsToken"
+        | none => false
+      if isAssign then
+        let e := exprJ.getD default
+        let lname := (fieldNode e "left").map (renderExprCtx reg none) |>.getD "_"
+        let rval := (fieldNode e "right").map (renderExprCtx reg none) |>.getD "default"
+        let cont := lowerMethodStmtsM reg paramTypes rest.toArray isMutating
+        .Let lname none (.Lit rval) (.Seq #[.Lit "()", cont]) false
+      else
+        let first := lowerMethodStmtM reg paramTypes s isMutating false
+        let remainder := lowerMethodStmtsM reg paramTypes rest.toArray isMutating
+        .Seq #[first, remainder]
     else
       let first := lowerMethodStmtM reg paramTypes s isMutating false
       let remainder := lowerMethodStmtsM reg paramTypes rest.toArray isMutating
@@ -1675,6 +1724,18 @@ private partial def lowerMethodStmtM (reg : UnionRegistry) (paramTypes : Array (
         if textContains innerRendered "state.storage" || textContains innerRendered "self.state.storage" then
           .Pure (.Sorry none none)
         else .Lit innerRendered
+      -- Check for assignment: x = expr → Let x value ()
+      else if nodeKind e == "BinaryExpression" then
+        let opKind := (fieldNode e "operatorToken").map nodeKind |>.getD ""
+        if opKind == "FirstAssignment" || opKind == "EqualsToken" then
+          let lname := (fieldNode e "left").map (renderExprCtx reg none) |>.getD "_"
+          let rval := (fieldNode e "right").map (renderExprCtx reg none) |>.getD "default"
+          .Let lname none (.Lit rval) (.Lit "()") false
+        else
+          let rendered := renderExprCtx reg none e
+          if textContains rendered "state.storage" || textContains rendered "self.state.storage" then
+            .Pure (.Sorry none none)
+          else .Lit rendered
       else
         let rendered := renderExprCtx reg none e
         if textContains rendered "state.storage" || textContains rendered "self.state.storage" then
