@@ -2112,14 +2112,14 @@ private def scanImports (stmts : Array Json) : Array String :=
     textContains text "Promise" || hasClassMutation stmts || hasAsyncFunc stmts ||
     hasFuncVarReassign stmts
   let needs := if needsMonad then needs.push "TSLean.Runtime.Monad" else needs
-  -- WebAPI — match actual type refs (typeName Identifier), not string literal text
+  -- WebAPI — match actual type refs or fetch calls (handle both compact and spaced JSON)
   let needsWebAPI :=
     #["Request", "Response", "URL", "Headers", "WebSocket"].any fun t =>
-      textContains text ("\"typeName\":{\"kind\":\"Identifier\",\"text\":\"" ++ t ++ "\"}")
-  let needsWebAPI := needsWebAPI || (textContains text "\"text\":\"fetch\"" &&
-    textContains text "\"kind\":\"CallExpression\"")
-  let needsWebAPI := needsWebAPI || (textContains text "\"text\":\"fetch\"" &&
-    textContains text "\"kind\":\"MethodDeclaration\"")
+      textContains text ("\"text\":\"" ++ t ++ "\"") ||
+      textContains text ("\"text\": \"" ++ t ++ "\"")
+  let needsWebAPI := needsWebAPI ||
+    ((textContains text "\"text\":\"fetch\"" || textContains text "\"text\": \"fetch\"") &&
+    (textContains text "CallExpression" || textContains text "MethodDeclaration"))
   let needs := if needsWebAPI then needs.push "TSLean.Runtime.WebAPI" else needs
   -- HashMap
   let needs := if textContains text "Map" || textContains text "Set" then
