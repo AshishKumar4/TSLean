@@ -1108,6 +1108,9 @@ private partial def wrapReturnsPure (e : LeanExpr) : LeanExpr :=
       let last := arr.getD (arr.size - 1) (.Lit "()")
       arr.set! (arr.size - 1) (wrapReturnsPure last) |> .Seq
   | .If c t f => .If c (wrapReturnsPure t) (wrapReturnsPure f)
+  | .Match scrut arms =>
+    .Match scrut (arms.map fun a => match a with
+      | .mk pat guard body => .mk pat guard (wrapReturnsPure body))
   | .Do b => .Do (wrapReturnsPure b)
   | .Pure _ | .Return _ | .Throw _ => e  -- already wrapped
   | .Lit "()" => e  -- unit continuation stays as-is
@@ -1471,6 +1474,8 @@ private partial def lowerMethodBodyM (reg : UnionRegistry) (paramTypes : Array (
     let inner := if isMutating && isUnitRet && !exprEndsWithReturn inner then
       .Seq #[inner, .Pure (.Lit "()")]
     else inner
+    -- Wrap terminal return positions with `pure` for stateful methods
+    let inner := if isMutating then wrapReturnsPure inner else inner
     -- Also wrap in Do for pure let-chains (matches TS pureBodyNeedsDo)
     let pureNeedsDo := match inner with
       | .Let _ _ _ body _ => match body with
@@ -1771,6 +1776,34 @@ private def paramTypeName (j : Json) : Option String :=
         if !aliasName.isEmpty then some aliasName else none
       else none
 
+/-- Deep recursive check: does any descendant contain a variable assignment (Identifier = ...)?
+    Skips nested function scopes (ArrowFunction, FunctionExpression, FunctionDeclaration)
+    to match the TS parser's bodyContainsMutation behavior. -/
+private partial def deepHasVarAssign (j : Json) : Bool :=
+  let kind := nodeKind j
+  -- Skip nested function scopes
+  if kind == "ArrowFunction" || kind == "FunctionExpression" || kind == "FunctionDeclaration" then
+    false
+  else if kind == "BinaryExpression" then
+    let opKind := (fieldNode j "operatorToken").map nodeKind |>.getD ""
+    let isAssign := opKind == "FirstAssignment" || opKind == "EqualsToken" ||
+      opKind == "PlusEqualsToken" || opKind == "MinusEqualsToken"
+    if isAssign then
+      match fieldNode j "left" with
+      | some l => nodeKind l == "Identifier"
+      | none => false
+    else
+      -- Check children
+      match j with
+      | .arr elems => elems.any deepHasVarAssign
+      | .obj fields => fields.toArray.any fun (_, v) => deepHasVarAssign v
+      | _ => false
+  else
+    match j with
+    | .arr elems => elems.any deepHasVarAssign
+    | .obj fields => fields.toArray.any fun (_, v) => deepHasVarAssign v
+    | _ => false
+
 /-- Check if statements contain variable reassignment (x = expr, not this.x = expr).
     Used to detect State effect for non-async functions. -/
 private partial def bodyHasVarReassign (stmts : Array Json) : Bool :=
@@ -1797,6 +1830,18 @@ private partial def bodyHasVarReassign (stmts : Array Json) : Bool :=
         | some e => if nodeKind e == "Block" then fieldArr e "statements" else #[e]
         | none => #[]
       bodyHasVarReassign thenStmts || bodyHasVarReassign elseStmts
+    else if kind == "SwitchStatement" then
+      let clauses := match fieldNode s "caseBlock" with
+        | some cb => fieldArr cb "clauses" | none => #[]
+      clauses.any fun c => bodyHasVarReassign (fieldArr c "statements")
+    else if kind == "WhileStatement" || kind == "ForStatement" || kind == "ForOfStatement"
+            || kind == "ForInStatement" then
+      let bodyStmts := match fieldNode s "statement" with
+        | some t => if nodeKind t == "Block" then fieldArr t "statements" else #[t]
+        | none => #[]
+      bodyHasVarReassign bodyStmts
+    else if kind == "Block" then
+      bodyHasVarReassign (fieldArr s "statements")
     else false
 
 private partial def lowerFuncDeclR (reg : UnionRegistry) (j : Json) : Array LeanDecl :=
@@ -1984,6 +2029,10 @@ private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array Lean
       -- Detect mutation and throw effects (this.x = ... OR let x = ...; x = ...)
       let isMutating := bodyHasThisAssign stmts || bodyHasVarReassign stmts
       let hasThrow := bodyHasThrow stmts
+      -- Local variable reassignment (x = expr, not this.x = expr) also triggers State effect
+      -- Use deep recursive check to find assignments at any nesting depth
+      let hasLocalVarReassign := stmts.any deepHasVarAssign
+      let hasStateEffect := isMutating || hasLocalVarReassign
       let selfParam : LeanParam := { name := "self", ty := stateType }
       let allParams := #[selfParam] ++ params
       -- Check for pure field return (e.g., getCount → self.count)
@@ -1994,12 +2043,12 @@ private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array Lean
         (retTy, lowerMethodBodyM reg #[] stmts false retTy)
       | none =>
         -- Determine effect-based return type
-        let wrappedRet := if isMutating && hasThrow then
+        let wrappedRet := if hasStateEffect && hasThrow then
             .TyApp (.TyName "StateT") #[stateType, .TyApp (.TyName "ExceptT") #[.TyName "String", .TyName "IO"], retTy]
-          else if isMutating then
+          else if hasStateEffect then
             .TyApp (.TyName "StateT") #[stateType, .TyName "IO", retTy]
           else retTy
-        (wrappedRet, lowerMethodBodyM reg #[] stmts isMutating wrappedRet)
+        (wrappedRet, lowerMethodBodyM reg #[] stmts hasStateEffect wrappedRet)
       some (.Def false (name ++ "." ++ mname) tyParams allParams retTy body none none none)
     else none
   -- Interleave blanks between methods
