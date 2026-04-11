@@ -52,7 +52,7 @@ private def fileToModuleName (filePath : String) : String :=
   let base := (parts.getLast?.getD "unknown").replace ".ts" "" |>.replace ".tsx" ""
   let segments := base.splitOn "-"
   let capitalized := segments.map fun s =>
-    if s.isEmpty then s else s.set ⟨0⟩ (s.get ⟨0⟩ |>.toUpper)
+    if s.isEmpty then s else (s.front.toUpper.toString) ++ (s.drop 1).toString
   s!"TSLean.Generated.{String.join capitalized}"
 
 -- ─── Type mapping ───────────────────────────────────────────────────────────────
@@ -324,7 +324,7 @@ private def mapFieldName (field : String) : String := match field with
   | other => escapeLeanKeyword other
 
 /-- Rewrite method calls: Math.sqrt(x) → Float.sqrt x, etc. -/
-private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array String) : Option String :=
+private def rewriteMethodCall (_fnJ : Option Json) (fn : String) (args : Array String) : Option String :=
   -- Math.X(args) → matching TS stdlib table
   if fn.startsWith "Math." then
     let method := (fn.drop 5).toString
@@ -348,30 +348,30 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
   else if fn.endsWith ".json" && args.size == 0 then some "sorry"
   -- Array method calls: arr.push(x) → Array.push arr x
   else if fn.endsWith ".push" && args.size == 1 then
-    let obj := fn.dropRight 5
+    let obj := fn.dropEnd 5 |>.toString
     some ("Array.push " ++ obj ++ " " ++ (args.getD 0 ""))
   else if fn.endsWith ".map" && args.size == 1 then
-    let obj := fn.dropRight 4
+    let obj := fn.dropEnd 4 |>.toString
     some ("Array.map " ++ (args.getD 0 "") ++ " " ++ obj)
   else if fn.endsWith ".filter" && args.size == 1 then
-    let obj := fn.dropRight 7
+    let obj := fn.dropEnd 7 |>.toString
     some ("Array.filter " ++ (args.getD 0 "") ++ " " ++ obj)
   else if fn.endsWith ".join" && args.size == 1 then
-    let obj := fn.dropRight 5
+    let obj := fn.dropEnd 5 |>.toString
     let obj := if obj.any (· == ' ') then "(" ++ obj ++ ")" else obj
     some ("String.intercalate " ++ (args.getD 0 "") ++ " " ++ obj)
   -- Also match after mapFieldName has renamed .join → .intercalate
   else if fn.endsWith ".intercalate" && args.size == 1 then
-    let obj := fn.dropRight 12
+    let obj := fn.dropEnd 12 |>.toString
     let obj := if obj.any (· == ' ') then "(" ++ obj ++ ")" else obj
     some ("String.intercalate " ++ (args.getD 0 "") ++ " " ++ obj)
   -- .has(x) on a Set → AssocSet.contains SET x
   else if fn.endsWith ".has" && args.size == 1 then
-    let obj := fn.dropRight 4
+    let obj := fn.dropEnd 4 |>.toString
     some ("AssocSet.contains " ++ obj ++ " " ++ (args.getD 0 ""))
   -- .splitOn(sep) — after mapFieldName has renamed .split → .splitOn
   else if fn.endsWith ".splitOn" && args.size == 1 then
-    let obj := fn.dropRight 8
+    let obj := fn.dropEnd 8 |>.toString
     some (obj ++ ".splitOn " ++ (args.getD 0 ""))
   else none
 
@@ -573,18 +573,51 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
         acc ++ "{" ++ expr ++ "}" ++ lit) headText
       "s!\"" ++ parts ++ "\""
     else
-      -- Build ++ chain, omitting empty head
-      let headPiece := if headText == "" then #[] else #["\"" ++ headText ++ "\""]
-      let spanPieces := spans.map fun span =>
-        let expr := (fieldNode span "expression").map re |>.getD ""
-        let exprJ := fieldNode span "expression"
-        let parenExpr := match exprJ with
-          | some ej => parenIfCompoundExpr ej expr | none => expr
-        let lit := (fieldNode span "literal").map nodeText |>.getD ""
-        if lit == "" then parenExpr
-        else parenExpr ++ " ++ \"" ++ lit ++ "\""
-      let pieces := headPiece ++ spanPieces
-      String.intercalate " ++ " pieces.toList
+      -- Hybrid approach: use s!"..." for the safe prefix, then ++ for the rest
+      -- Find the first unsafe span
+      let safePrefix := Id.run do
+        let mut acc := headText
+        for span in spans do
+          let ek := (fieldNode span "expression").map nodeKind |>.getD ""
+          let safe := ek == "Identifier" || ek == "PropertyAccessExpression" ||
+            ek == "StringLiteral" || ek == "NumericLiteral" ||
+            ek == "TrueKeyword" || ek == "FalseKeyword"
+          if !safe then break
+          let expr := (fieldNode span "expression").map re |>.getD ""
+          let lit := (fieldNode span "literal").map nodeText |>.getD ""
+          acc := acc ++ "{" ++ expr ++ "}" ++ lit
+        return acc
+      -- Count how many spans were safe
+      let safePrefixSpanCount := Id.run do
+        let mut count := 0
+        for span in spans do
+          let ek := (fieldNode span "expression").map nodeKind |>.getD ""
+          let safe := ek == "Identifier" || ek == "PropertyAccessExpression" ||
+            ek == "StringLiteral" || ek == "NumericLiteral" ||
+            ek == "TrueKeyword" || ek == "FalseKeyword"
+          if !safe then break
+          count := count + 1
+        return count
+      let unsafeSpans := spans.toList.drop safePrefixSpanCount
+      if unsafeSpans.length == 0 then
+        -- All safe (shouldn't happen since isSafe was false, but handle gracefully)
+        "s!\"" ++ safePrefix ++ "\""
+      else
+        -- Build: s!"prefix" ++ unsafePart1 ++ " ++ \"lit\"" ++ ...
+        -- Only use s!"..." when the prefix contains interpolations (safe spans > 0)
+        let prefixStr := if safePrefix == "" then #[]
+          else if safePrefixSpanCount > 0 then #["s!\"" ++ safePrefix ++ "\""]
+          else #["\"" ++ safePrefix ++ "\""]
+        let tailPieces := unsafeSpans.toArray.map fun span =>
+          let expr := (fieldNode span "expression").map re |>.getD ""
+          let exprJ := fieldNode span "expression"
+          let parenExpr := match exprJ with
+            | some ej => parenIfCompoundExpr ej expr | none => expr
+          let lit := (fieldNode span "literal").map nodeText |>.getD ""
+          if lit == "" then parenExpr
+          else parenExpr ++ " ++ \"" ++ lit ++ "\""
+        let allPieces := prefixStr ++ tailPieces
+        String.intercalate " ++ " allPieces.toList
   else if kind == "ObjectLiteralExpression" then
     let props := fieldArr j "properties"
     -- Try struct-literal → constructor rewrite for discriminated unions
@@ -1333,34 +1366,36 @@ private def extractTypeParams (j : Json) : Array LeanTyParam :=
     let name := (fieldNode tp "name").map nodeText |>.getD (nodeText tp)
     { name := name, explicit := true, constraints := none : LeanTyParam }
 
-private def lowerParam (j : Json) : LeanParam :=
+private partial def lowerParam (j : Json) : LeanParam :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
   let baseTy := match fieldNode j "type" with | some tn => mapTypeNode tn | none => mapResolvedType j
   -- Optional parameters (questionToken) get wrapped in Option
   let ty := if fieldBool j "questionToken" then .TyApp (.TyName "Option") #[baseTy] else baseTy
-  { name := name, ty := ty }
+  -- Default value from initializer
+  let def_ := (fieldNode j "initializer").map fun init => .Lit (renderExpr init)
+  { name := name, ty := ty, default_ := def_ }
 
 private def extractJSDocSummary (text : String) : Option String :=
-  if !text.trimLeft.startsWith "/**" then none
+  if !text.trimAsciiStart.toString.startsWith "/**" then none
   else
     let cleaned := text.replace "/**" "" |>.replace "*/" ""
     let descLines := (cleaned.splitOn "\n").foldl (fun acc line =>
-      let stripped := line.replace "* " "" |>.trim
+      let stripped := line.replace "* " "" |>.trimAscii.toString
       let stripped := if stripped == "*" then "" else stripped
       if stripped.startsWith "@" || stripped.isEmpty then acc
       else acc.push stripped
     ) #[]
-    let result := String.intercalate " " descLines.toList |>.trim
+    let result := String.intercalate " " descLines.toList |>.trimAscii.toString
     if result.isEmpty then none else some result
 
 private def isModuleJSDoc (text : String) : Bool :=
-  text.trimLeft.startsWith "/**" && textContains text "@module"
+  text.trimAsciiStart.toString.startsWith "/**" && textContains text "@module"
 
 private def extractDocComment (j : Json) : Option String :=
   (fieldArr j "leadingComments").findSome? fun c =>
     match getStr c with
     | some text =>
-      if text.trimLeft.startsWith "/**" && !isModuleJSDoc text then extractJSDocSummary text else none
+      if text.trimAsciiStart.toString.startsWith "/**" && !isModuleJSDoc text then extractJSDocSummary text else none
     | none => none
 
 private def extractLeadingComment (j : Json) : Option String :=
@@ -1470,7 +1505,7 @@ private partial def lowerFuncDeclR (reg : UnionRegistry) (j : Json) : Array Lean
     | none => .Default (some retTy)
   -- In async functions or state functions, wrap tail expressions with `pure`
   let body := if isAsync || hasBodyVarReassign then wrapReturnsPure body else body
-  let body := if needsDoWrap body || isAsync || hasBodyVarReassign then .Do body else body
+  let body := if isAsync || hasBodyVarReassign then .Do body else body
   let isPartial := exprContainsName body name
   let docComment := extractDocComment j
   let comment := if docComment.isSome then none else extractLeadingComment j
