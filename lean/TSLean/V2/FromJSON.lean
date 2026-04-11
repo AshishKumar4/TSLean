@@ -346,7 +346,8 @@ private def needsDoWrap (e : LeanExpr) : Bool :=
 
 private def extractTypeParams (j : Json) : Array LeanTyParam :=
   (fieldArr j "typeParameters").map fun tp =>
-    { name := nodeText tp, explicit := true, constraints := none : LeanTyParam }
+    let name := (fieldNode tp "name").map nodeText |>.getD (nodeText tp)
+    { name := name, explicit := true, constraints := none : LeanTyParam }
 
 private def lowerParam (j : Json) : LeanParam :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
@@ -368,9 +369,14 @@ private partial def lowerFuncDecl (j : Json) : Array LeanDecl :=
   let tyParams := extractTypeParams j
   let params := (fieldArr j "parameters").map lowerParam
   let retTy := match fieldNode j "type" with | some tn => mapTypeNode tn | none => mapResolvedType j
+  -- Detect async: check for async modifier
+  let mods := fieldArr j "modifiers"
+  let isAsync := mods.any fun m => nodeKind m == "AsyncKeyword"
+  -- Wrap return type in IO for async functions
+  let retTy := if isAsync then .TyApp (.TyName "IO") #[retTy] else retTy
   let body := match fieldNode j "body" with | some b => lowerBody b | none => .Default (some retTy)
-  -- Wrap in `do` if body has Let bindings followed by more code (multi-statement)
-  let body := if needsDoWrap body then .Do body else body
+  -- Wrap in `do` if body has Let bindings or is async
+  let body := if needsDoWrap body || isAsync then .Do body else body
   let isPartial := exprContainsName body name
   #[.Def isPartial name tyParams params retTy body none none none]
 
@@ -434,14 +440,36 @@ private partial def lowerStatement (j : Json) : Array LeanDecl :=
 
 -- ─── Module lowering ────────────────────────────────────────────────────────────
 
+private def textContains (text : String) (sub : String) : Bool :=
+  (text.splitOn sub).length > 1
+
+/-- Scan JSON statements for import needs. -/
+private def scanImports (stmts : Array Json) : Array String :=
+  let needs := #["TSLean.Runtime.Basic", "TSLean.Runtime.Coercions"]
+  let text := stmts.foldl (fun acc s => acc ++ toString s) ""
+  let needs := if textContains text "async" || textContains text "await" ||
+    textContains text "Promise" then needs.push "TSLean.Runtime.Monad" else needs
+  let needs := if textContains text "fetch" || textContains text "Request" ||
+    textContains text "Response" then needs.push "TSLean.Runtime.WebAPI" else needs
+  let needs := if textContains text "Map" || textContains text "Set" then
+    needs.push "TSLean.Stdlib.HashMap" else needs
+  needs
+
+/-- Determine open namespaces from imports. -/
+private def resolveOpens (imports : Array String) : Array String :=
+  let opens := #["TSLean"]
+  let opens := if imports.any (textContains · "WebAPI") then opens.push "TSLean.WebAPI" else opens
+  let opens := if imports.any (textContains · "HashMap") then opens.push "TSLean.Stdlib.HashMap" else opens
+  opens
+
 def lowerJsonModule (json : Json) : LeanFile :=
   let fileName := fieldStr json "fileName"
   let ns := fileToModuleName fileName
   let stmts := fieldArr json "statements"
-  let imports : Array String := #["TSLean.Runtime.Basic", "TSLean.Runtime.Coercions"]
+  let imports := scanImports stmts
   let decls := imports.map fun imp => LeanDecl.Import imp
   let decls := decls.push .Blank
-  let decls := decls.push (.Open #["TSLean"])
+  let decls := decls.push (.Open (resolveOpens imports))
   let decls := decls.push .Blank
   let bodyDecls := stmts.foldl (fun acc s =>
     let ds := lowerStatement s
