@@ -583,12 +583,7 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
   if kind == "NumericLiteral" then nodeText j
   else if kind == "StringLiteral" || kind == "NoSubstitutionTemplateLiteral" then
     let text := nodeText j
-    -- Escape special chars: JSON text may contain actual newlines/tabs
-    let text := text.replace "\\" "\\\\"
-    let text := text.replace "\n" "\\n"
-    let text := text.replace "\t" "\\t"
-    let text := text.replace "\r" "\\r"
-    "\"" ++ text ++ "\""
+    "\"" ++ escapeLitStr text ++ "\""
   else if kind == "RegularExpressionLiteral" then
     -- Render regex as a string literal: /pattern/flags → "/pattern/flags"
     -- Must escape backslashes/quotes (matches TS JSON.stringify behavior)
@@ -931,9 +926,9 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
           let v := (fieldNode p "initializer").map re |>.getD "default"
           some (n ++ " := " ++ v)
         else if pk == "ShorthandPropertyAssignment" then
-          let n := (fieldNode p "name").map nodeText |>.getD "_"
-          let escaped := escapeLeanKeyword n
-          some (escaped ++ " := " ++ n)
+           let n := (fieldNode p "name").map nodeText |>.getD "_"
+           let escaped := escapeLeanKeyword n
+           some (escaped ++ " := " ++ escaped)
         else none
       match spreadBase with
       | some base =>
@@ -1347,7 +1342,7 @@ private partial def lowerSwitchR (reg : UnionRegistry) (paramTypes : Array (Stri
       if ck == "CaseClause" then
         let pat := (fieldNode clause "expression").map fun e =>
           let ek := nodeKind e
-          if ek == "StringLiteral" then LeanPat.PLit ("\"" ++ nodeText e ++ "\"")
+          if ek == "StringLiteral" then LeanPat.PLit ("\"" ++ escapeLitStr (nodeText e) ++ "\"")
           else if ek == "NumericLiteral" then .PLit (nodeText e)
           else .PVar (renderExpr e)
         let pat := pat.getD .PWild
@@ -2031,13 +2026,16 @@ private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array Lean
       else none
   -- Extract methods as standalone defs
   let methods := members.filterMap fun m =>
-    if isMethodDeclaration m then
-      let mname := (fieldNode m "name").map nodeText |>.getD "_"
-      let params := (fieldArr m "parameters").map fun p =>
-        let pname := (fieldNode p "name").map nodeText |>.getD "_"
-        let pty := match fieldNode p "type" with | some tn => mapTypeNode tn | none => mapResolvedType p
-        { name := pname, ty := pty : LeanParam }
-      let retTy := match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
+     if isMethodDeclaration m then
+       let mname := (fieldNode m "name").map nodeText |>.getD "_"
+       let params := (fieldArr m "parameters").map fun p =>
+         let pname := (fieldNode p "name").map nodeText |>.getD "_"
+         let pty := match fieldNode p "type" with | some tn => mapTypeNode tn | none => mapResolvedType p
+         let pdef := match fieldNode p "initializer" with
+           | some init => some (.Lit (renderExpr init))
+           | none => none
+         { name := pname, ty := pty, default_ := pdef : LeanParam }
+       let retTy := match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
       let stmts := match fieldNode m "body" with
         | some b => fieldArr b "statements" | none => #[]
       -- Detect mutation and throw effects (this.x = ... OR let x = ...; x = ...)
