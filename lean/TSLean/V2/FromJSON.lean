@@ -608,9 +608,10 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     else
       -- Type-aware operator: PlusToken on strings → ++ (concat), otherwise +
       let op := if opKind == "PlusToken" then
-        match leftJ with
-        | some lj => if hasStringType lj then "++" else "+"
-        | none => mapBinOpSym opKind
+        let isStringConcat := isStringTyped j ||
+          (match leftJ with | some lj => hasStringType lj | none => false) ||
+          (match rightJ with | some rj => hasStringType rj | none => false)
+        if isStringConcat then "++" else "+"
       else mapBinOpSym opKind
       let left := match leftJ with | some lj => parenBinOperand lj left opKind | none => left
       let right := match rightJ with
@@ -905,6 +906,12 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
           let stmts := (fieldArr b "statements").filter fun s =>
             nodeKind s != "ContinueStatement" && nodeKind s != "BreakStatement"
           renderBlockStmtsInline re stmts
+        -- Strip ParenthesizedExpression around ObjectLiteral in arrow body
+        -- (TS uses parens to avoid {} being parsed as block; IR strips them)
+        else if nodeKind b == "ParenthesizedExpression" then
+          match fieldNode b "expression" with
+          | some inner => if nodeKind inner == "ObjectLiteralExpression" then re inner else re b
+          | none => re b
         else re b
       | none => "default"
     "fun " ++ String.intercalate " " params.toList ++ " => " ++ body
@@ -1412,7 +1419,14 @@ private partial def lowerMethodBodyM (reg : UnionRegistry) (paramTypes : Array (
     let inner := if isMutating && isUnitRet && !exprEndsWithReturn inner then
       .Seq #[inner, .Pure (.Lit "()")]
     else inner
-    if isMutating then .Do inner else inner
+    -- Also wrap in Do for pure let-chains (matches TS pureBodyNeedsDo)
+    let pureNeedsDo := match inner with
+      | .Let _ _ _ body _ => match body with
+        | .Let .. | .If .. | .Match .. => true
+        | _ => false
+      | .Seq stmts => stmts.size > 1 && stmts.any (fun s => match s with | .Let .. => true | _ => false)
+      | _ => false
+    if isMutating || pureNeedsDo then .Do inner else inner
 
 private partial def lowerMethodStmtsM (reg : UnionRegistry) (paramTypes : Array (String × String))
     (stmts : Array Json) (isMutating : Bool) : LeanExpr :=
