@@ -1083,6 +1083,9 @@ private partial def wrapReturnsPure (e : LeanExpr) : LeanExpr :=
       let last := arr.getD (arr.size - 1) (.Lit "()")
       arr.set! (arr.size - 1) (wrapReturnsPure last) |> .Seq
   | .If c t f => .If c (wrapReturnsPure t) (wrapReturnsPure f)
+  | .Match scrut arms =>
+    .Match scrut (arms.map fun a => match a with
+      | .mk pat guard body => .mk pat guard (wrapReturnsPure body))
   | .Do b => .Do (wrapReturnsPure b)
   | .Pure _ | .Return _ | .Throw _ => e  -- already wrapped
   | .Lit "()" => e  -- unit continuation stays as-is
@@ -1446,6 +1449,8 @@ private partial def lowerMethodBodyM (reg : UnionRegistry) (paramTypes : Array (
     let inner := if isMutating && isUnitRet && !exprEndsWithReturn inner then
       .Seq #[inner, .Pure (.Lit "()")]
     else inner
+    -- Wrap terminal return positions with `pure` for stateful methods
+    let inner := if isMutating then wrapReturnsPure inner else inner
     -- Also wrap in Do for pure let-chains (matches TS pureBodyNeedsDo)
     let pureNeedsDo := match inner with
       | .Let _ _ _ body _ => match body with
