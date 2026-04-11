@@ -458,10 +458,15 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
     let obj := fn.dropEnd 12 |>.toString
     let obj := if obj.any (· == ' ') then "(" ++ obj ++ ")" else obj
     some ("String.intercalate " ++ (args.getD 0 "") ++ " " ++ obj)
-  -- .has(x) on a Set → AssocSet.contains SET x
+  -- .has(x) on a collection → AssocSet.contains (Set) or AssocMap.contains (Map)
+  -- Default to AssocSet since most .has() calls are on Sets; detect Maps via type info.
   else if fn.endsWith ".has" && args.size == 1 then
     let obj := fn.dropEnd 4 |>.toString
-    some ("AssocSet.contains " ++ obj ++ " " ++ (args.getD 0 ""))
+    let objJ := fnJ.bind (fun fj => fieldNode fj "expression")
+    let tag := objJ.bind (fun oj => resolvedType oj) |>.bind (fun rt => getField rt "aliasName" |>.bind getStr) |>.getD ""
+    let rtName := objJ.bind (fun oj => resolvedType oj) |>.bind (fun rt => getField rt "name" |>.bind getStr) |>.getD ""
+    let isMap := tag == "Map" || tag == "AssocMap" || rtName == "Map" || rtName == "AssocMap"
+    some ((if isMap then "AssocMap.contains " else "AssocSet.contains ") ++ obj ++ " " ++ (args.getD 0 ""))
   -- .add(x) on a Set → AssocSet.insert SET x  (TS Set.add, not Array — arrays use .push)
   else if fn.endsWith ".add" && args.size == 1 then
     let obj := fn.dropEnd 4 |>.toString
