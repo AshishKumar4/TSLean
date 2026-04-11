@@ -112,7 +112,12 @@ partial def printExprInline (e : LeanExpr) : String :=
   | .App fn args =>
     let fnS := printExprInline fn
     if args.size == 0 then fnS
-    else fnS ++ " " ++ String.intercalate " " (args.toList.map printExprInline)
+    else fnS ++ " " ++ String.intercalate " " (args.toList.map fun a =>
+      let s := printExprInline a
+      match a with
+      | .App _ aa => if aa.size > 0 then "(" ++ s ++ ")" else s
+      | .Paren _ => s  -- already parenthesized
+      | _ => s)
   | .Lam params body =>
     let ps := if params.size > 0 then String.intercalate " " params.toList else "_"
     "fun " ++ ps ++ " => " ++ printExprInline body
@@ -189,7 +194,12 @@ partial def printExpr (e : LeanExpr) (depth : Nat) : String :=
   | .App fn args =>
     let fnS := printExprInline fn
     if args.size == 0 then ind ++ fnS
-    else ind ++ fnS ++ " " ++ String.intercalate " " (args.toList.map printExprInline)
+    else ind ++ fnS ++ " " ++ String.intercalate " " (args.toList.map fun a =>
+      let s := printExprInline a
+      match a with
+      | .App _ aa => if aa.size > 0 then "(" ++ s ++ ")" else s
+      | .Paren _ => s
+      | _ => s)
   | .Lam params body =>
     let ps := if params.size > 0 then String.intercalate " " params.toList else "_"
     let bodyS := printExprInline body

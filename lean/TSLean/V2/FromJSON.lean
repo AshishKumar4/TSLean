@@ -421,9 +421,11 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
     some ("Array.push " ++ obj ++ " " ++ (args.getD 0 ""))
   else if fn.endsWith ".map" && args.size == 1 then
     let obj := fn.dropEnd 4 |>.toString
+    let obj := if obj.any (· == ' ') then "(" ++ obj ++ ")" else obj
     some ("Array.map " ++ (args.getD 0 "") ++ " " ++ obj)
   else if fn.endsWith ".filter" && args.size == 1 then
     let obj := fn.dropEnd 7 |>.toString
+    let obj := if obj.any (· == ' ') then "(" ++ obj ++ ")" else obj
     some ("Array.filter " ++ (args.getD 0 "") ++ " " ++ obj)
   else if fn.endsWith ".join" && args.size == 1 then
     let obj := fn.dropEnd 5 |>.toString
@@ -621,6 +623,8 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     let opKind := (fieldNode j "operatorToken").map nodeKind |>.getD ""
     -- Null coalescing: x ?? y → Option.getD x y
     if opKind == "QuestionQuestionToken" then
+      let left := match leftJ with
+        | some lj => parenIfCompoundExpr lj left | none => left
       let right := match rightJ with
         | some rj => parenIfCompoundExpr rj right | none => right
       "Option.getD " ++ left ++ " " ++ right
