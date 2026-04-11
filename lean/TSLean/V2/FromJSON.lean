@@ -1077,6 +1077,36 @@ private def lowerParam (j : Json) : LeanParam :=
   let ty := match fieldNode j "type" with | some tn => mapTypeNode tn | none => mapResolvedType j
   { name := name, ty := ty }
 
+private def extractJSDocSummary (text : String) : Option String :=
+  if !text.trimLeft.startsWith "/**" then none
+  else
+    let cleaned := text.replace "/**" "" |>.replace "*/" ""
+    let descLines := (cleaned.splitOn "\n").foldl (fun acc line =>
+      let stripped := line.replace "* " "" |>.trim
+      let stripped := if stripped == "*" then "" else stripped
+      if stripped.startsWith "@" || stripped.isEmpty then acc
+      else acc.push stripped
+    ) #[]
+    let result := String.intercalate " " descLines.toList |>.trim
+    if result.isEmpty then none else some result
+
+private def isModuleJSDoc (text : String) : Bool :=
+  text.trimLeft.startsWith "/**" && textContains text "@module"
+
+private def extractDocComment (j : Json) : Option String :=
+  (fieldArr j "leadingComments").findSome? fun c =>
+    match getStr c with
+    | some text =>
+      if text.trimLeft.startsWith "/**" && !isModuleJSDoc text then extractJSDocSummary text else none
+    | none => none
+
+private def extractLeadingComment (j : Json) : Option String :=
+  let comments := fieldArr j "leadingComments"
+  if comments.size == 0 then none
+  else
+    let combined := String.intercalate "\n" (comments.toList.filterMap getStr)
+    if combined.isEmpty then none else some combined
+
 private partial def lowerVarStatement (j : Json) : Array LeanDecl :=
   let declList := fieldNode j "declarationList"
   let decls := declList.map (fieldArr · "declarations") |>.getD #[]
@@ -1136,7 +1166,9 @@ private partial def lowerFuncDeclR (reg : UnionRegistry) (j : Json) : Array Lean
   let body := if isAsync then wrapReturnsPure body else body
   let body := if needsDoWrap body || isAsync then .Do body else body
   let isPartial := exprContainsName body name
-  #[.Def isPartial name tyParams params retTy body none none none]
+  let docComment := extractDocComment j
+  let comment := if docComment.isSome then none else extractLeadingComment j
+  #[.Def isPartial name tyParams params retTy body none docComment comment]
 
 /-- Resolve the type of an optional member field to match TS parser behavior.
     The TS parser uses checker.getTypeOfSymbol (which includes undefined for optional),
@@ -1200,7 +1232,8 @@ private partial def lowerInterfaceDecl (j : Json) : Array LeanDecl :=
         match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
       some (LeanField.mk fn fty none)
     else none
-  #[.Structure name tyParams fields none DEFAULT_DERIVING none]
+  let comment := extractLeadingComment j
+  #[.Structure name tyParams fields none DEFAULT_DERIVING comment]
 
 -- Excluded fields for DurableObject state structs
 private def DO_EXCLUDED_FIELDS : Array String := #["state", "storage", "env", "config"]
@@ -1418,22 +1451,15 @@ private partial def lowerEnumDecl (j : Json) : Array LeanDecl :=
 
 private partial def lowerStatementR (reg : UnionRegistry) (j : Json) : Array LeanDecl :=
   let kind := nodeKind j
-  let comments := fieldArr j "leadingComments"
-  let commentDecls := comments.foldl (fun acc c =>
-    match getStr c with
-    | some text =>
-      if text.trim.isEmpty then acc else acc.push (.Comment text)
-    | none => acc
-  ) #[]
-  let decls := if kind == "VariableStatement" then lowerVarStatement j
+  -- Comments are handled via comment/docComment fields on declarations.
+  -- No separate Comment decls needed; each lowerer extracts its own comments.
+  if kind == "VariableStatement" then lowerVarStatement j
     else if kind == "FunctionDeclaration" then lowerFuncDeclR reg j
     else if kind == "InterfaceDeclaration" then lowerInterfaceDecl j
     else if kind == "ClassDeclaration" then lowerClassDecl reg j
     else if kind == "TypeAliasDeclaration" then lowerTypeAliasDecl j
     else if kind == "EnumDeclaration" then lowerEnumDecl j
     else #[]
-  -- Skip leading comments for class declarations (TS pipeline drops them)
-  if kind == "ClassDeclaration" then decls else commentDecls ++ decls
 
 -- ─── Module lowering ────────────────────────────────────────────────────────────
 
