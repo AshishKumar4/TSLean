@@ -79,7 +79,26 @@ partial def mapTypeNode (j : Json) : IRType :=
 
 -- ─── Expression parsing ─────────────────────────────────────────────────────────
 
-/-- Parse a JSON AST expression node into an IRExpr. -/
+/-- Render an IRExpr to its Lean 4 text representation. -/
+partial def renderExpr (e : IRExpr) : String :=
+  match e.tag with
+  | "LitNat" => e.value
+  | "LitInt" => e.value
+  | "LitFloat" => if e.value.contains '.' then e.value else s!"({e.value} : Float)"
+  | "LitString" => "\"" ++ e.value ++ "\""
+  | "LitBool" => e.value
+  | "LitUnit" => "()"
+  | "LitNull" => "none"
+  | "Var" => e.name
+  | "BinOp" => e.left ++ " " ++ e.op ++ " " ++ e.right
+  | "FieldAccess" => e.obj ++ "." ++ e.field
+  | "App" => e.fn
+  | "UnOp" => e.op ++ e.expr
+  | "Return" => e.value
+  | "IfThenElse" => s!"if {e.cond} then {e.then_} else {e.else_}"
+  | "Hole" => "sorry"
+  | _ => "default"
+
 partial def parseExpr (j : Json) : IRExpr :=
   let kind := nodeKind j
   let ty := mapResolvedType j
@@ -115,20 +134,23 @@ partial def parseExpr (j : Json) : IRExpr :=
     let right := (fieldNode j "right").map parseExpr |>.getD default
     let opKind := (fieldNode j "operatorToken").map (fun t => nodeKind t) |>.getD ""
     let op := mapBinOp opKind
-    { tag := "BinOp", op := op, left := left.tag, right := right.tag, type := ty, effect := Pure }
+    let opSym := mapBinOpSymbol opKind
+    { tag := "BinOp", op := opSym, left := renderExpr left, right := renderExpr right, type := ty, effect := Pure }
   -- Property access: x.y
   else if kind == "PropertyAccessExpression" then
     let obj := (fieldNode j "expression").map parseExpr |>.getD default
     let field := (fieldNode j "name").map nodeText |>.getD ""
-    { tag := "FieldAccess", obj := obj.tag, field := field, type := ty, effect := Pure }
+    { tag := "FieldAccess", obj := renderExpr obj, field := field, type := ty, effect := Pure }
   -- Call expression: f(x, y)
   else if kind == "CallExpression" then
     let fn := (fieldNode j "expression").map parseExpr |>.getD default
-    { tag := "App", fn := fn.tag, type := ty, effect := Pure }
+    let args := (fieldArr j "arguments").map parseExpr
+    let argStr := String.intercalate " " (args.toList.map renderExpr)
+    { tag := "App", fn := renderExpr fn ++ (if argStr.isEmpty then "" else " " ++ argStr), type := ty, effect := Pure }
   -- Return statement
   else if kind == "ReturnStatement" then
     let val := (fieldNode j "expression").map parseExpr |>.getD litUnit
-    { tag := "Return", value := val.tag, type := val.type, effect := val.effect }
+    { tag := "Return", value := renderExpr val, type := val.type, effect := val.effect }
   -- Parenthesized
   else if kind == "ParenthesizedExpression" then
     (fieldNode j "expression").map parseExpr |>.getD default
@@ -142,22 +164,22 @@ partial def parseExpr (j : Json) : IRExpr :=
   else if kind == "PrefixUnaryExpression" then
     let operand := (fieldNode j "operand").map parseExpr |>.getD default
     let opCode := fieldNat j "operator"
-    let op := if opCode == 53 then "Not" else if opCode == 40 then "Neg" else "Not"
-    { tag := "UnOp", op := op, type := ty, effect := Pure }
+    let opStr := if opCode == 53 then "!" else if opCode == 40 then "-" else "!"
+    { tag := "UnOp", op := opStr, expr := renderExpr operand, type := ty, effect := Pure }
   -- Conditional: cond ? a : b
   else if kind == "ConditionalExpression" then
     let cond := (fieldNode j "condition").map parseExpr |>.getD default
     let whenTrue := (fieldNode j "whenTrue").map parseExpr |>.getD default
     let whenFalse := (fieldNode j "whenFalse").map parseExpr |>.getD default
-    { tag := "IfThenElse", cond := cond.tag, then_ := whenTrue.tag,
-      else_ := whenFalse.tag, type := ty, effect := Pure }
+    { tag := "IfThenElse", cond := renderExpr cond, then_ := renderExpr whenTrue,
+      else_ := renderExpr whenFalse, type := ty, effect := Pure }
   -- Template expression: `hello ${name}`
   else if kind == "TemplateExpression" then
     { tag := "LitString", value := "(template)", type := TyString, effect := Pure }
   -- Await
   else if kind == "AwaitExpression" then
     let inner := (fieldNode j "expression").map parseExpr |>.getD default
-    { tag := "Await", expr := inner.tag, type := ty, effect := Effect.Async }
+    { tag := "Await", expr := renderExpr inner, type := ty, effect := Effect.Async }
   -- Default fallback
   else { tag := "Hole", type := ty, effect := Pure }
 where
@@ -176,6 +198,21 @@ where
     | "AmpersandAmpersandToken" => "And"
     | "BarBarToken" => "Or"
     | _ => "Add"
+  mapBinOpSymbol (kind : String) : String := match kind with
+    | "PlusToken" => "+"
+    | "MinusToken" => "-"
+    | "AsteriskToken" => "*"
+    | "SlashToken" => "/"
+    | "PercentToken" => "%"
+    | "EqualsEqualsToken" | "EqualsEqualsEqualsToken" => "=="
+    | "ExclamationEqualsToken" | "ExclamationEqualsEqualsToken" => "!="
+    | "LessThanToken" => "<"
+    | "LessThanEqualsToken" => "<="
+    | "GreaterThanToken" => ">"
+    | "GreaterThanEqualsToken" => ">="
+    | "AmpersandAmpersandToken" => "&&"
+    | "BarBarToken" => "||"
+    | _ => "+"
 
 -- ─── Statement parsing ──────────────────────────────────────────────────────────
 
@@ -193,12 +230,10 @@ where
     let kind := nodeKind j
     if kind == "ReturnStatement" then
       let val := (fieldNode j "expression").map parseExpr |>.getD litUnit
-      { tag := "Return", value := val.tag, type := val.type, effect := val.effect }
+      { tag := "Return", value := renderExpr val, type := val.type, effect := val.effect }
     else if kind == "ExpressionStatement" then
       (fieldNode j "expression").map parseExpr |>.getD litUnit
     else if kind == "VariableStatement" then
-      -- For blocks, a variable statement inside a function body is complex.
-      -- For MVP, just parse the initializer of the first declaration.
       let declList := fieldNode j "declarationList"
       let decls := declList.map (fieldArr · "declarations") |>.getD #[]
       if decls.size > 0 then
@@ -206,15 +241,14 @@ where
         let name := (fieldNode d "name").map nodeText |>.getD "_"
         let val := (fieldNode d "initializer").map parseExpr |>.getD (holeExpr TyUnit)
         let ty := mapResolvedType d
-        -- Build a let expression (body is the remaining code, simplified to the value)
-        { tag := "Let", name := name, value := val.tag, type := ty, effect := Pure }
+        { tag := "Let", name := name, value := renderExpr val, type := ty, effect := Pure }
       else litUnit
     else if kind == "IfStatement" then
       let cond := (fieldNode j "expression").map parseExpr |>.getD default
       let thenBranch := (fieldNode j "thenStatement").map parseBlockOrExpr |>.getD litUnit
       let elseBranch := (fieldNode j "elseStatement").map parseBlockOrExpr |>.getD litUnit
-      { tag := "IfThenElse", cond := cond.tag, then_ := thenBranch.tag,
-        else_ := elseBranch.tag, type := thenBranch.type, effect := Pure }
+      { tag := "IfThenElse", cond := renderExpr cond, then_ := renderExpr thenBranch,
+        else_ := renderExpr elseBranch, type := thenBranch.type, effect := Pure }
     else parseExpr j
   parseBlockOrExpr (j : Json) : IRExpr :=
     if isBlock j then parseBlock j else parseBlockStmt j
