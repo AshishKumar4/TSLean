@@ -620,13 +620,18 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
         ) #[]
         let allPieces := prefixStr ++ tailPieces
         -- Left-fold with parens to match TS lowerer's left-associative BinOp tree
-        -- Only parenthesize when accumulator is a compound expression (contains ++)
+        -- The TS lowerer wraps each BinOp child via lowerExprP/needsParens,
+        -- so the first piece (e.g. s!"...") gets wrapped in Paren too.
         match allPieces.toList with
         | [] => "\"\""
         | [x] => x
-        | x :: rest => rest.foldl (fun acc piece =>
-          if (acc.splitOn " ++ ").length > 1 then "(" ++ acc ++ ") ++ " ++ piece
-          else acc ++ " ++ " ++ piece) x
+        | x :: rest =>
+          -- Wrap initial piece in parens when it's s!"..." (matches TS Paren(SInterp(...)))
+          -- Plain string literals don't get parens since TS needsParens(LitString) is false
+          let x := if x.startsWith "s!\"" then "(" ++ x ++ ")" else x
+          rest.foldl (fun acc piece =>
+            if (acc.splitOn " ++ ").length > 1 then "(" ++ acc ++ ") ++ " ++ piece
+            else acc ++ " ++ " ++ piece) x
   else if kind == "ObjectLiteralExpression" then
     let props := fieldArr j "properties"
     -- Try struct-literal → constructor rewrite for discriminated unions
@@ -1357,7 +1362,11 @@ private partial def exprContainsName (e : LeanExpr) (name : String) : Bool :=
     arms.any (fun arm => match arm with | .mk _ _ body => exprContainsName body name)
   | .App fn args => exprContainsName fn name || args.any (exprContainsName · name)
   | .Lam _ body => exprContainsName body name
+  | .Paren inner => exprContainsName inner name
   | .Throw val => exprContainsName val name
+  | .Bind _ v b => exprContainsName v name || exprContainsName b name
+  | .TryCatch body _ handler => exprContainsName body name || exprContainsName handler name
+  | .Modify fn => exprContainsName fn name
   | _ => false
 
 /-- Check if a body expression needs `do` wrapping (multiple lets).
