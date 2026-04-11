@@ -193,21 +193,58 @@ private def substFieldAccess (ctx : SubstCtx) (obj : String) (field : String) : 
     else none
   | none => none
 
-private def isOptionalFieldName (name : String) : Bool :=
+private def mapBinOpSym (kind : String) : String := match kind with
+  | "PlusToken" => "+" | "MinusToken" => "-" | "AsteriskToken" => "*"
+  | "SlashToken" => "/" | "PercentToken" => "%"
+  | "EqualsEqualsToken" | "EqualsEqualsEqualsToken" => "=="
+  | "ExclamationEqualsToken" | "ExclamationEqualsEqualsToken" => "!="
+  | "LessThanToken" | "FirstBinaryOperator" => "<" | "LessThanEqualsToken" => "<="
+  | "GreaterThanToken" => ">" | "GreaterThanEqualsToken" => ">="
+  | "AmpersandAmpersandToken" => "&&" | "BarBarToken" => "||"
+  | _ => "+"
+
+-- Fields with simple Option-wrapped types (string?, string[]?) that need .isSome in conditions.
+-- Complex union? fields (LeanTy?, LeanExpr?) and boolean? fields do NOT get .isSome —
+-- the TS type checker expands complex unions, preventing Option wrapping.
+private def isStringOptionalField (name : String) : Bool :=
   name == "banner" || name == "sourcePath" || name == "comment" || name == "docComment" ||
-  name == "extends_" || name == "where_" || name == "default_" || name == "guard" ||
-  name == "reason" || name == "ty" || name == "rec" || name == "implicit" ||
-  name == "constraints" || name == "name"
+  name == "extends_" || name == "reason" || name == "constraints" || name == "name"
 
 private def wrapConditionIsSome (j : Json) (rendered : String) : String :=
   if nodeKind j == "PropertyAccessExpression" then
     let fieldName := (fieldNode j "name").map nodeText |>.getD ""
-    if isOptionalFieldName fieldName then rendered ++ ".isSome"
+    if isStringOptionalField fieldName then rendered ++ ".isSome"
     else rendered
   else rendered
 
+-- Render a condition for if-statements, recursively adding .isSome for
+-- string-optional fields and handling !== undefined → .isSome.
 private partial def renderIfCondition (render : Json → String) (j : Json) : String :=
-  wrapConditionIsSome j (render j)
+  let kind := nodeKind j
+  if kind == "BinaryExpression" then
+    let opKind := (fieldNode j "operatorToken").map nodeKind |>.getD ""
+    if opKind == "ExclamationEqualsEqualsToken" || opKind == "ExclamationEqualsToken" then
+      let rightK := (fieldNode j "right").map nodeKind |>.getD ""
+      if rightK == "Identifier" && ((fieldNode j "right").map nodeText |>.getD "") == "undefined" then
+        let left := (fieldNode j "left").map render |>.getD "default"
+        left ++ ".isSome"
+      else
+        let l := (fieldNode j "left").map (renderIfCondition render) |>.getD "default"
+        let r := (fieldNode j "right").map (renderIfCondition render) |>.getD "default"
+        l ++ " != " ++ r
+    else if opKind == "AmpersandAmpersandToken" || opKind == "BarBarToken" then
+      let l := (fieldNode j "left").map (renderIfCondition render) |>.getD "default"
+      let r := (fieldNode j "right").map (renderIfCondition render) |>.getD "default"
+      let op := if opKind == "AmpersandAmpersandToken" then "&&" else "||"
+      l ++ " " ++ op ++ " " ++ r
+    else wrapConditionIsSome j (render j)
+  else if kind == "PrefixUnaryExpression" then
+    let opCode := fieldNat j "operator"
+    if opCode == 53 then
+      let inner := (fieldNode j "operand").map (renderIfCondition render) |>.getD "default"
+      "!" ++ inner
+    else wrapConditionIsSome j (render j)
+  else wrapConditionIsSome j (render j)
 
 private def parenIfCompoundExpr (j : Json) (rendered : String) : String :=
   let kind := nodeKind j
@@ -376,15 +413,40 @@ private partial def hasStringType (j : Json) : Bool :=
       | none => false
     else false
 
-private def mapBinOpSym (kind : String) : String := match kind with
-  | "PlusToken" => "+" | "MinusToken" => "-" | "AsteriskToken" => "*"
-  | "SlashToken" => "/" | "PercentToken" => "%"
-  | "EqualsEqualsToken" | "EqualsEqualsEqualsToken" => "=="
-  | "ExclamationEqualsToken" | "ExclamationEqualsEqualsToken" => "!="
-  | "LessThanToken" | "FirstBinaryOperator" => "<" | "LessThanEqualsToken" => "<="
-  | "GreaterThanToken" => ">" | "GreaterThanEqualsToken" => ">="
-  | "AmpersandAmpersandToken" => "&&" | "BarBarToken" => "||"
-  | _ => "+"
+/-- Render a block body inline as "let x := v; let y := w; ... ; final".
+    Used for arrow function bodies with local variable declarations.
+    Takes a render function for expressions to avoid forward-reference issues. -/
+private partial def renderBlockStmtsInline (render : Json → String) (stmts : Array Json) : String :=
+  let parts := stmts.toList.map fun s =>
+    let kind := nodeKind s
+    if kind == "VariableStatement" then
+      let declList := fieldNode s "declarationList"
+      let decls := match declList with
+        | some dl => fieldArr dl "declarations" | none => #[]
+      let letParts := decls.toList.map fun d =>
+        let dname := (fieldNode d "name").map nodeText |>.getD "_"
+        let init := (fieldNode d "initializer").map render |>.getD "default"
+        "let " ++ dname ++ " := " ++ init
+      String.intercalate "; " letParts
+    else if kind == "ReturnStatement" then
+      (fieldNode s "expression").map render |>.getD "()"
+    else if kind == "ExpressionStatement" then
+      (fieldNode s "expression").map render |>.getD "()"
+    else if kind == "IfStatement" then
+      let cond := (fieldNode s "expression").map render |>.getD "true"
+      let thenBranch := match fieldNode s "thenStatement" with
+        | some t =>
+          if isBlock t then renderBlockStmtsInline render (fieldArr t "statements")
+          else render t
+        | none => "()"
+      let elseBranch := match fieldNode s "elseStatement" with
+        | some e =>
+          if isBlock e then renderBlockStmtsInline render (fieldArr e "statements")
+          else render e
+        | none => "()"
+      "if " ++ cond ++ " then " ++ thenBranch ++ " else " ++ elseBranch
+    else render s
+  String.intercalate "; " parts
 
 /-- Render a JSON AST expression to a Lean expression string.
     Takes a union registry for struct-literal→ctor rewriting,
@@ -511,7 +573,9 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
         acc ++ "{" ++ expr ++ "}" ++ lit) headText
       "s!\"" ++ parts ++ "\""
     else
-      let pieces := #["\"" ++ headText ++ "\""] ++ spans.map fun span =>
+      -- Build ++ chain, omitting empty head
+      let headPiece := if headText == "" then #[] else #["\"" ++ headText ++ "\""]
+      let spanPieces := spans.map fun span =>
         let expr := (fieldNode span "expression").map re |>.getD ""
         let exprJ := fieldNode span "expression"
         let parenExpr := match exprJ with
@@ -519,6 +583,7 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
         let lit := (fieldNode span "literal").map nodeText |>.getD ""
         if lit == "" then parenExpr
         else parenExpr ++ " ++ \"" ++ lit ++ "\""
+      let pieces := headPiece ++ spanPieces
       String.intercalate " ++ " pieces.toList
   else if kind == "ObjectLiteralExpression" then
     let props := fieldArr j "properties"
@@ -568,11 +633,10 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     let bodyJ := fieldNode j "body"
     let body := match bodyJ with
       | some b =>
-        if isBlock b then
+         if isBlock b then
           let stmts := (fieldArr b "statements").filter fun s =>
             nodeKind s != "ContinueStatement" && nodeKind s != "BreakStatement"
-          let rendered := stmts.map (renderExprCtx reg ctx)
-          String.intercalate "; " rendered.toList
+          renderBlockStmtsInline re stmts
         else re b
       | none => "default"
     "fun " ++ String.intercalate " " params.toList ++ " => " ++ body
@@ -848,7 +912,11 @@ private partial def lowerBlockStmtR (reg : UnionRegistry) (paramTypes : Array (S
     lowerSwitchR reg paramTypes j
   else if kind == "ForOfStatement" || kind == "ForInStatement" then
     let iterJ := fieldNode j "expression"
-    let iter := iterJ.map renderExpr |>.getD "default"
+    let rawIter := iterJ.map renderExpr |>.getD "default"
+    -- Parenthesize compound iterators (method calls with args, etc.)
+    let iter := match iterJ with
+      | some ij => parenIfCompoundExpr ij rawIter
+      | none => rawIter
     let varJ := fieldNode j "initializer"
     let varName := match varJ with
       | some v =>
@@ -943,7 +1011,8 @@ private partial def lowerSwitchR (reg : UnionRegistry) (paramTypes : Array (Stri
     -- Fallback: non-discriminated switch
     let scrutinee := scrutJ.map renderExpr |>.getD "default"
     let clauses := (fieldNode j "caseBlock").map (fieldArr · "clauses") |>.getD #[]
-    let arms := clauses.filterMap fun clause =>
+    -- Collect (pattern, bodyStmts) pairs, handling fall-through
+    let clauseInfo := clauses.filterMap fun clause =>
       let ck := nodeKind clause
       if ck == "CaseClause" then
         let pat := (fieldNode clause "expression").map fun e =>
@@ -955,19 +1024,32 @@ private partial def lowerSwitchR (reg : UnionRegistry) (paramTypes : Array (Stri
         let stmts := fieldArr clause "statements"
         let bodyStmts := stmts.filter fun s =>
           nodeKind s != "BreakStatement" && nodeKind s != "ContinueStatement"
-        let body := if bodyStmts.size == 0 then .Lit "()"
-          else if bodyStmts.size == 1 then lowerBlockStmtR reg paramTypes (bodyStmts.getD 0 default)
-          else lowerStmtSeqR reg paramTypes bodyStmts.toList
-        some (LeanMatchArm.mk pat none body)
+        some (pat, bodyStmts)
       else if ck == "DefaultClause" then
         let stmts := fieldArr clause "statements"
         let bodyStmts := stmts.filter fun s =>
           nodeKind s != "BreakStatement" && nodeKind s != "ContinueStatement"
+        some (LeanPat.PWild, bodyStmts)
+      else none
+    -- Handle fall-through: for empty-body cases, find next non-empty body
+    let findBodyStmts (i : Nat) : Array Json :=
+      let rec go (k : Nat) (fuel : Nat) : Array Json :=
+        if fuel == 0 then #[]
+        else if k >= clauseInfo.size then #[]
+        else
+          let (_, stmts) := clauseInfo.getD k (.PWild, #[])
+          if stmts.size > 0 then stmts else go (k + 1) (fuel - 1)
+      go i clauseInfo.size
+    let arms := Id.run do
+      let mut result : Array LeanMatchArm := #[]
+      for i in List.range clauseInfo.size do
+        let (pat, _) := clauseInfo.getD i (.PWild, #[])
+        let bodyStmts := findBodyStmts i
         let body := if bodyStmts.size == 0 then .Lit "()"
           else if bodyStmts.size == 1 then lowerBlockStmtR reg paramTypes (bodyStmts.getD 0 default)
           else lowerStmtSeqR reg paramTypes bodyStmts.toList
-        some (LeanMatchArm.mk .PWild none body)
-      else none
+        result := result.push (LeanMatchArm.mk pat none body)
+      return result
     .Match (.Lit scrutinee) arms
 
 /-- Lower a discriminated union switch: produce constructor patterns
@@ -1293,8 +1375,17 @@ private partial def lowerVarStatement (j : Json) : Array LeanDecl :=
   let decls := declList.map (fieldArr · "declarations") |>.getD #[]
   decls.filterMap fun d =>
     let name := (fieldNode d "name").map nodeText |>.getD "_"
-    let ty := match fieldNode d "type" with | some tn => mapTypeNode tn | none => mapResolvedType d
-    let body := match fieldNode d "initializer" with
+    let initJ := fieldNode d "initializer"
+    -- Detect new Set([...]) / new Map([...]) → Array String type
+    let initCtorName := match initJ with
+      | some init => if nodeKind init == "NewExpression" then
+          (fieldNode init "expression").map nodeText |>.getD ""
+        else ""
+      | none => ""
+    let ty := if initCtorName == "Set" || initCtorName == "Map" then
+        .TyApp (.TyName "Array") #[.TyName "String"]
+      else match fieldNode d "type" with | some tn => mapTypeNode tn | none => mapResolvedType d
+    let body := match initJ with
       | some init => lowerExpr init | none => .Default (some ty)
     some (.Def false name #[] #[] ty body none none none)
 
