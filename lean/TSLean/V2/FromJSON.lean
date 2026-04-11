@@ -458,13 +458,34 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
   else if fn.endsWith ".splitOn" && args.size == 1 then
     let obj := fn.dropEnd 8 |>.toString
     some (obj ++ ".splitOn " ++ (args.getD 0 ""))
-  -- .includes(x) → .contains for array literals (matches TS pipeline)
+  -- .includes(x) → .contains for non-string types (matches TS pipeline fieldMap)
+  -- TS transpiler: isString ? "includes" : "contains". We detect string via resolvedType
+  -- flags (TF_String/TF_StringLiteral) and known string-typed property names.
   else if fn.endsWith ".includes" && args.size == 1 then
     let objNode := fnJ.bind fun fj => fieldNode fj "expression"
-    let objKind := objNode.map nodeKind |>.getD ""
-    if objKind == "ArrayLiteralExpression" then
+    let isStr := match objNode with
+      | some oj =>
+        let flags := resolvedType oj |>.map typeFlags |>.getD 0
+        if flags &&& TF_String != 0 || flags &&& TF_StringLiteral != 0 then true
+        else
+          let okind := nodeKind oj
+          if okind == "PropertyAccessExpression" then
+            let pn := (fieldNode oj "name").map nodeText |>.getD ""
+            -- Known string-typed property names on IR nodes
+            pn == "name" || pn == "field" || pn == "ctor" || pn == "op" || pn == "text" ||
+            pn == "sourceFile" || pn == "module" || pn == "typeClass"
+          else okind == "StringLiteral" || okind == "NoSubstitutionTemplateLiteral"
+      | none => false
+    if !isStr then
       let obj := fn.dropEnd 9 |>.toString
       some (obj ++ ".contains " ++ (args.getD 0 ""))
+    else none
+  -- regex.test(x) → (sorry : Bool) — no Lean equivalent for regex
+  else if fn.endsWith ".test" && args.size == 1 then
+    -- Check if receiver looks like a regex literal (starts with "/" or is a RegExp)
+    let objStr := fn.dropEnd 5 |>.toString
+    if objStr.startsWith "\"/" || objStr.startsWith "/" then
+      some "(sorry : Bool)"
     else none
   else none
 
@@ -502,7 +523,16 @@ private partial def hasStringType (j : Json) : Bool :=
   if isStringTyped j then true
   else
     let kind := nodeKind j
-    if kind == "PropertyAccessExpression" || kind == "CallExpression" then
+    if kind == "PropertyAccessExpression" then
+      -- Known string-returning field names on IR nodes
+      let propName := (fieldNode j "name").map nodeText |>.getD ""
+      if propName == "name" || propName == "field" || propName == "ctor" || propName == "op" ||
+         propName == "text" || propName == "sourceFile" || propName == "module" ||
+         propName == "typeClass" then true
+      else match fieldNode j "expression" with
+        | some inner => hasStringType inner
+        | none => false
+    else if kind == "CallExpression" then
       match fieldNode j "expression" with
       | some inner => hasStringType inner
       | none => false
@@ -677,11 +707,30 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     -- Optional chaining: obj?.field → obj.bind (fun _oc => some _oc.field)
      -- When .tag is on an inductive type, render as (sorry : String) matching TS lowerer
      let hasQuestionDot := (fieldNode j "questionDotToken").isSome
+     -- Detect inductive union types (IRType, Effect, BinOp, UnOp) whose .tag access
+     -- should produce (sorry : String) per the TS lowerer's isInductiveType check.
      let checkInductiveAlias := fun (objJ : Json) =>
        let alias := resolvedType objJ |>.bind (fun rt => getField rt "aliasName" |>.bind getStr)
-       match alias with
-       | some n => n == "IRType" || n == "Effect" || n == "BinOp" || n == "UnOp"
-       | none => false
+       let byAlias := match alias with
+         | some n => n == "IRType" || n == "Effect" || n == "BinOp" || n == "UnOp"
+         | none => false
+       if byAlias then true
+       else
+          -- Check resolvedType.name — only match if type IS IRType/Effect/etc (not generic param)
+          let rtName := resolvedType objJ |>.bind (fun rt => getField rt "name" |>.bind getStr) |>.getD ""
+          if rtName == "IRType" || rtName == "Effect" || rtName == "BinOp" || rtName == "UnOp" then true
+         else
+           -- Check if obj is a direct (non-optional-chained) PropertyAccessExpression
+           -- on a known IRType-returning field (e.g. .type, .retType on IR nodes).
+           -- Skip if the field itself has questionDotToken — for `?.type?.tag` the TS IR
+           -- loses the specific type (resolves to TSAny) so no sorry is produced.
+           let objKind := nodeKind objJ
+           if objKind == "PropertyAccessExpression" then
+             let propName := (fieldNode objJ "name").map nodeText |>.getD ""
+             let propHasQDot := (fieldNode objJ "questionDotToken").isSome
+             !propHasQDot && (propName == "type" || propName == "testType" || propName == "retType" ||
+             propName == "stateType" || propName == "errorType" || propName == "targetType")
+           else false
      if hasQuestionDot then
        let isTagOnInductive := field == "tag" && match fieldNode j "expression" with
          | some objJ => checkInductiveAlias objJ | none => false
