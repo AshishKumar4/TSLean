@@ -311,8 +311,19 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
   else if kind == "NullKeyword" || kind == "UndefinedKeyword" then "none"
   else if kind == "Identifier" then nodeText j
   else if kind == "ThisKeyword" then "self"
-  else if kind == "AsExpression" || kind == "SatisfiesExpression" ||
-          kind == "NonNullExpression" then
+  else if kind == "AsExpression" then
+    let inner := (fieldNode j "expression").map re |>.getD "default"
+    -- Cast to Error → access .val (catch variables are TSError wrappers)
+    let typeName := (fieldNode j "type").bind (fun t =>
+      if nodeKind t == "TypeReference" then
+        let fromTypeName := (fieldNode t "typeName").map nodeText
+        let fromAlias := resolvedType t |>.bind (fun rt => getField rt "aliasName" |>.bind getStr)
+        fromTypeName.orElse (fun _ => fromAlias)
+      else none)
+    let isError := match typeName with
+      | some n => n == "Error" || n.endsWith "Error" | none => false
+    if isError then inner ++ ".val" else inner
+  else if kind == "SatisfiesExpression" || kind == "NonNullExpression" then
     (fieldNode j "expression").map re |>.getD "default"
   else if kind == "ParenthesizedExpression" then
     "(" ++ ((fieldNode j "expression").map re |>.getD "default") ++ ")"
@@ -534,6 +545,24 @@ private def isPureFieldReturn (stmts : Array Json) : Option String :=
     else none
   else none
 
+/-- Wrap the tail expression of a monadic body with `pure`.
+    Transforms `expr` → `Pure expr` at return positions (end of Let/Bind chains, both If branches). -/
+private partial def wrapReturnsPure (e : LeanExpr) : LeanExpr :=
+  match e with
+  | .Let n t v b r => .Let n t v (wrapReturnsPure b) r
+  | .Bind n v b => .Bind n v (wrapReturnsPure b)
+  | .Seq stmts =>
+    let arr := stmts
+    if arr.size == 0 then .Pure (.Lit "()")
+    else
+      let last := arr.getD (arr.size - 1) (.Lit "()")
+      arr.set! (arr.size - 1) (wrapReturnsPure last) |> .Seq
+  | .If c t f => .If c (wrapReturnsPure t) (wrapReturnsPure f)
+  | .Do b => .Do (wrapReturnsPure b)
+  | .Pure _ | .Return _ | .Throw _ => e  -- already wrapped
+  | .Lit s => .Pure (.Lit s)
+  | other => .Pure other
+
 mutual
 
 /-- Check if a LeanExpr contains any Bind nodes. -/
@@ -611,6 +640,23 @@ private partial def lowerStmtSeqR (reg : UnionRegistry) (paramTypes : Array (Str
     else if kind == "SwitchStatement" then
       let sw := lowerSwitchR reg paramTypes s
       match rest with | [] => sw | _ => .Seq #[sw, lowerStmtSeqR reg paramTypes rest]
+    else if kind == "ExpressionStatement" then
+      -- Check for assignment: x = expr → Let x value ((); rest)
+      let exprJ := fieldNode s "expression"
+      let isAssign := match exprJ with
+        | some e => nodeKind e == "BinaryExpression" &&
+          let opKind := (fieldNode e "operatorToken").map nodeKind |>.getD ""
+          opKind == "FirstAssignment" || opKind == "EqualsToken"
+        | none => false
+      if isAssign then
+        let e := exprJ.getD default
+        let lname := (fieldNode e "left").map renderExpr |>.getD "_"
+        let rval := (fieldNode e "right").map renderExpr |>.getD "default"
+        let cont := lowerStmtSeqR reg paramTypes rest
+        .Let lname none (.Lit rval) (.Seq #[.Lit "()", cont]) false
+      else
+        let expr := lowerBlockStmtR reg paramTypes s
+        match rest with | [] => expr | _ => .Seq #[expr, lowerStmtSeqR reg paramTypes rest]
     else
       let expr := lowerBlockStmtR reg paramTypes s
       match rest with | [] => expr | _ => .Seq #[expr, lowerStmtSeqR reg paramTypes rest]
@@ -980,26 +1026,6 @@ private partial def lowerThisAssignM (reg : UnionRegistry) (j : Json) : Option (
   | none => none
 
 end -- mutual
-
-/-- Wrap the tail expression of a monadic body with `pure`.
-    Transforms `expr` → `Pure expr` at return positions (end of Let/Bind chains, both If branches). -/
-private partial def wrapReturnsPure (e : LeanExpr) : LeanExpr :=
-  match e with
-  | .Let n t v b r => .Let n t v (wrapReturnsPure b) r
-  | .Bind n v b => .Bind n v (wrapReturnsPure b)
-  | .Seq stmts =>
-    let arr := stmts
-    if arr.size == 0 then .Pure (.Lit "()")
-    else
-      let last := arr.getD (arr.size - 1) (.Lit "()")
-      arr.set! (arr.size - 1) (wrapReturnsPure last) |> .Seq
-  | .If c t f => .If c (wrapReturnsPure t) (wrapReturnsPure f)
-  | .Do b => .Do (wrapReturnsPure b)
-  | .Pure _ | .Return _ | .Throw _ => e  -- already wrapped
-  | .Lit s =>
-    -- Return statements already produce plain Lit — wrap with pure
-    .Pure (.Lit s)
-  | other => .Pure other
 
 -- Legacy wrappers used by non-registry-aware callers
 private partial def lowerBody (j : Json) : LeanExpr := lowerBodyR #[] #[] j
