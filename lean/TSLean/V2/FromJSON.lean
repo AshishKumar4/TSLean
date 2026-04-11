@@ -131,6 +131,8 @@ private partial def mapTypeNode (j : Json) : LeanTy :=
     else if name == "Promise" && typeArgs.size == 1 then mapTypeNode (typeArgs.getD 0 default)
     -- JS Error types map to String in the Lean model
     else if name == "Error" || name.endsWith "Error" then .TyName "String"
+    -- Record<K,V> → String (matches TS pipeline which maps Record types to String)
+    else if name == "Record" then .TyName "String"
     else if typeArgs.size > 0 then .TyApp (.TyName name) (typeArgs.map mapTypeNode)
     else .TyName name
   else if kind == "ArrayType" then
@@ -374,7 +376,12 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     else if opKind == "FirstAssignment" || opKind == "EqualsToken" then
       "let " ++ left ++ " := " ++ right
     else
-      let op := mapBinOpSym opKind
+      -- Type-aware operator: PlusToken on strings → ++ (concat), otherwise +
+      let op := if opKind == "PlusToken" then
+        match leftJ with
+        | some lj => if hasStringType lj then "++" else "+"
+        | none => mapBinOpSym opKind
+      else mapBinOpSym opKind
       let left := match leftJ with | some lj => parenBinOperand lj left opKind | none => left
       let right := match rightJ with
         | some rj => parenBinOperand rj right opKind
@@ -426,14 +433,22 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     match tryStructToCtor reg props re with
     | some ctorApp => ctorApp
     | none =>
-      let fields := props.filterMap fun p =>
+       let fields := props.filterMap fun p =>
         let pk := nodeKind p
         if pk == "PropertyAssignment" then
           let nameJ := fieldNode p "name"
           let rawName := nameJ.map nodeText |>.getD "_"
-          -- Sanitize field name: replace dashes with _, wrap with _ if has special chars
-          let n := if rawName.any (· == '-') then
-            "_" ++ (rawName.map fun c => if c == '-' then '_' else c) ++ "_"
+          let nameKind := nameJ.map nodeKind |>.getD ""
+          -- For StringLiteral keys, use sourceText (preserves quotes from TS source)
+          -- then sanitize: keep [a-zA-Z0-9_.!?'], replace everything else with _
+          let sanitizeChars := fun (s : String) => s.map fun c =>
+            if c.isAlphanum || c == '_' || c == '.' || c == '!' || c == '?' || c == '\'' then c
+            else '_'
+          let n := if nameKind == "StringLiteral" then
+            let srcText := nameJ.bind (fun nj => getField nj "sourceText" |>.bind getStr)
+            match srcText with
+            | some st => sanitizeChars st
+            | none => sanitizeChars rawName
           else rawName
           let v := (fieldNode p "initializer").map re |>.getD "default"
           some (n ++ " := " ++ v)
@@ -1096,7 +1111,9 @@ private def extractTypeParams (j : Json) : Array LeanTyParam :=
 
 private def lowerParam (j : Json) : LeanParam :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
-  let ty := match fieldNode j "type" with | some tn => mapTypeNode tn | none => mapResolvedType j
+  let baseTy := match fieldNode j "type" with | some tn => mapTypeNode tn | none => mapResolvedType j
+  -- Optional parameters (questionToken) get wrapped in Option
+  let ty := if fieldBool j "questionToken" then .TyApp (.TyName "Option") #[baseTy] else baseTy
   { name := name, ty := ty }
 
 private def extractJSDocSummary (text : String) : Option String :=
@@ -1694,13 +1711,15 @@ def lowerJsonModule (json : Json) : LeanFile :=
           let merged := ds.foldl (fun (acc, pendingComments) d =>
             match d with
             | .Comment text => (acc, pendingComments ++ [text])
-            | .Structure n tp fs ext der _ =>
-              let comment := if pendingComments.isEmpty then none
-                else some (String.intercalate "\n" pendingComments)
+            | .Structure n tp fs ext der existingComment =>
+              let comment := if !pendingComments.isEmpty then
+                some (String.intercalate "\n" pendingComments)
+              else existingComment
               (acc.push (.Structure n tp fs ext der comment), [])
-            | .Inductive n tp ctors der _ =>
-              let comment := if pendingComments.isEmpty then none
-                else some (String.intercalate "\n" pendingComments)
+            | .Inductive n tp ctors der existingComment =>
+              let comment := if !pendingComments.isEmpty then
+                some (String.intercalate "\n" pendingComments)
+              else existingComment
               (acc.push (.Inductive n tp ctors der comment), [])
             | _ => (acc.push d, pendingComments)
           ) (#[], ([] : List String))
