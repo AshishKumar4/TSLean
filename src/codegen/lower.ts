@@ -623,8 +623,21 @@ class LowerCtx {
   }
 
   private lowerVarDecl(d: Extract<IRDecl, { tag: 'VarDecl' }>): LeanDecl {
-    const ty = this.lowerType(d.type);
-    const val = this.lowerExpr(d.value, Pure);
+    let ty = this.lowerType(d.type);
+    let val = this.lowerExpr(d.value, Pure);
+    // Anonymous object values lowered to default → infer AssocMap type from field values
+    if (val.tag === 'Default' && d.value?.tag === 'StructLit' && d.value.fields.length > 3) {
+      const firstField = d.value.fields[0];
+      if (firstField?.value?.tag === 'StructLit') {
+        // Nested struct values: infer value type from struct fields that match known types
+        const valueTypeName = this.inferStructValueType(firstField.value);
+        ty = { tag: 'TyApp', fn: { tag: 'TyName', name: 'AssocMap' },
+               args: [{ tag: 'TyName', name: 'String' }, { tag: 'TyName', name: valueTypeName }] };
+      } else if (firstField?.value?.type?.tag === 'TypeRef' && firstField.value.type.name !== '__object') {
+        ty = { tag: 'TyApp', fn: { tag: 'TyName', name: 'AssocMap' },
+               args: [{ tag: 'TyName', name: 'String' }, { tag: 'TyName', name: firstField.value.type.name }] };
+      }
+    }
     if (d.mutable) {
       return { tag: 'Raw', code: `-- mutable binding '${d.name}' modelled as IO.Ref\ndef ${d.name}_ref : IO (IO.Ref ${this.printTyInline(ty)}) := IO.mkRef ${this.printExprInline(val)}` };
     }
@@ -637,6 +650,23 @@ class LowerCtx {
       retTy: ty,
       body: val,
     };
+  }
+
+  /** Infer a struct's type name from its field signatures (for method table objects). */
+  private inferStructValueType(structLit: IRExpr): string {
+    if (structLit.tag !== 'StructLit') return 'String';
+    // Look for known struct patterns by field names
+    const fieldNames = new Set(structLit.fields.map(f => f.name));
+    if (fieldNames.has('leanFn') || fieldNames.has('resultType') || fieldNames.has('argOrder'))
+      return 'MethodTx';
+    if (fieldNames.has('leanExpr') || fieldNames.has('maxArgs'))
+      return 'GlobalTx';
+    // Check if any field's value has a known named type
+    for (const f of structLit.fields) {
+      if (f.value?.type?.tag === 'TypeRef' && f.value.type.name !== '__object' && f.value.type.name !== 'Any')
+        return f.value.type.name;
+    }
+    return 'String';
   }
 
   private lowerInstance(d: Extract<IRDecl, { tag: 'InstanceDef' }>): LeanDecl {
@@ -1223,6 +1253,13 @@ class LowerCtx {
   private lowerStructLit(e: Extract<IRExpr, { tag: 'StructLit' }>, ctx: Effect): LeanExpr {
     if (e.type?.tag === 'String' || (e.type?.tag === 'TypeRef' && (e.type.name === 'Any' || e.type.name === 'TSAny'))) {
       return sorryForType(e.type);
+    }
+    // Large anonymous object literals with nested struct values (like TS Record
+    // types used as method/config tables) can't be Lean struct literals.
+    // Only emit default for objects with 5+ fields that contain nested structs.
+    const hasNestedStructs = e.fields.some(f => f.value?.tag === 'StructLit');
+    if (hasNestedStructs && e.fields.length > 5 && !this.structFields.has(e.typeName ?? '')) {
+      return { tag: 'Default' };
     }
     // Detect struct-update pattern: _base field + other fields
     const baseField = e.fields.find(f => f.name === '_base');
