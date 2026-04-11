@@ -547,7 +547,12 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       -- Fall back to ++ chain (matches TS BinOp "++" fallback)
       let acc := if headText == "" then "" else "\"" ++ headText ++ "\""
       spans.foldl (fun acc span =>
-        let expr := (fieldNode span "expression").map re |>.getD ""
+        let exprJ := fieldNode span "expression"
+        let rawExpr := exprJ.map re |>.getD ""
+        -- Parenthesize compound interpolated expressions in ++ chains
+        let expr := match exprJ with
+          | some ej => parenIfCompoundExpr ej rawExpr
+          | none => rawExpr
         let lit := (fieldNode span "literal").map nodeText |>.getD ""
         let withExpr := if acc == "" then expr
           else if expr == "" then acc
@@ -593,7 +598,10 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       | none =>
         if fields.size == 0 then "{}" else "{ " ++ String.intercalate ", " fields.toList ++ " }"
   else if kind == "ArrayLiteralExpression" then
-    let elems := (fieldArr j "elements").map re
+    let elems := (fieldArr j "elements").map fun e =>
+      if nodeKind e == "SpreadElement" then
+        (fieldNode e "expression").map re |>.getD "default"
+      else re e
     "#[" ++ String.intercalate ", " elems.toList ++ "]"
   else if kind == "AwaitExpression" then
     (fieldNode j "expression").map re |>.getD "default"
@@ -604,7 +612,8 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       | some b =>
         if isBlock b then
           -- Render block statements inline, chained with "; "
-          let stmts := fieldArr b "statements"
+          let stmts := (fieldArr b "statements").filter fun s =>
+            nodeKind s != "ContinueStatement" && nodeKind s != "BreakStatement"
           let rendered := stmts.map (renderExprCtx reg ctx)
           String.intercalate "; " rendered.toList
         else re b
@@ -780,8 +789,13 @@ private partial def lowerBodyR (reg : UnionRegistry) (paramTypes : Array (String
     (j : Json) : LeanExpr :=
   if isBlock j then
     let stmts := fieldArr j "statements"
+    -- Filter out ContinueStatement/BreakStatement (loop control absorbed by if-else chaining)
+    let stmts := stmts.filter fun s =>
+      nodeKind s != "ContinueStatement" && nodeKind s != "BreakStatement"
     if stmts.size == 0 then .Lit "()" else lowerStmtSeqR reg paramTypes stmts.toList
-  else lowerExpr j
+  else
+    -- Non-block body (single statement without braces): treat as one-element statement list
+    lowerBlockStmtR reg paramTypes j
 
 private partial def lowerStmtSeqR (reg : UnionRegistry) (paramTypes : Array (String × String))
     : List Json → LeanExpr
