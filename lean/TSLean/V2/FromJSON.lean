@@ -151,17 +151,16 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
     some ("String.intercalate " ++ (args.getD 0 "") ++ " " ++ obj)
   else none
 
-/-- Parenthesize a binary expression operand if it has lower precedence. -/
-private def parenBinOperand (j : Json) (rendered : String) (parentOp : String) : String :=
+/-- Parenthesize a binary expression operand if it's compound.
+    Matches the TS lowering which wraps all BinOp/App/Lambda/etc. sub-exprs. -/
+private def parenBinOperand (j : Json) (rendered : String) (_parentOp : String) : String :=
   let kind := nodeKind j
-  if kind != "BinaryExpression" then rendered
-  else
-    let childOp := (fieldNode j "operatorToken").map nodeKind |>.getD ""
-    -- Parenthesize add/sub inside mul/div
-    let needsParens :=
-      (parentOp == "AsteriskToken" || parentOp == "SlashToken" || parentOp == "PercentToken") &&
-      (childOp == "PlusToken" || childOp == "MinusToken")
-    if needsParens then "(" ++ rendered ++ ")" else rendered
+  -- The TS lowering wraps any compound sub-expression in parens
+  if kind == "BinaryExpression" || kind == "ConditionalExpression" ||
+     kind == "AwaitExpression" ||
+     (kind == "CallExpression" && (fieldArr j "arguments").size > 0) then
+    "(" ++ rendered ++ ")"
+  else rendered
 
 private partial def renderExpr (j : Json) : String :=
   let kind := nodeKind j
@@ -189,7 +188,7 @@ private partial def renderExpr (j : Json) : String :=
     -- Precedence-aware parenthesization
     let left := match leftJ with | some lj => parenBinOperand lj left opKind | none => left
     let right := match rightJ with
-      | some rj => parenBinOperand rj (parenIfCompoundExpr rj right) opKind
+      | some rj => parenBinOperand rj right opKind
       | none => right
     left ++ " " ++ op ++ " " ++ right
   else if kind == "PropertyAccessExpression" then
@@ -305,6 +304,9 @@ private partial def lowerStmtSeq : List Json → LeanExpr
             | _ => some rt
         .Let name ty (.Lit val) (lowerStmtSeq rest) false
       else lowerStmtSeq rest
+    else if kind == "SwitchStatement" then
+      let sw := lowerSwitch s
+      match rest with | [] => sw | _ => .Seq #[sw, lowerStmtSeq rest]
     else
       let expr := lowerBlockStmt s
       match rest with | [] => expr | _ => .Seq #[expr, lowerStmtSeq rest]
@@ -318,7 +320,59 @@ private partial def lowerBlockStmt (j : Json) : LeanExpr :=
     let thenB := (fieldNode j "thenStatement").map lowerBody |>.getD (.Lit "()")
     let elseB := (fieldNode j "elseStatement").map lowerBody |>.getD (.Lit "()")
     .If (.Lit cond) thenB elseB
+  else if kind == "SwitchStatement" then
+    lowerSwitch j
+  else if kind == "ForOfStatement" || kind == "ForInStatement" then
+    -- for (const x of arr) { body } → Array.forM arr (fun x => body)
+    let iterJ := fieldNode j "expression"
+    let iter := iterJ.map renderExpr |>.getD "default"
+    let varJ := fieldNode j "initializer"
+    let varName := match varJ with
+      | some v =>
+        if nodeKind v == "VariableDeclarationList" then
+          let decls := fieldArr v "declarations"
+          let d := decls.getD 0 default
+          (fieldNode d "name").map nodeText |>.getD "_"
+        else renderExpr v
+      | none => "_"
+    let bodyExpr := (fieldNode j "statement").map lowerBody |>.getD (.Lit "()")
+    .App (.Var "Array.forM") #[.Lit iter, .Lam #[varName] bodyExpr]
+  else if kind == "ThrowStatement" then
+    let expr := (fieldNode j "expression").map renderExpr |>.getD "default"
+    .Throw (.Lit expr)
   else .Lit (renderExpr j)
+
+/-- Lower a SwitchStatement to a Match expression. -/
+private partial def lowerSwitch (j : Json) : LeanExpr :=
+  let scrutinee := (fieldNode j "expression").map renderExpr |>.getD "default"
+  let clauses := (fieldNode j "caseBlock").map (fieldArr · "clauses") |>.getD #[]
+  let arms := clauses.filterMap fun clause =>
+    let ck := nodeKind clause
+    if ck == "CaseClause" then
+      let pat := (fieldNode clause "expression").map fun e =>
+        let ek := nodeKind e
+        if ek == "StringLiteral" then LeanPat.PLit ("\"" ++ nodeText e ++ "\"")
+        else if ek == "NumericLiteral" then .PLit (nodeText e)
+        else .PVar (renderExpr e)
+      let pat := pat.getD .PWild
+      let stmts := fieldArr clause "statements"
+      -- Filter out break/continue statements
+      let bodyStmts := stmts.filter fun s =>
+        nodeKind s != "BreakStatement" && nodeKind s != "ContinueStatement"
+      let body := if bodyStmts.size == 0 then .Lit "()"
+        else if bodyStmts.size == 1 then lowerBlockStmt (bodyStmts.getD 0 default)
+        else lowerStmtSeq bodyStmts.toList
+      some (LeanMatchArm.mk pat none body)
+    else if ck == "DefaultClause" then
+      let stmts := fieldArr clause "statements"
+      let bodyStmts := stmts.filter fun s =>
+        nodeKind s != "BreakStatement" && nodeKind s != "ContinueStatement"
+      let body := if bodyStmts.size == 0 then .Lit "()"
+        else if bodyStmts.size == 1 then lowerBlockStmt (bodyStmts.getD 0 default)
+        else lowerStmtSeq bodyStmts.toList
+      some (LeanMatchArm.mk .PWild none body)
+    else none
+  .Match (.Lit scrutinee) arms
 
 end -- mutual
 
@@ -387,7 +441,13 @@ private partial def lowerInterfaceDecl (j : Json) : Array LeanDecl :=
   let fields := members.filterMap fun m =>
     if isPropertySignature m then
       let fn := (fieldNode m "name").map nodeText |>.getD "_"
-      let fty := match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
+      let isOptional := fieldBool m "questionToken"
+      -- For optional properties, use resolved type (which includes undefined) then wrap
+      let fty := if isOptional then
+        let baseTy := mapResolvedType m  -- This already gives Option T from union
+        .TyApp (.TyName "Option") #[baseTy]  -- Wrap again for the ? token
+      else
+        match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
       some (LeanField.mk fn fty none)
     else none
   #[.Structure name tyParams fields none DEFAULT_DERIVING none]

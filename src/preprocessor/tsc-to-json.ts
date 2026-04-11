@@ -273,6 +273,7 @@ function serializeNode(
   if (n.argumentExpression && isNode(n.argumentExpression))
     result.argumentExpression = serializeNode(n.argumentExpression, checker, sf, depth + 1);
   if (n.questionDotToken) result.questionDotToken = { kind: 'QuestionDotToken' };
+  if (n.questionToken) (result as any).questionToken = true;
   if (n.whenTrue && isNode(n.whenTrue)) result.whenTrue = serializeNode(n.whenTrue, checker, sf, depth + 1);
   if (n.whenFalse && isNode(n.whenFalse)) result.whenFalse = serializeNode(n.whenFalse, checker, sf, depth + 1);
 
