@@ -608,14 +608,16 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
         let prefixStr := if safePrefix == "" then #[]
           else if safePrefixSpanCount > 0 then #["s!\"" ++ safePrefix ++ "\""]
           else #["\"" ++ safePrefix ++ "\""]
-        let tailPieces := unsafeSpans.toArray.map fun span =>
+        -- Build tail pieces with separate entries for expr and literal
+        let tailPieces := unsafeSpans.foldl (fun acc span =>
           let expr := (fieldNode span "expression").map re |>.getD ""
           let exprJ := fieldNode span "expression"
           let parenExpr := match exprJ with
             | some ej => parenIfCompoundExpr ej expr | none => expr
           let lit := (fieldNode span "literal").map nodeText |>.getD ""
-          if lit == "" then parenExpr
-          else parenExpr ++ " ++ \"" ++ lit ++ "\""
+          if lit == "" then acc.push parenExpr
+          else acc.push parenExpr |>.push ("\"" ++ lit ++ "\"")
+        ) #[]
         let allPieces := prefixStr ++ tailPieces
         -- Left-fold with parens to match TS lowerer's left-associative BinOp tree
         -- Only parenthesize when accumulator is a compound expression (contains ++)
