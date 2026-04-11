@@ -186,7 +186,8 @@ private def parenIfCompoundExpr (j : Json) (rendered : String) : String :=
   if kind == "BinaryExpression" || kind == "ConditionalExpression" ||
      kind == "ArrowFunction" || kind == "AwaitExpression" ||
      kind == "TemplateExpression" ||
-     (kind == "CallExpression" && (fieldArr j "arguments").size > 0) then
+     (kind == "CallExpression" && (fieldArr j "arguments").size > 0) ||
+     (kind == "NewExpression" && (fieldArr j "arguments").size > 0) then
     "(" ++ rendered ++ ")"
   else rendered
 
@@ -326,6 +327,9 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       let right := match rightJ with
         | some rj => parenIfCompoundExpr rj right | none => right
       "Option.getD " ++ left ++ " " ++ right
+    -- Assignment: x = y → let x := y (rendered as statement context)
+    else if opKind == "FirstAssignment" || opKind == "EqualsToken" then
+      "let " ++ left ++ " := " ++ right
     else
       let op := mapBinOpSym opKind
       let left := match leftJ with | some lj => parenBinOperand lj left opKind | none => left
@@ -675,7 +679,8 @@ private partial def lowerBlockStmtR (reg : UnionRegistry) (paramTypes : Array (S
     .Let loopName none loopBody callLoop true
   else if kind == "TryStatement" then
     -- try { body } catch (e) { handler } → tryCatch body (fun e => handler)
-    let tryBody := (fieldNode j "tryBlock").map (lowerBodyR reg paramTypes) |>.getD (.Lit "()")
+    -- Apply pure wrapping since try body is in monadic context
+    let tryBody := (fieldNode j "tryBlock").map (fun b => wrapReturnsPure (lowerBodyR reg paramTypes b)) |>.getD (.Lit "()")
     let catchClause := fieldNode j "catchClause"
     let errName := catchClause.bind (fun cc =>
       (fieldNode cc "variableDeclaration").bind (fun vd =>
@@ -1074,10 +1079,20 @@ private partial def lowerFuncDeclR (reg : UnionRegistry) (j : Json) : Array Lean
     match paramTypeName p with
     | some tname => some (pname, tname)
     | none => none
-  -- Detect async
+  -- Detect async and combined effects
   let mods := fieldArr j "modifiers"
   let isAsync := mods.any fun m => nodeKind m == "AsyncKeyword"
-  let retTy := if isAsync then .TyApp (.TyName "IO") #[retTy] else retTy
+  let bodyStmts := match fieldNode j "body" with
+    | some b => fieldArr b "statements" | none => #[]
+  let bodyText := bodyStmts.foldl (fun acc s => acc ++ toString s) ""
+  let hasThrowInBody := textContains bodyText "ThrowStatement"
+  let hasTryCatch := textContains bodyText "TryStatement"
+  let hasVarReassign := textContains bodyText "FirstAssignment"
+  -- Combined effects: State + Except when there's try/catch + throw + mutable vars
+  let retTy := if isAsync && hasThrowInBody && (hasTryCatch || hasVarReassign) then
+    .TyApp (.TyName "StateT") #[.TyName "Unit",
+      .TyApp (.TyName "ExceptT") #[.TyName "String", .TyName "IO"], retTy]
+  else if isAsync then .TyApp (.TyName "IO") #[retTy] else retTy
   let body := match fieldNode j "body" with
     | some b => lowerBodyR reg paramTypes b
     | none => .Default (some retTy)
