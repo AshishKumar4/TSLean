@@ -193,6 +193,25 @@ private def substFieldAccess (ctx : SubstCtx) (obj : String) (field : String) : 
     else none
   | none => none
 
+private def sanitizeId (name : String) : String :=
+  if #["def","fun","let","in","if","then","else","match","with","do","return","where",
+       "have","show","from","by","class","instance","structure","inductive","namespace",
+       "end","open","import","theorem","lemma","example","variable","universe","abbrev",
+       "opaque","partial","mutual","private","protected","section","attribute","and","or",
+       "not","true","false","Type","Prop",
+       "for","while","repeat","at","try","catch","throw","macro","syntax","tactic",
+       "set_option","derive","deriving","extends","override"].any (· == name)
+  then "«" ++ name ++ "»" else name
+
+private def escapeLitStr (s : String) : String :=
+  s.foldl (fun acc c =>
+    if c == '\n' then acc ++ "\\n"
+    else if c == '\r' then acc ++ "\\r"
+    else if c == '\t' then acc ++ "\\t"
+    else if c == '\\' then acc ++ "\\\\"
+    else if c == '"' then acc ++ "\\\""
+    else acc.push c) ""
+
 private def mapBinOpSym (kind : String) : String := match kind with
   | "PlusToken" => "+" | "MinusToken" => "-" | "AsteriskToken" => "*"
   | "SlashToken" => "/" | "PercentToken" => "%"
@@ -233,10 +252,34 @@ private partial def renderIfCondition (render : Json → String) (j : Json) : St
         let r := (fieldNode j "right").map (renderIfCondition render) |>.getD "default"
         l ++ " != " ++ r
     else if opKind == "AmpersandAmpersandToken" || opKind == "BarBarToken" then
-      let l := (fieldNode j "left").map (renderIfCondition render) |>.getD "default"
-      let r := (fieldNode j "right").map (renderIfCondition render) |>.getD "default"
+      let leftJ := fieldNode j "left"
+      let rightJ := fieldNode j "right"
+      let l := leftJ.map render |>.getD "default"
+      let r := rightJ.map render |>.getD "default"
+      -- Wrap BinaryExpression/PrefixUnary operands in parens (matches TS lowerExprP)
+      let l := match leftJ with
+        | some lj => let lk := nodeKind lj
+          if lk == "BinaryExpression" || lk == "ConditionalExpression" ||
+             lk == "PrefixUnaryExpression" then "(" ++ l ++ ")" else l
+        | none => l
+      let r := match rightJ with
+        | some rj => let rk := nodeKind rj
+          if rk == "BinaryExpression" || rk == "ConditionalExpression" ||
+             rk == "PrefixUnaryExpression" then "(" ++ r ++ ")" else r
+        | none => r
       let op := if opKind == "AmpersandAmpersandToken" then "&&" else "||"
-      l ++ " " ++ op ++ " " ++ r
+      let result := l ++ " " ++ op ++ " " ++ r
+      -- Check if ||/&& has optional operands → append .isSome to whole result
+      let leftIsOpt := match leftJ with
+        | some lj => nodeKind lj == "PropertyAccessExpression" &&
+            isStringOptionalField ((fieldNode lj "name").map nodeText |>.getD "")
+        | none => false
+      let rightIsOpt := match rightJ with
+        | some rj => nodeKind rj == "PropertyAccessExpression" &&
+            isStringOptionalField ((fieldNode rj "name").map nodeText |>.getD "")
+        | none => false
+      if opKind == "BarBarToken" && (leftIsOpt || rightIsOpt) then result ++ ".isSome"
+      else result
     else wrapConditionIsSome j (render j)
   else if kind == "PrefixUnaryExpression" then
     let opCode := fieldNat j "operator"
@@ -380,9 +423,9 @@ private def rewriteMethodCall (_fnJ : Option Json) (fn : String) (args : Array S
 private def parenBinOperand (j : Json) (rendered : String) (_parentOp : String) : String :=
   let kind := nodeKind j
   -- The TS lowering wraps any compound sub-expression in parens
-  if kind == "BinaryExpression" || kind == "ConditionalExpression" ||
-     kind == "AwaitExpression" ||
-     (kind == "CallExpression" && (fieldArr j "arguments").size > 0) ||
+   if kind == "BinaryExpression" || kind == "ConditionalExpression" ||
+      kind == "AwaitExpression" || kind == "PrefixUnaryExpression" ||
+      (kind == "CallExpression" && (fieldArr j "arguments").size > 0) ||
      -- Method chain: e.g. s.charAt(0).toUpper needs parens as binop operand
      (kind == "CallExpression" && (fieldArr j "arguments").size == 0 &&
        ((fieldNode j "expression").map nodeKind |>.getD "") == "PropertyAccessExpression" &&
@@ -417,36 +460,78 @@ private partial def hasStringType (j : Json) : Bool :=
     Used for arrow function bodies with local variable declarations.
     Takes a render function for expressions to avoid forward-reference issues. -/
 private partial def renderBlockStmtsInline (render : Json → String) (stmts : Array Json) : String :=
-  let parts := stmts.toList.map fun s =>
-    let kind := nodeKind s
-    if kind == "VariableStatement" then
-      let declList := fieldNode s "declarationList"
-      let decls := match declList with
-        | some dl => fieldArr dl "declarations" | none => #[]
-      let letParts := decls.toList.map fun d =>
-        let dname := (fieldNode d "name").map nodeText |>.getD "_"
-        let init := (fieldNode d "initializer").map render |>.getD "default"
-        "let " ++ dname ++ " := " ++ init
-      String.intercalate "; " letParts
-    else if kind == "ReturnStatement" then
-      (fieldNode s "expression").map render |>.getD "()"
-    else if kind == "ExpressionStatement" then
-      (fieldNode s "expression").map render |>.getD "()"
-    else if kind == "IfStatement" then
-      let cond := (fieldNode s "expression").map render |>.getD "true"
-      let thenBranch := match fieldNode s "thenStatement" with
-        | some t =>
-          if isBlock t then renderBlockStmtsInline render (fieldArr t "statements")
-          else render t
-        | none => "()"
-      let elseBranch := match fieldNode s "elseStatement" with
-        | some e =>
-          if isBlock e then renderBlockStmtsInline render (fieldArr e "statements")
-          else render e
-        | none => "()"
-      "if " ++ cond ++ " then " ++ thenBranch ++ " else " ++ elseBranch
-    else render s
-  String.intercalate "; " parts
+  let rec go : List Json → List String
+    | [] => []
+    | s :: rest =>
+      let kind := nodeKind s
+      if kind == "VariableStatement" then
+        let declList := fieldNode s "declarationList"
+        let decls := match declList with
+          | some dl => fieldArr dl "declarations" | none => #[]
+        let letParts := decls.toList.map fun d =>
+          let dname := escapeLeanKeyword ((fieldNode d "name").map nodeText |>.getD "_")
+          let init := (fieldNode d "initializer").map render |>.getD "default"
+          "let " ++ dname ++ " := " ++ init
+        (String.intercalate "; " letParts) :: go rest
+      else if kind == "ReturnStatement" then
+        [(fieldNode s "expression").map render |>.getD "()"]
+      else if kind == "ExpressionStatement" then
+        ((fieldNode s "expression").map render |>.getD "()") :: go rest
+      else if kind == "ForOfStatement" || kind == "ForInStatement" then
+        let iterJ := fieldNode s "expression"
+        let iter := iterJ.map render |>.getD "default"
+        let iter := match iterJ with
+          | some ij => parenIfCompoundExpr ij iter | none => iter
+        let varJ := fieldNode s "initializer"
+        let varName := match varJ with
+          | some v =>
+            if nodeKind v == "VariableDeclarationList" then
+              let decls := fieldArr v "declarations"
+              let d := decls.getD 0 default
+              (fieldNode d "name").map nodeText |>.getD "_"
+            else render v
+          | none => "_"
+        let bodyStmts := match fieldNode s "statement" with
+          | some b => if isBlock b then fieldArr b "statements" else #[b]
+          | none => #[]
+        let body := renderBlockStmtsInline render bodyStmts
+        -- Compound assignments produce "let x := ..." which needs "; ()" continuation
+        let body := if body.startsWith "let " then body ++ "; ()" else body
+        let forExpr := "Array.forM " ++ iter ++ " (fun " ++ varName ++ " => " ++ body ++ ")"
+        forExpr :: go rest
+      else if kind == "IfStatement" then
+        let condJ := fieldNode s "expression"
+        let cond := condJ.map render |>.getD "true"
+        -- Add .isSome for known optional fields used as conditions
+        let cond := match condJ with | some cj => wrapConditionIsSome cj cond | none => cond
+        let thenBranch := match fieldNode s "thenStatement" with
+          | some t =>
+            if isBlock t then renderBlockStmtsInline render (fieldArr t "statements")
+            else render t
+          | none => "()"
+        let hasElse := (fieldNode s "elseStatement").isSome
+        let elseBranch := if hasElse then
+            match fieldNode s "elseStatement" with
+            | some e =>
+              if isBlock e then renderBlockStmtsInline render (fieldArr e "statements")
+              else render e
+            | none => "()"
+          else
+            -- No else clause: fold next ReturnStatement into else as "pure <val>"
+            match rest with
+            | r :: _ =>
+              if nodeKind r == "ReturnStatement" then
+                "pure " ++ ((fieldNode r "expression").map render |>.getD "()")
+              else "()"
+            | [] => "()"
+        let ifExpr := "if " ++ cond ++ " then " ++ thenBranch ++ " else " ++ elseBranch
+        -- If we folded the next return into else, consume it
+        if !hasElse && match rest with | r :: _ => nodeKind r == "ReturnStatement" | [] => false then
+          [ifExpr]
+        else
+          ifExpr :: go rest
+      else (render s) :: go rest
+  String.intercalate "; " (go stmts.toList)
 
 /-- Render a JSON AST expression to a Lean expression string.
     Takes a union registry for struct-literal→ctor rewriting,
@@ -464,12 +549,14 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     let text := text.replace "\r" "\\r"
     "\"" ++ text ++ "\""
   else if kind == "RegularExpressionLiteral" then
-    -- Render regex as a string literal: /pattern/flags → "/pattern/flags"
-    "\"" ++ (nodeText j) ++ "\""
+    let text := nodeText j
+    let text := text.replace "\\" "\\\\"
+    let text := text.replace "\"" "\\\""
+    "\"" ++ text ++ "\""
   else if kind == "TrueKeyword" then "true"
   else if kind == "FalseKeyword" then "false"
   else if kind == "NullKeyword" || kind == "UndefinedKeyword" then "none"
-  else if kind == "Identifier" then nodeText j
+  else if kind == "Identifier" then sanitizeId (nodeText j)
   else if kind == "ThisKeyword" then "self"
   else if kind == "AsExpression" then
     let inner := (fieldNode j "expression").map re |>.getD "default"
@@ -554,7 +641,7 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       | some oj => parenIfCompoundExpr oj operand | none => operand
     op ++ operand
   else if kind == "ConditionalExpression" then
-    let c := (fieldNode j "condition").map re |>.getD "default"
+    let c := (fieldNode j "condition").map (renderIfCondition re) |>.getD "default"
     let t := (fieldNode j "whenTrue").map re |>.getD "default"
     let f := (fieldNode j "whenFalse").map re |>.getD "default"
     s!"if {c} then {t} else {f}"
@@ -582,18 +669,26 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
         let lit := (fieldNode span "literal").map nodeText |>.getD ""
         acc ++ "{" ++ expr ++ "}" ++ lit) headText
       "s!\"" ++ parts ++ "\""
-    else if isSafe && !hasLiteral then
-      -- All parts safe but no literal text → plain ++ chain like TS pipeline
-      let exprs := spans.map fun span =>
-        let exprJ := fieldNode span "expression"
-        let expr := exprJ.map re |>.getD ""
-        match exprJ with
-        | some ej => parenIfCompoundExpr ej expr
-        | none => expr
-      match exprs.toList with
+    else if isSafe && (!hasLiteral || hasUnsafeChars) then
+      -- All safe but no literal text OR unsafe chars → plain ++ chain (TS uses BinOp)
+      let pieces : Array String := Id.run do
+        let mut parts : Array String := #[]
+        if headText != "" then parts := parts.push ("\"" ++ escapeLitStr headText ++ "\"")
+        for span in spans do
+          let exprJ := fieldNode span "expression"
+          let expr := exprJ.map re |>.getD ""
+          let parenExpr := match exprJ with
+            | some ej => parenIfCompoundExpr ej expr | none => expr
+          parts := parts.push parenExpr
+          let lit := (fieldNode span "literal").map nodeText |>.getD ""
+          if lit != "" then parts := parts.push ("\"" ++ escapeLitStr lit ++ "\"")
+        return parts
+      match pieces.toList with
       | [] => "\"\""
       | [x] => x
-      | x :: rest => rest.foldl (fun acc piece => acc ++ " ++ " ++ piece) x
+      | x :: rest => rest.foldl (fun acc piece =>
+        if (acc.splitOn " ++ ").length > 1 then "(" ++ acc ++ ") ++ " ++ piece
+        else acc ++ " ++ " ++ piece) x
     else
       -- Hybrid approach: use s!"..." for the safe prefix, then ++ for the rest
       -- Find the first unsafe span
@@ -644,17 +739,17 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
             -- (matches TS pipeline which wouldn't use s!"..." without literals)
             Id.run do
               let mut parts : Array String := #[]
-              if headText != "" then parts := parts.push ("\"" ++ headText ++ "\"")
+              if headText != "" then parts := parts.push ("\"" ++ escapeLitStr headText ++ "\"")
               let mut i := 0
               for span in spans do
                 if i >= safePrefixSpanCount then break
                 let expr := (fieldNode span "expression").map re |>.getD ""
                 parts := parts.push expr
-                let lit := (fieldNode span "literal").map nodeText |>.getD ""
-                if lit != "" then parts := parts.push ("\"" ++ lit ++ "\"")
-                i := i + 1
-              return parts
-          else #["\"" ++ safePrefix ++ "\""]
+                 let lit := (fieldNode span "literal").map nodeText |>.getD ""
+                 if lit != "" then parts := parts.push ("\"" ++ escapeLitStr lit ++ "\"")
+                 i := i + 1
+               return parts
+           else #["\"" ++ escapeLitStr safePrefix ++ "\""]
         -- Build tail pieces with separate entries for expr and literal
         let tailPieces := unsafeSpans.foldl (fun acc span =>
           let expr := (fieldNode span "expression").map re |>.getD ""
@@ -663,7 +758,7 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
             | some ej => parenIfCompoundExpr ej expr | none => expr
           let lit := (fieldNode span "literal").map nodeText |>.getD ""
           if lit == "" then acc.push parenExpr
-          else acc.push parenExpr |>.push ("\"" ++ lit ++ "\"")
+          else acc.push parenExpr |>.push ("\"" ++ escapeLitStr lit ++ "\"")
         ) #[]
         let allPieces := prefixStr ++ tailPieces
         -- Left-fold with parens to match TS lowerer's left-associative BinOp tree
