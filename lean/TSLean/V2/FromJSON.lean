@@ -781,7 +781,15 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
         nodeKind fnNode == "PropertyAccessExpression" &&
         ((fieldNode fnNode "expression").map nodeKind |>.getD "") == "ThisKeyword"
       | none => false
-    if isSelfMethodCall then
+    -- regex.test(x) → (sorry : Bool) (TS can't represent regex in Lean)
+    let isRegexTest := match fnJ with
+      | some fnNode =>
+        nodeKind fnNode == "PropertyAccessExpression" &&
+        ((fieldNode fnNode "name").map nodeText |>.getD "") == "test" &&
+        ((fieldNode fnNode "expression").map nodeKind |>.getD "") == "RegularExpressionLiteral"
+      | none => false
+    if isRegexTest then "(sorry : Bool)"
+    else if isSelfMethodCall then
       let methodName := match fnJ with
         | some fnNode => (fieldNode fnNode "name").map nodeText |>.getD "default"
         | none => "default"
@@ -1832,8 +1840,13 @@ private partial def lowerVarStatement (j : Json) : Array LeanDecl :=
           (fieldNode init "expression").map nodeText |>.getD ""
         else ""
       | none => ""
+    -- Detect array literal initializers → Array String
+    let isArrayLitInit := match initJ with
+      | some init => nodeKind init == "ArrayLiteralExpression"
+      | none => false
     let ty := if initCtorName == "Set" || initCtorName == "Map" then
         .TyApp (.TyName "Array") #[.TyName "String"]
+      else if isArrayLitInit then .TyApp (.TyName "Array") #[.TyName "String"]
       else match fieldNode d "type" with | some tn => mapTypeNode tn | none => mapResolvedType d
     let body := match initJ with
       | some init => lowerExpr init | none => .Default (some ty)
