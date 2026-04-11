@@ -1,8 +1,6 @@
 -- TSLean.V2.FromJSON
 -- Direct JSON AST → V2 LeanAST lowering.
--- Bypasses the flat ir_types IR to preserve full type/field information
--- from the JSON AST. Produces LeanAST nodes that the V2 Printer emits
--- as text identical to the TS pipeline's output.
+-- Preserves full type/field information from JSON for fixpoint bootstrap.
 
 import Lean.Data.Json
 import TSLean.JsonAST
@@ -14,25 +12,20 @@ open Lean
 open TSLean.JsonAST
 open TSLean.V2.LeanAST
 
--- ─── Helpers ────────────────────────────────────────────────────────────────────
-
 private def DEFAULT_DERIVING : Array String := #["Repr", "BEq", "Inhabited"]
 
-/-- Convert a file path to a module name. -/
+-- ─── Namespace naming ───────────────────────────────────────────────────────────
+
 private def fileToModuleName (filePath : String) : String :=
   let parts := filePath.splitOn "/"
   let base := (parts.getLast?.getD "unknown").replace ".ts" "" |>.replace ".tsx" ""
-  -- CamelCase: capitalize first letter, remove hyphens
   let segments := base.splitOn "-"
   let capitalized := segments.map fun s =>
-    if s.isEmpty then s
-    else s.set ⟨0⟩ (s.get ⟨0⟩ |>.toUpper)
-  let name := String.join capitalized
-  s!"TSLean.Generated.{name}"
+    if s.isEmpty then s else s.set ⟨0⟩ (s.get ⟨0⟩ |>.toUpper)
+  s!"TSLean.Generated.{String.join capitalized}"
 
 -- ─── Type mapping ───────────────────────────────────────────────────────────────
 
-/-- Map resolved type flags from JSON to a LeanTy. -/
 private def mapTypeFromFlags (flags : Nat) (name : String) : LeanTy :=
   if flags &&& TF_StringLiteral != 0 then .TyName "String"
   else if flags &&& TF_NumberLiteral != 0 then .TyName "Float"
@@ -54,13 +47,27 @@ private def mapTypeFromFlags (flags : Nat) (name : String) : LeanTy :=
   else if name.isEmpty then .TyName "Unit"
   else .TyName name
 
-/-- Map a resolved type JSON to a LeanTy. -/
-private def mapResolvedType (j : Json) : LeanTy :=
+private def mapResolvedTypeJson (rt : Json) : LeanTy :=
+  let flags := typeFlags rt
+  let sym := typeSymbol rt
+  let name := typeName rt
+  let eName := if !sym.isEmpty then sym else if !name.isEmpty then name else ""
+  mapTypeFromFlags flags eName
+
+private partial def mapResolvedType (j : Json) : LeanTy :=
   match resolvedType j with
-  | some rt => mapTypeFromFlags (typeFlags rt) (typeName rt)
+  | some rt =>
+    let flags := typeFlags rt
+    if flags &&& TF_Union != 0 then
+      let types := fieldArr rt "types"
+      let nonUndef := types.filter fun t =>
+        let tf := typeFlags t; tf &&& TF_Undefined == 0 && tf &&& TF_Null == 0
+      if nonUndef.size == 1 && nonUndef.size < types.size then
+        .TyApp (.TyName "Option") #[mapResolvedTypeJson (nonUndef.getD 0 default)]
+      else mapResolvedTypeJson rt
+    else mapResolvedTypeJson rt
   | none => .TyName "Unit"
 
-/-- Map a type annotation node to LeanTy. -/
 private partial def mapTypeNode (j : Json) : LeanTy :=
   let kind := nodeKind j
   if kind == "NumberKeyword" then .TyName "Float"
@@ -70,52 +77,60 @@ private partial def mapTypeNode (j : Json) : LeanTy :=
   else if kind == "NeverKeyword" then .TyName "Empty"
   else if kind == "AnyKeyword" then .TyName "TSAny"
   else if kind == "UndefinedKeyword" then .TyApp (.TyName "Option") #[.TyName "Unit"]
-  else if kind == "ArrayType" then
-    let elem := (fieldNode j "elementType").map mapTypeNode |>.getD (.TyName "Unit")
-    .TyApp (.TyName "Array") #[elem]
   else if kind == "TypeReference" then
-    let name := (fieldNode j "typeName").bind (fun tn => fieldNode tn "text" |>.bind getStr)
-      |>.getD ((fieldNode j "name").bind (fun n => getStr n) |>.getD (nodeText j))
+    let name := (fieldNode j "typeName").bind (fun tn => getStr tn) |>.getD (nodeText j)
     if name.isEmpty then mapResolvedType j else .TyName name
+  else if kind == "ArrayType" then
+    .TyApp (.TyName "Array") #[(fieldNode j "elementType").map mapTypeNode |>.getD (.TyName "Unit")]
   else if kind == "UnionType" then
     let types := fieldArr j "types"
-    let nonUndef := types.filter (fun t =>
-      nodeKind t != "UndefinedKeyword" && nodeKind t != "NullKeyword" &&
-      nodeKind t != "LiteralType")
+    let nonUndef := types.filter fun t =>
+      nodeKind t != "UndefinedKeyword" && nodeKind t != "NullKeyword" && nodeKind t != "LiteralType"
     if nonUndef.size == 1 && nonUndef.size < types.size then
       .TyApp (.TyName "Option") #[mapTypeNode (nonUndef.getD 0 default)]
     else mapResolvedType j
   else if kind == "FunctionType" then
     let params := (fieldArr j "parameters").map fun p =>
       (fieldNode p "type").map mapTypeNode |>.getD (.TyName "Unit")
-    let ret := (fieldNode j "type").map mapTypeNode |>.getD (.TyName "Unit")
-    .TyArrow params ret
+    .TyArrow params ((fieldNode j "type").map mapTypeNode |>.getD (.TyName "Unit"))
   else if kind == "TupleType" then
     let elems := (fieldArr j "elements").map mapTypeNode
-    if elems.size == 0 then .TyName "Unit"
-    else .TyTuple elems
+    if elems.size == 0 then .TyName "Unit" else .TyTuple elems
   else if kind == "ParenthesizedType" then
     (fieldNode j "type").map mapTypeNode |>.getD (.TyName "Unit")
-  else if kind == "LiteralType" then mapResolvedType j
   else mapResolvedType j
 
--- ─── Expression lowering ────────────────────────────────────────────────────────
+-- ─── Expression rendering ───────────────────────────────────────────────────────
 
-/-- Render a JSON expression node to Lean text directly. -/
+private def parenIfCompoundExpr (j : Json) (rendered : String) : String :=
+  let kind := nodeKind j
+  if kind == "BinaryExpression" || kind == "ConditionalExpression" ||
+     kind == "ArrowFunction" || kind == "AwaitExpression" ||
+     (kind == "CallExpression" && (fieldArr j "arguments").size > 0) then
+    "(" ++ rendered ++ ")"
+  else rendered
+
 private partial def renderExpr (j : Json) : String :=
   let kind := nodeKind j
   if kind == "NumericLiteral" then nodeText j
-  else if kind == "StringLiteral" then "\"" ++ nodeText j ++ "\""
+  else if kind == "StringLiteral" || kind == "NoSubstitutionTemplateLiteral" then
+    "\"" ++ nodeText j ++ "\""
   else if kind == "TrueKeyword" then "true"
   else if kind == "FalseKeyword" then "false"
   else if kind == "NullKeyword" || kind == "UndefinedKeyword" then "none"
   else if kind == "Identifier" then nodeText j
   else if kind == "ThisKeyword" then "self"
+  else if kind == "AsExpression" || kind == "SatisfiesExpression" ||
+          kind == "NonNullExpression" || kind == "ParenthesizedExpression" then
+    (fieldNode j "expression").map renderExpr |>.getD "default"
   else if kind == "BinaryExpression" then
-    let left := (fieldNode j "left").map renderExpr |>.getD "default"
-    let right := (fieldNode j "right").map renderExpr |>.getD "default"
+    let leftJ := fieldNode j "left"
+    let rightJ := fieldNode j "right"
+    let left := leftJ.map renderExpr |>.getD "default"
+    let right := rightJ.map renderExpr |>.getD "default"
     let opKind := (fieldNode j "operatorToken").map nodeKind |>.getD ""
-    let op := mapBinOpSymbol opKind
+    let op := mapBinOpSym opKind
+    let right := match rightJ with | some rj => parenIfCompoundExpr rj right | none => right
     left ++ " " ++ op ++ " " ++ right
   else if kind == "PropertyAccessExpression" then
     let obj := (fieldNode j "expression").map renderExpr |>.getD "default"
@@ -123,7 +138,7 @@ private partial def renderExpr (j : Json) : String :=
     obj ++ "." ++ field
   else if kind == "CallExpression" then
     let fn := (fieldNode j "expression").map renderExpr |>.getD "default"
-    let args := (fieldArr j "arguments").map renderExpr
+    let args := (fieldArr j "arguments").map fun a => parenIfCompoundExpr a (renderExpr a)
     if args.size == 0 then fn
     else fn ++ " " ++ String.intercalate " " args.toList
   else if kind == "ReturnStatement" then
@@ -131,175 +146,194 @@ private partial def renderExpr (j : Json) : String :=
   else if kind == "PrefixUnaryExpression" then
     let operand := (fieldNode j "operand").map renderExpr |>.getD "default"
     let opCode := fieldNat j "operator"
-    let op := if opCode == 53 then "!" else if opCode == 40 then "-" else "!"
-    op ++ operand
-  else if kind == "ParenthesizedExpression" then
-    "(" ++ ((fieldNode j "expression").map renderExpr |>.getD "default") ++ ")"
+    (if opCode == 53 then "!" else if opCode == 40 then "-" else "!") ++ operand
   else if kind == "ConditionalExpression" then
-    let cond := (fieldNode j "expression").map renderExpr |>.getD "default"
+    let c := (fieldNode j "condition").map renderExpr |>.getD "default"
     let t := (fieldNode j "whenTrue").map renderExpr |>.getD "default"
     let f := (fieldNode j "whenFalse").map renderExpr |>.getD "default"
-    s!"if {cond} then {t} else {f}"
+    s!"if {c} then {t} else {f}"
   else if kind == "TemplateExpression" then
     let headText := (fieldNode j "head").map nodeText |>.getD ""
     let spans := fieldArr j "templateSpans"
     let parts := spans.foldl (fun acc span =>
       let expr := (fieldNode span "expression").map renderExpr |>.getD ""
       let lit := (fieldNode span "literal").map nodeText |>.getD ""
-      acc ++ "{" ++ expr ++ "}" ++ lit
-    ) headText
+      acc ++ "{" ++ expr ++ "}" ++ lit) headText
     "s!\"" ++ parts ++ "\""
-  else if kind == "NoSubstitutionTemplateLiteral" then
-    "\"" ++ nodeText j ++ "\""
+  else if kind == "ObjectLiteralExpression" then
+    let props := fieldArr j "properties"
+    let fields := props.filterMap fun p =>
+      let pk := nodeKind p
+      if pk == "PropertyAssignment" then
+        let n := (fieldNode p "name").map nodeText |>.getD "_"
+        let v := (fieldNode p "initializer").map renderExpr |>.getD "default"
+        some (n ++ " := " ++ v)
+      else if pk == "ShorthandPropertyAssignment" then
+        let n := (fieldNode p "name").map nodeText |>.getD "_"
+        some (n ++ " := " ++ n)
+      else none
+    if fields.size == 0 then "{}" else "{ " ++ String.intercalate ", " fields.toList ++ " }"
   else if kind == "ArrayLiteralExpression" then
     let elems := (fieldArr j "elements").map renderExpr
     "#[" ++ String.intercalate ", " elems.toList ++ "]"
   else if kind == "AwaitExpression" then
     (fieldNode j "expression").map renderExpr |>.getD "default"
+  else if kind == "ArrowFunction" || kind == "FunctionExpression" then
+    let params := (fieldArr j "parameters").map fun p => (fieldNode p "name").map nodeText |>.getD "_"
+    let bodyJ := fieldNode j "body"
+    let body := match bodyJ with
+      | some b => if isBlock b then "(block)" else renderExpr b
+      | none => "default"
+    "fun " ++ String.intercalate " " params.toList ++ " => " ++ body
   else "default"
 where
-  mapBinOpSymbol (kind : String) : String := match kind with
-    | "PlusToken" => "+"
-    | "MinusToken" => "-"
-    | "AsteriskToken" => "*"
-    | "SlashToken" => "/"
-    | "PercentToken" => "%"
+  mapBinOpSym (kind : String) : String := match kind with
+    | "PlusToken" => "+" | "MinusToken" => "-" | "AsteriskToken" => "*"
+    | "SlashToken" => "/" | "PercentToken" => "%"
     | "EqualsEqualsToken" | "EqualsEqualsEqualsToken" => "=="
     | "ExclamationEqualsToken" | "ExclamationEqualsEqualsToken" => "!="
-    | "LessThanToken" => "<"
-    | "LessThanEqualsToken" => "<="
-    | "GreaterThanToken" => ">"
-    | "GreaterThanEqualsToken" => ">="
-    | "AmpersandAmpersandToken" => "&&"
-    | "BarBarToken" => "||"
-    | "BarBarEqualsToken" => "||="
+    | "LessThanToken" => "<" | "LessThanEqualsToken" => "<="
+    | "GreaterThanToken" => ">" | "GreaterThanEqualsToken" => ">="
+    | "AmpersandAmpersandToken" => "&&" | "BarBarToken" => "||"
     | _ => "+"
 
-/-- Lower a JSON expression node to a LeanExpr. -/
-private partial def lowerExpr (j : Json) : LeanExpr :=
-  .Lit (renderExpr j)
+-- ─── Body lowering ──────────────────────────────────────────────────────────────
 
-/-- Lower a function body (Block or expression) to a LeanExpr. -/
+private partial def lowerExpr (j : Json) : LeanExpr := .Lit (renderExpr j)
+
+mutual
+
 private partial def lowerBody (j : Json) : LeanExpr :=
   if isBlock j then
     let stmts := fieldArr j "statements"
-    if stmts.size == 0 then .Lit "()"
-    else if stmts.size == 1 then lowerBlockStmt (stmts.getD 0 default)
-    else
-      -- Multiple statements: render as let-chain or sequence
-      let rendered := stmts.map fun s => renderExpr s
-      .Lit (String.intercalate "\n" rendered.toList)
+    if stmts.size == 0 then .Lit "()" else lowerStmtSeq stmts.toList
   else lowerExpr j
-where
-  lowerBlockStmt (j : Json) : LeanExpr :=
-    let kind := nodeKind j
-    if kind == "ReturnStatement" then
-      .Lit ((fieldNode j "expression").map renderExpr |>.getD "()")
-    else .Lit (renderExpr j)
+
+private partial def lowerStmtSeq : List Json → LeanExpr
+  | [] => .Lit "()"
+  | [s] => lowerBlockStmt s
+  | s :: rest =>
+    let kind := nodeKind s
+    if kind == "IfStatement" then
+      let cond := (fieldNode s "expression").map renderExpr |>.getD "true"
+      let thenB := (fieldNode s "thenStatement").map lowerBody |>.getD (.Lit "()")
+      let elseB := match fieldNode s "elseStatement" with
+        | some e => lowerBody e | none => lowerStmtSeq rest
+      .If (.Lit cond) thenB elseB
+    else if kind == "VariableStatement" then
+      let declList := fieldNode s "declarationList"
+      let decls := declList.map (fieldArr · "declarations") |>.getD #[]
+      if decls.size > 0 then
+        let d := decls.getD 0 default
+        let name := (fieldNode d "name").map nodeText |>.getD "_"
+        let val := (fieldNode d "initializer").map renderExpr |>.getD "default"
+        .Let name none (.Lit val) (lowerStmtSeq rest) false
+      else lowerStmtSeq rest
+    else
+      let expr := lowerBlockStmt s
+      match rest with | [] => expr | _ => .Seq #[expr, lowerStmtSeq rest]
+
+private partial def lowerBlockStmt (j : Json) : LeanExpr :=
+  let kind := nodeKind j
+  if kind == "ReturnStatement" then
+    .Lit ((fieldNode j "expression").map renderExpr |>.getD "()")
+  else if kind == "IfStatement" then
+    let cond := (fieldNode j "expression").map renderExpr |>.getD "true"
+    let thenB := (fieldNode j "thenStatement").map lowerBody |>.getD (.Lit "()")
+    let elseB := (fieldNode j "elseStatement").map lowerBody |>.getD (.Lit "()")
+    .If (.Lit cond) thenB elseB
+  else .Lit (renderExpr j)
+
+end -- mutual
+
+-- ─── Helpers ────────────────────────────────────────────────────────────────────
+
+private partial def exprContainsName (e : LeanExpr) (name : String) : Bool :=
+  match e with
+  | .Lit s => (s.splitOn name).length > 1
+  | .Var n => n == name
+  | .If c t f => exprContainsName c name || exprContainsName t name || exprContainsName f name
+  | .Let _ _ v b _ => exprContainsName v name || exprContainsName b name
+  | .Seq stmts => stmts.any (exprContainsName · name)
+  | .Do b | .Pure b | .Return b => exprContainsName b name
+  | _ => false
 
 -- ─── Declaration lowering ───────────────────────────────────────────────────────
 
-/-- Extract type parameters from a JSON declaration node. -/
 private def extractTypeParams (j : Json) : Array LeanTyParam :=
   (fieldArr j "typeParameters").map fun tp =>
     { name := nodeText tp, explicit := true, constraints := none : LeanTyParam }
 
-/-- Lower a parameter node. -/
 private def lowerParam (j : Json) : LeanParam :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
-  let ty := match fieldNode j "type" with
-    | some tn => mapTypeNode tn
-    | none => mapResolvedType j
+  let ty := match fieldNode j "type" with | some tn => mapTypeNode tn | none => mapResolvedType j
   { name := name, ty := ty }
 
--- Variable statement: const x: T = expr
 private partial def lowerVarStatement (j : Json) : Array LeanDecl :=
   let declList := fieldNode j "declarationList"
   let decls := declList.map (fieldArr · "declarations") |>.getD #[]
-  let flags := declList.map (fun dl => fieldNat dl "flags") |>.getD 0
-  let _isConst := flags &&& NF_Const != 0
   decls.filterMap fun d =>
     let name := (fieldNode d "name").map nodeText |>.getD "_"
-    let ty := match fieldNode d "type" with
-      | some tn => mapTypeNode tn
-      | none => mapResolvedType d
+    let ty := match fieldNode d "type" with | some tn => mapTypeNode tn | none => mapResolvedType d
     let body := match fieldNode d "initializer" with
-      | some init => lowerExpr init
-      | none => .Default (some ty)
+      | some init => lowerExpr init | none => .Default (some ty)
     some (.Def false name #[] #[] ty body none none none)
 
--- Function declaration
 private partial def lowerFuncDecl (j : Json) : Array LeanDecl :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
   let tyParams := extractTypeParams j
   let params := (fieldArr j "parameters").map lowerParam
-  let retTy := match fieldNode j "type" with
-    | some tn => mapTypeNode tn
-    | none => mapResolvedType j
-  let body := match fieldNode j "body" with
-    | some b => lowerBody b
-    | none => .Default (some retTy)
-  -- Detect partial: does the body reference the function name?
-  let bodyText := match body with | .Lit s => s | _ => ""
-  let parts := bodyText.splitOn name
-  let isPartial := parts.length > 1
+  let retTy := match fieldNode j "type" with | some tn => mapTypeNode tn | none => mapResolvedType j
+  let body := match fieldNode j "body" with | some b => lowerBody b | none => .Default (some retTy)
+  let isPartial := exprContainsName body name
   #[.Def isPartial name tyParams params retTy body none none none]
 
--- Interface declaration → Structure
 private partial def lowerInterfaceDecl (j : Json) : Array LeanDecl :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
   let tyParams := extractTypeParams j
   let members := fieldArr j "members"
   let fields := members.filterMap fun m =>
     if isPropertySignature m then
-      let fname := (fieldNode m "name").map nodeText |>.getD "_"
-      let fty := match fieldNode m "type" with
-        | some tn => mapTypeNode tn
-        | none => mapResolvedType m
-      some (LeanField.mk fname fty none)
+      let fn := (fieldNode m "name").map nodeText |>.getD "_"
+      let fty := match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
+      some (LeanField.mk fn fty none)
     else none
   #[.Structure name tyParams fields none DEFAULT_DERIVING none]
 
--- Class declaration → Structure + Namespace
 private partial def lowerClassDecl (j : Json) : Array LeanDecl :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
   let members := fieldArr j "members"
   let fields := members.filterMap fun m =>
     if isPropertyDeclaration m || isPropertySignature m then
-      let fname := (fieldNode m "name").map nodeText |>.getD "_"
-      let fty := match fieldNode m "type" with
-        | some tn => mapTypeNode tn
-        | none => mapResolvedType m
-      some (LeanField.mk fname fty none)
+      let fn := (fieldNode m "name").map nodeText |>.getD "_"
+      let fty := match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
+      some (LeanField.mk fn fty none)
     else none
   #[.Structure name #[] fields none DEFAULT_DERIVING none]
 
--- Type alias → Abbrev
 private partial def lowerTypeAliasDecl (j : Json) : Array LeanDecl :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
   let tyParams := extractTypeParams j
-  let body := match fieldNode j "type" with
-    | some tn => mapTypeNode tn
-    | none => .TyName "Unit"
+  let body := match fieldNode j "type" with | some tn => mapTypeNode tn | none => .TyName "Unit"
   #[.Abbrev name tyParams body none]
 
--- Enum declaration → Inductive
 private partial def lowerEnumDecl (j : Json) : Array LeanDecl :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
-  let members := fieldArr j "members"
-  let ctors := members.map fun m =>
-    let cname := (fieldNode m "name").map nodeText |>.getD "_"
-    LeanCtor.mk cname #[]
+  let ctors := (fieldArr j "members").map fun m =>
+    LeanCtor.mk ((fieldNode m "name").map nodeText |>.getD "_") #[]
   #[.Inductive name #[] ctors DEFAULT_DERIVING none]
 
-/-- Lower a top-level JSON statement to LeanDecl(s). -/
 private partial def lowerStatement (j : Json) : Array LeanDecl :=
   let kind := nodeKind j
   let comments := fieldArr j "leadingComments"
   let commentDecls := comments.foldl (fun acc c =>
     match getStr c with
     | some text =>
-      let stripped := text.replace "//" "" |>.replace "/*" "" |>.replace "*/" "" |>.trim
+      -- Preserve // prefix (TS lowering keeps it); only strip /* */ block markers
+      let stripped := text.trim
+      let stripped := if stripped.startsWith "/*" then
+        stripped.replace "/*" "" |>.replace "*/" "" |>.replace "* " "" |>.trim
+      else stripped
       if stripped.isEmpty then acc else acc.push (.Comment stripped)
     | none => acc
   ) #[]
@@ -312,45 +346,25 @@ private partial def lowerStatement (j : Json) : Array LeanDecl :=
     else #[]
   commentDecls ++ decls
 
--- ─── Import resolution ──────────────────────────────────────────────────────────
-
-/-- Scan declarations for import needs. -/
-private def resolveImports (_json : Json) : Array String :=
-  -- Always include base imports; dynamic resolution would scan for
-  -- HashMap, WebAPI, Monad usage
-  #["TSLean.Runtime.Basic", "TSLean.Runtime.Coercions"]
-
 -- ─── Module lowering ────────────────────────────────────────────────────────────
 
-/-- Lower a full JSON AST to a LeanFile. -/
 def lowerJsonModule (json : Json) : LeanFile :=
   let fileName := fieldStr json "fileName"
   let ns := fileToModuleName fileName
   let stmts := fieldArr json "statements"
-
-  let imports := resolveImports json
-  let decls : Array LeanDecl := #[]
-  let decls := imports.foldl (fun acc imp => acc.push (.Import imp)) decls
+  let imports : Array String := #["TSLean.Runtime.Basic", "TSLean.Runtime.Coercions"]
+  let decls := imports.map fun imp => LeanDecl.Import imp
   let decls := decls.push .Blank
   let decls := decls.push (.Open #["TSLean"])
   let decls := decls.push .Blank
-
   let bodyDecls := stmts.foldl (fun acc s =>
     let ds := lowerStatement s
-    if ds.isEmpty then acc
-    else acc ++ ds ++ #[.Blank]
+    if ds.isEmpty then acc else acc ++ ds ++ #[.Blank]
   ) #[]
-
   let useNs := !ns.isEmpty && ns != "T" && ns != "Test"
-  let decls := if useNs then
-    decls.push (.Namespace ns bodyDecls)
-  else
-    decls ++ bodyDecls
-
-  {
-    banner := some "Auto-generated by ts-lean-transpiler"
+  let decls := if useNs then decls.push (.Namespace ns bodyDecls) else decls ++ bodyDecls
+  { banner := some "Auto-generated by ts-lean-transpiler"
     sourcePath := some fileName
-    decls := decls
-  }
+    decls := decls }
 
 end TSLean.V2.FromJSON
