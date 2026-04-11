@@ -253,6 +253,27 @@ private def tryStructToCtor (reg : UnionRegistry) (props : Array Json)
         some (vi.ctorName ++ argStr)
 
 /-- Map JS field/method names to Lean equivalents. -/
+-- Lean keywords that need «» escaping when used as identifiers/field names
+private def isLeanKeyword (name : String) : Bool :=
+  name == "def" || name == "fun" || name == "let" || name == "in" ||
+  name == "if" || name == "then" || name == "else" || name == "match" ||
+  name == "with" || name == "do" || name == "return" || name == "where" ||
+  name == "have" || name == "show" || name == "from" || name == "by" ||
+  name == "class" || name == "instance" || name == "structure" || name == "inductive" ||
+  name == "namespace" || name == "end" || name == "open" || name == "import" ||
+  name == "theorem" || name == "lemma" || name == "example" || name == "variable" ||
+  name == "universe" || name == "abbrev" || name == "opaque" || name == "partial" ||
+  name == "mutual" || name == "private" || name == "protected" || name == "section" ||
+  name == "attribute" || name == "and" || name == "or" || name == "not" ||
+  name == "true" || name == "false" || name == "Type" || name == "Prop" ||
+  name == "for" || name == "while" || name == "repeat" || name == "at" ||
+  name == "try" || name == "catch" || name == "throw" || name == "macro" ||
+  name == "syntax" || name == "tactic" || name == "set_option" || name == "derive" ||
+  name == "deriving" || name == "extends" || name == "override"
+
+private def escapeLeanKeyword (name : String) : String :=
+  if isLeanKeyword name then "«" ++ name ++ "»" else name
+
 private def mapFieldName (field : String) : String := match field with
   | "length" => "size" | "push" => "push" | "pop" => "back?"
   | "map" => "map" | "filter" => "filter" | "find" => "find?"
@@ -263,7 +284,7 @@ private def mapFieldName (field : String) : String := match field with
   | "toLowerCase" => "toLower" | "toUpperCase" => "toUpper"
   | "trim" => "trim" | "startsWith" => "startsWith" | "endsWith" => "endsWith"
   | "toString" => "toString" | "split" => "splitOn" | "join" => "intercalate"
-  | other => other
+  | other => escapeLeanKeyword other
 
 /-- Rewrite method calls: Math.sqrt(x) → Float.sqrt x, etc. -/
 private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array String) : Option String :=
@@ -300,7 +321,21 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
     some ("Array.filter " ++ (args.getD 0 "") ++ " " ++ obj)
   else if fn.endsWith ".join" && args.size == 1 then
     let obj := fn.dropRight 5
+    let obj := if obj.any (· == ' ') then "(" ++ obj ++ ")" else obj
     some ("String.intercalate " ++ (args.getD 0 "") ++ " " ++ obj)
+  -- Also match after mapFieldName has renamed .join → .intercalate
+  else if fn.endsWith ".intercalate" && args.size == 1 then
+    let obj := fn.dropRight 12
+    let obj := if obj.any (· == ' ') then "(" ++ obj ++ ")" else obj
+    some ("String.intercalate " ++ (args.getD 0 "") ++ " " ++ obj)
+  -- .has(x) on a Set → AssocSet.contains SET x
+  else if fn.endsWith ".has" && args.size == 1 then
+    let obj := fn.dropRight 4
+    some ("AssocSet.contains " ++ obj ++ " " ++ (args.getD 0 ""))
+  -- .splitOn(sep) — after mapFieldName has renamed .split → .splitOn
+  else if fn.endsWith ".splitOn" && args.size == 1 then
+    let obj := fn.dropRight 8
+    some (obj ++ ".splitOn " ++ (args.getD 0 ""))
   else none
 
 /-- Parenthesize a binary expression operand if it's compound.
@@ -366,6 +401,9 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     let text := text.replace "\t" "\\t"
     let text := text.replace "\r" "\\r"
     "\"" ++ text ++ "\""
+  else if kind == "RegularExpressionLiteral" then
+    -- Render regex as a string literal: /pattern/flags → "/pattern/flags"
+    "\"" ++ (nodeText j) ++ "\""
   else if kind == "TrueKeyword" then "true"
   else if kind == "FalseKeyword" then "false"
   else if kind == "NullKeyword" || kind == "UndefinedKeyword" then "none"
@@ -561,7 +599,12 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       "TSError.typeError " ++ String.intercalate " " args.toList
     -- new Promise(...) can't be expressed in Lean
     else if ctorName == "Promise" then "default"
+    -- new Set([...]) → #[] (Set not representable in Lean, drop to empty array)
+    else if ctorName == "Set" || ctorName == "Map" then "#[]"
     else ctorName ++ " " ++ String.intercalate " " args.toList
+  else if kind == "TypeOfExpression" then
+    let expr := (fieldNode j "expression").map re |>.getD "default"
+    "(TSLean.typeOf " ++ expr ++ ")"
   else "default"
 
 /-- Render expression with no substitution context and no union registry. -/
@@ -722,9 +765,14 @@ private partial def lowerStmtSeqR (reg : UnionRegistry) (paramTypes : Array (Str
     if kind == "IfStatement" then
       let cond := (fieldNode s "expression").map (renderIfCondition renderExpr) |>.getD "true"
       let thenB := (fieldNode s "thenStatement").map (lowerBodyR reg paramTypes) |>.getD (.Lit "()")
+      let hasElse := (fieldNode s "elseStatement").isSome
       let elseB := match fieldNode s "elseStatement" with
         | some e => lowerBodyR reg paramTypes e | none => lowerStmtSeqR reg paramTypes rest
-      .If (.Lit cond) thenB elseB
+      let ifExpr := LeanExpr.If (.Lit cond) thenB elseB
+      -- When the if has an explicit else branch, rest is not folded into elseB
+      if hasElse && rest.length > 0 then
+        .Seq #[ifExpr, lowerStmtSeqR reg paramTypes rest]
+      else ifExpr
     else if kind == "VariableStatement" then
       let declList := fieldNode s "declarationList"
       let decls := declList.map (fieldArr · "declarations") |>.getD #[]
@@ -788,7 +836,8 @@ private partial def lowerStmtSeqR (reg : UnionRegistry) (paramTypes : Array (Str
 private partial def lowerBlockStmtR (reg : UnionRegistry) (paramTypes : Array (String × String))
     (j : Json) : LeanExpr :=
   let kind := nodeKind j
-  if kind == "ReturnStatement" then
+  if kind == "Block" then lowerBodyR reg paramTypes j
+  else if kind == "ReturnStatement" then
     .Lit ((fieldNode j "expression").map renderExpr |>.getD "()")
   else if kind == "IfStatement" then
     let cond := (fieldNode j "expression").map (renderIfCondition renderExpr) |>.getD "true"
