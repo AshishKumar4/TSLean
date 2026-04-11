@@ -133,6 +133,12 @@ private partial def mapTypeNode (j : Json) : LeanTy :=
     else if name == "Error" || name.endsWith "Error" then .TyName "String"
     -- Record<K,V> → String (matches TS pipeline which maps Record types to String)
     else if name == "Record" then .TyName "String"
+    -- Extract<T, U> → resolve via resolvedType flags (TS maps Extract to TSAny via flags)
+    else if name == "Extract" then mapResolvedType j
+    -- Set<T> → Array T (matches TS pipeline which maps Set to Array)
+    else if name == "Set" then .TyApp (.TyName "Array") (typeArgs.map mapTypeNode)
+    -- Map<K,V> → AssocMap K V (matches TS pipeline)
+    else if name == "Map" && typeArgs.size == 2 then .TyApp (.TyName "AssocMap") (typeArgs.map mapTypeNode)
     else if typeArgs.size > 0 then .TyApp (.TyName name) (typeArgs.map mapTypeNode)
     else .TyName name
   else if kind == "ArrayType" then
