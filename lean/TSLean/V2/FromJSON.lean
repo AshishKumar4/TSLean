@@ -373,7 +373,7 @@ private def mapFieldName (field : String) : String := match field with
   | other => escapeLeanKeyword other
 
 /-- Rewrite method calls: Math.sqrt(x) → Float.sqrt x, etc. -/
-private def rewriteMethodCall (_fnJ : Option Json) (fn : String) (args : Array String) : Option String :=
+private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array String) : Option String :=
   -- Math.X(args) → matching TS stdlib table
   if fn.startsWith "Math." then
     let method := (fn.drop 5).toString
@@ -418,10 +418,34 @@ private def rewriteMethodCall (_fnJ : Option Json) (fn : String) (args : Array S
   else if fn.endsWith ".has" && args.size == 1 then
     let obj := fn.dropEnd 4 |>.toString
     some ("AssocSet.contains " ++ obj ++ " " ++ (args.getD 0 ""))
+  -- .add(x) on a Set → AssocSet.insert SET x  (TS Set.add, not Array — arrays use .push)
+  else if fn.endsWith ".add" && args.size == 1 then
+    let obj := fn.dropEnd 4 |>.toString
+    some ("AssocSet.insert " ++ obj ++ " " ++ (args.getD 0 ""))
+  -- .set(k, v) on a Map → AssocMap.insert MAP k v
+  else if fn.endsWith ".set" && args.size == 2 then
+    let obj := fn.dropEnd 4 |>.toString
+    some ("AssocMap.insert " ++ obj ++ " " ++ (args.getD 0 "") ++ " " ++ (args.getD 1 ""))
+  -- .get(k) on a Map → AssocMap.find? MAP k
+  else if fn.endsWith ".get" && args.size == 1 then
+    let obj := fn.dropEnd 4 |>.toString
+    some ("AssocMap.find? " ++ obj ++ " " ++ (args.getD 0 ""))
+  -- .keys() on a Map → AssocMap.keys MAP
+  else if fn.endsWith ".keys" && args.size == 0 then
+    let obj := fn.dropEnd 5 |>.toString
+    some ("AssocMap.keys " ++ obj)
   -- .splitOn(sep) — after mapFieldName has renamed .split → .splitOn
   else if fn.endsWith ".splitOn" && args.size == 1 then
     let obj := fn.dropEnd 8 |>.toString
     some (obj ++ ".splitOn " ++ (args.getD 0 ""))
+  -- .includes(x) → .contains for array literals (matches TS pipeline)
+  else if fn.endsWith ".includes" && args.size == 1 then
+    let objNode := fnJ.bind fun fj => fieldNode fj "expression"
+    let objKind := objNode.map nodeKind |>.getD ""
+    if objKind == "ArrayLiteralExpression" then
+      let obj := fn.dropEnd 9 |>.toString
+      some (obj ++ ".contains " ++ (args.getD 0 ""))
+    else none
   else none
 
 /-- Parenthesize a binary expression operand if it's compound.
