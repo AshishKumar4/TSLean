@@ -170,6 +170,9 @@ def typeName (j : Json) : String := fieldStr j "name"
 /-- Get the symbol name from a resolved type JSON. -/
 def typeSymbol (j : Json) : String := fieldStr j "symbol"
 
+/-- Get the alias name from a resolved type JSON (e.g. type alias name). -/
+def typeAliasName (j : Json) : String := fieldStr j "aliasName"
+
 -- ─── File reading ───────────────────────────────────────────────────────────────
 
 /-- Parse a JSON AST file content into a structured Json value. -/

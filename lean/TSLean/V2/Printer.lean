@@ -286,10 +286,23 @@ private def fmtTyParamsForDef (params : Array LeanTyParam) : String :=
     | some cs => base ++ String.join (cs.toList.map fun c => " [" ++ c ++ " " ++ p.name ++ "]")
     | none => base)
 
+private def stripCommentLine (line : String) : String :=
+  let s := line.trimLeft
+  -- Strip leading /**, /*, or * prefix (only at start of line)
+  let s := if s.startsWith "/**" then (s.drop 3).toString.trimLeft
+    else if s.startsWith "/*" then (s.drop 2).toString.trimLeft
+    else if s.startsWith "* " then (s.drop 2).toString
+    else if s == "*" then ""
+    else s
+  -- Strip trailing */ (only at end of line)
+  let s := s.trimRight
+  let s := if s.endsWith "*/" then s.dropRight 2 |>.trimRight else s
+  s.trim
+
 private def printCommentLines (text : String) (ind : String) : Array String :=
   let lines := text.splitOn "\n"
   lines.foldl (fun acc line =>
-    let stripped := line.replace "/**" "" |>.replace "*/" "" |>.replace "* " "" |>.trim
+    let stripped := stripCommentLine line
     if stripped.isEmpty || stripped.startsWith "@" then acc
     else acc.push (ind ++ "-- " ++ stripped)
   ) #[]
@@ -300,7 +313,7 @@ partial def printDecl (d : LeanDecl) (depth : Nat) : Array String :=
   let ind := indent depth
   match d with
   | .Blank => #[""]
-  | .Comment text => (text.splitOn "\n").toArray.map fun line => ind ++ "-- " ++ line
+  | .Comment text => printCommentLines text ind
   | .Raw code => (code.splitOn "\n").toArray.map fun line => line
   | .Import module => #[ind ++ "import " ++ module]
   | .Open namespaces => #[ind ++ "open " ++ String.intercalate " " namespaces.toList]

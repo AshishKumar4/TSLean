@@ -84,7 +84,11 @@ private def mapResolvedTypeJson (rt : Json) : LeanTy :=
   let flags := typeFlags rt
   let sym := typeSymbol rt
   let name := typeName rt
-  let eName := if !sym.isEmpty then sym else if !name.isEmpty then name else ""
+  let alias := typeAliasName rt
+  let eName := if !sym.isEmpty then sym
+    else if !name.isEmpty then name
+    else if !alias.isEmpty then alias
+    else ""
   mapTypeFromFlags flags eName
 
 private partial def mapResolvedType (j : Json) : LeanTy :=
@@ -97,7 +101,13 @@ private partial def mapResolvedType (j : Json) : LeanTy :=
         let tf := typeFlags t; tf &&& TF_Undefined == 0 && tf &&& TF_Null == 0
       if nonUndef.size == 1 && nonUndef.size < types.size then
         .TyApp (.TyName "Option") #[mapResolvedTypeJson (nonUndef.getD 0 default)]
-      else mapResolvedTypeJson rt
+      else
+        -- Check for alias name on the resolved type
+        let alias := typeAliasName rt
+        if !alias.isEmpty then .TyName alias
+        -- Multiple non-nil types: take the first one (matches TS mapUnion fallthrough)
+        else if nonUndef.size > 0 then mapResolvedTypeJson (nonUndef.getD 0 default)
+        else mapResolvedTypeJson rt
     else mapResolvedTypeJson rt
   | none => .TyName "Unit"
 
@@ -1128,6 +1138,54 @@ private partial def lowerFuncDeclR (reg : UnionRegistry) (j : Json) : Array Lean
   let isPartial := exprContainsName body name
   #[.Def isPartial name tyParams params retTy body none none none]
 
+/-- Resolve the type of an optional member field to match TS parser behavior.
+    The TS parser uses checker.getTypeOfSymbol (which includes undefined for optional),
+    then mapType handles the T|undefined union. The result is wrapped by the caller. -/
+private partial def resolveOptionalFieldType (m : Json) : LeanTy :=
+  match fieldNode m "type" with
+  | some tn =>
+    if nodeKind tn == "TypeReference" then
+      -- TypeReference: may resolve to complex union (alias expanded like LeanExpr)
+      let memberRt := resolvedType m
+      match memberRt with
+      | some mrt =>
+        let flags := typeFlags mrt
+        if flags &&& TF_Union != 0 then
+          let types := fieldArr mrt "types"
+          let nonUndef := types.filter fun t =>
+            let tf := typeFlags t; tf &&& TF_Undefined == 0 && tf &&& TF_Null == 0
+          if nonUndef.size > 1 then
+            -- Complex union (alias expanded) → take first member → String/etc
+            mapResolvedTypeJson (nonUndef.getD 0 default)
+          else mapResolvedType m
+        else mapResolvedType m
+      | none => mapTypeNode tn
+    else
+      -- Non-TypeReference (ArrayType, StringKeyword, etc.):
+      -- Use resolved type to match TS mapType(T|undefined) behavior.
+      -- For T that doesn't expand (string → 1 member): gives Option(T)
+      -- For T that expands (boolean → true|false → 2 members): falls through → T
+      -- BUT: resolved type loses array info (string[] → {}) → detect and fall back
+      let memberRt := resolvedType m
+      match memberRt with
+      | some mrt =>
+        let flags := typeFlags mrt
+        if flags &&& TF_Union != 0 then
+          let types := fieldArr mrt "types"
+          let nonUndef := types.filter fun t =>
+            let tf := typeFlags t; tf &&& TF_Undefined == 0 && tf &&& TF_Null == 0
+          if nonUndef.size == 1 && nonUndef.size < types.size then
+            let inner := mapResolvedTypeJson (nonUndef.getD 0 default)
+            let innerIsUseful := match inner with
+              | .TyName n => n != "{}" && n != "Unit"
+              | _ => true
+            if innerIsUseful then .TyApp (.TyName "Option") #[inner]
+            else .TyApp (.TyName "Option") #[mapTypeNode tn]
+          else mapResolvedTypeJson (nonUndef.getD 0 default)
+        else mapTypeNode tn
+      | none => mapTypeNode tn
+  | none => mapResolvedType m
+
 private partial def lowerInterfaceDecl (j : Json) : Array LeanDecl :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
   let tyParams := extractTypeParams j
@@ -1136,10 +1194,8 @@ private partial def lowerInterfaceDecl (j : Json) : Array LeanDecl :=
     if isPropertySignature m then
       let fn := (fieldNode m "name").map nodeText |>.getD "_"
       let isOptional := fieldBool m "questionToken"
-      -- For optional properties, use resolved type (which includes undefined) then wrap
       let fty := if isOptional then
-        let baseTy := mapResolvedType m  -- This already gives Option T from union
-        .TyApp (.TyName "Option") #[baseTy]  -- Wrap again for the ? token
+        .TyApp (.TyName "Option") #[resolveOptionalFieldType m]
       else
         match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
       some (LeanField.mk fn fty none)
@@ -1314,7 +1370,11 @@ private partial def lowerDiscriminatedUnion (name : String) (tyParams : Array Le
       let fname := (fieldNode m "name").map nodeText |>.getD ""
       if isDiscriminantField fname then none
       else
-        let fty := match fieldNode m "type" with
+        let isOptional := fieldBool m "questionToken"
+        let fty := if isOptional then
+          .TyApp (.TyName "Option") #[resolveOptionalFieldType m]
+        else
+          match fieldNode m "type" with
           | some tn => mapTypeNode tn | none => mapResolvedType m
         some (some fname, fty)
     LeanCtor.mk ctorName fields
@@ -1361,11 +1421,7 @@ private partial def lowerStatementR (reg : UnionRegistry) (j : Json) : Array Lea
   let commentDecls := comments.foldl (fun acc c =>
     match getStr c with
     | some text =>
-      let stripped := text.trimLeft.trimRight
-      let stripped := if stripped.startsWith "/*" then
-        stripped.replace "/*" "" |>.replace "*/" "" |>.replace "* " "" |>.trimLeft.trimRight
-      else stripped
-      if stripped.isEmpty then acc else acc.push (.Comment stripped)
+      if text.trim.isEmpty then acc else acc.push (.Comment text)
     | none => acc
   ) #[]
   let decls := if kind == "VariableStatement" then lowerVarStatement j
@@ -1457,21 +1513,169 @@ private def collectUnionRegistry (stmts : Array Json) : UnionRegistry :=
     else reg
   ) #[]
 
+-- ─── Mutual block detection ─────────────────────────────────────────────────
+
+/-- Collect names of type declarations (interfaces and discriminated union type aliases). -/
+private def collectTypeNames (stmts : Array Json) : Array String :=
+  stmts.filterMap fun s =>
+    let kind := nodeKind s
+    if kind == "InterfaceDeclaration" then
+      (fieldNode s "name").map nodeText
+    else if kind == "TypeAliasDeclaration" then
+      match fieldNode s "type" with
+      | some tn =>
+        if nodeKind tn == "UnionType" then (fieldNode s "name").map nodeText
+        else none
+      | none => none
+    else none
+
+/-- Collect TypeReference names from all member types of a type declaration. -/
+private partial def collectTypeRefs (s : Json) (typeNames : Array String) (selfName : String) : Array String :=
+  let members := match nodeKind s with
+    | "InterfaceDeclaration" => fieldArr s "members"
+    | "TypeAliasDeclaration" =>
+      match fieldNode s "type" with
+      | some tn =>
+        if nodeKind tn == "UnionType" then
+          (fieldArr tn "types").foldl (fun acc t => acc ++ fieldArr t "members") #[]
+        else #[]
+      | none => #[]
+    | _ => #[]
+  let refs := members.foldl (fun acc m =>
+    let rec scanTypeNode (j : Json) (refs : Array String) : Array String :=
+      let kind := nodeKind j
+      if kind == "TypeReference" then
+        let name := (fieldNode j "typeName").map nodeText |>.getD ""
+        let refs := if typeNames.contains name && name != selfName && !refs.contains name
+          then refs.push name else refs
+        -- Also scan type arguments
+        (fieldArr j "typeArguments").foldl (fun r a => scanTypeNode a r) refs
+      else if kind == "ArrayType" then
+        match fieldNode j "elementType" with
+        | some et => scanTypeNode et refs | none => refs
+      else if kind == "UnionType" then
+        (fieldArr j "types").foldl (fun r t => scanTypeNode t r) refs
+      else refs
+    match fieldNode m "type" with
+    | some tn => scanTypeNode tn acc
+    | none => acc
+  ) #[]
+  refs
+
+/-- Find mutual group: types that transitively cross-reference each other. -/
+private def findMutualGroup (start : String) (typeRefs : Array (String × Array String))
+    : Array String :=
+  -- Use LIFO (stack) ordering to match TS queue.pop() behavior
+  let rec go (stack : Array String) (group : Array String) (fuel : Nat) : Array String :=
+    match fuel with
+    | 0 => group
+    | fuel + 1 =>
+      if stack.isEmpty then group
+      else
+        let name := stack.back!
+        let stack := stack.pop
+        if group.contains name then go stack group fuel
+        else
+          let group := group.push name
+          let refs := (typeRefs.find? fun (n, _) => n == name).map (·.2) |>.getD #[]
+          let stack := refs.foldl (fun s ref =>
+            let backRefs := (typeRefs.find? fun (n, _) => n == ref).map (·.2) |>.getD #[]
+            if group.any (fun g => backRefs.contains g) then s.push ref else s
+          ) stack
+          go stack group fuel
+  let group := go #[start] #[] 100
+  if group.size > 1 then group else #[]
+
+/-- Detect mutual groups among type declarations. -/
+private def detectMutualGroups (stmts : Array Json) : Array (Array String) :=
+  let typeNames := collectTypeNames stmts
+  let typeRefs := stmts.filterMap fun s =>
+    let name := (fieldNode s "name").map nodeText |>.getD ""
+    if typeNames.contains name then
+      some (name, collectTypeRefs s typeNames name)
+    else none
+  let groups : Array (Array String) := #[]
+  let assigned : Array String := #[]
+  typeNames.foldl (fun (groups, assigned) name =>
+    if assigned.contains name then (groups, assigned)
+    else
+      let group := findMutualGroup name typeRefs
+      if group.size > 1 then
+        (groups.push group, assigned ++ group)
+      else (groups, assigned)
+  ) (groups, assigned) |>.1
+
+-- ─── Module lowering ────────────────────────────────────────────────────────
+
 def lowerJsonModule (json : Json) : LeanFile :=
   let fileName := fieldStr json "fileName"
   let ns := fileToModuleName fileName
   let stmts := fieldArr json "statements"
   -- Collect discriminated union info for constructor pattern matching
   let reg := collectUnionRegistry stmts
+  -- Detect mutual groups for cross-referencing types
+  let mutualGroups := detectMutualGroups stmts
+  let mutualNames := mutualGroups.foldl (fun acc g => acc ++ g) #[]
   let imports := scanImports stmts
   let decls := imports.map fun imp => LeanDecl.Import imp
   let decls := decls.push .Blank
   let decls := decls.push (.Open (resolveOpens imports))
   let decls := decls.push .Blank
-  let bodyDecls := stmts.foldl (fun acc s =>
-    let ds := lowerStatementR reg s
-    if ds.isEmpty then acc else acc ++ ds ++ #[.Blank]
-  ) #[]
+  -- Lower statements, grouping mutual types
+  let emittedMutuals : Array String := #[]
+  let bodyDecls := stmts.foldl (fun (acc, emitted) s =>
+    let name := (fieldNode s "name").map nodeText |>.getD ""
+    if mutualNames.contains name && !emitted.contains name then
+      -- Find this type's mutual group
+      let group := (mutualGroups.find? fun g => g.contains name).getD #[]
+      -- Lower all types in the group in mutual-detection order (BFS order)
+      let mutualDecls := group.foldl (fun mutAcc gName =>
+        let memberStmt := stmts.find? fun s2 =>
+          ((fieldNode s2 "name").map nodeText |>.getD "") == gName
+        match memberStmt with
+        | some ms =>
+          let ds := lowerStatementR reg ms
+          -- Strip deriving and blank lines; merge leading comments into decl
+          let ds := ds.filterMap fun d => match d with
+            | .Structure n tp fs ext _ c => some (.Structure n tp fs ext #[] c)
+            | .Inductive n tp ctors _ c => some (.Inductive n tp ctors #[] c)
+            | .Blank => none
+            | _ => some d
+          -- Merge consecutive Comment decls into the following type decl's comment field
+          let merged := ds.foldl (fun (acc, pendingComments) d =>
+            match d with
+            | .Comment text => (acc, pendingComments ++ [text])
+            | .Structure n tp fs ext der _ =>
+              let comment := if pendingComments.isEmpty then none
+                else some (String.intercalate "\n" pendingComments)
+              (acc.push (.Structure n tp fs ext der comment), [])
+            | .Inductive n tp ctors der _ =>
+              let comment := if pendingComments.isEmpty then none
+                else some (String.intercalate "\n" pendingComments)
+              (acc.push (.Inductive n tp ctors der comment), [])
+            | _ => (acc.push d, pendingComments)
+          ) (#[], ([] : List String))
+          mutAcc ++ merged.1
+        | none => mutAcc
+      ) #[]
+      let mutualDecl := LeanDecl.Mutual mutualDecls
+      -- Generate standalone instances in group order (matches TS codegen)
+      let instances := group.foldl (fun instAcc gName =>
+        instAcc
+          |>.push (.StandaloneInstance s!"instance : Inhabited {gName} := ⟨sorry⟩")
+          |>.push (.StandaloneInstance s!"instance : BEq {gName} := ⟨fun _ _ => false⟩")
+          |>.push (.StandaloneInstance s!"instance : Repr {gName} := ⟨fun _ _ => .text s!\"{gName}\"⟩")
+      ) #[]
+      let emitted := emitted ++ group
+      (acc ++ #[mutualDecl, .Blank] ++ instances ++ #[.Blank], emitted)
+    else if emitted.contains name then
+      -- Already emitted as part of a mutual group
+      (acc, emitted)
+    else
+      let ds := lowerStatementR reg s
+      if ds.isEmpty then (acc, emitted) else (acc ++ ds ++ #[.Blank], emitted)
+  ) (#[], emittedMutuals)
+  let bodyDecls := bodyDecls.1
   let useNs := !ns.isEmpty && ns != "T" && ns != "Test"
   let decls := if useNs then decls.push (.Namespace ns bodyDecls) else decls ++ bodyDecls
   { banner := some "Auto-generated by ts-lean-transpiler"
