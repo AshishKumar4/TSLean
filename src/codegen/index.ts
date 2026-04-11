@@ -19,6 +19,7 @@ import {
 import { irTypeToLean } from '../typemap/index.js';
 import { monadString } from '../effects/index.js';
 import { translateBinOp } from '../stdlib/index.js';
+import { generateLeanV2 } from './v2.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
 
@@ -34,6 +35,11 @@ const DEFAULT_DERIVING = 'Repr, BEq, Inhabited';
  * @returns A string containing valid Lean 4 source code.
  */
 export function generateLean(mod: IRModule): string {
+  return generateLeanV2(mod);
+}
+
+/** V1 codegen: string-building approach (kept for comparison during migration). */
+export function generateLeanV1(mod: IRModule): string {
   return new Gen().gen(mod);
 }
 

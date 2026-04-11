@@ -36,6 +36,7 @@ const LEAN_KEYWORDS = new Set([
 
 /** Wrap a name in «» if it's a Lean keyword. Replace special chars with _. */
 function sanitize(name: string): string {
+  if (typeof name !== 'string') return String(name ?? '_');
   if (LEAN_KEYWORDS.has(name)) return `«${name}»`;
   return name.replace(/[^a-zA-Z0-9_.!?']/g, '_');
 }
@@ -172,7 +173,9 @@ function printDecl(d: LeanDecl, depth: number, out: string[]): void {
       // Check if body is simple enough to inline on the same line
       const bodyInline = printExprInline(d.body);
       const isSimpleBody = !bodyInline.includes('\n') && bodyInline.length < 80 &&
-        d.body.tag !== 'Do' && d.body.tag !== 'If' && d.body.tag !== 'Match' && d.body.tag !== 'Seq';
+        d.body.tag !== 'Do' && d.body.tag !== 'If' && d.body.tag !== 'Match' &&
+        d.body.tag !== 'Seq' && d.body.tag !== 'LineComment' && d.body.tag !== 'Let' &&
+        d.body.tag !== 'Bind';
       if (isSimpleBody) {
         out.push(`${ind}${kw} ${sanitize(d.name)}${tp}${psStr} : ${retStr} := ${bodyInline}`);
       } else {
@@ -541,7 +544,8 @@ function printTy(t: LeanTy): string {
     }
     case 'TyTuple': {
       if (t.elems.length === 0) return 'Unit';
-      return t.elems.map(e => printTy(e)).join(' × ');
+      if (t.elems.length === 1) return printTy(t.elems[0]);
+      return '(' + t.elems.map(e => printTy(e)).join(' × ') + ')';
     }
     case 'TyParen':
       return `(${printTy(t.inner)})`;
@@ -588,6 +592,8 @@ function printPat(p: LeanPat): string {
       return `{ ${p.fields.map(f => `${sanitize(f.name)} := ${printPat(f.pat)}`).join(', ')} }`;
     case 'POr':
       return p.pats.map(x => printPat(x)).join(' | ');
+    case 'PAs':
+      return `${printPat(p.pattern)} as ${sanitize(p.name)}`;
   }
 }
 

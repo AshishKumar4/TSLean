@@ -57,7 +57,7 @@ describe('LeanAST type printing', () => {
       tag: 'TyTuple',
       elems: [{ tag: 'TyName', name: 'String' }, { tag: 'TyName', name: 'Nat' }],
     };
-    expect(printTyStr(t)).toBe('String × Nat');
+    expect(printTyStr(t)).toBe('(String × Nat)');
   });
 
   it('prints empty tuple as Unit', () => {

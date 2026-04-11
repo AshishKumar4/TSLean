@@ -349,8 +349,12 @@ describe('generateLean – expression coverage', () => {
     const code = generateLean(mod([{
       tag: 'FuncDef', name: 'f', typeParams: [], params: [], retType: e.type, effect: eff, body: e,
     }]));
-    const idx = code.indexOf(':=\n') + 3;
-    return code.slice(idx).trimStart();
+    // V2 may inline simple bodies on the := line; handle both formats
+    const nlIdx = code.indexOf(':=\n');
+    if (nlIdx >= 0) return code.slice(nlIdx + 3).trimStart();
+    const inlineIdx = code.indexOf(':= ');
+    if (inlineIdx >= 0) return code.slice(inlineIdx + 3).trimStart();
+    return code;
   }
 
   // ─── Bindings ───────────────────────────────────────────────────────────────

@@ -33,7 +33,8 @@ export type LeanPat =
   | { tag: 'PSome'; inner: LeanPat }                                   // .some x
   | { tag: 'PTuple'; elems: LeanPat[] }                                // (a, b)
   | { tag: 'PStruct'; fields: { name: string; pat: LeanPat }[] }      // { x := p, y := q }
-  | { tag: 'POr'; pats: LeanPat[] };                                   // p₁ | p₂
+  | { tag: 'POr'; pats: LeanPat[] }                                    // p₁ | p₂
+  | { tag: 'PAs'; pattern: LeanPat; name: string };                    // p as name
 
 // ─── Expressions ────────────────────────────────────────────────────────────────
 

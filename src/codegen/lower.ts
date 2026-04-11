@@ -725,7 +725,7 @@ class LowerCtx {
         fn: { tag: 'TyName', name: 'AssocMap' },
         args: [this.lowerType(t.key), this.lowerType(t.value)],
       };
-      case 'Set': return { tag: 'TyApp', fn: { tag: 'TyName', name: 'AssocSet' }, args: [this.lowerType(t.elem)] };
+      case 'Set': return { tag: 'TyApp', fn: { tag: 'TyName', name: 'Array' }, args: [this.lowerType(t.elem)] };
       case 'Promise': return { tag: 'TyApp', fn: { tag: 'TyName', name: 'IO' }, args: [this.lowerType(t.inner)] };
       case 'Result': return {
         tag: 'TyApp',
@@ -866,16 +866,14 @@ class LowerCtx {
         const val = this.lowerExpr(e.value, ctx);
         const body = this.lowerExpr(e.body, ctx);
         const isRec = e.value.tag === 'Lambda' && bodyContainsVarRef(e.value.body, e.name);
-        return { tag: 'Let', name: e.name, value: val, body, rec: isRec };
+        const ty = e.annot ? this.lowerType(e.annot) : undefined;
+        return { tag: 'Let', name: e.name, ty, value: val, body, rec: isRec };
       }
 
       case 'Bind': {
         const monad = this.lowerExpr(e.monad, ctx);
         const body = this.lowerExpr(e.body, ctx);
-        // Pure values use := instead of ←
-        if (this.isPureValue(monad)) {
-          return { tag: 'Let', name: e.name, value: monad, body };
-        }
+        // Bind IR nodes always represent monadic operations (← in Lean)
         return { tag: 'Bind', name: e.name, value: monad, body };
       }
 
@@ -955,7 +953,10 @@ class LowerCtx {
       }
 
       case 'Cast': return this.lowerCast(e, ctx);
-      case 'IsType': return { tag: 'Sorry', ty: { tag: 'TyName', name: 'Bool' }, reason: `type test` };
+      case 'IsType': {
+        const typeName = e.testType?.tag === 'TypeRef' ? e.testType.name : (e.testType?.tag ?? 'unknown');
+        return { tag: 'Sorry', ty: { tag: 'TyName', name: 'Bool' }, reason: `type test: ${typeName}` };
+      }
       case 'Panic': return { tag: 'Panic', msg: e.msg };
       case 'OptChain': return this.lowerExpr(e.expr, ctx);
       case 'TypeNarrow': return this.lowerExpr(e.expr, ctx);
@@ -1318,7 +1319,7 @@ class LowerCtx {
       case 'PTuple': return { tag: 'PTuple', elems: p.elems.map(x => this.lowerPat(x)) };
       case 'PStruct': return { tag: 'PStruct', fields: p.fields.map(f => ({ name: f.name, pat: this.lowerPat(f.pattern) })) };
       case 'POr': return { tag: 'POr', pats: p.pats.map(x => this.lowerPat(x)) };
-      case 'PAs': return this.lowerPat(p.pattern); // simplify: drop the `as` binding
+      case 'PAs': return { tag: 'PAs', pattern: this.lowerPat(p.pattern), name: p.name };
     }
   }
 

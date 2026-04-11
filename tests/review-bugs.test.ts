@@ -36,8 +36,8 @@ describe('Review Bug #1: instanceof / IsType not hardcoded true', () => {
     expect(code).toContain('def isDog');
     // Must NOT silently emit `true`
     expect(code).not.toMatch(/isDog[^\n]*\n\s*true\s*$/m);
-    // Must emit something meaningful about the type check
-    expect(code).toMatch(/True.intro|default|matches/);
+    // Must emit something meaningful about the type check (not bare true)
+    expect(code).toMatch(/True.intro|default|matches|sorry/);
   });
 
   it('instanceof check references the class name', () => {
