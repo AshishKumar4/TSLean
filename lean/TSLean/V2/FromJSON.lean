@@ -616,6 +616,7 @@ private partial def wrapReturnsPure (e : LeanExpr) : LeanExpr :=
   | .If c t f => .If c (wrapReturnsPure t) (wrapReturnsPure f)
   | .Do b => .Do (wrapReturnsPure b)
   | .Pure _ | .Return _ | .Throw _ => e  -- already wrapped
+  | .Lit "()" => e  -- unit continuation stays as-is
   | .Lit s => .Pure (.Lit s)
   | other => .Pure other
 
@@ -684,13 +685,15 @@ private partial def lowerStmtSeqR (reg : UnionRegistry) (paramTypes : Array (Str
         let cont := lowerStmtSeqR reg paramTypes rest
         if isAwait then .Bind name (.Lit val) cont
         else
-          let ty := match fieldNode d "type" with
-            | some tn => some (mapTypeNode tn)
-            | none =>
-              let rt := mapResolvedType d
-              match rt with
-              | .TyName "Unit" | .TyName "TSAny" => none
-              | _ => some rt
+          -- Only annotate when explicit type or new X() initializer (matches TS pipeline)
+          let hasExplicitType := (fieldNode d "type").isSome
+          let isNewExpr := match initJ with
+            | some init => nodeKind init == "NewExpression" | none => false
+          let ty := if hasExplicitType then (fieldNode d "type").map mapTypeNode
+            else if isNewExpr then
+              initJ.bind fun init =>
+                (fieldNode init "expression").map fun c => .TyName (nodeText c)
+            else none
           .Let name ty (.Lit val) cont false
       else lowerStmtSeqR reg paramTypes rest
     else if kind == "SwitchStatement" then
@@ -796,8 +799,20 @@ private partial def lowerBlockStmtR (reg : UnionRegistry) (paramTypes : Array (S
     let expr := (fieldNode j "expression").map renderExpr |>.getD "default"
     .Throw (.Lit expr)
   else if kind == "ExpressionStatement" then
-    -- Unwrap expression statement
-    (fieldNode j "expression").map (fun e => .Lit (renderExpr e)) |>.getD (.Lit "()")
+    -- Check for assignment: x = expr → Let x value ()
+    let exprJ := fieldNode j "expression"
+    let isAssign := match exprJ with
+      | some e => nodeKind e == "BinaryExpression" &&
+        let opKind := (fieldNode e "operatorToken").map nodeKind |>.getD ""
+        opKind == "FirstAssignment" || opKind == "EqualsToken"
+      | none => false
+    if isAssign then
+      let e := exprJ.getD default
+      let lname := (fieldNode e "left").map renderExpr |>.getD "_"
+      let rval := (fieldNode e "right").map renderExpr |>.getD "default"
+      .Let lname none (.Lit rval) (.Lit "()") false
+    else
+      exprJ.map (fun e => .Lit (renderExpr e)) |>.getD (.Lit "()")
   else .Lit (renderExpr j)
 
 /-- Lower a SwitchStatement to a Match expression.
@@ -966,18 +981,15 @@ private partial def lowerMethodStmtsM (reg : UnionRegistry) (paramTypes : Array 
         let cont := lowerMethodStmtsM reg paramTypes rest.toArray isMutating
         if isAwait then .Bind dname (.Lit val) cont
         else
-          let ty := match fieldNode d "type" with
-            | some tn => some (mapTypeNode tn)
-            | none =>
-              -- For new X(...), infer type from constructor name
-              let newTy := initJ.bind fun init =>
-                if nodeKind init == "NewExpression" then
-                  (fieldNode init "expression").map fun c => .TyName (nodeText c)
-                else none
-              match newTy with
-              | some t => some t
-              | none => let rt := mapResolvedType d
-                match rt with | .TyName "Unit" | .TyName "TSAny" => none | _ => some rt
+          -- Only annotate when explicit type or new X() initializer (matches TS pipeline)
+          let hasExplicitType := (fieldNode d "type").isSome
+          let isNewExpr := match initJ with
+            | some init => nodeKind init == "NewExpression" | none => false
+          let ty := if hasExplicitType then (fieldNode d "type").map mapTypeNode
+            else if isNewExpr then
+              initJ.bind fun init =>
+                (fieldNode init "expression").map fun c => .TyName (nodeText c)
+            else none
           .Let dname ty (.Lit val) cont false
       else lowerMethodStmtsM reg paramTypes rest.toArray isMutating
     else
@@ -1042,11 +1054,17 @@ private partial def lowerMethodStmtM (reg : UnionRegistry) (paramTypes : Array (
     if decls.size > 0 then
       let d := decls.getD 0 default
       let dname := (fieldNode d "name").map nodeText |>.getD "_"
-      let val := (fieldNode d "initializer").map (renderExprCtx reg none) |>.getD "default"
-      let ty := match fieldNode d "type" with
-        | some tn => some (mapTypeNode tn)
-        | none => let rt := mapResolvedType d
-          match rt with | .TyName "Unit" | .TyName "TSAny" => none | _ => some rt
+      let initJ := fieldNode d "initializer"
+      let val := initJ.map (renderExprCtx reg none) |>.getD "default"
+      -- Only annotate when explicit type or new X() initializer (matches TS pipeline)
+      let hasExplicitType := (fieldNode d "type").isSome
+      let isNewExpr := match initJ with
+        | some init => nodeKind init == "NewExpression" | none => false
+      let ty := if hasExplicitType then (fieldNode d "type").map mapTypeNode
+        else if isNewExpr then
+          initJ.bind fun init =>
+            (fieldNode init "expression").map fun c => .TyName (nodeText c)
+        else none
       .Let dname ty (.Lit val) (.Lit "()") false
     else .Lit "()"
   else .Lit (renderExprCtx reg none j)
@@ -1245,7 +1263,7 @@ private partial def lowerFuncDeclR (reg : UnionRegistry) (j : Json) : Array Lean
     | some b => lowerBodyR reg paramTypes b
     | none => .Default (some retTy)
   -- In async functions or state functions, wrap tail expressions with `pure`
-  let body := if isAsync then wrapReturnsPure body else body
+  let body := if isAsync || hasBodyVarReassign then wrapReturnsPure body else body
   let body := if needsDoWrap body || isAsync || hasBodyVarReassign then .Do body else body
   let isPartial := exprContainsName body name
   let docComment := extractDocComment j
