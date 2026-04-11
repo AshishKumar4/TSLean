@@ -699,9 +699,13 @@ class ParserCtx {
          if (!isPure(val.effect) && hasAsync(eff)) {
            return { tag: 'Bind', name, monad: val, body, type: body.type, effect: combined };
          }
-         return { tag: 'Let', name, annot: ty, value: val, body, type: body.type, effect: combined };
-       }
-       // Destructuring: const { x, y } = obj  →  let x := obj.x; let y := obj.y; body
+          // Only annotate when the source has an explicit type or a `new X()` initializer
+          const hasExplicitType = !!decl.type;
+          const isNewExpr = decl.initializer && ts.isNewExpression(decl.initializer);
+          const annot = (hasExplicitType || isNewExpr) ? ty : undefined;
+          return { tag: 'Let', name, annot, value: val, body, type: body.type, effect: combined };
+        }
+        // Destructuring: const { x, y } = obj  →  let x := obj.x; let y := obj.y; body
        if (decl && ts.isObjectBindingPattern(decl.name) && decl.initializer) {
           const rhs = this.parseExpr(decl.initializer);
           let body = cont();
