@@ -2112,9 +2112,14 @@ private def scanImports (stmts : Array Json) : Array String :=
     textContains text "Promise" || hasClassMutation stmts || hasAsyncFunc stmts ||
     hasFuncVarReassign stmts
   let needs := if needsMonad then needs.push "TSLean.Runtime.Monad" else needs
-  -- WebAPI
-  let needsWebAPI := textContains text "fetch" || textContains text "Request" ||
-    textContains text "Response" || textContains text "URL"
+  -- WebAPI — match actual type refs (typeName Identifier), not string literal text
+  let needsWebAPI :=
+    #["Request", "Response", "URL", "Headers", "WebSocket"].any fun t =>
+      textContains text ("\"typeName\":{\"kind\":\"Identifier\",\"text\":\"" ++ t ++ "\"}")
+  let needsWebAPI := needsWebAPI || (textContains text "\"text\":\"fetch\"" &&
+    textContains text "\"kind\":\"CallExpression\"")
+  let needsWebAPI := needsWebAPI || (textContains text "\"text\":\"fetch\"" &&
+    textContains text "\"kind\":\"MethodDeclaration\"")
   let needs := if needsWebAPI then needs.push "TSLean.Runtime.WebAPI" else needs
   -- HashMap
   let needs := if textContains text "Map" || textContains text "Set" then
