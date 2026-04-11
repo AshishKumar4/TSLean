@@ -629,6 +629,9 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
           "let " ++ left ++ " := s!\"{" ++ left ++ "}" ++ parts ++ "\""
         else "let " ++ left ++ " := " ++ left ++ " ++ " ++ right
       else "let " ++ left ++ " := " ++ left ++ " ++ " ++ right
+    -- `in` operator: "key" in obj → AssocMap.contains obj "key"
+    else if opKind == "InKeyword" then
+      "AssocMap.contains " ++ right ++ " " ++ left
     else
       -- Type-aware operator: PlusToken on strings → ++ (concat), otherwise +
       let op := if opKind == "PlusToken" then
