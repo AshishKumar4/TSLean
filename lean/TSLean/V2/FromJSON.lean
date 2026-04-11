@@ -420,9 +420,14 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
     let obj := fn.dropEnd 5 |>.toString
     some ("Array.push " ++ obj ++ " " ++ (args.getD 0 ""))
   else if fn.endsWith ".map" && args.size == 1 then
-    let obj := fn.dropEnd 4 |>.toString
-    let obj := if obj.any (· == ' ') then "(" ++ obj ++ ")" else obj
-    some ("Array.map " ++ (args.getD 0 "") ++ " " ++ obj)
+    -- Optional-chain .map (e.g. d.where_?.map) → keep method-call form (matches TS lowerFieldAccess)
+    let fnHasQDot := fnJ.map (fun fj => (fieldNode fj "questionDotToken").isSome) |>.getD false
+    if fnHasQDot then
+      some (fn ++ " " ++ (args.getD 0 ""))
+    else
+      let obj := fn.dropEnd 4 |>.toString
+      let obj := if obj.any (· == ' ') then "(" ++ obj ++ ")" else obj
+      some ("Array.map " ++ (args.getD 0 "") ++ " " ++ obj)
   else if fn.endsWith ".filter" && args.size == 1 then
     let obj := fn.dropEnd 7 |>.toString
     let obj := if obj.any (· == ' ') then "(" ++ obj ++ ")" else obj
