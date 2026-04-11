@@ -172,6 +172,55 @@ private partial def mapTypeNode (j : Json) : LeanTy :=
   else if kind == "TypeLiteral" then .TyName "String"
   else mapResolvedType j
 
+/-- Infer a type annotation from the initializer expression when resolvedType is TSAny.
+    Detects common method return types: .findIndex → Float, .some/.every → Bool, etc.
+    Also handles known function return types for cross-module calls. -/
+private def inferTypeFromInit (initJ : Json) : Option LeanTy :=
+  let kind := nodeKind initJ
+  -- Method calls: obj.method(...) where method has a known return type
+  if kind == "CallExpression" then
+    let fnJ := fieldNode initJ "expression"
+    let fnKind := fnJ.map nodeKind |>.getD ""
+    if fnKind == "PropertyAccessExpression" then
+      let method := fnJ.bind (fieldNode · "name") |>.map nodeText |>.getD ""
+      match method with
+      | "findIndex" | "indexOf" => some (.TyName "Float")
+      | "some" | "every" | "includes" | "has" | "startsWith" | "endsWith" => some (.TyName "Bool")
+      | _ => none
+    else
+      -- Bare function calls: known cross-module functions
+      let fnName := fnJ.map nodeText |>.getD ""
+      match fnName with
+      | "lowerModule" => some (.TyName "LeanFile")
+      | _ => none
+  -- Element access: RECORD[key] — check if RECORD has a Record<K,V> resolved type
+  else if kind == "ElementAccessExpression" then
+    let objJ := fieldNode initJ "expression"
+    match objJ.bind resolvedType with
+    | some rt =>
+      let name := typeName rt
+      if name.startsWith "Record<" then some (.TyName "String")
+      else none
+    | none => none
+  -- Binary: x === y, x !== y → Bool; x ?? fallback → type of fallback
+  else if kind == "BinaryExpression" then
+    let opKind := (fieldNode initJ "operatorToken").map nodeKind |>.getD ""
+    if opKind == "EqualsEqualsEqualsToken" || opKind == "ExclamationEqualsEqualsToken" ||
+       opKind == "EqualsEqualsToken" || opKind == "ExclamationEqualsToken" then
+      some (.TyName "Bool")
+    else if opKind == "QuestionQuestionToken" then
+      -- Nullish coalescing: type from right operand
+      let rightJ := fieldNode initJ "right"
+      match rightJ with
+      | some rj =>
+        let rk := nodeKind rj
+        if rk == "StringLiteral" || rk == "NoSubstitutionTemplateLiteral" || rk == "TemplateExpression"
+        then some (.TyName "String")
+        else none
+      | none => none
+    else none
+  else none
+
 -- ─── Discriminant field detection ────────────────────────────────────────────────
 
 private def DISCRIMINANT_FIELDS : Array String := #["kind", "tag", "type"]
@@ -192,6 +241,28 @@ private def substFieldAccess (ctx : SubstCtx) (obj : String) (field : String) : 
       (subst.fieldBindings.find? fun (f, _) => f == field).map (·.2)
     else none
   | none => none
+
+/-- Known optional field names from LeanAST interfaces (used for .isSome condition wrapping). -/
+private def isOptionalFieldName (name : String) : Bool :=
+  name == "banner" || name == "sourcePath" || name == "comment" || name == "docComment" ||
+  name == "extends_" || name == "where_" || name == "default_" || name == "guard" ||
+  name == "reason" || name == "ty" || name == "rec" || name == "implicit" ||
+  name == "constraints" || name == "name"
+
+/-- Wrap a condition expression with .isSome if it's a property access on a known optional field.
+    Also handles BinaryExpression(||, &&) where one operand is an optional field access. -/
+private def wrapConditionIsSome (j : Json) (rendered : String) : String :=
+  let kind := nodeKind j
+  if kind == "PropertyAccessExpression" then
+    let fieldName := (fieldNode j "name").map nodeText |>.getD ""
+    if isOptionalFieldName fieldName then rendered ++ ".isSome"
+    else rendered
+  else rendered
+
+/-- Render an if-condition expression, applying .isSome for optional field access. -/
+private partial def renderIfCondition (render : Json → String) (j : Json) : String :=
+  let rendered := render j
+  wrapConditionIsSome j rendered
 
 private def parenIfCompoundExpr (j : Json) (rendered : String) : String :=
   let kind := nodeKind j
@@ -285,6 +356,14 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
   else if fn.endsWith ".join" && args.size == 1 then
     let obj := fn.dropRight 5
     some ("String.intercalate " ++ (args.getD 0 "") ++ " " ++ obj)
+  -- Also match after mapFieldName has already renamed .join → .intercalate
+  else if fn.endsWith ".intercalate" && args.size == 1 then
+    let obj := fn.dropRight 12
+    some ("String.intercalate " ++ (args.getD 0 "") ++ " " ++ obj)
+  -- Also match .splitOn (from mapFieldName renaming .split → .splitOn)
+  else if fn.endsWith ".splitOn" && args.size == 1 then
+    let obj := fn.dropRight 8
+    some (obj ++ ".splitOn " ++ (args.getD 0 ""))
   else none
 
 /-- Parenthesize a binary expression operand if it's compound.
@@ -343,7 +422,10 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
   let kind := nodeKind j
   if kind == "NumericLiteral" then nodeText j
   else if kind == "StringLiteral" || kind == "NoSubstitutionTemplateLiteral" then
-    "\"" ++ nodeText j ++ "\""
+    let text := (nodeText j).replace "\n" "\\n"
+    let text := text.replace "\t" "\\t"
+    let text := text.replace "\r" "\\r"
+    "\"" ++ text ++ "\""
   else if kind == "TrueKeyword" then "true"
   else if kind == "FalseKeyword" then "false"
   else if kind == "NullKeyword" || kind == "UndefinedKeyword" then "none"
@@ -475,7 +557,13 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     let params := (fieldArr j "parameters").map fun p => (fieldNode p "name").map nodeText |>.getD "_"
     let bodyJ := fieldNode j "body"
     let body := match bodyJ with
-      | some b => if isBlock b then "(block)" else re b
+      | some b =>
+        if isBlock b then
+          -- Render block statements inline, chained with "; "
+          let stmts := fieldArr b "statements"
+          let rendered := stmts.map (renderExprCtx reg ctx)
+          String.intercalate "; " rendered.toList
+        else re b
       | none => "default"
     "fun " ++ String.intercalate " " params.toList ++ " => " ++ body
   else if kind == "ElementAccessExpression" then
@@ -658,7 +746,8 @@ private partial def lowerStmtSeqR (reg : UnionRegistry) (paramTypes : Array (Str
   | s :: rest =>
     let kind := nodeKind s
     if kind == "IfStatement" then
-      let cond := (fieldNode s "expression").map renderExpr |>.getD "true"
+      let condJ := fieldNode s "expression"
+      let cond := condJ.map (renderIfCondition renderExpr) |>.getD "true"
       let thenB := (fieldNode s "thenStatement").map (lowerBodyR reg paramTypes) |>.getD (.Lit "()")
       let elseB := match fieldNode s "elseStatement" with
         | some e => lowerBodyR reg paramTypes e | none => lowerStmtSeqR reg paramTypes rest
@@ -685,7 +774,6 @@ private partial def lowerStmtSeqR (reg : UnionRegistry) (paramTypes : Array (Str
         let cont := lowerStmtSeqR reg paramTypes rest
         if isAwait then .Bind name (.Lit val) cont
         else
-          -- Only annotate when explicit type or new X() initializer (matches TS pipeline)
           let hasExplicitType := (fieldNode d "type").isSome
           let isNewExpr := match initJ with
             | some init => nodeKind init == "NewExpression" | none => false
@@ -726,7 +814,8 @@ private partial def lowerBlockStmtR (reg : UnionRegistry) (paramTypes : Array (S
   if kind == "ReturnStatement" then
     .Lit ((fieldNode j "expression").map renderExpr |>.getD "()")
   else if kind == "IfStatement" then
-    let cond := (fieldNode j "expression").map renderExpr |>.getD "true"
+    let condJ := fieldNode j "expression"
+    let cond := condJ.map (renderIfCondition renderExpr) |>.getD "true"
     let thenB := (fieldNode j "thenStatement").map (lowerBodyR reg paramTypes) |>.getD (.Lit "()")
     let elseB := (fieldNode j "elseStatement").map (lowerBodyR reg paramTypes) |>.getD (.Lit "()")
     .If (.Lit cond) thenB elseB
@@ -735,6 +824,8 @@ private partial def lowerBlockStmtR (reg : UnionRegistry) (paramTypes : Array (S
   else if kind == "ForOfStatement" || kind == "ForInStatement" then
     let iterJ := fieldNode j "expression"
     let iter := iterJ.map renderExpr |>.getD "default"
+    -- Parenthesize compound iterators (e.g. method calls with args)
+    let iter := if iter.any (· == ' ') then "(" ++ iter ++ ")" else iter
     let varJ := fieldNode j "initializer"
     let varName := match varJ with
       | some v =>
@@ -745,12 +836,11 @@ private partial def lowerBlockStmtR (reg : UnionRegistry) (paramTypes : Array (S
         else renderExpr v
       | none => "_"
     let bodyExpr := (fieldNode j "statement").map (lowerBodyR reg paramTypes) |>.getD (.Lit "()")
-    -- If body has binds (← in it), wrap in `do`
     let hasBinds := exprHasBindsCheck bodyExpr
     let bodyExpr := if hasBinds then .Do bodyExpr else bodyExpr
     let lam := .Lam #[varName] bodyExpr
-    -- Wrap lambda in parens if it has do or is compound
-    let lam := if hasBinds then .Paren lam else lam
+    -- Always wrap lambda in parens (matches TS needsParens for Lambda)
+    let lam := .Paren lam
     .App (.Var "Array.forM") #[.Lit iter, lam]
   else if kind == "ForStatement" then
     -- for (let i = init; cond; incr) body → let rec _loop_POS := fun i => if cond then body; _loop(incr) else pure ()
@@ -958,7 +1048,8 @@ private partial def lowerMethodStmtsM (reg : UnionRegistry) (paramTypes : Array 
     let kind := nodeKind s
     -- Chain if-without-else: make the else branch the rest of the statements
     if kind == "IfStatement" && (fieldNode s "elseStatement").isNone then
-      let cond := (fieldNode s "expression").map (renderExprCtx reg none) |>.getD "true"
+      let condJ := fieldNode s "expression"
+      let cond := condJ.map (renderIfCondition (renderExprCtx reg none)) |>.getD "true"
       let thenStmts := match fieldNode s "thenStatement" with
         | some t => if nodeKind t == "Block" then fieldArr t "statements" else #[t]
         | none => #[]
@@ -981,7 +1072,6 @@ private partial def lowerMethodStmtsM (reg : UnionRegistry) (paramTypes : Array 
         let cont := lowerMethodStmtsM reg paramTypes rest.toArray isMutating
         if isAwait then .Bind dname (.Lit val) cont
         else
-          -- Only annotate when explicit type or new X() initializer (matches TS pipeline)
           let hasExplicitType := (fieldNode d "type").isSome
           let isNewExpr := match initJ with
             | some init => nodeKind init == "NewExpression" | none => false
@@ -1009,7 +1099,8 @@ private partial def lowerMethodStmtM (reg : UnionRegistry) (paramTypes : Array (
     let expr := (fieldNode j "expression").map (renderExprCtx reg none) |>.getD "()"
     if isMutating then .Pure (.Lit expr) else .Lit expr
   else if kind == "IfStatement" then
-    let cond := (fieldNode j "expression").map (renderExprCtx reg none) |>.getD "true"
+    let condJ := fieldNode j "expression"
+    let cond := condJ.map (renderIfCondition (renderExprCtx reg none)) |>.getD "true"
     let thenStmts := match fieldNode j "thenStatement" with
       | some t => if nodeKind t == "Block" then fieldArr t "statements" else #[t]
       | none => #[]
@@ -1056,7 +1147,6 @@ private partial def lowerMethodStmtM (reg : UnionRegistry) (paramTypes : Array (
       let dname := (fieldNode d "name").map nodeText |>.getD "_"
       let initJ := fieldNode d "initializer"
       let val := initJ.map (renderExprCtx reg none) |>.getD "default"
-      -- Only annotate when explicit type or new X() initializer (matches TS pipeline)
       let hasExplicitType := (fieldNode d "type").isSome
       let isNewExpr := match initJ with
         | some init => nodeKind init == "NewExpression" | none => false
