@@ -453,6 +453,10 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
   else if fn.endsWith ".set" && args.size == 2 then
     let obj := fn.dropEnd 4 |>.toString
     some ("AssocMap.insert " ++ obj ++ " " ++ (args.getD 0 "") ++ " " ++ (args.getD 1 ""))
+  -- .delete(k) on a Map/Set → AssocMap.erase MAP k
+  else if fn.endsWith ".delete" && args.size == 1 then
+    let obj := fn.dropEnd 7 |>.toString
+    some ("AssocMap.erase " ++ obj ++ " " ++ (args.getD 0 ""))
   -- .get(k) on a Map → AssocMap.find? MAP k
   else if fn.endsWith ".get" && args.size == 1 then
     let obj := fn.dropEnd 4 |>.toString
