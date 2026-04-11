@@ -69,15 +69,7 @@ private def mapTypeFromFlags (flags : Nat) (name : String) : LeanTy :=
   else if flags &&& TF_Null != 0 then .TyApp (.TyName "Option") #[.TyName "Unit"]
   else if flags &&& TF_Never != 0 then .TyName "Empty"
   else if flags &&& TF_BigInt != 0 then .TyName "Int"
-  else if flags &&& TF_Any != 0 || flags &&& TF_Unknown != 0 then
-    -- When flags say "any" but name has actual type info, use the name
-    if name == "any" || name.isEmpty then .TyName "TSAny"
-    else if name == "number" then .TyName "Float"
-    else if name == "string" then .TyName "String"
-    else if name == "boolean" then .TyName "Bool"
-    else if name == "void" then .TyName "Unit"
-    else if name == "never" then .TyName "Empty"
-    else .TyName "TSAny"
+  else if flags &&& TF_Any != 0 || flags &&& TF_Unknown != 0 then .TyName "TSAny"
   else if name == "number" then .TyName "Float"
   else if name == "string" then .TyName "String"
   else if name == "boolean" then .TyName "Bool"
