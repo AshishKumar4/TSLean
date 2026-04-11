@@ -133,8 +133,9 @@ private partial def mapTypeNode (j : Json) : LeanTy :=
       .TyApp (.TyName "Option") #[mapTypeNode (nonUndef.getD 0 default)]
     else mapResolvedType j
   else if kind == "FunctionType" then
-    let params := (fieldArr j "parameters").map fun p =>
+    let rawParams := (fieldArr j "parameters").map fun p =>
       (fieldNode p "type").map mapTypeNode |>.getD (.TyName "Unit")
+    let params := if rawParams.size == 0 then #[.TyName "Unit"] else rawParams
     let retNode := fieldNode j "type"
     -- If return type is Promise<T>, wrap inner as IO T
     let retTy := match retNode with
@@ -142,7 +143,7 @@ private partial def mapTypeNode (j : Json) : LeanTy :=
         let rk := nodeKind rn
         if rk == "TypeReference" then
           let rAlias := resolvedType rn |>.bind (fun rt => getField rt "aliasName" |>.bind getStr)
-          let rName := (fieldNode rn "typeName").bind getStr |>.orElse (fun _ => rAlias)
+          let rName := (fieldNode rn "typeName").map nodeText |>.orElse (fun _ => rAlias)
           if rName == some "Promise" then
             let inner := mapTypeNode rn  -- recursive call unwraps Promise<T> to T
             .TyApp (.TyName "IO") #[inner]
