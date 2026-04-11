@@ -1354,7 +1354,7 @@ private def extractUnionInfo (name : String) (variants : Array Json) : UnionInfo
   { typeName := name, discField := discField, variants := variantEntries }
 
 private partial def lowerDiscriminatedUnion (name : String) (tyParams : Array LeanTyParam)
-    (variants : Array Json) : Array LeanDecl :=
+    (variants : Array Json) (comment : Option String := none) : Array LeanDecl :=
   let ctors := variants.map fun v =>
     let members := fieldArr v "members"
     let discMember := members.find? fun m =>
@@ -1378,11 +1378,12 @@ private partial def lowerDiscriminatedUnion (name : String) (tyParams : Array Le
           | some tn => mapTypeNode tn | none => mapResolvedType m
         some (some fname, fty)
     LeanCtor.mk ctorName fields
-  #[.Inductive name tyParams ctors DEFAULT_DERIVING none]
+  #[.Inductive name tyParams ctors DEFAULT_DERIVING comment]
 
 private partial def lowerTypeAliasDecl (j : Json) : Array LeanDecl :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
   let tyParams := extractTypeParams j
+  let comment := extractLeadingComment j
   -- Check for discriminated union pattern: type X = {kind:'A',...} | {kind:'B',...}
   let typeNode := fieldNode j "type"
   match typeNode with
@@ -1396,7 +1397,7 @@ private partial def lowerTypeAliasDecl (j : Json) : Array LeanDecl :=
       let isStringEnum := types.size > 0 && types.all fun t =>
         nodeKind t == "LiteralType"
       if isDiscriminated then
-        lowerDiscriminatedUnion name tyParams types
+        lowerDiscriminatedUnion name tyParams types comment
       else if isStringEnum then
         let ctors := types.map fun t =>
           let text := (fieldNode t "literal").map nodeText |>.getD "Unknown"
