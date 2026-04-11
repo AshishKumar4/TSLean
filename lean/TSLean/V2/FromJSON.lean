@@ -986,8 +986,10 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       "TSError.typeError " ++ String.intercalate " " args.toList
     -- new Promise(...) can't be expressed in Lean
     else if ctorName == "Promise" then "default"
-    -- new Set([...]) → #[] (Set not representable in Lean, drop to empty array)
-    else if ctorName == "Set" || ctorName == "Map" then "#[]"
+    -- new Set([...]) → #[] (Set maps to Array in Lean)
+    else if ctorName == "Set" then "#[]"
+    -- new Map() → AssocMap.empty (Map maps to AssocMap in Lean)
+    else if ctorName == "Map" then "AssocMap.empty"
     else ctorName ++ " " ++ String.intercalate " " args.toList
   else if kind == "TypeOfExpression" then
     let expr := (fieldNode j "expression").map re |>.getD "default"
