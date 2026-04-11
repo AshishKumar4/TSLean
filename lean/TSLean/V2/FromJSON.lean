@@ -566,12 +566,34 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       ek == "Identifier" || ek == "PropertyAccessExpression" ||
       ek == "StringLiteral" || ek == "NumericLiteral" ||
       ek == "TrueKeyword" || ek == "FalseKeyword"
-    if isSafe then
+     -- hasLiteral: at least one non-empty string literal part must exist for s!"..."
+    -- Without literal text, TS trySInterp returns null → plain ++ concatenation
+    let hasLiteral := headText != "" || spans.any fun span =>
+      let lit := (fieldNode span "literal").map nodeText |>.getD ""
+      lit != ""
+    -- hasUnsafeChars: check for {, }, ", \ in string parts
+    let hasUnsafeChars := headText.any (fun c => c == '{' || c == '}' || c == '"' || c == '\\') ||
+      spans.any fun span =>
+        let lit := (fieldNode span "literal").map nodeText |>.getD ""
+        lit.any (fun c => c == '{' || c == '}' || c == '"' || c == '\\')
+    if isSafe && hasLiteral && !hasUnsafeChars then
       let parts := spans.foldl (fun acc span =>
         let expr := (fieldNode span "expression").map re |>.getD ""
         let lit := (fieldNode span "literal").map nodeText |>.getD ""
         acc ++ "{" ++ expr ++ "}" ++ lit) headText
       "s!\"" ++ parts ++ "\""
+    else if isSafe && !hasLiteral then
+      -- All parts safe but no literal text → plain ++ chain like TS pipeline
+      let exprs := spans.map fun span =>
+        let exprJ := fieldNode span "expression"
+        let expr := exprJ.map re |>.getD ""
+        match exprJ with
+        | some ej => parenIfCompoundExpr ej expr
+        | none => expr
+      match exprs.toList with
+      | [] => "\"\""
+      | [x] => x
+      | x :: rest => rest.foldl (fun acc piece => acc ++ " ++ " ++ piece) x
     else
       -- Hybrid approach: use s!"..." for the safe prefix, then ++ for the rest
       -- Find the first unsafe span
