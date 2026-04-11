@@ -628,8 +628,8 @@ private partial def renderBlockStmtsInline (render : Json → String) (stmts : A
           else
             match rest with
             | r :: _ =>
-              if nodeKind r == "ReturnStatement" then
-                "pure " ++ ((fieldNode r "expression").map render |>.getD "()")
+              if nodeKind r == "ReturnStatement"
+              then "pure " ++ ((fieldNode r "expression").map render |>.getD "()")
               else "()"
             | [] => "()"
         let ifStr := "if " ++ cond ++ " then " ++ thenBranch ++ " else " ++ elseBranch
