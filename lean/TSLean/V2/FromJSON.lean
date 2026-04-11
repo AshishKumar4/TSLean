@@ -250,6 +250,9 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
   -- console.log(args) → IO.println args
   else if fn == "console.log" then
     some ("IO.println " ++ String.intercalate " " args.toList)
+  -- JSON.stringify(x) → serialize x
+  else if fn == "JSON.stringify" then
+    some ("serialize " ++ String.intercalate " " args.toList)
   -- fetch(url) → WebAPI.fetch url
   else if fn == "fetch" then
     some ("WebAPI.fetch " ++ String.intercalate " " args.toList)
@@ -288,7 +291,7 @@ private def mapBinOpSym (kind : String) : String := match kind with
   | "SlashToken" => "/" | "PercentToken" => "%"
   | "EqualsEqualsToken" | "EqualsEqualsEqualsToken" => "=="
   | "ExclamationEqualsToken" | "ExclamationEqualsEqualsToken" => "!="
-  | "LessThanToken" => "<" | "LessThanEqualsToken" => "<="
+  | "LessThanToken" | "FirstBinaryOperator" => "<" | "LessThanEqualsToken" => "<="
   | "GreaterThanToken" => ">" | "GreaterThanEqualsToken" => ">="
   | "AmpersandAmpersandToken" => "&&" | "BarBarToken" => "||"
   | _ => "+"
@@ -318,12 +321,18 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     let left := leftJ.map re |>.getD "default"
     let right := rightJ.map re |>.getD "default"
     let opKind := (fieldNode j "operatorToken").map nodeKind |>.getD ""
-    let op := mapBinOpSym opKind
-    let left := match leftJ with | some lj => parenBinOperand lj left opKind | none => left
-    let right := match rightJ with
-      | some rj => parenBinOperand rj right opKind
-      | none => right
-    left ++ " " ++ op ++ " " ++ right
+    -- Null coalescing: x ?? y → Option.getD x y
+    if opKind == "QuestionQuestionToken" then
+      let right := match rightJ with
+        | some rj => parenIfCompoundExpr rj right | none => right
+      "Option.getD " ++ left ++ " " ++ right
+    else
+      let op := mapBinOpSym opKind
+      let left := match leftJ with | some lj => parenBinOperand lj left opKind | none => left
+      let right := match rightJ with
+        | some rj => parenBinOperand rj right opKind
+        | none => right
+      left ++ " " ++ op ++ " " ++ right
   else if kind == "PropertyAccessExpression" then
     let obj := (fieldNode j "expression").map re |>.getD "default"
     let field := (fieldNode j "name").map nodeText |>.getD ""
@@ -373,7 +382,12 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       let fields := props.filterMap fun p =>
         let pk := nodeKind p
         if pk == "PropertyAssignment" then
-          let n := (fieldNode p "name").map nodeText |>.getD "_"
+          let nameJ := fieldNode p "name"
+          let rawName := nameJ.map nodeText |>.getD "_"
+          -- Sanitize field name: replace dashes with _, wrap with _ if has special chars
+          let n := if rawName.any (· == '-') then
+            "_" ++ (rawName.map fun c => if c == '-' then '_' else c) ++ "_"
+          else rawName
           let v := (fieldNode p "initializer").map re |>.getD "default"
           some (n ++ " := " ++ v)
         else if pk == "ShorthandPropertyAssignment" then
@@ -402,6 +416,21 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       | some ij => parenIfCompoundExpr ij idx
       | none => idx
     obj ++ ".getD " ++ idx ++ " default"
+  else if kind == "NewExpression" then
+    let ctorName := (fieldNode j "expression").map nodeText |>.getD ""
+    let args := (fieldArr j "arguments").map fun a => parenIfCompoundExpr a (re a)
+    -- new URL(x) → URL.parse x
+    if ctorName == "URL" then
+      "URL.parse " ++ String.intercalate " " args.toList
+    -- new Response(body, init) → mkResponse body init
+    else if ctorName == "Response" then
+      "mkResponse " ++ String.intercalate " " args.toList
+    -- new Error(msg) → TSError.typeError msg
+    else if ctorName == "Error" then
+      "TSError.typeError " ++ String.intercalate " " args.toList
+    -- new Promise(...) can't be expressed in Lean
+    else if ctorName == "Promise" then "default"
+    else ctorName ++ " " ++ String.intercalate " " args.toList
   else "default"
 
 /-- Render expression with no substitution context and no union registry. -/
@@ -451,6 +480,13 @@ private def isThisAssignment (j : Json) : Bool :=
             ((fieldNode l "expression").map nodeKind |>.getD "") == "ThisKeyword"
           | none => false
         else false
+      else if nodeKind e == "PostfixUnaryExpression" then
+        -- this.count++ → modify count = self.count + 1
+        match fieldNode e "operand" with
+        | some op =>
+          nodeKind op == "PropertyAccessExpression" &&
+          ((fieldNode op "expression").map nodeKind |>.getD "") == "ThisKeyword"
+        | none => false
       else false
     | none => false
   else false
@@ -547,9 +583,15 @@ private partial def lowerStmtSeqR (reg : UnionRegistry) (paramTypes : Array (Str
         -- Detect await: const x = await expr → let x ← expr (Bind node)
         let isAwait := match initJ with
           | some init => nodeKind init == "AwaitExpression" | none => false
+        -- For uninitialized Option variables, use `none` instead of `default`
+        let tyNode := fieldNode d "type"
+        let tyMapped := tyNode.map mapTypeNode
+        let isOptionTy := match tyMapped with
+          | some (.TyApp (.TyName "Option") _) => true | _ => false
+        let defaultVal := if isOptionTy then "none" else "default"
         let val := if isAwait then
-            (initJ.bind (fieldNode · "expression")).map renderExpr |>.getD "default"
-          else initJ.map renderExpr |>.getD "default"
+            (initJ.bind (fieldNode · "expression")).map renderExpr |>.getD defaultVal
+          else initJ.map renderExpr |>.getD defaultVal
         let cont := lowerStmtSeqR reg paramTypes rest
         if isAwait then .Bind name (.Lit val) cont
         else
@@ -601,6 +643,48 @@ private partial def lowerBlockStmtR (reg : UnionRegistry) (paramTypes : Array (S
     -- Wrap lambda in parens if it has do or is compound
     let lam := if hasBinds then .Paren lam else lam
     .App (.Var "Array.forM") #[.Lit iter, lam]
+  else if kind == "ForStatement" then
+    -- for (let i = init; cond; incr) body → let rec _loop_POS := fun i => if cond then body; _loop(incr) else pure ()
+    let pos := fieldNat j "pos"
+    let loopName := s!"_loop_{pos}"
+    let initDeclList := fieldNode j "initializer"
+    let (iName, iVal) := match initDeclList with
+      | some il =>
+        if nodeKind il == "VariableDeclarationList" then
+          let decls := fieldArr il "declarations"
+          let d := decls.getD 0 default
+          let n := (fieldNode d "name").map nodeText |>.getD "_i"
+          let v := (fieldNode d "initializer").map renderExpr |>.getD "0"
+          (n, v)
+        else ("_i", "0")
+      | none => ("_i", "0")
+    let cond := (fieldNode j "condition").map renderExpr |>.getD "true"
+    let incrJ := fieldNode j "incrementor"
+    let incr := match incrJ with
+      | some ij =>
+        if nodeKind ij == "PostfixUnaryExpression" || nodeKind ij == "PrefixUnaryExpression" then
+          let operand := (fieldNode ij "operand").map renderExpr |>.getD iName
+          operand ++ " + 1"
+        else renderExpr ij
+      | none => iName ++ " + 1"
+    let bodyExpr := (fieldNode j "statement").map (lowerBodyR reg paramTypes) |>.getD (.Lit "()")
+    let recurse := .App (.Var loopName) #[.Lit ("(" ++ incr ++ ")")]
+    let thenBody := .Seq #[bodyExpr, recurse]
+    let loopBody := .Lam #[iName] (.If (.Lit cond) thenBody (.Pure (.Lit "()")))
+    let callLoop := .App (.Var loopName) #[.Lit iVal]
+    .Let loopName none loopBody callLoop true
+  else if kind == "TryStatement" then
+    -- try { body } catch (e) { handler } → tryCatch body (fun e => handler)
+    let tryBody := (fieldNode j "tryBlock").map (lowerBodyR reg paramTypes) |>.getD (.Lit "()")
+    let catchClause := fieldNode j "catchClause"
+    let errName := catchClause.bind (fun cc =>
+      (fieldNode cc "variableDeclaration").bind (fun vd =>
+        (fieldNode vd "name").map nodeText))
+      |>.getD "_e"
+    let handler := catchClause.bind (fun cc =>
+      (fieldNode cc "block").map (lowerBodyR reg paramTypes))
+      |>.getD (.Lit "()")
+    .TryCatch tryBody errName handler
   else if kind == "ThrowStatement" then
     let expr := (fieldNode j "expression").map renderExpr |>.getD "default"
     .Throw (.Lit expr)
@@ -759,6 +843,36 @@ private partial def lowerMethodStmtsM (reg : UnionRegistry) (paramTypes : Array 
       let thenBody := lowerMethodStmtsM reg paramTypes thenStmts isMutating
       let elseBody := lowerMethodStmtsM reg paramTypes rest.toArray isMutating
       .If (.Lit cond) thenBody elseBody
+    else if kind == "VariableStatement" then
+      -- Chain Let: let x := val; <rest of stmts>
+      let declList := fieldNode s "declarationList"
+      let decls := declList.map (fieldArr · "declarations") |>.getD #[]
+      if decls.size > 0 then
+        let d := decls.getD 0 default
+        let dname := (fieldNode d "name").map nodeText |>.getD "_"
+        let initJ := fieldNode d "initializer"
+        let isAwait := match initJ with
+          | some init => nodeKind init == "AwaitExpression" | none => false
+        let val := if isAwait then
+            (initJ.bind (fieldNode · "expression")).map (renderExprCtx reg none) |>.getD "default"
+          else initJ.map (renderExprCtx reg none) |>.getD "default"
+        let cont := lowerMethodStmtsM reg paramTypes rest.toArray isMutating
+        if isAwait then .Bind dname (.Lit val) cont
+        else
+          let ty := match fieldNode d "type" with
+            | some tn => some (mapTypeNode tn)
+            | none =>
+              -- For new X(...), infer type from constructor name
+              let newTy := initJ.bind fun init =>
+                if nodeKind init == "NewExpression" then
+                  (fieldNode init "expression").map fun c => .TyName (nodeText c)
+                else none
+              match newTy with
+              | some t => some t
+              | none => let rt := mapResolvedType d
+                match rt with | .TyName "Unit" | .TyName "TSAny" => none | _ => some rt
+          .Let dname ty (.Lit val) cont false
+      else lowerMethodStmtsM reg paramTypes rest.toArray isMutating
     else
       let first := lowerMethodStmtM reg paramTypes s isMutating false
       let remainder := lowerMethodStmtsM reg paramTypes rest.toArray isMutating
@@ -803,10 +917,17 @@ private partial def lowerMethodStmtM (reg : UnionRegistry) (paramTypes : Array (
   else if kind == "ExpressionStatement" then
     match fieldNode j "expression" with
     | some e =>
-      let rendered := renderExprCtx reg none e
-      if textContains rendered "state.storage" || textContains rendered "self.state.storage" then
-        .Pure (.Sorry none none)
-      else .Lit rendered
+      -- Check for await this.state.storage.X(...) → pure sorry
+      if nodeKind e == "AwaitExpression" then
+        let innerRendered := (fieldNode e "expression").map (renderExprCtx reg none) |>.getD ""
+        if textContains innerRendered "state.storage" || textContains innerRendered "self.state.storage" then
+          .Pure (.Sorry none none)
+        else .Lit innerRendered
+      else
+        let rendered := renderExprCtx reg none e
+        if textContains rendered "state.storage" || textContains rendered "self.state.storage" then
+          .Pure (.Sorry none none)
+        else .Lit rendered
     | none => .Lit "()"
   else if kind == "VariableStatement" then
     let declList := fieldNode j "declarationList"
@@ -826,20 +947,31 @@ private partial def lowerMethodStmtM (reg : UnionRegistry) (paramTypes : Array (
 private partial def lowerThisAssignM (reg : UnionRegistry) (j : Json) : Option (String × LeanExpr) :=
   match fieldNode j "expression" with
   | some e =>
-    let left := fieldNode e "left"
-    let right := fieldNode e "right"
-    let opKind := (fieldNode e "operatorToken").map nodeKind |>.getD ""
-    match left, right with
-    | some l, some r =>
-      let field := (fieldNode l "name").map nodeText |>.getD ""
-      if opKind == "FirstAssignment" || opKind == "EqualsToken" then
-        some (field, .Lit (renderExprCtx reg none r))
-      else if opKind == "FirstCompoundAssignment" || opKind == "PlusEqualsToken" then
-        some (field, .BinOp "+" (.FieldAccess (.Var "self") field) (.Lit (renderExprCtx reg none r)))
-      else if opKind == "MinusEqualsToken" then
-        some (field, .BinOp "-" (.FieldAccess (.Var "self") field) (.Lit (renderExprCtx reg none r)))
-      else none
-    | _, _ => none
+    if nodeKind e == "PostfixUnaryExpression" then
+      -- this.field++ or this.field-- → (field, self.field ± 1)
+      match fieldNode e "operand" with
+      | some op =>
+        let field := (fieldNode op "name").map nodeText |>.getD ""
+        let opCode := fieldNat e "operator"
+        if opCode == 46 then some (field, .BinOp "+" (.FieldAccess (.Var "self") field) (.Lit "1"))
+        else if opCode == 47 then some (field, .BinOp "-" (.FieldAccess (.Var "self") field) (.Lit "1"))
+        else none
+      | none => none
+    else
+      let left := fieldNode e "left"
+      let right := fieldNode e "right"
+      let opKind := (fieldNode e "operatorToken").map nodeKind |>.getD ""
+      match left, right with
+      | some l, some r =>
+        let field := (fieldNode l "name").map nodeText |>.getD ""
+        if opKind == "FirstAssignment" || opKind == "EqualsToken" then
+          some (field, .Lit (renderExprCtx reg none r))
+        else if opKind == "FirstCompoundAssignment" || opKind == "PlusEqualsToken" then
+          some (field, .BinOp "+" (.FieldAccess (.Var "self") field) (.Lit (renderExprCtx reg none r)))
+        else if opKind == "MinusEqualsToken" then
+          some (field, .BinOp "-" (.FieldAccess (.Var "self") field) (.Lit (renderExprCtx reg none r)))
+        else none
+      | _, _ => none
   | none => none
 
 end -- mutual
@@ -973,6 +1105,10 @@ private partial def lowerInterfaceDecl (j : Json) : Array LeanDecl :=
     else none
   #[.Structure name tyParams fields none DEFAULT_DERIVING none]
 
+-- Excluded fields for DurableObject state structs
+private def DO_EXCLUDED_FIELDS : Array String := #["state", "storage", "env", "config"]
+private def DO_EXCLUDED_TYPES : Array String := #["DurableObjectState", "Env", "CompilerHost"]
+
 private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array LeanDecl :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
   let tyParams := extractTypeParams j
@@ -982,34 +1118,57 @@ private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array Lean
   let stateType := if tyParams.size > 0 then
     .TyApp (.TyName stateName) (tyParams.map fun tp => .TyName tp.name)
   else .TyName stateName
-  -- Extract property fields
+  -- Detect DurableObject class: has a DurableObjectState constructor param
+  let isDO := members.any fun m =>
+    nodeKind m == "Constructor" && (fieldArr m "parameters").any fun p =>
+      let typeName := (fieldNode p "type").bind (fieldNode · "typeName") |>.map nodeText |>.getD ""
+      typeName == "DurableObjectState"
+  -- Extract property fields (excluding DO framework fields)
   let fields := members.filterMap fun m =>
     if isPropertyDeclaration m || isPropertySignature m then
       let fn := (fieldNode m "name").map nodeText |>.getD "_"
-      let fty := match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
-      some (LeanField.mk fn fty none)
+      -- Exclude DO framework fields
+      if isDO && (DO_EXCLUDED_FIELDS.contains fn) then none
+      else
+        let fty := match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
+        -- Also exclude by type name
+        let excludeByType := isDO && match fty with
+          | .TyName n => DO_EXCLUDED_TYPES.contains n
+          | _ => false
+        if excludeByType then none
+        else some (LeanField.mk fn fty none)
     else none
-  -- Extract constructor as init method
-  let ctorDecls := members.filterMap fun m =>
-    if nodeKind m == "Constructor" then
-      let params := (fieldArr m "parameters").map fun p =>
-        let pname := (fieldNode p "name").map nodeText |>.getD "_"
-        let pty := match fieldNode p "type" with | some tn => mapTypeNode tn | none => mapResolvedType p
-        let pdef := match fieldNode p "initializer" with
-          | some init =>
-            let val := renderExpr init
-            -- For float literals that are integers, use TypeAnnot
-            some (.Lit val)
-          | none => none
-        { name := pname, ty := pty, default_ := pdef : LeanParam }
-      let stmts := match fieldNode m "body" with
-        | some b => fieldArr b "statements" | none => #[]
-      let selfParam : LeanParam := { name := "self", ty := stateType }
-      let allParams := #[selfParam] ++ params
-      let retTy := .TyApp (.TyName "StateT") #[stateType, .TyName "IO", .TyName "Unit"]
-      let body := lowerMethodBodyM reg #[] stmts true retTy
-      some (.Def false (name ++ ".init") tyParams allParams retTy body none none none)
-    else none
+  -- For DO classes, generate simple init constant instead of constructor method
+  let ctorDecls := if isDO then
+    -- DO init: simple struct literal with default field values
+    let fieldInits := fields.map fun f =>
+      let defVal := match f.ty with
+        | .TyName "Float" => .TypeAnnot (.Lit "0") (.TyName "Float")
+        | .TyName "String" => .Lit "\"\""
+        | .TyName "Bool" => .Lit "false"
+        | .TyApp (.TyName "Array") _ => .ArrayLit #[]
+        | _ => .Default none
+      LeanFieldVal.mk f.name defVal
+    #[.Def false (name ++ ".init") #[] #[] stateType (.StructLit fieldInits) none none none]
+  else
+    -- Regular class: extract constructor as init method
+    members.filterMap fun m =>
+      if nodeKind m == "Constructor" then
+        let params := (fieldArr m "parameters").map fun p =>
+          let pname := (fieldNode p "name").map nodeText |>.getD "_"
+          let pty := match fieldNode p "type" with | some tn => mapTypeNode tn | none => mapResolvedType p
+          let pdef := match fieldNode p "initializer" with
+            | some init => some (.Lit (renderExpr init))
+            | none => none
+          { name := pname, ty := pty, default_ := pdef : LeanParam }
+        let stmts := match fieldNode m "body" with
+          | some b => fieldArr b "statements" | none => #[]
+        let selfParam : LeanParam := { name := "self", ty := stateType }
+        let allParams := #[selfParam] ++ params
+        let retTy := .TyApp (.TyName "StateT") #[stateType, .TyName "IO", .TyName "Unit"]
+        let body := lowerMethodBodyM reg #[] stmts true retTy
+        some (.Def false (name ++ ".init") tyParams allParams retTy body none none none)
+      else none
   -- Extract methods as standalone defs
   let methods := members.filterMap fun m =>
     if isMethodDeclaration m then
@@ -1048,8 +1207,18 @@ private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array Lean
   -- Comment + state struct + methods
   let result := #[LeanDecl.Comment ("State for " ++ name)]
   let result := result.push (.Structure stateName tyParams fields none DEFAULT_DERIVING none)
-  let result := result ++ methodDecls
-  result
+  -- For DO classes, wrap init + methods in inner namespace
+  if isDO then
+    -- Remove leading blank from method decls for namespace body
+    let nsDecls := if methodDecls.size > 0 && (match methodDecls.getD 0 default with | .Blank => true | _ => false)
+      then methodDecls.extract 1 methodDecls.size ++ #[.Blank]
+      else methodDecls ++ #[.Blank]
+    let result := result.push .Blank
+    let result := result.push (.Namespace name nsDecls)
+    result
+  else
+    let result := result ++ methodDecls
+    result
 
 private def hasDiscriminantField (j : Json) : Bool :=
   let members := fieldArr j "members"
@@ -1219,7 +1388,8 @@ private def scanImports (stmts : Array Json) : Array String :=
     |>.push "TSLean.DurableObjects.State"
     |>.push "TSLean.DurableObjects.Storage"
   else needs
-  needs
+  -- Sort imports alphabetically (matches TS pipeline)
+  needs.toList.mergeSort (· < ·) |>.toArray
 
 /-- Determine open namespaces from imports. -/
 private def resolveOpens (imports : Array String) : Array String :=
