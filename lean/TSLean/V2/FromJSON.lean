@@ -69,7 +69,15 @@ private def mapTypeFromFlags (flags : Nat) (name : String) : LeanTy :=
   else if flags &&& TF_Null != 0 then .TyApp (.TyName "Option") #[.TyName "Unit"]
   else if flags &&& TF_Never != 0 then .TyName "Empty"
   else if flags &&& TF_BigInt != 0 then .TyName "Int"
-  else if flags &&& TF_Any != 0 || flags &&& TF_Unknown != 0 then .TyName "TSAny"
+  else if flags &&& TF_Any != 0 || flags &&& TF_Unknown != 0 then
+    -- When flags say "any" but name has actual type info, use the name
+    if name == "any" || name.isEmpty then .TyName "TSAny"
+    else if name == "number" then .TyName "Float"
+    else if name == "string" then .TyName "String"
+    else if name == "boolean" then .TyName "Bool"
+    else if name == "void" then .TyName "Unit"
+    else if name == "never" then .TyName "Empty"
+    else .TyName "TSAny"
   else if name == "number" then .TyName "Float"
   else if name == "string" then .TyName "String"
   else if name == "boolean" then .TyName "Bool"
@@ -411,7 +419,10 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
   else if kind == "CallExpression" then
     let fnJ := fieldNode j "expression"
     let fn := fnJ.map re |>.getD "default"
-    let args := (fieldArr j "arguments").map fun a => parenIfCompoundExpr a (re a)
+    let args := (fieldArr j "arguments").map fun a =>
+      if nodeKind a == "SpreadElement" then
+        (fieldNode a "expression").map re |>.getD "default"
+      else parenIfCompoundExpr a (re a)
     let rewritten := rewriteMethodCall fnJ fn args
     match rewritten with
     | some r => r
@@ -420,9 +431,14 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
   else if kind == "ReturnStatement" then
     (fieldNode j "expression").map re |>.getD "()"
   else if kind == "PrefixUnaryExpression" then
-    let operand := (fieldNode j "operand").map re |>.getD "default"
+    let operandJ := fieldNode j "operand"
+    let operand := operandJ.map re |>.getD "default"
     let opCode := fieldNat j "operator"
-    (if opCode == 53 then "!" else if opCode == 40 then "-" else "!") ++ operand
+    let op := if opCode == 53 then "!" else if opCode == 40 then "-" else "!"
+    -- Parenthesize compound operands (matches TS lowerExprP/needsParens)
+    let operand := match operandJ with
+      | some oj => parenIfCompoundExpr oj operand | none => operand
+    op ++ operand
   else if kind == "ConditionalExpression" then
     let c := (fieldNode j "condition").map re |>.getD "default"
     let t := (fieldNode j "whenTrue").map re |>.getD "default"
@@ -431,18 +447,41 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
   else if kind == "TemplateExpression" then
     let headText := (fieldNode j "head").map nodeText |>.getD ""
     let spans := fieldArr j "templateSpans"
-    let parts := spans.foldl (fun acc span =>
-      let expr := (fieldNode span "expression").map re |>.getD ""
-      let lit := (fieldNode span "literal").map nodeText |>.getD ""
-      acc ++ "{" ++ expr ++ "}" ++ lit) headText
-    "s!\"" ++ parts ++ "\""
+    -- Safe for s!"..." = only Identifier/PropertyAccess/literals (no function calls)
+    let isSafe := spans.all fun span =>
+      let ek := (fieldNode span "expression").map nodeKind |>.getD ""
+      ek == "Identifier" || ek == "PropertyAccessExpression" ||
+      ek == "StringLiteral" || ek == "NumericLiteral" ||
+      ek == "TrueKeyword" || ek == "FalseKeyword"
+    if isSafe then
+      let parts := spans.foldl (fun acc span =>
+        let expr := (fieldNode span "expression").map re |>.getD ""
+        let lit := (fieldNode span "literal").map nodeText |>.getD ""
+        acc ++ "{" ++ expr ++ "}" ++ lit) headText
+      "s!\"" ++ parts ++ "\""
+    else
+      -- Fall back to ++ concatenation (matches TS trySInterp safety check)
+      let pieces := #["\"" ++ headText ++ "\""] ++ spans.map fun span =>
+        let expr := (fieldNode span "expression").map re |>.getD ""
+        let exprJ := fieldNode span "expression"
+        let parenExpr := match exprJ with
+          | some ej => parenIfCompoundExpr ej expr | none => expr
+        let lit := (fieldNode span "literal").map nodeText |>.getD ""
+        if lit == "" then parenExpr
+        else parenExpr ++ " ++ \"" ++ lit ++ "\""
+      String.intercalate " ++ " pieces.toList
   else if kind == "ObjectLiteralExpression" then
     let props := fieldArr j "properties"
     -- Try struct-literal → constructor rewrite for discriminated unions
     match tryStructToCtor reg props re with
     | some ctorApp => ctorApp
     | none =>
-       let fields := props.filterMap fun p =>
+      -- Check for SpreadAssignment to generate { base with ... } syntax
+      let spreadBase := props.findSome? fun p =>
+        if nodeKind p == "SpreadAssignment" then
+          (fieldNode p "expression").map re
+        else none
+      let fields := props.filterMap fun p =>
         let pk := nodeKind p
         if pk == "PropertyAssignment" then
           let nameJ := fieldNode p "name"
@@ -465,9 +504,17 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
           let n := (fieldNode p "name").map nodeText |>.getD "_"
           some (n ++ " := " ++ n)
         else none
-      if fields.size == 0 then "{}" else "{ " ++ String.intercalate ", " fields.toList ++ " }"
+      match spreadBase with
+      | some base =>
+        if fields.size == 0 then base
+        else "{ " ++ base ++ " with " ++ String.intercalate ", " fields.toList ++ " }"
+      | none =>
+        if fields.size == 0 then "{}" else "{ " ++ String.intercalate ", " fields.toList ++ " }"
   else if kind == "ArrayLiteralExpression" then
-    let elems := (fieldArr j "elements").map re
+    let elems := (fieldArr j "elements").map fun e =>
+      if nodeKind e == "SpreadElement" then
+        (fieldNode e "expression").map re |>.getD "default"
+      else re e
     "#[" ++ String.intercalate ", " elems.toList ++ "]"
   else if kind == "AwaitExpression" then
     (fieldNode j "expression").map re |>.getD "default"
@@ -616,6 +663,7 @@ private partial def wrapReturnsPure (e : LeanExpr) : LeanExpr :=
   | .If c t f => .If c (wrapReturnsPure t) (wrapReturnsPure f)
   | .Do b => .Do (wrapReturnsPure b)
   | .Pure _ | .Return _ | .Throw _ => e  -- already wrapped
+  | .Lit "()" => e  -- unit continuation stays as-is
   | .Lit s => .Pure (.Lit s)
   | other => .Pure other
 
@@ -647,6 +695,9 @@ private partial def lowerBodyR (reg : UnionRegistry) (paramTypes : Array (String
     (j : Json) : LeanExpr :=
   if isBlock j then
     let stmts := fieldArr j "statements"
+    -- Filter out ContinueStatement/BreakStatement (loop control absorbed by if-else chaining)
+    let stmts := stmts.filter fun s =>
+      nodeKind s != "ContinueStatement" && nodeKind s != "BreakStatement"
     if stmts.size == 0 then .Lit "()" else lowerStmtSeqR reg paramTypes stmts.toList
   else lowerExpr j
 
@@ -687,10 +738,15 @@ private partial def lowerStmtSeqR (reg : UnionRegistry) (paramTypes : Array (Str
           let ty := match fieldNode d "type" with
             | some tn => some (mapTypeNode tn)
             | none =>
-              let rt := mapResolvedType d
-              match rt with
-              | .TyName "Unit" | .TyName "TSAny" => none
-              | _ => some rt
+              -- For new X(...), infer type from constructor name
+              let newTy := initJ.bind fun init =>
+                if nodeKind init == "NewExpression" then
+                  (fieldNode init "expression").map fun c => .TyName (nodeText c)
+                else none
+              match newTy with
+              | some t => some t
+              | none => let rt := mapResolvedType d
+                match rt with | .TyName "Unit" | .TyName "TSAny" => none | _ => some rt
           .Let name ty (.Lit val) cont false
       else lowerStmtSeqR reg paramTypes rest
     else if kind == "SwitchStatement" then
@@ -720,7 +776,8 @@ private partial def lowerStmtSeqR (reg : UnionRegistry) (paramTypes : Array (Str
 private partial def lowerBlockStmtR (reg : UnionRegistry) (paramTypes : Array (String × String))
     (j : Json) : LeanExpr :=
   let kind := nodeKind j
-  if kind == "ReturnStatement" then
+  if kind == "Block" then lowerBodyR reg paramTypes j
+  else if kind == "ReturnStatement" then
     .Lit ((fieldNode j "expression").map renderExpr |>.getD "()")
   else if kind == "IfStatement" then
     let cond := (fieldNode j "expression").map renderExpr |>.getD "true"
@@ -746,8 +803,8 @@ private partial def lowerBlockStmtR (reg : UnionRegistry) (paramTypes : Array (S
     let hasBinds := exprHasBindsCheck bodyExpr
     let bodyExpr := if hasBinds then .Do bodyExpr else bodyExpr
     let lam := .Lam #[varName] bodyExpr
-    -- Wrap lambda in parens if it has do or is compound
-    let lam := if hasBinds then .Paren lam else lam
+    -- Always wrap lambda in parens (matches TS needsParens for Lambda)
+    let lam := .Paren lam
     .App (.Var "Array.forM") #[.Lit iter, lam]
   else if kind == "ForStatement" then
     -- for (let i = init; cond; incr) body → let rec _loop_POS := fun i => if cond then body; _loop(incr) else pure ()
@@ -796,8 +853,22 @@ private partial def lowerBlockStmtR (reg : UnionRegistry) (paramTypes : Array (S
     let expr := (fieldNode j "expression").map renderExpr |>.getD "default"
     .Throw (.Lit expr)
   else if kind == "ExpressionStatement" then
-    -- Unwrap expression statement
-    (fieldNode j "expression").map (fun e => .Lit (renderExpr e)) |>.getD (.Lit "()")
+    -- Check for assignment: x = expr → Let x value ()
+    let exprJ := fieldNode j "expression"
+    let isAssign := match exprJ with
+      | some e => nodeKind e == "BinaryExpression" &&
+        let opKind := (fieldNode e "operatorToken").map nodeKind |>.getD ""
+        opKind == "FirstAssignment" || opKind == "EqualsToken"
+      | none => false
+    if isAssign then
+      let e := exprJ.getD default
+      let lname := (fieldNode e "left").map renderExpr |>.getD "_"
+      let rval := (fieldNode e "right").map renderExpr |>.getD "default"
+      .Let lname none (.Lit rval) (.Lit "()") false
+    else
+      (fieldNode j "expression").map (fun e => .Lit (renderExpr e)) |>.getD (.Lit "()")
+  else if kind == "ContinueStatement" || kind == "BreakStatement" then
+    .Lit "()"
   else .Lit (renderExpr j)
 
 /-- Lower a SwitchStatement to a Match expression.
@@ -1245,7 +1316,7 @@ private partial def lowerFuncDeclR (reg : UnionRegistry) (j : Json) : Array Lean
     | some b => lowerBodyR reg paramTypes b
     | none => .Default (some retTy)
   -- In async functions or state functions, wrap tail expressions with `pure`
-  let body := if isAsync then wrapReturnsPure body else body
+  let body := if isAsync || hasBodyVarReassign then wrapReturnsPure body else body
   let body := if needsDoWrap body || isAsync || hasBodyVarReassign then .Do body else body
   let isPartial := exprContainsName body name
   let docComment := extractDocComment j
