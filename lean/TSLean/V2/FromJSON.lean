@@ -1731,6 +1731,18 @@ private partial def bodyHasVarReassign (stmts : Array Json) : Bool :=
         | some e => if nodeKind e == "Block" then fieldArr e "statements" else #[e]
         | none => #[]
       bodyHasVarReassign thenStmts || bodyHasVarReassign elseStmts
+    else if kind == "SwitchStatement" then
+      let clauses := match fieldNode s "caseBlock" with
+        | some cb => fieldArr cb "clauses" | none => #[]
+      clauses.any fun c => bodyHasVarReassign (fieldArr c "statements")
+    else if kind == "WhileStatement" || kind == "ForStatement" || kind == "ForOfStatement"
+            || kind == "ForInStatement" then
+      let bodyStmts := match fieldNode s "statement" with
+        | some t => if nodeKind t == "Block" then fieldArr t "statements" else #[t]
+        | none => #[]
+      bodyHasVarReassign bodyStmts
+    else if kind == "Block" then
+      bodyHasVarReassign (fieldArr s "statements")
     else false
 
 private partial def lowerFuncDeclR (reg : UnionRegistry) (j : Json) : Array LeanDecl :=
@@ -1918,6 +1930,11 @@ private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array Lean
       -- Detect mutation and throw effects
       let isMutating := bodyHasThisAssign stmts
       let hasThrow := bodyHasThrow stmts
+      -- Local variable reassignment (x = expr, not this.x = expr) also triggers State effect
+      let bodyText := stmts.foldl (fun acc s => acc ++ toString s) ""
+      let hasLocalVarReassign := bodyHasVarReassign stmts ||
+        textContains bodyText "FirstAssignment"
+      let hasStateEffect := isMutating || hasLocalVarReassign
       let selfParam : LeanParam := { name := "self", ty := stateType }
       let allParams := #[selfParam] ++ params
       -- Check for pure field return (e.g., getCount → self.count)
@@ -1928,12 +1945,12 @@ private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array Lean
         (retTy, lowerMethodBodyM reg #[] stmts false retTy)
       | none =>
         -- Determine effect-based return type
-        let wrappedRet := if isMutating && hasThrow then
+        let wrappedRet := if hasStateEffect && hasThrow then
             .TyApp (.TyName "StateT") #[stateType, .TyApp (.TyName "ExceptT") #[.TyName "String", .TyName "IO"], retTy]
-          else if isMutating then
+          else if hasStateEffect then
             .TyApp (.TyName "StateT") #[stateType, .TyName "IO", retTy]
           else retTy
-        (wrappedRet, lowerMethodBodyM reg #[] stmts isMutating wrappedRet)
+        (wrappedRet, lowerMethodBodyM reg #[] stmts hasStateEffect wrappedRet)
       some (.Def false (name ++ "." ++ mname) tyParams allParams retTy body none none none)
     else none
   -- Interleave blanks between methods
