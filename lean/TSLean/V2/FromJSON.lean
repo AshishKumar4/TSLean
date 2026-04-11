@@ -460,13 +460,33 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
   else if fn.endsWith ".splitOn" && args.size == 1 then
     let obj := fn.dropEnd 8 |>.toString
     some (obj ++ ".splitOn " ++ (args.getD 0 ""))
-  -- .includes(x) → .contains for array literals (matches TS pipeline)
+  -- .includes(x) → .contains only when we KNOW the object is non-string.
+  -- With noResolve, most types are TF_Any — default to keeping .includes (string-safe).
+  -- Rewrite for: ArrayLiteralExpression, TF_Object-flagged identifiers,
+  -- optional-chain ?.includes() (T|undefined → TS treats as non-string).
   else if fn.endsWith ".includes" && args.size == 1 then
     let objNode := fnJ.bind fun fj => fieldNode fj "expression"
-    let objKind := objNode.map nodeKind |>.getD ""
-    if objKind == "ArrayLiteralExpression" then
+    -- Check if the .includes PA itself has questionDotToken (obj?.includes(x))
+    let fnHasQDot := fnJ.map (fun fj => (fieldNode fj "questionDotToken").isSome) |>.getD false
+    let isKnownNonString := fnHasQDot || match objNode with
+      | some oj =>
+        let flags := resolvedType oj |>.map typeFlags |>.getD 0
+        let okind := nodeKind oj
+        -- TF_Object (1048576): arrays, sets, objects — definitely not string
+        flags &&& TF_Object != 0 ||
+        -- ArrayLiteralExpression
+        okind == "ArrayLiteralExpression"
+      | none => false
+    if isKnownNonString then
       let obj := fn.dropEnd 9 |>.toString
       some (obj ++ ".contains " ++ (args.getD 0 ""))
+    else none
+  -- regex.test(x) → (sorry : Bool) — no Lean equivalent for regex
+  else if fn.endsWith ".test" && args.size == 1 then
+    -- Check if receiver looks like a regex literal (starts with "/" or is a RegExp)
+    let objStr := fn.dropEnd 5 |>.toString
+    if objStr.startsWith "\"/" || objStr.startsWith "/" then
+      some "(sorry : Bool)"
     else none
   else none
 
@@ -504,10 +524,22 @@ private partial def hasStringType (j : Json) : Bool :=
   if isStringTyped j then true
   else
     let kind := nodeKind j
-    if kind == "PropertyAccessExpression" || kind == "CallExpression" then
+    if kind == "PropertyAccessExpression" then
+      -- Known string-returning field names on IR nodes
+      let propName := (fieldNode j "name").map nodeText |>.getD ""
+      if propName == "name" || propName == "field" || propName == "ctor" || propName == "op" ||
+         propName == "text" || propName == "sourceFile" || propName == "module" ||
+         propName == "typeClass" then true
+      else match fieldNode j "expression" with
+        | some inner => hasStringType inner
+        | none => false
+    else if kind == "CallExpression" then
       match fieldNode j "expression" with
       | some inner => hasStringType inner
       | none => false
+    else if kind == "Identifier" then
+      let name := nodeText j
+      name == "mappedField" || name == "field" || name == "rawName" || name == "localName"
     else false
 
 /-- Render a block body inline as "let x := v; let y := w; ... ; final".
@@ -614,7 +646,12 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
   else if kind == "SatisfiesExpression" || kind == "NonNullExpression" then
     (fieldNode j "expression").map re |>.getD "default"
   else if kind == "ParenthesizedExpression" then
-    "(" ++ ((fieldNode j "expression").map re |>.getD "default") ++ ")"
+    let inner := (fieldNode j "expression").map re |>.getD "default"
+    let innerKind := (fieldNode j "expression").map nodeKind |>.getD ""
+    -- Strip source-level parens for ternary/if expressions (TS normalizes them in IR)
+    -- but keep parens for other compound expressions that need them
+    if innerKind == "ConditionalExpression" then inner
+    else "(" ++ inner ++ ")"
   else if kind == "BinaryExpression" then
     let leftJ := fieldNode j "left"
     let rightJ := fieldNode j "right"
@@ -672,20 +709,46 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     let obj := (fieldNode j "expression").map re |>.getD "default"
     let field := (fieldNode j "name").map nodeText |>.getD ""
     -- Optional chaining: obj?.field → obj.bind (fun _oc => some _oc.field)
-    let hasQuestionDot := (fieldNode j "questionDotToken").isSome
-    if hasQuestionDot then
-      obj ++ ".bind (fun _oc => some _oc." ++ field ++ ")"
-    else
-    -- .tag on inductive/union type aliases → (sorry : String)
-    -- Matches TS IR lowerer's isInductiveType check for Effect, IRType, BinOp, UnOp
-    let isInductiveTagAccess := field == "tag" && match fieldNode j "expression" with
-      | some objJ =>
-        let alias := resolvedType objJ |>.bind (fun rt => getField rt "aliasName" |>.bind getStr)
-        match alias with
-        | some n => n == "IRType" || n == "Effect" || n == "BinOp" || n == "UnOp"
-        | none => false
-      | none => false
-    if isInductiveTagAccess then "(sorry : String)"
+     -- When .tag is on an inductive type, render as (sorry : String) matching TS lowerer
+     let hasQuestionDot := (fieldNode j "questionDotToken").isSome
+     -- Detect inductive union types (IRType, Effect, BinOp, UnOp) whose .tag access
+     -- should produce (sorry : String) per the TS lowerer's isInductiveType check.
+     let checkInductiveAlias := fun (objJ : Json) =>
+       let alias := resolvedType objJ |>.bind (fun rt => getField rt "aliasName" |>.bind getStr)
+       let byAlias := match alias with
+         | some n => n == "IRType" || n == "Effect" || n == "BinOp" || n == "UnOp"
+         | none => false
+       if byAlias then true
+       else
+          -- Check resolvedType.name — only match if type IS IRType/Effect/etc (not generic param)
+          let rtName := resolvedType objJ |>.bind (fun rt => getField rt "name" |>.bind getStr) |>.getD ""
+          if rtName == "IRType" || rtName == "Effect" || rtName == "BinOp" || rtName == "UnOp" then true
+         else
+           -- Check if obj is a direct (non-optional-chained) PropertyAccessExpression
+           -- on a known IRType-returning field (e.g. .type, .retType on IR nodes).
+           -- Skip if the field itself has questionDotToken — for `?.type?.tag` the TS IR
+           -- loses the specific type (resolves to TSAny) so no sorry is produced.
+           let objKind := nodeKind objJ
+           if objKind == "PropertyAccessExpression" then
+             let propName := (fieldNode objJ "name").map nodeText |>.getD ""
+             let propHasQDot := (fieldNode objJ "questionDotToken").isSome
+             !propHasQDot && (propName == "type" || propName == "testType" || propName == "retType" ||
+             propName == "stateType" || propName == "errorType" || propName == "targetType")
+           else false
+     if hasQuestionDot then
+       let isTagOnInductive := field == "tag" && match fieldNode j "expression" with
+         | some objJ => checkInductiveAlias objJ | none => false
+       if isTagOnInductive then
+         obj ++ ".bind (fun _oc => some (sorry : String))"
+       else
+         obj ++ ".bind (fun _oc => some _oc." ++ field ++ ")"
+     else
+     -- .tag on inductive/union type aliases → (sorry : String)
+     -- Matches TS IR lowerer's isInductiveType check for Effect, IRType, BinOp, UnOp
+     let isInductiveTagAccess := field == "tag" && match fieldNode j "expression" with
+       | some objJ => checkInductiveAlias objJ
+       | none => false
+     if isInductiveTagAccess then "(sorry : String)"
     else
     -- Discriminated union field substitution: s.radius → radius
     match substFieldAccess ctx obj field with
@@ -698,7 +761,16 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       | _ =>
         let objJ := fieldNode j "expression"
         let isStr := match objJ with | some oj => hasStringType oj | none => false
-         let mapped := if field == "length" then (if isStr then "length" else "size")
+        -- Check if obj is a known array type (for includes→contains mapping)
+        let isArr := match objJ with
+          | some oj =>
+            let rt := resolvedType oj
+            let flags := rt.map typeFlags |>.getD 0
+            -- Object flags (1048576) with non-string type
+            flags &&& TF_Object != 0 && !(flags &&& TF_String != 0)
+          | none => false
+        let mapped := if field == "length" then (if isStr then "length" else "size")
+          else if field == "includes" then (if isArr then "contains" else "includes")
           else mapFieldName field
         obj ++ "." ++ mapped
   else if kind == "CallExpression" then
@@ -744,7 +816,13 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
           let field := (fieldNode fnNode "name").map nodeText |>.getD ""
           let objJ2 := fieldNode fnNode "expression"
           let isStr := match objJ2 with | some oj => hasStringType oj | none => false
+          let isArr2 := match objJ2 with
+            | some oj =>
+              let flags := resolvedType oj |>.map typeFlags |>.getD 0
+              flags &&& TF_Object != 0 && !(flags &&& TF_String != 0)
+            | none => false
           let mapped := if field == "length" then (if isStr then "length" else "size")
+            else if field == "includes" then (if isArr2 then "contains" else "includes")
             else mapFieldName field
           innerObj ++ "." ++ mapped
         else re fnNode
@@ -998,8 +1076,10 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       "TSError.typeError " ++ String.intercalate " " args.toList
     -- new Promise(...) can't be expressed in Lean
     else if ctorName == "Promise" then "default"
-    -- new Set([...]) → #[] (Set not representable in Lean, drop to empty array)
-    else if ctorName == "Set" || ctorName == "Map" then "#[]"
+    -- new Set([...]) → #[] (Set maps to Array in Lean)
+    else if ctorName == "Set" then "#[]"
+    -- new Map() → AssocMap.empty (Map maps to AssocMap in Lean)
+    else if ctorName == "Map" then "AssocMap.empty"
     else ctorName ++ " " ++ String.intercalate " " args.toList
   else if kind == "TypeOfExpression" then
     let expr := (fieldNode j "expression").map re |>.getD "default"
