@@ -76,6 +76,8 @@ private def mapTypeFromFlags (flags : Nat) (name : String) : LeanTy :=
   else if name == "void" then .TyName "Unit"
   else if name == "never" then .TyName "Empty"
   else if name.isEmpty then .TyName "Unit"
+  -- Anonymous object types (TS internal __type) → String as compilable approximation
+  else if name == "__type" then .TyName "String"
   else .TyName name
 
 private def mapResolvedTypeJson (rt : Json) : LeanTy :=
@@ -115,6 +117,10 @@ private partial def mapTypeNode (j : Json) : LeanTy :=
     let name := nameFromTypeName.getD (nameFromAlias.getD (nodeText j))
     let typeArgs := fieldArr j "typeArguments"
     if name.isEmpty then mapResolvedType j
+    -- Promise<T> is unwrapped; IO wrapper added at function declaration level
+    else if name == "Promise" && typeArgs.size == 1 then mapTypeNode (typeArgs.getD 0 default)
+    -- JS Error types map to String in the Lean model
+    else if name == "Error" || name.endsWith "Error" then .TyName "String"
     else if typeArgs.size > 0 then .TyApp (.TyName name) (typeArgs.map mapTypeNode)
     else .TyName name
   else if kind == "ArrayType" then
@@ -129,12 +135,28 @@ private partial def mapTypeNode (j : Json) : LeanTy :=
   else if kind == "FunctionType" then
     let params := (fieldArr j "parameters").map fun p =>
       (fieldNode p "type").map mapTypeNode |>.getD (.TyName "Unit")
-    .TyArrow params ((fieldNode j "type").map mapTypeNode |>.getD (.TyName "Unit"))
+    let retNode := fieldNode j "type"
+    -- If return type is Promise<T>, wrap inner as IO T
+    let retTy := match retNode with
+      | some rn =>
+        let rk := nodeKind rn
+        if rk == "TypeReference" then
+          let rAlias := resolvedType rn |>.bind (fun rt => getField rt "aliasName" |>.bind getStr)
+          let rName := (fieldNode rn "typeName").bind getStr |>.orElse (fun _ => rAlias)
+          if rName == some "Promise" then
+            let inner := mapTypeNode rn  -- recursive call unwraps Promise<T> to T
+            .TyApp (.TyName "IO") #[inner]
+          else mapTypeNode rn
+        else mapTypeNode rn
+      | none => .TyName "Unit"
+    .TyArrow params retTy
   else if kind == "TupleType" then
     let elems := (fieldArr j "elements").map mapTypeNode
     if elems.size == 0 then .TyName "Unit" else .TyTuple elems
   else if kind == "ParenthesizedType" then
     (fieldNode j "type").map mapTypeNode |>.getD (.TyName "Unit")
+  -- Anonymous object types (TypeLiteral) → String as compilable approximation
+  else if kind == "TypeLiteral" then .TyName "String"
   else mapResolvedType j
 
 -- ─── Discriminant field detection ────────────────────────────────────────────────
@@ -226,6 +248,11 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
   -- console.log(args) → IO.println args
   else if fn == "console.log" then
     some ("IO.println " ++ String.intercalate " " args.toList)
+  -- fetch(url) → WebAPI.fetch url
+  else if fn == "fetch" then
+    some ("WebAPI.fetch " ++ String.intercalate " " args.toList)
+  -- response.json() → sorry (untyped Response method)
+  else if fn.endsWith ".json" && args.size == 0 then some "sorry"
   -- Array method calls: arr.push(x) → Array.push arr x
   else if fn.endsWith ".push" && args.size == 1 then
     let obj := fn.dropRight 5
@@ -364,6 +391,15 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       | some b => if isBlock b then "(block)" else re b
       | none => "default"
     "fun " ++ String.intercalate " " params.toList ++ " => " ++ body
+  else if kind == "ElementAccessExpression" then
+    -- array[index] → obj.getD index default
+    let obj := (fieldNode j "expression").map re |>.getD "default"
+    let idxJ := fieldNode j "argumentExpression"
+    let idx := idxJ.map re |>.getD "0"
+    let idx := match idxJ with
+      | some ij => parenIfCompoundExpr ij idx
+      | none => idx
+    obj ++ ".getD " ++ idx ++ " default"
   else "default"
 
 /-- Render expression with no substitution context and no union registry. -/
@@ -394,7 +430,81 @@ private def detectDiscriminant (reg : UnionRegistry) (scrutJ : Json)
         | some tname => (lookupUnionByName reg tname).map fun u => (objName, field, u)
         | none => none
 
+private def textContains (text : String) (sub : String) : Bool :=
+  (text.splitOn sub).length > 1
+
+private def isThisAssignment (j : Json) : Bool :=
+  if nodeKind j == "ExpressionStatement" then
+    match fieldNode j "expression" with
+    | some e =>
+      if nodeKind e == "BinaryExpression" then
+        let opKind := (fieldNode e "operatorToken").map nodeKind |>.getD ""
+        let isAssign := opKind == "FirstAssignment" || opKind == "EqualsToken" ||
+          opKind == "FirstCompoundAssignment" || opKind == "PlusEqualsToken" ||
+          opKind == "MinusEqualsToken"
+        if isAssign then
+          match fieldNode e "left" with
+          | some l =>
+            nodeKind l == "PropertyAccessExpression" &&
+            ((fieldNode l "expression").map nodeKind |>.getD "") == "ThisKeyword"
+          | none => false
+        else false
+      else false
+    | none => false
+  else false
+
+private partial def bodyHasThisAssign (stmts : Array Json) : Bool :=
+  stmts.any fun s =>
+    isThisAssignment s ||
+    (nodeKind s == "IfStatement" &&
+      (let thenStmts := match fieldNode s "thenStatement" with
+        | some t => if nodeKind t == "Block" then fieldArr t "statements" else #[t]
+        | none => #[]
+      let elseStmts := match fieldNode s "elseStatement" with
+        | some e => if nodeKind e == "Block" then fieldArr e "statements" else #[e]
+        | none => #[]
+      bodyHasThisAssign thenStmts || bodyHasThisAssign elseStmts))
+
+private partial def bodyHasThrow (stmts : Array Json) : Bool :=
+  stmts.any fun s =>
+    nodeKind s == "ThrowStatement" ||
+    (nodeKind s == "IfStatement" &&
+      (let thenStmts := match fieldNode s "thenStatement" with
+        | some t => if nodeKind t == "Block" then fieldArr t "statements" else #[t]
+        | none => #[]
+      let elseStmts := match fieldNode s "elseStatement" with
+        | some e => if nodeKind e == "Block" then fieldArr e "statements" else #[e]
+        | none => #[]
+      bodyHasThrow thenStmts || bodyHasThrow elseStmts))
+
+private def isPureFieldReturn (stmts : Array Json) : Option String :=
+  if stmts.size == 1 then
+    let s := stmts.getD 0 default
+    if nodeKind s == "ReturnStatement" then
+      match fieldNode s "expression" with
+      | some e =>
+        if nodeKind e == "PropertyAccessExpression" then
+          if ((fieldNode e "expression").map nodeKind |>.getD "") == "ThisKeyword" then
+            (fieldNode e "name").map nodeText
+          else none
+        else none
+      | none => none
+    else none
+  else none
+
 mutual
+
+/-- Check if a LeanExpr ends with a Return/Pure/Throw. -/
+private partial def exprEndsWithReturn (e : LeanExpr) : Bool :=
+  match e with
+  | .Return .. | .Pure .. | .Throw .. => true
+  | .If _ t f => exprEndsWithReturn t && exprEndsWithReturn f
+  | .Match _ arms => arms.all fun arm => match arm with | .mk _ _ body => exprEndsWithReturn body
+  | .Seq stmts => stmts.size > 0 && exprEndsWithReturn (stmts.getD (stmts.size - 1) default)
+  | .Do body => exprEndsWithReturn body
+  | .Let _ _ _ body _ => exprEndsWithReturn body
+  | .Bind _ _ body => exprEndsWithReturn body
+  | _ => false
 
 private partial def lowerBodyR (reg : UnionRegistry) (paramTypes : Array (String × String))
     (j : Json) : LeanExpr :=
@@ -421,15 +531,24 @@ private partial def lowerStmtSeqR (reg : UnionRegistry) (paramTypes : Array (Str
       if decls.size > 0 then
         let d := decls.getD 0 default
         let name := (fieldNode d "name").map nodeText |>.getD "_"
-        let val := (fieldNode d "initializer").map renderExpr |>.getD "default"
-        let ty := match fieldNode d "type" with
-          | some tn => some (mapTypeNode tn)
-          | none =>
-            let rt := mapResolvedType d
-            match rt with
-            | .TyName "Unit" | .TyName "TSAny" => none
-            | _ => some rt
-        .Let name ty (.Lit val) (lowerStmtSeqR reg paramTypes rest) false
+        let initJ := fieldNode d "initializer"
+        -- Detect await: const x = await expr → let x ← expr (Bind node)
+        let isAwait := match initJ with
+          | some init => nodeKind init == "AwaitExpression" | none => false
+        let val := if isAwait then
+            (initJ.bind (fieldNode · "expression")).map renderExpr |>.getD "default"
+          else initJ.map renderExpr |>.getD "default"
+        let cont := lowerStmtSeqR reg paramTypes rest
+        if isAwait then .Bind name (.Lit val) cont
+        else
+          let ty := match fieldNode d "type" with
+            | some tn => some (mapTypeNode tn)
+            | none =>
+              let rt := mapResolvedType d
+              match rt with
+              | .TyName "Unit" | .TyName "TSAny" => none
+              | _ => some rt
+          .Let name ty (.Lit val) cont false
       else lowerStmtSeqR reg paramTypes rest
     else if kind == "SwitchStatement" then
       let sw := lowerSwitchR reg paramTypes s
@@ -584,7 +703,145 @@ private partial def lowerStmtSeqSubst (reg : UnionRegistry) (paramTypes : Array 
       let expr := lowerBlockStmtSubst reg paramTypes ctx s
       match rest with | [] => expr | _ => .Seq #[expr, lowerStmtSeqSubst reg paramTypes ctx rest]
 
+/-- Lower a class method body to a LeanExpr, handling this-assignments as Modify. -/
+private partial def lowerMethodBodyM (reg : UnionRegistry) (paramTypes : Array (String × String))
+    (stmts : Array Json) (isMutating : Bool) (retTy : LeanTy) : LeanExpr :=
+  match isPureFieldReturn stmts with
+  | some field => .FieldAccess (.Var "self") field
+  | none =>
+    let inner := lowerMethodStmtsM reg paramTypes stmts isMutating
+    -- Extract the inner return type from StateT/ExceptT wrapping
+    let innerRetTy := match retTy with
+      | .TyApp (.TyName "StateT") args => args.getD (args.size - 1) (.TyName "Unit")
+      | .TyApp (.TyName "ExceptT") args => args.getD (args.size - 1) (.TyName "Unit")
+      | _ => retTy
+    let isUnitRet := match innerRetTy with | .TyName "Unit" => true | _ => false
+    -- For mutating Unit-return methods, append `pure ()` if body doesn't end with return
+    let inner := if isMutating && isUnitRet && !exprEndsWithReturn inner then
+      .Seq #[inner, .Pure (.Lit "()")]
+    else inner
+    if isMutating then .Do inner else inner
+
+private partial def lowerMethodStmtsM (reg : UnionRegistry) (paramTypes : Array (String × String))
+    (stmts : Array Json) (isMutating : Bool) : LeanExpr :=
+  match stmts.toList with
+  | [] => .Pure (.Lit "()")
+  | [s] => lowerMethodStmtM reg paramTypes s isMutating true
+  | s :: rest =>
+    let kind := nodeKind s
+    -- Chain if-without-else: make the else branch the rest of the statements
+    if kind == "IfStatement" && (fieldNode s "elseStatement").isNone then
+      let cond := (fieldNode s "expression").map (renderExprCtx reg none) |>.getD "true"
+      let thenStmts := match fieldNode s "thenStatement" with
+        | some t => if nodeKind t == "Block" then fieldArr t "statements" else #[t]
+        | none => #[]
+      let thenBody := lowerMethodStmtsM reg paramTypes thenStmts isMutating
+      let elseBody := lowerMethodStmtsM reg paramTypes rest.toArray isMutating
+      .If (.Lit cond) thenBody elseBody
+    else
+      let first := lowerMethodStmtM reg paramTypes s isMutating false
+      let remainder := lowerMethodStmtsM reg paramTypes rest.toArray isMutating
+      .Seq #[first, remainder]
+
+private partial def lowerMethodStmtM (reg : UnionRegistry) (paramTypes : Array (String × String))
+    (j : Json) (isMutating : Bool) (isLast : Bool) : LeanExpr :=
+  let kind := nodeKind j
+  if isThisAssignment j then
+    match lowerThisAssignM reg j with
+    | some (field, value) =>
+      .Modify (.Lam #["s"] (.StructUpdate (.Var "s") #[.mk field value]))
+    | none => .Lit "()"
+  else if kind == "ReturnStatement" then
+    let expr := (fieldNode j "expression").map (renderExprCtx reg none) |>.getD "()"
+    if isMutating then .Pure (.Lit expr) else .Lit expr
+  else if kind == "IfStatement" then
+    let cond := (fieldNode j "expression").map (renderExprCtx reg none) |>.getD "true"
+    let thenStmts := match fieldNode j "thenStatement" with
+      | some t => if nodeKind t == "Block" then fieldArr t "statements" else #[t]
+      | none => #[]
+    let elseStmts := match fieldNode j "elseStatement" with
+      | some e => if nodeKind e == "Block" then fieldArr e "statements" else #[e]
+      | none => #[]
+    let thenBody := lowerMethodStmtsM reg paramTypes thenStmts isMutating
+    let elseBody := if elseStmts.size > 0 then
+        lowerMethodStmtsM reg paramTypes elseStmts isMutating
+      else if isLast && isMutating then .Pure (.Lit "()")
+      else .Lit "()"
+    .If (.Lit cond) thenBody elseBody
+  else if kind == "ThrowStatement" then
+    let exprJ := fieldNode j "expression"
+    let errExpr := match exprJ with
+    | some e =>
+      if nodeKind e == "NewExpression" then
+        let args := fieldArr e "arguments"
+        let msg := if args.size > 0 then renderExprCtx reg none (args.getD 0 default) else "\"error\""
+        "TSError.typeError " ++ msg
+      else renderExprCtx reg none e
+    | none => "\"error\""
+    .Throw (.Lit errExpr)
+  else if kind == "ExpressionStatement" then
+    match fieldNode j "expression" with
+    | some e =>
+      let rendered := renderExprCtx reg none e
+      if textContains rendered "state.storage" || textContains rendered "self.state.storage" then
+        .Pure (.Sorry none none)
+      else .Lit rendered
+    | none => .Lit "()"
+  else if kind == "VariableStatement" then
+    let declList := fieldNode j "declarationList"
+    let decls := declList.map (fieldArr · "declarations") |>.getD #[]
+    if decls.size > 0 then
+      let d := decls.getD 0 default
+      let dname := (fieldNode d "name").map nodeText |>.getD "_"
+      let val := (fieldNode d "initializer").map (renderExprCtx reg none) |>.getD "default"
+      let ty := match fieldNode d "type" with
+        | some tn => some (mapTypeNode tn)
+        | none => let rt := mapResolvedType d
+          match rt with | .TyName "Unit" | .TyName "TSAny" => none | _ => some rt
+      .Let dname ty (.Lit val) (.Lit "()") false
+    else .Lit "()"
+  else .Lit (renderExprCtx reg none j)
+
+private partial def lowerThisAssignM (reg : UnionRegistry) (j : Json) : Option (String × LeanExpr) :=
+  match fieldNode j "expression" with
+  | some e =>
+    let left := fieldNode e "left"
+    let right := fieldNode e "right"
+    let opKind := (fieldNode e "operatorToken").map nodeKind |>.getD ""
+    match left, right with
+    | some l, some r =>
+      let field := (fieldNode l "name").map nodeText |>.getD ""
+      if opKind == "FirstAssignment" || opKind == "EqualsToken" then
+        some (field, .Lit (renderExprCtx reg none r))
+      else if opKind == "FirstCompoundAssignment" || opKind == "PlusEqualsToken" then
+        some (field, .BinOp "+" (.FieldAccess (.Var "self") field) (.Lit (renderExprCtx reg none r)))
+      else if opKind == "MinusEqualsToken" then
+        some (field, .BinOp "-" (.FieldAccess (.Var "self") field) (.Lit (renderExprCtx reg none r)))
+      else none
+    | _, _ => none
+  | none => none
+
 end -- mutual
+
+/-- Wrap the tail expression of a monadic body with `pure`.
+    Transforms `expr` → `Pure expr` at return positions (end of Let/Bind chains, both If branches). -/
+private partial def wrapReturnsPure (e : LeanExpr) : LeanExpr :=
+  match e with
+  | .Let n t v b r => .Let n t v (wrapReturnsPure b) r
+  | .Bind n v b => .Bind n v (wrapReturnsPure b)
+  | .Seq stmts =>
+    let arr := stmts
+    if arr.size == 0 then .Pure (.Lit "()")
+    else
+      let last := arr.getD (arr.size - 1) (.Lit "()")
+      arr.set! (arr.size - 1) (wrapReturnsPure last) |> .Seq
+  | .If c t f => .If c (wrapReturnsPure t) (wrapReturnsPure f)
+  | .Do b => .Do (wrapReturnsPure b)
+  | .Pure _ | .Return _ | .Throw _ => e  -- already wrapped
+  | .Lit s =>
+    -- Return statements already produce plain Lit — wrap with pure
+    .Pure (.Lit s)
+  | other => .Pure other
 
 -- Legacy wrappers used by non-registry-aware callers
 private partial def lowerBody (j : Json) : LeanExpr := lowerBodyR #[] #[] j
@@ -613,9 +870,6 @@ private def needsDoWrap (e : LeanExpr) : Bool :=
     | .Let .. | .If .. | .Match .. | .Seq .. => true
     | _ => false
   | _ => false
-
-private def textContains (text : String) (sub : String) : Bool :=
-  (text.splitOn sub).length > 1
 
 -- ─── Declaration lowering ───────────────────────────────────────────────────────
 
@@ -674,6 +928,8 @@ private partial def lowerFuncDeclR (reg : UnionRegistry) (j : Json) : Array Lean
   let body := match fieldNode j "body" with
     | some b => lowerBodyR reg paramTypes b
     | none => .Default (some retTy)
+  -- In async functions, wrap tail expressions with `pure`
+  let body := if isAsync then wrapReturnsPure body else body
   let body := if needsDoWrap body || isAsync then .Do body else body
   let isPartial := exprContainsName body name
   #[.Def isPartial name tyParams params retTy body none none none]
@@ -696,11 +952,15 @@ private partial def lowerInterfaceDecl (j : Json) : Array LeanDecl :=
     else none
   #[.Structure name tyParams fields none DEFAULT_DERIVING none]
 
-private partial def lowerClassDecl (j : Json) : Array LeanDecl :=
+private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array LeanDecl :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
   let tyParams := extractTypeParams j
   let members := fieldArr j "members"
   let stateName := name ++ "State"
+  -- Build state type with generic args
+  let stateType := if tyParams.size > 0 then
+    .TyApp (.TyName stateName) (tyParams.map fun tp => .TyName tp.name)
+  else .TyName stateName
   -- Extract property fields
   let fields := members.filterMap fun m =>
     if isPropertyDeclaration m || isPropertySignature m then
@@ -708,29 +968,66 @@ private partial def lowerClassDecl (j : Json) : Array LeanDecl :=
       let fty := match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
       some (LeanField.mk fn fty none)
     else none
+  -- Extract constructor as init method
+  let ctorDecls := members.filterMap fun m =>
+    if nodeKind m == "Constructor" then
+      let params := (fieldArr m "parameters").map fun p =>
+        let pname := (fieldNode p "name").map nodeText |>.getD "_"
+        let pty := match fieldNode p "type" with | some tn => mapTypeNode tn | none => mapResolvedType p
+        let pdef := match fieldNode p "initializer" with
+          | some init =>
+            let val := renderExpr init
+            -- For float literals that are integers, use TypeAnnot
+            some (.Lit val)
+          | none => none
+        { name := pname, ty := pty, default_ := pdef : LeanParam }
+      let stmts := match fieldNode m "body" with
+        | some b => fieldArr b "statements" | none => #[]
+      let selfParam : LeanParam := { name := "self", ty := stateType }
+      let allParams := #[selfParam] ++ params
+      let retTy := .TyApp (.TyName "StateT") #[stateType, .TyName "IO", .TyName "Unit"]
+      let body := lowerMethodBodyM reg #[] stmts true retTy
+      some (.Def false (name ++ ".init") tyParams allParams retTy body none none none)
+    else none
   -- Extract methods as standalone defs
   let methods := members.filterMap fun m =>
     if isMethodDeclaration m then
       let mname := (fieldNode m "name").map nodeText |>.getD "_"
-      let params := (fieldArr m "parameters").map lowerParam
+      let params := (fieldArr m "parameters").map fun p =>
+        let pname := (fieldNode p "name").map nodeText |>.getD "_"
+        let pty := match fieldNode p "type" with | some tn => mapTypeNode tn | none => mapResolvedType p
+        { name := pname, ty := pty : LeanParam }
       let retTy := match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
-      let body := match fieldNode m "body" with | some b => lowerBody b | none => .Default (some retTy)
-      -- Detect if method mutates state (has this.x = expr patterns)
-      let bodyStr := match body with | .Lit s => s | _ => ""
-      let isMutating := textContains bodyStr "this." || textContains bodyStr "self."
-      let selfParam : LeanParam := { name := "self", ty := .TyName stateName }
+      let stmts := match fieldNode m "body" with
+        | some b => fieldArr b "statements" | none => #[]
+      -- Detect mutation and throw effects
+      let isMutating := bodyHasThisAssign stmts
+      let hasThrow := bodyHasThrow stmts
+      let selfParam : LeanParam := { name := "self", ty := stateType }
       let allParams := #[selfParam] ++ params
-      -- Wrap return type in StateT for mutating methods
-      let retTy := if isMutating then
-        .TyApp (.TyName "StateT") #[.TyName stateName, .TyName "IO", retTy]
-      else retTy
-      let body := if isMutating then .Do body else body
+      -- Check for pure field return (e.g., getCount → self.count)
+      let pureReturn := isPureFieldReturn stmts
+      let (retTy, body) := match pureReturn with
+      | some _field =>
+        -- Pure field return: no monad wrapping
+        (retTy, lowerMethodBodyM reg #[] stmts false retTy)
+      | none =>
+        -- Determine effect-based return type
+        let wrappedRet := if isMutating && hasThrow then
+            .TyApp (.TyName "StateT") #[stateType, .TyApp (.TyName "ExceptT") #[.TyName "String", .TyName "IO"], retTy]
+          else if isMutating then
+            .TyApp (.TyName "StateT") #[stateType, .TyName "IO", retTy]
+          else retTy
+        (wrappedRet, lowerMethodBodyM reg #[] stmts isMutating wrappedRet)
       some (.Def false (name ++ "." ++ mname) tyParams allParams retTy body none none none)
     else none
+  -- Interleave blanks between methods
+  let allMethods := ctorDecls ++ methods
+  let methodDecls := allMethods.foldl (fun acc m => acc ++ #[.Blank, m]) #[]
   -- Comment + state struct + methods
   let result := #[LeanDecl.Comment ("State for " ++ name)]
   let result := result.push (.Structure stateName tyParams fields none DEFAULT_DERIVING none)
-  let result := result ++ methods
+  let result := result ++ methodDecls
   result
 
 private def hasDiscriminantField (j : Json) : Bool :=
@@ -833,9 +1130,9 @@ private partial def lowerStatementR (reg : UnionRegistry) (j : Json) : Array Lea
   let commentDecls := comments.foldl (fun acc c =>
     match getStr c with
     | some text =>
-      let stripped := text.trim
+      let stripped := text.trimLeft.trimRight
       let stripped := if stripped.startsWith "/*" then
-        stripped.replace "/*" "" |>.replace "*/" "" |>.replace "* " "" |>.trim
+        stripped.replace "/*" "" |>.replace "*/" "" |>.replace "* " "" |>.trimLeft.trimRight
       else stripped
       if stripped.isEmpty then acc else acc.push (.Comment stripped)
     | none => acc
@@ -843,24 +1140,64 @@ private partial def lowerStatementR (reg : UnionRegistry) (j : Json) : Array Lea
   let decls := if kind == "VariableStatement" then lowerVarStatement j
     else if kind == "FunctionDeclaration" then lowerFuncDeclR reg j
     else if kind == "InterfaceDeclaration" then lowerInterfaceDecl j
-    else if kind == "ClassDeclaration" then lowerClassDecl j
+    else if kind == "ClassDeclaration" then lowerClassDecl reg j
     else if kind == "TypeAliasDeclaration" then lowerTypeAliasDecl j
     else if kind == "EnumDeclaration" then lowerEnumDecl j
     else #[]
-  commentDecls ++ decls
+  -- Skip leading comments for class declarations (TS pipeline drops them)
+  if kind == "ClassDeclaration" then decls else commentDecls ++ decls
 
 -- ─── Module lowering ────────────────────────────────────────────────────────────
+
+/-- Check if any class has mutating methods (needs Monad import). -/
+private def hasClassMutation (stmts : Array Json) : Bool :=
+  stmts.any fun s =>
+    if nodeKind s == "ClassDeclaration" then
+      let members := fieldArr s "members"
+      members.any fun m =>
+        if isMethodDeclaration m || nodeKind m == "Constructor" then
+          let bodyStmts := match fieldNode m "body" with
+            | some b => fieldArr b "statements" | none => #[]
+          bodyHasThisAssign bodyStmts
+        else false
+    else false
+
+/-- Check if any function is async. -/
+private def hasAsyncFunc (stmts : Array Json) : Bool :=
+  stmts.any fun s =>
+    if nodeKind s == "FunctionDeclaration" then
+      let mods := fieldArr s "modifiers"
+      mods.any fun m => nodeKind m == "AsyncKeyword"
+    else false
+
+/-- Check if file uses DurableObject patterns. -/
+private def hasDurableObjectPattern (stmts : Array Json) : Bool :=
+  let text := stmts.foldl (fun acc s => acc ++ toString s) ""
+  textContains text "DurableObjectState" || textContains text "this.state.storage"
 
 /-- Scan JSON statements for import needs. -/
 private def scanImports (stmts : Array Json) : Array String :=
   let needs := #["TSLean.Runtime.Basic", "TSLean.Runtime.Coercions"]
   let text := stmts.foldl (fun acc s => acc ++ toString s) ""
-  let needs := if textContains text "async" || textContains text "await" ||
-    textContains text "Promise" then needs.push "TSLean.Runtime.Monad" else needs
-  let needs := if textContains text "fetch" || textContains text "Request" ||
-    textContains text "Response" then needs.push "TSLean.Runtime.WebAPI" else needs
+  -- Monad needed for async, class mutations, or state patterns
+  let needsMonad := textContains text "async" || textContains text "await" ||
+    textContains text "Promise" || hasClassMutation stmts || hasAsyncFunc stmts
+  let needs := if needsMonad then needs.push "TSLean.Runtime.Monad" else needs
+  -- WebAPI
+  let needsWebAPI := textContains text "fetch" || textContains text "Request" ||
+    textContains text "Response" || textContains text "URL"
+  let needs := if needsWebAPI then needs.push "TSLean.Runtime.WebAPI" else needs
+  -- HashMap
   let needs := if textContains text "Map" || textContains text "Set" then
     needs.push "TSLean.Stdlib.HashMap" else needs
+  -- DurableObjects
+  let hasDO := hasDurableObjectPattern stmts
+  let needs := if hasDO then
+    needs.push "TSLean.DurableObjects.Http"
+    |>.push "TSLean.DurableObjects.Model"
+    |>.push "TSLean.DurableObjects.State"
+    |>.push "TSLean.DurableObjects.Storage"
+  else needs
   needs
 
 /-- Determine open namespaces from imports. -/
@@ -868,6 +1205,7 @@ private def resolveOpens (imports : Array String) : Array String :=
   let opens := #["TSLean"]
   let opens := if imports.any (textContains · "WebAPI") then opens.push "TSLean.WebAPI" else opens
   let opens := if imports.any (textContains · "HashMap") then opens.push "TSLean.Stdlib.HashMap" else opens
+  let opens := if imports.any (textContains · "DurableObjects") then opens.push "TSLean.DO" else opens
   opens
 
 /-- Collect discriminated union info from type alias declarations in the AST. -/

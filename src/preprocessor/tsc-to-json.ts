@@ -305,6 +305,12 @@ function serializeNode(
   if (n.types && Array.isArray(n.types))
     result.types = serializeArray(n.types, checker, sf, depth);
 
+  // Type-specific children: ArrayType, TupleType, etc.
+  if (n.elementType && isNode(n.elementType))
+    (result as any).elementType = serializeNode(n.elementType, checker, sf, depth + 1);
+  if (n.typeName && isNode(n.typeName))
+    (result as any).typeName = serializeNode(n.typeName, checker, sf, depth + 1);
+
   // Leading comments
   const comments = getLeadingComments(node, sf);
   if (comments.length > 0) result.leadingComments = comments;
