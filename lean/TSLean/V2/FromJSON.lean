@@ -57,6 +57,17 @@ private def fileToModuleName (filePath : String) : String :=
 
 -- ─── Type mapping ───────────────────────────────────────────────────────────────
 
+/-- Complex discriminated union aliases whose resolved type is `any` (TF_Any).
+    The TS pipeline expands these to many anonymous object members, causing mapUnion
+    to skip Option wrapping and map to String via the `__type` fallback.
+    Our JSON preserves the alias name, so we detect and handle them explicitly. -/
+private def isComplexUnionAlias (name : String) (flags : Nat) : Bool :=
+  flags &&& TF_Any != 0 &&
+    #["LeanExpr", "LeanTy", "LeanDecl", "LeanFile",
+      "IRType", "IRDecl", "IRExpr", "IRModule",
+      "Effect", "LeanMatchArm", "SInterpPart", "LeanFieldVal",
+      "LeanField"].contains name
+
 private def mapTypeFromFlags (flags : Nat) (name : String) : LeanTy :=
   if flags &&& TF_StringLiteral != 0 then .TyName "String"
   else if flags &&& TF_NumberLiteral != 0 then .TyName "Float"
@@ -148,7 +159,13 @@ private partial def mapTypeNode (j : Json) : LeanTy :=
     let nonUndef := types.filter fun t =>
       nodeKind t != "UndefinedKeyword" && nodeKind t != "NullKeyword" && nodeKind t != "LiteralType"
     if nonUndef.size == 1 && nonUndef.size < types.size then
-      .TyApp (.TyName "Option") #[mapTypeNode (nonUndef.getD 0 default)]
+      let inner := nonUndef.getD 0 default
+      -- Complex discriminated union aliases skip Option wrapping in the TS pipeline
+      let innerName := if nodeKind inner == "TypeReference"
+        then (fieldNode inner "typeName").map nodeText |>.getD "" else ""
+      if isComplexUnionAlias innerName ((resolvedType inner).map typeFlags |>.getD 0)
+      then .TyName "String"
+      else .TyApp (.TyName "Option") #[mapTypeNode inner]
     else mapResolvedType j
   else if kind == "FunctionType" then
     let rawParams := (fieldArr j "parameters").map fun p =>
@@ -1697,8 +1714,21 @@ private partial def lowerMethodStmtM (reg : UnionRegistry) (paramTypes : Array (
       .Modify (.Lam #["s"] (.StructUpdate (.Var "s") #[.mk field value]))
     | none => .Lit "()"
   else if kind == "ReturnStatement" then
-    let expr := (fieldNode j "expression").map (renderExprCtx reg none) |>.getD "()"
-    if isMutating then .Pure (.Lit expr) else .Lit expr
+    let exprJ := fieldNode j "expression"
+    let exprKind := exprJ.map nodeKind |>.getD ""
+    -- ConditionalExpression in ReturnStatement → structured .If (renders multiline)
+    if exprKind == "ConditionalExpression" then
+      let cj := exprJ.getD default
+      let c := (fieldNode cj "condition").map (renderIfCondition (renderExprCtx reg none)) |>.getD "true"
+      let t := (fieldNode cj "whenTrue").map (renderExprCtx reg none) |>.getD "default"
+      let f := (fieldNode cj "whenFalse").map (renderExprCtx reg none) |>.getD "default"
+      if isMutating then
+        .If (.Lit c) (.Pure (.Lit t)) (.Lit f)
+      else
+        .If (.Lit c) (.Lit t) (.Lit f)
+    else
+      let expr := exprJ.map (renderExprCtx reg none) |>.getD "()"
+      if isMutating then .Pure (.Lit expr) else .Lit expr
   else if kind == "IfStatement" then
     let cond := (fieldNode j "expression").map (renderExprCtx reg none) |>.getD "true"
     let thenStmts := match fieldNode j "thenStatement" with
