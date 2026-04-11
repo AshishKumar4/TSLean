@@ -289,7 +289,7 @@ private partial def renderIfCondition (render : Json → String) (j : Json) : St
     else wrapConditionIsSome j (render j)
   else if kind == "PrefixUnaryExpression" then
     let opCode := fieldNat j "operator"
-    if opCode == 53 then
+    if opCode == 54 then
       let inner := (fieldNode j "operand").map (renderIfCondition render) |>.getD "default"
       "!" ++ inner
     else wrapConditionIsSome j (render j)
@@ -576,7 +576,9 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
   else if kind == "TrueKeyword" then "true"
   else if kind == "FalseKeyword" then "false"
   else if kind == "NullKeyword" || kind == "UndefinedKeyword" then "none"
-  else if kind == "Identifier" then sanitizeId (nodeText j)
+  else if kind == "Identifier" then
+    let ident := nodeText j
+    if ident == "undefined" then "none" else sanitizeId ident
   else if kind == "ThisKeyword" then "self"
   else if kind == "AsExpression" then
     let inner := (fieldNode j "expression").map re |>.getD "default"
@@ -904,11 +906,13 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
             | some st => sanitizeChars st
             | none => sanitizeChars rawName
           else rawName
+          let n := escapeLeanKeyword n
           let v := (fieldNode p "initializer").map re |>.getD "default"
           some (n ++ " := " ++ v)
         else if pk == "ShorthandPropertyAssignment" then
           let n := (fieldNode p "name").map nodeText |>.getD "_"
-          some (n ++ " := " ++ n)
+          let escaped := escapeLeanKeyword n
+          some (escaped ++ " := " ++ n)
         else none
       match spreadBase with
       | some base =>
@@ -2001,8 +2005,8 @@ private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array Lean
       let retTy := match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
       let stmts := match fieldNode m "body" with
         | some b => fieldArr b "statements" | none => #[]
-      -- Detect mutation and throw effects
-      let isMutating := bodyHasThisAssign stmts
+      -- Detect mutation and throw effects (this.x = ... OR let x = ...; x = ...)
+      let isMutating := bodyHasThisAssign stmts || bodyHasVarReassign stmts
       let hasThrow := bodyHasThrow stmts
       -- Local variable reassignment (x = expr, not this.x = expr) also triggers State effect
       -- Use deep recursive check to find assignments at any nesting depth
