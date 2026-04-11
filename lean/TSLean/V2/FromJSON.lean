@@ -1751,6 +1751,34 @@ private def paramTypeName (j : Json) : Option String :=
         if !aliasName.isEmpty then some aliasName else none
       else none
 
+/-- Deep recursive check: does any descendant contain a variable assignment (Identifier = ...)?
+    Skips nested function scopes (ArrowFunction, FunctionExpression, FunctionDeclaration)
+    to match the TS parser's bodyContainsMutation behavior. -/
+private partial def deepHasVarAssign (j : Json) : Bool :=
+  let kind := nodeKind j
+  -- Skip nested function scopes
+  if kind == "ArrowFunction" || kind == "FunctionExpression" || kind == "FunctionDeclaration" then
+    false
+  else if kind == "BinaryExpression" then
+    let opKind := (fieldNode j "operatorToken").map nodeKind |>.getD ""
+    let isAssign := opKind == "FirstAssignment" || opKind == "EqualsToken" ||
+      opKind == "PlusEqualsToken" || opKind == "MinusEqualsToken"
+    if isAssign then
+      match fieldNode j "left" with
+      | some l => nodeKind l == "Identifier"
+      | none => false
+    else
+      -- Check children
+      match j with
+      | .arr elems => elems.any deepHasVarAssign
+      | .obj fields => fields.toArray.any fun (_, v) => deepHasVarAssign v
+      | _ => false
+  else
+    match j with
+    | .arr elems => elems.any deepHasVarAssign
+    | .obj fields => fields.toArray.any fun (_, v) => deepHasVarAssign v
+    | _ => false
+
 /-- Check if statements contain variable reassignment (x = expr, not this.x = expr).
     Used to detect State effect for non-async functions. -/
 private partial def bodyHasVarReassign (stmts : Array Json) : Bool :=
@@ -1977,9 +2005,8 @@ private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array Lean
       let isMutating := bodyHasThisAssign stmts
       let hasThrow := bodyHasThrow stmts
       -- Local variable reassignment (x = expr, not this.x = expr) also triggers State effect
-      let bodyText := stmts.foldl (fun acc s => acc ++ toString s) ""
-      let hasLocalVarReassign := bodyHasVarReassign stmts ||
-        textContains bodyText "FirstAssignment"
+      -- Use deep recursive check to find assignments at any nesting depth
+      let hasLocalVarReassign := stmts.any deepHasVarAssign
       let hasStateEffect := isMutating || hasLocalVarReassign
       let selfParam : LeanParam := { name := "self", ty := stateType }
       let allParams := #[selfParam] ++ params
