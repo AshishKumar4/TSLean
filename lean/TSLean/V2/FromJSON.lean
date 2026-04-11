@@ -421,9 +421,11 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
     some ("Array.push " ++ obj ++ " " ++ (args.getD 0 ""))
   else if fn.endsWith ".map" && args.size == 1 then
     let obj := fn.dropEnd 4 |>.toString
+    let obj := if obj.any (· == ' ') then "(" ++ obj ++ ")" else obj
     some ("Array.map " ++ (args.getD 0 "") ++ " " ++ obj)
   else if fn.endsWith ".filter" && args.size == 1 then
     let obj := fn.dropEnd 7 |>.toString
+    let obj := if obj.any (· == ' ') then "(" ++ obj ++ ")" else obj
     some ("Array.filter " ++ (args.getD 0 "") ++ " " ++ obj)
   else if fn.endsWith ".join" && args.size == 1 then
     let obj := fn.dropEnd 5 |>.toString
