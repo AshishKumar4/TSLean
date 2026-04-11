@@ -240,7 +240,8 @@ private def mapFieldName (field : String) : String := match field with
   | "map" => "map" | "filter" => "filter" | "find" => "find?"
   | "some" => "any" | "every" => "all" | "reduce" => "foldl"
   | "reverse" => "reverse" | "flat" => "join" | "flatMap" => "flatMap"
-  | "includes" => "contains" | "indexOf" => "indexOf?"
+  | "includes" => "includes" | "indexOf" => "indexOf?"
+  | "slice" => "extract"
   | "toLowerCase" => "toLower" | "toUpperCase" => "toUpper"
   | "trim" => "trim" | "startsWith" => "startsWith" | "endsWith" => "endsWith"
   | "toString" => "toString" | "split" => "splitOn" | "join" => "intercalate"
@@ -296,6 +297,27 @@ private def parenBinOperand (j : Json) (rendered : String) (_parentOp : String) 
      (kind == "NumericLiteral" && (nodeText j).any (· == '.')) then
     "(" ++ rendered ++ ")"
   else rendered
+
+/-- Check if a JSON AST node has string type via resolved type flags or name. -/
+private def isStringTyped (j : Json) : Bool :=
+  match resolvedType j with
+  | some rt =>
+    let flags := typeFlags rt
+    let name := typeName rt
+    flags &&& TF_String != 0 || flags &&& TF_StringLiteral != 0 || name == "string"
+  | none => false
+
+/-- Recursively check if an expression involves string types
+    (checks the node and walks through PropertyAccess/Call chains). -/
+private partial def hasStringType (j : Json) : Bool :=
+  if isStringTyped j then true
+  else
+    let kind := nodeKind j
+    if kind == "PropertyAccessExpression" || kind == "CallExpression" then
+      match fieldNode j "expression" with
+      | some inner => hasStringType inner
+      | none => false
+    else false
 
 private def mapBinOpSym (kind : String) : String := match kind with
   | "PlusToken" => "+" | "MinusToken" => "-" | "AsteriskToken" => "*"
