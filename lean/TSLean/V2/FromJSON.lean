@@ -1402,12 +1402,12 @@ private partial def lowerTypeAliasDecl (j : Json) : Array LeanDecl :=
         let ctors := types.map fun t =>
           let text := (fieldNode t "literal").map nodeText |>.getD "Unknown"
           LeanCtor.mk text.capitalize #[]
-        #[.Inductive name tyParams ctors DEFAULT_DERIVING none]
+        #[.Inductive name tyParams ctors DEFAULT_DERIVING comment]
       else
-        #[.Abbrev name tyParams (mapTypeNode tn) none]
+        #[.Abbrev name tyParams (mapTypeNode tn) comment]
     else
-      #[.Abbrev name tyParams (mapTypeNode tn) none]
-  | none => #[.Abbrev name tyParams (.TyName "Unit") none]
+      #[.Abbrev name tyParams (mapTypeNode tn) comment]
+  | none => #[.Abbrev name tyParams (.TyName "Unit") comment]
 
 /-- Check if a TypeLiteral has a discriminant field (kind/tag/type with string literal). -/
 private partial def lowerEnumDecl (j : Json) : Array LeanDecl :=
