@@ -508,7 +508,11 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     "\"" ++ text ++ "\""
   else if kind == "RegularExpressionLiteral" then
     -- Render regex as a string literal: /pattern/flags → "/pattern/flags"
-    "\"" ++ (nodeText j) ++ "\""
+    -- Must escape backslashes/quotes (matches TS JSON.stringify behavior)
+    let text := nodeText j
+    let text := text.replace "\\" "\\\\"
+    let text := text.replace "\"" "\\\""
+    "\"" ++ text ++ "\""
   else if kind == "TrueKeyword" then "true"
   else if kind == "FalseKeyword" then "false"
   else if kind == "NullKeyword" || kind == "UndefinedKeyword" then "none"
@@ -557,7 +561,16 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
         | none => right
       left ++ " " ++ op ++ " " ++ right
   else if kind == "PropertyAccessExpression" then
-    let obj := (fieldNode j "expression").map re |>.getD "default"
+    let objJ := fieldNode j "expression"
+    let obj := objJ.map re |>.getD "default"
+    -- Paren-wrap compound objects (CallExpr with args, BinExpr, etc.) for proper chaining
+    let obj := match objJ with
+      | some oj =>
+        let ok := nodeKind oj
+        if ok == "CallExpression" && (fieldArr oj "arguments").size > 0 then "(" ++ obj ++ ")"
+        else if ok == "BinaryExpression" || ok == "ConditionalExpression" then "(" ++ obj ++ ")"
+        else obj
+      | none => obj
     let field := (fieldNode j "name").map nodeText |>.getD ""
     -- Optional chaining: obj?.field → obj.bind (fun _oc => some _oc.field)
     let hasQuestionDot := (fieldNode j "questionDotToken").isSome
