@@ -617,7 +617,14 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
           if lit == "" then parenExpr
           else parenExpr ++ " ++ \"" ++ lit ++ "\""
         let allPieces := prefixStr ++ tailPieces
-        String.intercalate " ++ " allPieces.toList
+        -- Left-fold with parens to match TS lowerer's left-associative BinOp tree
+        -- Only parenthesize when accumulator is a compound expression (contains ++)
+        match allPieces.toList with
+        | [] => "\"\""
+        | [x] => x
+        | x :: rest => rest.foldl (fun acc piece =>
+          if (acc.splitOn " ++ ").length > 1 then "(" ++ acc ++ ") ++ " ++ piece
+          else acc ++ " ++ " ++ piece) x
   else if kind == "ObjectLiteralExpression" then
     let props := fieldArr j "properties"
     -- Try struct-literal → constructor rewrite for discriminated unions
@@ -1351,12 +1358,14 @@ private partial def exprContainsName (e : LeanExpr) (name : String) : Bool :=
   | .Throw val => exprContainsName val name
   | _ => false
 
-/-- Check if a body expression needs `do` wrapping (multiple lets). -/
+/-- Check if a body expression needs `do` wrapping (multiple lets).
+    Matches TS pureBodyNeedsDo: Let→(Let|If|Match) or Seq with Let + length > 1. -/
 private def needsDoWrap (e : LeanExpr) : Bool :=
   match e with
   | .Let _ _ _ body _ => match body with
-    | .Let .. | .If .. | .Match .. | .Seq .. => true
+    | .Let .. | .If .. | .Match .. => true
     | _ => false
+  | .Seq stmts => stmts.size > 1 && stmts.any (fun s => match s with | .Let .. => true | _ => false)
   | _ => false
 
 -- ─── Declaration lowering ───────────────────────────────────────────────────────
@@ -1505,7 +1514,7 @@ private partial def lowerFuncDeclR (reg : UnionRegistry) (j : Json) : Array Lean
     | none => .Default (some retTy)
   -- In async functions or state functions, wrap tail expressions with `pure`
   let body := if isAsync || hasBodyVarReassign then wrapReturnsPure body else body
-  let body := if isAsync || hasBodyVarReassign then .Do body else body
+  let body := if needsDoWrap body || isAsync || hasBodyVarReassign then .Do body else body
   let isPartial := exprContainsName body name
   let docComment := extractDocComment j
   let comment := if docComment.isSome then none else extractLeadingComment j
