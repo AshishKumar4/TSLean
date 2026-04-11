@@ -110,6 +110,59 @@ private def parenIfCompoundExpr (j : Json) (rendered : String) : String :=
     "(" ++ rendered ++ ")"
   else rendered
 
+/-- Map JS field/method names to Lean equivalents. -/
+private def mapFieldName (field : String) : String := match field with
+  | "length" => "size" | "push" => "push" | "pop" => "back?"
+  | "map" => "map" | "filter" => "filter" | "find" => "find?"
+  | "some" => "any" | "every" => "all" | "reduce" => "foldl"
+  | "reverse" => "reverse" | "flat" => "join" | "flatMap" => "flatMap"
+  | "includes" => "contains" | "indexOf" => "indexOf?"
+  | "toLowerCase" => "toLower" | "toUpperCase" => "toUpper"
+  | "trim" => "trim" | "startsWith" => "startsWith" | "endsWith" => "endsWith"
+  | "toString" => "toString" | "split" => "splitOn" | "join" => "intercalate"
+  | other => other
+
+/-- Rewrite method calls: Math.sqrt(x) → Float.sqrt x, etc. -/
+private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array String) : Option String :=
+  -- Math.X(args) → Float.X args
+  if fn.startsWith "Math." then
+    let method := fn.drop 5
+    let leanFn := match method with
+      | "sqrt" => "Float.sqrt" | "abs" => "Float.abs"
+      | "floor" => "Float.floor" | "ceil" => "Float.ceil"
+      | "round" => "Float.round" | "min" => "Float.min" | "max" => "Float.max"
+      | other => "Float." ++ other
+    some (leanFn ++ " " ++ String.intercalate " " args.toList)
+  -- console.log(args) → IO.println args
+  else if fn == "console.log" then
+    some ("IO.println " ++ String.intercalate " " args.toList)
+  -- Array method calls: arr.push(x) → Array.push arr x
+  else if fn.endsWith ".push" && args.size == 1 then
+    let obj := fn.dropRight 5
+    some ("Array.push " ++ obj ++ " " ++ (args.getD 0 ""))
+  else if fn.endsWith ".map" && args.size == 1 then
+    let obj := fn.dropRight 4
+    some ("Array.map " ++ (args.getD 0 "") ++ " " ++ obj)
+  else if fn.endsWith ".filter" && args.size == 1 then
+    let obj := fn.dropRight 7
+    some ("Array.filter " ++ (args.getD 0 "") ++ " " ++ obj)
+  else if fn.endsWith ".join" && args.size == 1 then
+    let obj := fn.dropRight 5
+    some ("String.intercalate " ++ (args.getD 0 "") ++ " " ++ obj)
+  else none
+
+/-- Parenthesize a binary expression operand if it has lower precedence. -/
+private def parenBinOperand (j : Json) (rendered : String) (parentOp : String) : String :=
+  let kind := nodeKind j
+  if kind != "BinaryExpression" then rendered
+  else
+    let childOp := (fieldNode j "operatorToken").map nodeKind |>.getD ""
+    -- Parenthesize add/sub inside mul/div
+    let needsParens :=
+      (parentOp == "AsteriskToken" || parentOp == "SlashToken" || parentOp == "PercentToken") &&
+      (childOp == "PlusToken" || childOp == "MinusToken")
+    if needsParens then "(" ++ rendered ++ ")" else rendered
+
 private partial def renderExpr (j : Json) : String :=
   let kind := nodeKind j
   if kind == "NumericLiteral" then nodeText j
@@ -121,8 +174,11 @@ private partial def renderExpr (j : Json) : String :=
   else if kind == "Identifier" then nodeText j
   else if kind == "ThisKeyword" then "self"
   else if kind == "AsExpression" || kind == "SatisfiesExpression" ||
-          kind == "NonNullExpression" || kind == "ParenthesizedExpression" then
+          kind == "NonNullExpression" then
     (fieldNode j "expression").map renderExpr |>.getD "default"
+  else if kind == "ParenthesizedExpression" then
+    -- Preserve parens for explicit parenthesization in source
+    "(" ++ ((fieldNode j "expression").map renderExpr |>.getD "default") ++ ")"
   else if kind == "BinaryExpression" then
     let leftJ := fieldNode j "left"
     let rightJ := fieldNode j "right"
@@ -130,17 +186,28 @@ private partial def renderExpr (j : Json) : String :=
     let right := rightJ.map renderExpr |>.getD "default"
     let opKind := (fieldNode j "operatorToken").map nodeKind |>.getD ""
     let op := mapBinOpSym opKind
-    let right := match rightJ with | some rj => parenIfCompoundExpr rj right | none => right
+    -- Precedence-aware parenthesization
+    let left := match leftJ with | some lj => parenBinOperand lj left opKind | none => left
+    let right := match rightJ with
+      | some rj => parenBinOperand rj (parenIfCompoundExpr rj right) opKind
+      | none => right
     left ++ " " ++ op ++ " " ++ right
   else if kind == "PropertyAccessExpression" then
     let obj := (fieldNode j "expression").map renderExpr |>.getD "default"
     let field := (fieldNode j "name").map nodeText |>.getD ""
-    obj ++ "." ++ field
+    -- Map JS field names to Lean equivalents
+    let mappedField := mapFieldName field
+    obj ++ "." ++ mappedField
   else if kind == "CallExpression" then
-    let fn := (fieldNode j "expression").map renderExpr |>.getD "default"
+    let fnJ := fieldNode j "expression"
+    let fn := fnJ.map renderExpr |>.getD "default"
     let args := (fieldArr j "arguments").map fun a => parenIfCompoundExpr a (renderExpr a)
-    if args.size == 0 then fn
-    else fn ++ " " ++ String.intercalate " " args.toList
+    -- Method call rewriting: Math.sqrt(x) → Float.sqrt x
+    let rewritten := rewriteMethodCall fnJ fn args
+    match rewritten with
+    | some r => r
+    | none => if args.size == 0 then fn
+              else fn ++ " " ++ String.intercalate " " args.toList
   else if kind == "ReturnStatement" then
     (fieldNode j "expression").map renderExpr |>.getD "()"
   else if kind == "PrefixUnaryExpression" then
@@ -227,7 +294,16 @@ private partial def lowerStmtSeq : List Json → LeanExpr
         let d := decls.getD 0 default
         let name := (fieldNode d "name").map nodeText |>.getD "_"
         let val := (fieldNode d "initializer").map renderExpr |>.getD "default"
-        .Let name none (.Lit val) (lowerStmtSeq rest) false
+        -- Add type annotation from explicit type or resolved type
+        let ty := match fieldNode d "type" with
+          | some tn => some (mapTypeNode tn)
+          | none =>
+            -- Use resolved type if it's informative (not Unit/TSAny)
+            let rt := mapResolvedType d
+            match rt with
+            | .TyName "Unit" | .TyName "TSAny" => none
+            | _ => some rt
+        .Let name ty (.Lit val) (lowerStmtSeq rest) false
       else lowerStmtSeq rest
     else
       let expr := lowerBlockStmt s
@@ -258,6 +334,14 @@ private partial def exprContainsName (e : LeanExpr) (name : String) : Bool :=
   | .Do b | .Pure b | .Return b => exprContainsName b name
   | _ => false
 
+/-- Check if a body expression needs `do` wrapping (multiple lets). -/
+private def needsDoWrap (e : LeanExpr) : Bool :=
+  match e with
+  | .Let _ _ _ body _ => match body with
+    | .Let .. | .If .. | .Match .. | .Seq .. => true
+    | _ => false
+  | _ => false
+
 -- ─── Declaration lowering ───────────────────────────────────────────────────────
 
 private def extractTypeParams (j : Json) : Array LeanTyParam :=
@@ -285,6 +369,8 @@ private partial def lowerFuncDecl (j : Json) : Array LeanDecl :=
   let params := (fieldArr j "parameters").map lowerParam
   let retTy := match fieldNode j "type" with | some tn => mapTypeNode tn | none => mapResolvedType j
   let body := match fieldNode j "body" with | some b => lowerBody b | none => .Default (some retTy)
+  -- Wrap in `do` if body has Let bindings followed by more code (multi-statement)
+  let body := if needsDoWrap body then .Do body else body
   let isPartial := exprContainsName body name
   #[.Def isPartial name tyParams params retTy body none none none]
 
