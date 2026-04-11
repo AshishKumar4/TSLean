@@ -904,11 +904,13 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
             | some st => sanitizeChars st
             | none => sanitizeChars rawName
           else rawName
+          let n := escapeLeanKeyword n
           let v := (fieldNode p "initializer").map re |>.getD "default"
           some (n ++ " := " ++ v)
         else if pk == "ShorthandPropertyAssignment" then
           let n := (fieldNode p "name").map nodeText |>.getD "_"
-          some (n ++ " := " ++ n)
+          let escaped := escapeLeanKeyword n
+          some (escaped ++ " := " ++ n)
         else none
       match spreadBase with
       | some base =>
@@ -1956,8 +1958,8 @@ private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array Lean
       let retTy := match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
       let stmts := match fieldNode m "body" with
         | some b => fieldArr b "statements" | none => #[]
-      -- Detect mutation and throw effects
-      let isMutating := bodyHasThisAssign stmts
+      -- Detect mutation and throw effects (this.x = ... OR let x = ...; x = ...)
+      let isMutating := bodyHasThisAssign stmts || bodyHasVarReassign stmts
       let hasThrow := bodyHasThrow stmts
       let selfParam : LeanParam := { name := "self", ty := stateType }
       let allParams := #[selfParam] ++ params
