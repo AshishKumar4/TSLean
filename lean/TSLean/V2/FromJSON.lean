@@ -458,25 +458,24 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
   else if fn.endsWith ".splitOn" && args.size == 1 then
     let obj := fn.dropEnd 8 |>.toString
     some (obj ++ ".splitOn " ++ (args.getD 0 ""))
-  -- .includes(x) → .contains for non-string types (matches TS pipeline fieldMap)
-  -- TS transpiler: isString ? "includes" : "contains". We detect string via resolvedType
-  -- flags (TF_String/TF_StringLiteral) and known string-typed property names.
+  -- .includes(x) → .contains only when we KNOW the object is non-string.
+  -- With noResolve, most types are TF_Any — default to keeping .includes (string-safe).
+  -- Rewrite for: ArrayLiteralExpression, TF_Object-flagged identifiers,
+  -- optional-chain ?.includes() (T|undefined → TS treats as non-string).
   else if fn.endsWith ".includes" && args.size == 1 then
     let objNode := fnJ.bind fun fj => fieldNode fj "expression"
-    let isStr := match objNode with
+    -- Check if the .includes PA itself has questionDotToken (obj?.includes(x))
+    let fnHasQDot := fnJ.map (fun fj => (fieldNode fj "questionDotToken").isSome) |>.getD false
+    let isKnownNonString := fnHasQDot || match objNode with
       | some oj =>
         let flags := resolvedType oj |>.map typeFlags |>.getD 0
-        if flags &&& TF_String != 0 || flags &&& TF_StringLiteral != 0 then true
-        else
-          let okind := nodeKind oj
-          if okind == "PropertyAccessExpression" then
-            let pn := (fieldNode oj "name").map nodeText |>.getD ""
-            -- Known string-typed property names on IR nodes
-            pn == "name" || pn == "field" || pn == "ctor" || pn == "op" || pn == "text" ||
-            pn == "sourceFile" || pn == "module" || pn == "typeClass"
-          else okind == "StringLiteral" || okind == "NoSubstitutionTemplateLiteral"
+        let okind := nodeKind oj
+        -- TF_Object (1048576): arrays, sets, objects — definitely not string
+        flags &&& TF_Object != 0 ||
+        -- ArrayLiteralExpression
+        okind == "ArrayLiteralExpression"
       | none => false
-    if !isStr then
+    if isKnownNonString then
       let obj := fn.dropEnd 9 |>.toString
       some (obj ++ ".contains " ++ (args.getD 0 ""))
     else none
@@ -536,6 +535,9 @@ private partial def hasStringType (j : Json) : Bool :=
       match fieldNode j "expression" with
       | some inner => hasStringType inner
       | none => false
+    else if kind == "Identifier" then
+      let name := nodeText j
+      name == "mappedField" || name == "field" || name == "rawName" || name == "localName"
     else false
 
 /-- Render a block body inline as "let x := v; let y := w; ... ; final".
@@ -757,7 +759,16 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       | _ =>
         let objJ := fieldNode j "expression"
         let isStr := match objJ with | some oj => hasStringType oj | none => false
-         let mapped := if field == "length" then (if isStr then "length" else "size")
+        -- Check if obj is a known array type (for includes→contains mapping)
+        let isArr := match objJ with
+          | some oj =>
+            let rt := resolvedType oj
+            let flags := rt.map typeFlags |>.getD 0
+            -- Object flags (1048576) with non-string type
+            flags &&& TF_Object != 0 && !(flags &&& TF_String != 0)
+          | none => false
+        let mapped := if field == "length" then (if isStr then "length" else "size")
+          else if field == "includes" then (if isArr then "contains" else "includes")
           else mapFieldName field
         obj ++ "." ++ mapped
   else if kind == "CallExpression" then
@@ -795,7 +806,13 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
           let field := (fieldNode fnNode "name").map nodeText |>.getD ""
           let objJ2 := fieldNode fnNode "expression"
           let isStr := match objJ2 with | some oj => hasStringType oj | none => false
+          let isArr2 := match objJ2 with
+            | some oj =>
+              let flags := resolvedType oj |>.map typeFlags |>.getD 0
+              flags &&& TF_Object != 0 && !(flags &&& TF_String != 0)
+            | none => false
           let mapped := if field == "length" then (if isStr then "length" else "size")
+            else if field == "includes" then (if isArr2 then "contains" else "includes")
             else mapFieldName field
           innerObj ++ "." ++ mapped
         else re fnNode
