@@ -513,11 +513,39 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
   else if kind == "TemplateExpression" then
     let headText := (fieldNode j "head").map nodeText |>.getD ""
     let spans := fieldArr j "templateSpans"
-    let parts := spans.foldl (fun acc span =>
-      let expr := (fieldNode span "expression").map re |>.getD ""
+    -- Check if all interpolated expressions are "safe" for s!"..." (matches TS trySInterp)
+    -- Safe = Identifier, PropertyAccessExpression (on safe base), AsExpression (on safe expr)
+    let rec isSafe (e : Json) : Bool :=
+      let ek := nodeKind e
+      ek == "Identifier" || ek == "NumericLiteral" || ek == "StringLiteral" ||
+      (ek == "PropertyAccessExpression" && match fieldNode e "expression" with
+        | some base => isSafe base | none => false) ||
+      (ek == "AsExpression" && match fieldNode e "expression" with
+        | some inner => isSafe inner | none => false)
+    let allSafe := spans.all fun span =>
+      match fieldNode span "expression" with | some e => isSafe e | none => true
+    -- Also check for unsafe chars in literal parts
+    let hasUnsafeChars := spans.any fun span =>
       let lit := (fieldNode span "literal").map nodeText |>.getD ""
-      acc ++ "{" ++ expr ++ "}" ++ lit) headText
-    "s!\"" ++ parts ++ "\""
+      lit.any (fun c => c == '{' || c == '}' || c == '"' || c == '\\') ||
+      headText.any (fun c => c == '{' || c == '}' || c == '"' || c == '\\')
+    if allSafe && !hasUnsafeChars then
+      let parts := spans.foldl (fun acc span =>
+        let expr := (fieldNode span "expression").map re |>.getD ""
+        let lit := (fieldNode span "literal").map nodeText |>.getD ""
+        acc ++ "{" ++ expr ++ "}" ++ lit) headText
+      "s!\"" ++ parts ++ "\""
+    else
+      -- Fall back to ++ chain (matches TS BinOp "++" fallback)
+      let acc := if headText == "" then "" else "\"" ++ headText ++ "\""
+      spans.foldl (fun acc span =>
+        let expr := (fieldNode span "expression").map re |>.getD ""
+        let lit := (fieldNode span "literal").map nodeText |>.getD ""
+        let withExpr := if acc == "" then expr
+          else if expr == "" then acc
+          else acc ++ " ++ " ++ expr
+        if lit == "" then withExpr
+        else withExpr ++ " ++ \"" ++ lit ++ "\"") acc
   else if kind == "ObjectLiteralExpression" then
     let props := fieldArr j "properties"
     -- Try struct-literal → constructor rewrite for discriminated unions
@@ -811,7 +839,8 @@ private partial def lowerStmtSeqR (reg : UnionRegistry) (paramTypes : Array (Str
 private partial def lowerBlockStmtR (reg : UnionRegistry) (paramTypes : Array (String × String))
     (j : Json) : LeanExpr :=
   let kind := nodeKind j
-  if kind == "ReturnStatement" then
+  if kind == "Block" then lowerBodyR reg paramTypes j
+  else if kind == "ReturnStatement" then
     .Lit ((fieldNode j "expression").map renderExpr |>.getD "()")
   else if kind == "IfStatement" then
     let condJ := fieldNode j "expression"
