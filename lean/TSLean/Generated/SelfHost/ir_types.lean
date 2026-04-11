@@ -90,12 +90,10 @@ def IO : Effect := Effect.IO
 def Async : Effect := Effect.Async
 
 /-- Construct a State effect over the given state type. -/
-def stateEffect (stateType : IRType) : Effect :=
-  Effect.State stateType
+def stateEffect (stateType : IRType) : Effect := Effect.State stateType
 
 /-- Construct an Except effect over the given error type. -/
-def exceptEffect (errorType : IRType) : Effect :=
-  Effect.Except errorType
+def exceptEffect (errorType : IRType) : Effect := Effect.Except errorType
 
 def isPure : Effect → Bool
   | .Pure => true
@@ -151,35 +149,25 @@ def TyUnit : IRType := IRType.Unit
 
 def TyNever : IRType := IRType.Never
 
-def TyOption (inner : IRType) : IRType :=
-  IRType.Option inner
+def TyOption (inner : IRType) : IRType := IRType.Option inner
 
-def TyArray (elem : IRType) : IRType :=
-  IRType.Array elem
+def TyArray (elem : IRType) : IRType := IRType.Array elem
 
-def TyTuple (elems : Array IRType) : IRType :=
-  IRType.Tuple elems
+def TyTuple (elems : Array IRType) : IRType := IRType.Tuple elems
 
-def TyMap (key : IRType) (value : IRType) : IRType :=
-  IRType.Map key value
+def TyMap (key : IRType) (value : IRType) : IRType := IRType.Map key value
 
-def TySet (elem : IRType) : IRType :=
-  IRType.Set elem
+def TySet (elem : IRType) : IRType := IRType.Set elem
 
-def TyPromise (inner : IRType) : IRType :=
-  IRType.Promise inner
+def TyPromise (inner : IRType) : IRType := IRType.Promise inner
 
-def TyResult (ok : IRType) (err : IRType) : IRType :=
-  IRType.Result ok err
+def TyResult (ok : IRType) (err : IRType) : IRType := IRType.Result ok err
 
-def TyRef (name : String) (args : Array IRType := #[]) : IRType :=
-  IRType.TypeRef name args
+def TyRef (name : String) (args : Array IRType := #[]) : IRType := IRType.TypeRef name args
 
-def TyVar (name : String) : IRType :=
-  IRType.TypeVar name
+def TyVar (name : String) : IRType := IRType.TypeVar name
 
-def TyFn (params : Array IRType) (ret : IRType) (effect : Effect := Pure) : IRType :=
-  IRType.Function params ret effect
+def TyFn (params : Array IRType) (ret : IRType) (effect : Effect := Pure) : IRType := IRType.Function params ret effect
 
 -- // ─── Expressions ────────────────────────────────────────────────────────────────
 -- //
@@ -206,6 +194,7 @@ structure IRNode where
 -- Literals, variables, function application, let-binding, if-then-else, match,
 -- do-notation, monadic bind, state/throw/try-catch, and structural operations.
 structure IRExpr where
+  mk ::
   tag : String
   type : IRType := default
   effect : Effect := default

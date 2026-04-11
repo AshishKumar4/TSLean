@@ -14,31 +14,11 @@ import TSLean.Stdlib.HashMap
 
 open TSLean TSLean.Generated.Types TSLean.Stdlib.HashMap TSLean.DO
 
-namespace TSLean.Generated.SelfHost.DoModelAmbient
+namespace TSLean.Generated.SelfHost.DoModel_Ambient
 
 def hasDOPattern (source : String) : Bool :=
-  source.includes "DurableObjectState" || source.includes "DurableObjectStorage" ||
-  source.includes "DurableObjectNamespace" || source.includes "state.storage" ||
-  source.includes "implements" && source.includes "DurableObject"
+  source.includes "DurableObjectState" || source.includes "state.storage"
+def CF_AMBIENT : String := sorry
+def DO_LEAN_IMPORTS : Array String := #["TSLean.DurableObjects.Http", "TSLean.DurableObjects.State", "TSLean.Runtime.Monad"]
 
-def CF_AMBIENT : String :=
-  "interface DurableObjectState { storage: DurableObjectStorage; id: DurableObjectId; }" ++
-  "interface DurableObjectStorage { get(key: string): Promise<unknown>; put(key: string, value: unknown): Promise<void>; }" ++
-  "interface DurableObjectId { toString(): string; name?: string; }" ++
-  "interface DurableObjectNamespace { idFromName(name: string): DurableObjectId; get(id: DurableObjectId): DurableObjectStub; }" ++
-  "interface DurableObjectStub { fetch(req: Request | string): Promise<Response>; }" ++
-  "interface Request { method: string; url: string; json(): Promise<unknown>; text(): Promise<string>; }" ++
-  "interface Response { status: number; ok: boolean; json(): Promise<unknown>; text(): Promise<string>; }" ++
-  "interface WebSocket { send(data: string): void; close(code?: number): void; readyState: number; }" ++
-  "interface ExecutionContext { waitUntil(p: Promise<unknown>): void; }"
-
-opaque makeAmbientHost_impl (base : TSAny) (virtual : AssocMap String String) : TSAny
-def makeAmbientHost (base : TSAny) (virtual : AssocMap String String) : TSAny :=
-  makeAmbientHost_impl base virtual
-
-def DO_LEAN_IMPORTS : Array String := #[
-  "TSLean.DurableObjects.Http", "TSLean.DurableObjects.State",
-  "TSLean.DurableObjects.Storage", "TSLean.DurableObjects.Model",
-  "TSLean.Runtime.Monad"]
-
-end TSLean.Generated.SelfHost.DoModelAmbient
+end TSLean.Generated.SelfHost.DoModel_Ambient

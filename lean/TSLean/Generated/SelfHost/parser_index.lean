@@ -14,197 +14,25 @@ import TSLean.Stdlib.HashMap
 
 open TSLean TSLean.Generated.Types TSLean.Stdlib.HashMap TSLean.DO
 
-namespace TSLean.Generated.SelfHost.ParserIndex
-
-structure ParseOptions where
-  fileName : String
-  sourceText : Option (Option String)
-  extraFiles : Option (Option (AssocMap String String))
-  deriving Inhabited
-
-opaque parseFile_impl (opts : TSAny) : ExceptT String IO IRModule
-def parseFile (opts : TSAny) : ExceptT String IO IRModule := parseFile_impl opts
+namespace TSLean.Generated.SelfHost.Parser_index
 
 structure ParserCtxState where
-  imports : Array IRImport
-  sf : TSAny
-  needsDO : Bool
+  mk ::
   checker : TSAny
-  deriving Repr, BEq, Inhabited
+  sf : TSAny
+  deriving Inhabited
 
-def ParserCtx.init (_self : ParserCtxState) (_checker : TSAny) (_sf : TSAny) (_needsDO : Bool) : Unit := ()
+def fileToModuleName (filePath : String) : String := sorry
+def leadingComment (_node : TSAny) (_sf : TSAny) : Option String := none
+def isDOClass (_node : TSAny) (_checker : TSAny) : Bool := false
+def ParserCtx.tsModToLean (self : ParserCtxState) (_spec : String) : String := sorry
+def ParserCtx.parseExportDecl (self : ParserCtxState) (_node : TSAny) : Option (Array IRDecl) := sorry
+def ParserCtx.parseFnDecl (self : ParserCtxState) (_node : TSAny) : IRDecl := sorry
+def ParserCtx.parseMethod (self : ParserCtxState) (_node : TSAny) (_className : String) (_stateType : String) (_isDO : Bool) : String := sorry
+def ParserCtx.parseBlock (self : ParserCtxState) (_block : TSAny) (_eff : Effect) : IRExpr := sorry
+def ParserCtx.parseStmts (self : ParserCtxState) (_stmts : Array TSAny) (_eff : Effect) : IRExpr := sorry
+def ParserCtx.parseStmt (self : ParserCtxState) (_stmt : TSAny) (_rest : Array TSAny) (_eff : Effect) : IRExpr := sorry
+def ParserCtx.parse (self : ParserCtxState) : IRModule := sorry
+def hasIndexSignature (_node : TSAny) (_checker : TSAny) : Bool := sorry
 
-opaque ParserCtx.parseModule_impl (self : ParserCtxState) : IRModule
-def ParserCtx.parseModule (self : ParserCtxState) : IRModule := ParserCtx.parseModule_impl self
-
-opaque ParserCtx.collectImport_impl (self : ParserCtxState) (node : TSAny) : Unit
-def ParserCtx.collectImport (self : ParserCtxState) (node : TSAny) : Unit := ParserCtx.collectImport_impl self node
-
-opaque ParserCtx.tsModToLean_impl (self : ParserCtxState) (spec : String) : String
-def ParserCtx.tsModToLean (self : ParserCtxState) (spec : String) : String := ParserCtx.tsModToLean_impl self spec
-
-opaque ParserCtx.parseStatement_impl (self : ParserCtxState) (stmt : TSAny) : String
-def ParserCtx.parseStatement (self : ParserCtxState) (stmt : TSAny) : String := ParserCtx.parseStatement_impl self stmt
-
-opaque ParserCtx.parseExportDecl_impl (self : ParserCtxState) (node : TSAny) : Option (Array IRDecl)
-def ParserCtx.parseExportDecl (self : ParserCtxState) (node : TSAny) : Option (Array IRDecl) := ParserCtx.parseExportDecl_impl self node
-
-opaque ParserCtx.parseExportAssignment_impl (self : ParserCtxState) (node : TSAny) : Option (Array IRDecl)
-def ParserCtx.parseExportAssignment (self : ParserCtxState) (node : TSAny) : Option (Array IRDecl) := ParserCtx.parseExportAssignment_impl self node
-
-opaque ParserCtx.parseFnDecl_impl (self : ParserCtxState) (node : TSAny) : IRDecl
-def ParserCtx.parseFnDecl (self : ParserCtxState) (node : TSAny) : IRDecl := ParserCtx.parseFnDecl_impl self node
-
-opaque ParserCtx.parseParams_impl (self : ParserCtxState) (params : Array TSAny) : Array IRParam
-def ParserCtx.parseParams (self : ParserCtxState) (params : Array TSAny) : Array IRParam := ParserCtx.parseParams_impl self params
-
-opaque ParserCtx.parseClassDecl_impl (self : ParserCtxState) (node : TSAny) : Array IRDecl
-def ParserCtx.parseClassDecl (self : ParserCtxState) (node : TSAny) : Array IRDecl := ParserCtx.parseClassDecl_impl self node
-
-opaque ParserCtx.parseGetter_impl (self : ParserCtxState) (node : TSAny) (className : String) (stateType : String) : String
-def ParserCtx.parseGetter (self : ParserCtxState) (node : TSAny) (className : String) (stateType : String) : String := ParserCtx.parseGetter_impl self node className stateType
-
-opaque ParserCtx.parseSetter_impl (self : ParserCtxState) (node : TSAny) (className : String) (stateType : String) : String
-def ParserCtx.parseSetter (self : ParserCtxState) (node : TSAny) (className : String) (stateType : String) : String := ParserCtx.parseSetter_impl self node className stateType
-
-opaque ParserCtx.isDOClass_impl (self : ParserCtxState) (node : TSAny) : Bool
-def ParserCtx.isDOClass (self : ParserCtxState) (node : TSAny) : Bool := ParserCtx.isDOClass_impl self node
-
-opaque ParserCtx.classStateFields_impl (self : ParserCtxState) (node : TSAny) : Array String
-def ParserCtx.classStateFields (self : ParserCtxState) (node : TSAny) : Array String := ParserCtx.classStateFields_impl self node
-
-opaque ParserCtx.parseCtor_impl (self : ParserCtxState) (node : TSAny) (className : String) (stateType : String) (isDO : Bool) : String
-def ParserCtx.parseCtor (self : ParserCtxState) (node : TSAny) (className : String) (stateType : String) (isDO : Bool) : String := ParserCtx.parseCtor_impl self node className stateType isDO
-
-opaque ParserCtx.parseMethod_impl (self : ParserCtxState) (node : TSAny) (className : String) (stateType : String) (isDO : Bool) : String
-def ParserCtx.parseMethod (self : ParserCtxState) (node : TSAny) (className : String) (stateType : String) (isDO : Bool) : String := ParserCtx.parseMethod_impl self node className stateType isDO
-
-opaque ParserCtx.parseInterface_impl (self : ParserCtxState) (node : TSAny) : String
-def ParserCtx.parseInterface (self : ParserCtxState) (node : TSAny) : String := ParserCtx.parseInterface_impl self node
-
-opaque ParserCtx.parseTypeAlias_impl (self : ParserCtxState) (node : TSAny) : String
-def ParserCtx.parseTypeAlias (self : ParserCtxState) (node : TSAny) : String := ParserCtx.parseTypeAlias_impl self node
-
-opaque ParserCtx.parseEnum_impl (self : ParserCtxState) (node : TSAny) : String
-def ParserCtx.parseEnum (self : ParserCtxState) (node : TSAny) : String := ParserCtx.parseEnum_impl self node
-
-opaque ParserCtx.parseVarStmt_impl (self : ParserCtxState) (node : TSAny) : Array IRDecl
-def ParserCtx.parseVarStmt (self : ParserCtxState) (node : TSAny) : Array IRDecl := ParserCtx.parseVarStmt_impl self node
-
-opaque ParserCtx.parseNamespace_impl (self : ParserCtxState) (node : TSAny) : IRDecl
-def ParserCtx.parseNamespace (self : ParserCtxState) (node : TSAny) : IRDecl := ParserCtx.parseNamespace_impl self node
-
-opaque ParserCtx.parseBlock_impl (self : ParserCtxState) (block : TSAny) (eff : Effect) : IRExpr
-def ParserCtx.parseBlock (self : ParserCtxState) (block : TSAny) (eff : Effect) : IRExpr := ParserCtx.parseBlock_impl self block eff
-
-opaque ParserCtx.parseStmts_impl (self : ParserCtxState) (stmts : Array TSAny) (eff : Effect) : IRExpr
-def ParserCtx.parseStmts (self : ParserCtxState) (stmts : Array TSAny) (eff : Effect) : IRExpr := ParserCtx.parseStmts_impl self stmts eff
-
-opaque ParserCtx.parseStmt_impl (self : ParserCtxState) (stmt : TSAny) (rest : Array TSAny) (eff : Effect) : IRExpr
-def ParserCtx.parseStmt (self : ParserCtxState) (stmt : TSAny) (rest : Array TSAny) (eff : Effect) : IRExpr := ParserCtx.parseStmt_impl self stmt rest eff
-
-opaque ParserCtx.parseIf_impl (self : ParserCtxState) (stmt : TSAny) (rest : Array TSAny) (eff : Effect) : IRExpr
-def ParserCtx.parseIf (self : ParserCtxState) (stmt : TSAny) (rest : Array TSAny) (eff : Effect) : IRExpr := ParserCtx.parseIf_impl self stmt rest eff
-
-opaque ParserCtx.parseSwitch_impl (self : ParserCtxState) (node : TSAny) : IRExpr
-def ParserCtx.parseSwitch (self : ParserCtxState) (node : TSAny) : IRExpr := ParserCtx.parseSwitch_impl self node
-
-opaque ParserCtx.parseSwitchCaseBody_impl (self : ParserCtxState) (cl : TSAny) (allClauses : Array TSAny) : IRExpr
-def ParserCtx.parseSwitchCaseBody (self : ParserCtxState) (cl : TSAny) (allClauses : Array TSAny) : IRExpr := ParserCtx.parseSwitchCaseBody_impl self cl allClauses
-
-opaque ParserCtx.flattenObjectBinding_impl (self : ParserCtxState) (pattern : TSAny) (rhs : IRExpr) (body : IRExpr) : IRExpr
-def ParserCtx.flattenObjectBinding (self : ParserCtxState) (pattern : TSAny) (rhs : IRExpr) (body : IRExpr) : IRExpr := ParserCtx.flattenObjectBinding_impl self pattern rhs body
-
-opaque ParserCtx.flattenArrayBinding_impl (self : ParserCtxState) (pattern : TSAny) (rhs : IRExpr) (body : IRExpr) : IRExpr
-def ParserCtx.flattenArrayBinding (self : ParserCtxState) (pattern : TSAny) (rhs : IRExpr) (body : IRExpr) : IRExpr := ParserCtx.flattenArrayBinding_impl self pattern rhs body
-
-opaque ParserCtx.parseTry_impl (self : ParserCtxState) (node : TSAny) (rest : Array TSAny) (eff : Effect) : IRExpr
-def ParserCtx.parseTry (self : ParserCtxState) (node : TSAny) (rest : Array TSAny) (eff : Effect) : IRExpr := ParserCtx.parseTry_impl self node rest eff
-
-opaque ParserCtx.parseFor_impl (self : ParserCtxState) (node : TSAny) (eff : Effect) : IRExpr
-def ParserCtx.parseFor (self : ParserCtxState) (node : TSAny) (eff : Effect) : IRExpr := ParserCtx.parseFor_impl self node eff
-
-opaque ParserCtx.parseWhile_impl (self : ParserCtxState) (node : TSAny) (eff : Effect) : IRExpr
-def ParserCtx.parseWhile (self : ParserCtxState) (node : TSAny) (eff : Effect) : IRExpr := ParserCtx.parseWhile_impl self node eff
-
-opaque ParserCtx.parseExpr_impl (self : ParserCtxState) (node : TSAny) : IRExpr
-def ParserCtx.parseExpr (self : ParserCtxState) (node : TSAny) : IRExpr := ParserCtx.parseExpr_impl self node
-
-opaque ParserCtx.parsePropAccess_impl (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr
-def ParserCtx.parsePropAccess (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr := ParserCtx.parsePropAccess_impl self node ty
-
-opaque ParserCtx.parseCall_impl (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr
-def ParserCtx.parseCall (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr := ParserCtx.parseCall_impl self node ty
-
-opaque ParserCtx.parseMethodCall_impl (self : ParserCtxState) (node : TSAny) (acc : TSAny) (ty : IRType) : IRExpr
-def ParserCtx.parseMethodCall (self : ParserCtxState) (node : TSAny) (acc : TSAny) (ty : IRType) : IRExpr := ParserCtx.parseMethodCall_impl self node acc ty
-
-opaque ParserCtx.isStorageAccess_impl (self : ParserCtxState) (node : TSAny) : Bool
-def ParserCtx.isStorageAccess (self : ParserCtxState) (node : TSAny) : Bool := ParserCtx.isStorageAccess_impl self node
-
-opaque ParserCtx.parseNew_impl (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr
-def ParserCtx.parseNew (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr := ParserCtx.parseNew_impl self node ty
-
-opaque ParserCtx.parseLambda_impl (self : ParserCtxState) (node : TSAny) : IRExpr
-def ParserCtx.parseLambda (self : ParserCtxState) (node : TSAny) : IRExpr := ParserCtx.parseLambda_impl self node
-
-opaque ParserCtx.parseBinary_impl (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr
-def ParserCtx.parseBinary (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr := ParserCtx.parseBinary_impl self node ty
-
-opaque ParserCtx.parsePrefix_impl (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr
-def ParserCtx.parsePrefix (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr := ParserCtx.parsePrefix_impl self node ty
-
-opaque ParserCtx.parsePostfix_impl (self : ParserCtxState) (node : TSAny) : IRExpr
-def ParserCtx.parsePostfix (self : ParserCtxState) (node : TSAny) : IRExpr := ParserCtx.parsePostfix_impl self node
-
-opaque ParserCtx.parseObjLit_impl (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr
-def ParserCtx.parseObjLit (self : ParserCtxState) (node : TSAny) (ty : IRType) : IRExpr := ParserCtx.parseObjLit_impl self node ty
-
-opaque ParserCtx.parseTemplate_impl (self : ParserCtxState) (node : TSAny) : IRExpr
-def ParserCtx.parseTemplate (self : ParserCtxState) (node : TSAny) : IRExpr := ParserCtx.parseTemplate_impl self node
-
-def seq (a : IRExpr) (b : IRExpr) : IRExpr :=
-  if a.tag == "LitUnit" then b
-  else if b.tag == "LitUnit" then a
-  else { tag := "Sequence", stmts := default, type := b.type, effect := default }
-
-opaque mkBinOp_impl (op : BinOp) (left : IRExpr) (right : IRExpr) : IRExpr
-def mkBinOp (op : BinOp) (left : IRExpr) (right : IRExpr) : IRExpr := mkBinOp_impl op left right
-
-partial def branchReturns (e : IRExpr) : Bool :=
-  e.tag == "Return" || (e.tag == "IfThenElse" && branchReturns { tag := e.then_ } && branchReturns { tag := e.else_ })
-
-def exprToPat (e : IRExpr) : IRPattern :=
-  if e.tag == "LitString" then .PString e.value
-  else if e.tag == "LitNat" then .PLit e.value
-  else if e.tag == "Var" then .PVar e.name
-  else .PWild
-
-opaque isCompoundAssign_impl (kind : TSAny) : Bool
-def isCompoundAssign (kind : TSAny) : Bool := isCompoundAssign_impl kind
-
-opaque compoundOp_impl (kind : TSAny) : BinOp
-def compoundOp (kind : TSAny) : BinOp := compoundOp_impl kind
-
-opaque tsBinOp_impl (kind : TSAny) : String
-def tsBinOp (kind : TSAny) : String := tsBinOp_impl kind
-
-def cap (s : String) : String :=
-  if s.isEmpty then s
-  else (s.get 0).toUpper.toString ++ s.drop 1
-
-def fileToModuleName (filePath : String) : String :=
-  let base := ((filePath.splitOn "/").getLast?.getD filePath).replace ".ts" ""
-  let parts := (base.splitOn "-").map cap
-  "TSLean.Generated." ++ String.intercalate "" parts
-
-opaque leadingComment_impl (node : TSAny) (sf : TSAny) : Option String
-def leadingComment (node : TSAny) (sf : TSAny) : Option String := leadingComment_impl node sf
-
-opaque jsdocComment_impl (node : TSAny) (sf : TSAny) : Option String
-def jsdocComment (node : TSAny) (sf : TSAny) : Option String := jsdocComment_impl node sf
-
-opaque hasIndexSignature_impl (node : TSAny) (checker : TSAny) : Bool
-def hasIndexSignature (node : TSAny) (checker : TSAny) : Bool := hasIndexSignature_impl node checker
-
-end TSLean.Generated.SelfHost.ParserIndex
+end TSLean.Generated.SelfHost.Parser_index

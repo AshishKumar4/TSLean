@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# Self-hosting pipeline: transpile → post-process → compile
+# Self-hosting pipeline: V2 codegen → selfhost-adapter → compile
 # Usage: bash scripts/self-host.sh
 set -euo pipefail
 
 PROJ="$(cd "$(dirname "$0")/.." && pwd)"
 LEAN_SH="$PROJ/lean/TSLean/Generated/SelfHost"
 TMP="/tmp/selfhost_pipeline"
-PP="$PROJ/scripts/selfhost-postprocess.ts"
+ADAPTER="$PROJ/scripts/selfhost-adapter.ts"
+FIX_IR="$PROJ/scripts/fix-ir-types.ts"
 
 mkdir -p "$TMP"
 
-echo "═══ TSLean Self-Hosting Pipeline ═══"
+echo "═══ TSLean Self-Hosting Pipeline (V2) ═══"
 
 # Sources in dependency order
 declare -a NAMES=(ir_types effects_index stdlib_index typemap_index rewrite_index
@@ -28,10 +29,8 @@ SRC[parser_index]=src/parser/index.ts
 SRC[project_index]=src/project/index.ts
 SRC[src_cli]=src/cli.ts
 
-FIX_IR="$PROJ/scripts/fix-ir-types.ts"
-
 echo ""
-echo "Step 1: Transpile + post-process"
+echo "Step 1: Transpile (V2 codegen) + adapt"
 for name in "${NAMES[@]}"; do
   src="${SRC[$name]}"
   raw="$TMP/${name}_raw.lean"
@@ -39,12 +38,11 @@ for name in "${NAMES[@]}"; do
   cd "$PROJ"
   if npx tsx src/cli.ts "$src" -o "$raw" 2>/dev/null; then
     if [ "$name" = "ir_types" ]; then
-      # ir_types uses dedicated fix script (avoids regex bugs in general postprocessor)
       npx tsx "$FIX_IR" "$raw" "$out" 2>&1 | head -1
-    elif npx tsx "$PP" "$raw" "$out" 2>&1 | head -1; then
+    elif npx tsx "$ADAPTER" "$raw" "$out" "$name" 2>&1 | head -1; then
       :
     else
-      echo "  ! $name: post-process failed, using raw"
+      echo "  ! $name: adapter failed, using raw"
       cp "$raw" "$out"
     fi
   else

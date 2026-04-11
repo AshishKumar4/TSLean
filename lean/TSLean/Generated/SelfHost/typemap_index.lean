@@ -9,92 +9,31 @@ import TSLean.Stdlib.HashMap
 
 open TSLean TSLean.Generated.Types TSLean.Stdlib.HashMap
 
-namespace TSLean.Generated.SelfHost.TypemapIndex
+namespace TSLean.Generated.SelfHost.Typemap_index
 
 def MAX_TYPE_DEPTH : Float := 20
 def FALLBACK_TYPE_VAR : String := "α"
-def TS_ANON_TYPE : String := "__type"
-def DISCRIMINANT_FIELDS : Array String := #["kind", "type", "tag", "ok", "hasValue", "_type"]
-
--- TS compiler type mapping uses opaque external APIs
 opaque mapType_impl (t : TSAny) (checker : TSAny) (depth : Float) : IRType
 partial def mapType (t : TSAny) (checker : TSAny) (depth : Float := 0) : IRType :=
-  if depth > MAX_TYPE_DEPTH then IRType.TypeRef "TSAny" #[]
-  else mapType_impl t checker depth
-
-opaque mapUnion_impl (t : TSAny) (checker : TSAny) (depth : Float) : IRType
-def mapUnion (t : TSAny) (checker : TSAny) (depth : Float) : IRType := mapUnion_impl t checker depth
-
-opaque mapIntersection_impl (t : TSAny) (checker : TSAny) (depth : Float) : IRType
-def mapIntersection (t : TSAny) (checker : TSAny) (depth : Float) : IRType := mapIntersection_impl t checker depth
-
-opaque mapObject_impl (t : TSAny) (checker : TSAny) (depth : Float) : IRType
-def mapObject (t : TSAny) (checker : TSAny) (depth : Float) : IRType := mapObject_impl t checker depth
-
-opaque mapTypeRef_impl (t : TSAny) (checker : TSAny) (depth : Float) : IRType
-def mapTypeRef (t : TSAny) (checker : TSAny) (depth : Float) : IRType := mapTypeRef_impl t checker depth
-
+  if depth > MAX_TYPE_DEPTH then IRType.TypeRef "TSAny" #[] else mapType_impl t checker depth
 mutual
 partial def typeStr (t : IRType) : String :=
   match t with
-  | .Nat => "Nat" | .Int => "Int" | .Float => "Float"
-  | .String => "String" | .Bool => "Bool" | .Unit => "Unit" | .Never => "Empty"
+  | .Nat => "Nat" | .Int => "Int" | .Float => "Float" | .String => "String"
+  | .Bool => "Bool" | .Unit => "Unit" | .Never => "Empty"
   | .Option inner => "Option " ++ irTypeToLean inner true
   | .Array elem => "Array " ++ irTypeToLean elem true
-  | .Tuple elems => if elems.size == 0 then "Unit"
-    else "(" ++ String.intercalate " × " (elems.toList.map typeStr) ++ ")"
-  | .Function params ret _ =>
-    let paramStr := if params.size == 0 then "Unit"
-      else String.intercalate " → " (params.toList.map (fun p => irTypeToLean p true))
-    paramStr ++ " → " ++ typeStr ret
+  | .Tuple elems => "(" ++ String.intercalate " × " (elems.toList.map typeStr) ++ ")"
+  | .Function params ret _ => (if params.size == 0 then "Unit" else String.intercalate " → " (params.toList.map (fun p => irTypeToLean p true))) ++ " → " ++ typeStr ret
   | .Map key value => "AssocMap " ++ irTypeToLean key true ++ " " ++ irTypeToLean value true
   | .Set elem => "Array " ++ irTypeToLean elem true
-  | .Promise inner =>
-    match inner with
-    | .Promise inner2 => "IO " ++ irTypeToLean inner2 true
-    | _ => "IO " ++ irTypeToLean inner true
+  | .Promise inner => "IO " ++ irTypeToLean inner true
   | .Result ok err => "Except " ++ irTypeToLean err true ++ " " ++ irTypeToLean ok true
-  | .TypeRef name args =>
-    if args.size == 0 then name
-    else name ++ " " ++ String.intercalate " " (args.toList.map (fun a => irTypeToLean a true))
-  | .TypeVar name => name
-  | .Structure name _ => name | .Inductive name _ _ => name
-  | .Dependent param paramType body => "(" ++ param ++ " : " ++ typeStr paramType ++ ") → " ++ typeStr body
-  | .Subtype base refinement => "{x : " ++ typeStr base ++ " // " ++ refinement ++ "}"
-  | .Universe level => if level == 0 then "Prop" else "Type " ++ toString level
-
+  | .TypeRef name args => if args.size == 0 then name else "(" ++ name ++ " " ++ String.intercalate " " (args.toList.map (fun a => irTypeToLean a true)) ++ ")"
+  | .TypeVar name => name | _ => "TSAny"
 partial def irTypeToLean (t : IRType) (parens : Bool := false) : String :=
   let s := typeStr t
-  if parens && s.includes " " then "(" ++ s ++ ")" else s
+  if parens && (s.any (· == ' ') || s.any (· == '→')) then "(" ++ s ++ ")" else s
 end
 
-structure StructField where
-  name : String
-  type : IRType
-  optional : Bool
-  mutable_ : Bool
-  deriving Repr, BEq, Inhabited
-
-opaque extractStructFields_impl (node : TSAny) (checker : TSAny) : Array StructField
-def extractStructFields (node : TSAny) (checker : TSAny) : Array StructField :=
-  extractStructFields_impl node checker
-
-structure DiscriminantInfo where
-  field : String
-  variants : Array String
-  deriving Repr, BEq, Inhabited
-
-opaque detectDiscriminatedUnion_impl (t : TSAny) (checker : TSAny) : Option DiscriminantInfo
-def detectDiscriminatedUnion (t : TSAny) (checker : TSAny) : Option DiscriminantInfo :=
-  detectDiscriminatedUnion_impl t checker
-
-opaque tryField_impl (types : Array TSAny) (field : String) (checker : TSAny) : Option DiscriminantInfo
-def tryField (types : Array TSAny) (field : String) (checker : TSAny) : Option DiscriminantInfo :=
-  tryField_impl types field checker
-
-opaque extractTypeParams_impl (node : TSAny) : Array String
-def extractTypeParams (node : TSAny) : Array String := extractTypeParams_impl node
-
-def getAliasName (_t : TSAny) : Option String := none
-
-end TSLean.Generated.SelfHost.TypemapIndex
+end TSLean.Generated.SelfHost.Typemap_index

@@ -10,3 +10,4 @@ lean/lake-packages/
 lean/build/
 .DS_Store
 /tmp/
+bun.lock
