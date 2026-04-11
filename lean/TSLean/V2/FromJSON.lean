@@ -625,10 +625,35 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
         -- All safe (shouldn't happen since isSafe was false, but handle gracefully)
         "s!\"" ++ safePrefix ++ "\""
       else
-        -- Build: s!"prefix" ++ unsafePart1 ++ " ++ \"lit\"" ++ ...
-        -- Only use s!"..." when the prefix contains interpolations (safe spans > 0)
-        let prefixStr := if safePrefix == "" then #[]
-          else if safePrefixSpanCount > 0 then #["s!\"" ++ safePrefix ++ "\""]
+         -- Build: s!"prefix" ++ unsafePart1 ++ "lit" ++ ...
+        -- Check if safe prefix has literal text (needed for s!"...")
+        let safePrefixHasLiteral := headText != "" || Id.run do
+          let mut i := 0
+          for span in spans do
+            if i >= safePrefixSpanCount then break
+            let lit := (fieldNode span "literal").map nodeText |>.getD ""
+            if lit != "" then return true
+            i := i + 1
+          return false
+        -- Build prefix pieces: s!"..." if has literals, individual exprs if not
+        let prefixStr : Array String := if safePrefix == "" then #[]
+          else if safePrefixSpanCount > 0 && safePrefixHasLiteral then
+            #["s!\"" ++ safePrefix ++ "\""]
+          else if safePrefixSpanCount > 0 && !safePrefixHasLiteral then
+            -- No literal text → produce individual expressions joined with ++
+            -- (matches TS pipeline which wouldn't use s!"..." without literals)
+            Id.run do
+              let mut parts : Array String := #[]
+              if headText != "" then parts := parts.push ("\"" ++ headText ++ "\"")
+              let mut i := 0
+              for span in spans do
+                if i >= safePrefixSpanCount then break
+                let expr := (fieldNode span "expression").map re |>.getD ""
+                parts := parts.push expr
+                let lit := (fieldNode span "literal").map nodeText |>.getD ""
+                if lit != "" then parts := parts.push ("\"" ++ lit ++ "\"")
+                i := i + 1
+              return parts
           else #["\"" ++ safePrefix ++ "\""]
         -- Build tail pieces with separate entries for expr and literal
         let tailPieces := unsafeSpans.foldl (fun acc span =>
