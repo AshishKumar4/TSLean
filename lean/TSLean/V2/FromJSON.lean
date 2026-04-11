@@ -493,7 +493,10 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
   else if kind == "CallExpression" then
     let fnJ := fieldNode j "expression"
     let fn := fnJ.map re |>.getD "default"
-    let args := (fieldArr j "arguments").map fun a => parenIfCompoundExpr a (re a)
+    let args := (fieldArr j "arguments").map fun a =>
+      if nodeKind a == "SpreadElement" then
+        (fieldNode a "expression").map re |>.getD "default"
+      else parenIfCompoundExpr a (re a)
     let rewritten := rewriteMethodCall fnJ fn args
     match rewritten with
     | some r => r
@@ -502,9 +505,14 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
   else if kind == "ReturnStatement" then
     (fieldNode j "expression").map re |>.getD "()"
   else if kind == "PrefixUnaryExpression" then
-    let operand := (fieldNode j "operand").map re |>.getD "default"
+    let operandJ := fieldNode j "operand"
+    let operand := operandJ.map re |>.getD "default"
     let opCode := fieldNat j "operator"
-    (if opCode == 53 then "!" else if opCode == 40 then "-" else "!") ++ operand
+    let op := if opCode == 53 then "!" else if opCode == 40 then "-" else "!"
+    -- Parenthesize compound operands (matches TS lowerExprP/needsParens)
+    let operand := match operandJ with
+      | some oj => parenIfCompoundExpr oj operand | none => operand
+    op ++ operand
   else if kind == "ConditionalExpression" then
     let c := (fieldNode j "condition").map re |>.getD "default"
     let t := (fieldNode j "whenTrue").map re |>.getD "default"
@@ -552,14 +560,17 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     match tryStructToCtor reg props re with
     | some ctorApp => ctorApp
     | none =>
-       let fields := props.filterMap fun p =>
+      -- Detect SpreadAssignment for struct update syntax: { ...base, field: val }
+      let spreadBase := props.findSome? fun p =>
+        if nodeKind p == "SpreadAssignment" then
+          (fieldNode p "expression").map re
+        else none
+      let fields := props.filterMap fun p =>
         let pk := nodeKind p
         if pk == "PropertyAssignment" then
           let nameJ := fieldNode p "name"
           let rawName := nameJ.map nodeText |>.getD "_"
           let nameKind := nameJ.map nodeKind |>.getD ""
-          -- For StringLiteral keys, use sourceText (preserves quotes from TS source)
-          -- then sanitize: keep [a-zA-Z0-9_.!?'], replace everything else with _
           let sanitizeChars := fun (s : String) => s.map fun c =>
             if c.isAlphanum || c == '_' || c == '.' || c == '!' || c == '?' || c == '\'' then c
             else '_'
@@ -575,7 +586,12 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
           let n := (fieldNode p "name").map nodeText |>.getD "_"
           some (n ++ " := " ++ n)
         else none
-      if fields.size == 0 then "{}" else "{ " ++ String.intercalate ", " fields.toList ++ " }"
+      match spreadBase with
+      | some base =>
+        if fields.size == 0 then base
+        else "{ " ++ base ++ " with " ++ String.intercalate ", " fields.toList ++ " }"
+      | none =>
+        if fields.size == 0 then "{}" else "{ " ++ String.intercalate ", " fields.toList ++ " }"
   else if kind == "ArrayLiteralExpression" then
     let elems := (fieldArr j "elements").map re
     "#[" ++ String.intercalate ", " elems.toList ++ "]"
