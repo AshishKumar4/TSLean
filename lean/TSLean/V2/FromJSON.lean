@@ -133,8 +133,8 @@ private partial def mapTypeNode (j : Json) : LeanTy :=
     else if name == "Error" || name.endsWith "Error" then .TyName "String"
     -- Record<K,V> → String (matches TS pipeline which maps Record types to String)
     else if name == "Record" then .TyName "String"
-    -- Extract<T, U> → resolve via resolvedType flags (TS maps Extract to TSAny via flags)
-    else if name == "Extract" then mapResolvedType j
+    -- Extract<T, U> → String (TS pipeline resolves Extract to the underlying tagged-record type)
+    else if name == "Extract" then .TyName "String"
     -- Set<T> → Array T (matches TS pipeline which maps Set to Array)
     else if name == "Set" then .TyApp (.TyName "Array") (typeArgs.map mapTypeNode)
     -- Map<K,V> → AssocMap K V (matches TS pipeline)
@@ -1976,7 +1976,21 @@ private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array Lean
       -- Exclude DO framework fields
       if isDO && (DO_EXCLUDED_FIELDS.contains fn) then none
       else
-        let fty := match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
+        let fty := match fieldNode m "type" with
+          | some tn => mapTypeNode tn
+          | none =>
+            -- Infer type from initializer: new Map<K,V>() → AssocMap K V, new Set<T>() → Array T
+            let fromInit : Option LeanTy := match fieldNode m "initializer" with
+              | some init =>
+                if nodeKind init == "NewExpression" then
+                  let ctorName := (fieldNode init "expression").map nodeText |>.getD ""
+                  let targs := (fieldArr init "typeArguments").map mapTypeNode
+                  if ctorName == "Map" && targs.size == 2 then some (LeanTy.TyApp (.TyName "AssocMap") targs)
+                  else if ctorName == "Set" && targs.size == 1 then some (LeanTy.TyApp (.TyName "Array") targs)
+                  else none
+                else none
+              | none => none
+            fromInit.getD (mapResolvedType m)
         -- Also exclude by type name
         let excludeByType := isDO && match fty with
           | .TyName n => DO_EXCLUDED_TYPES.contains n
