@@ -2117,6 +2117,36 @@ private partial def hasFuncVarReassign (stmts : Array Json) : Bool :=
       bodyHasVarReassign bodyStmts
     else false
 
+/-- Walk JSON AST for actual WebAPI usage: TypeReference nodes with
+    Request/Response/URL/Headers/WebSocket, or fetch() calls/methods.
+    Uses AST node kinds to avoid false positives from string literals
+    like `['Request', 'Response', 'URL']` in lower.ts. -/
+private partial def hasWebAPIUsage (stmts : Array Json) : Bool :=
+  let webAPITypes := #["Request", "Response", "URL", "Headers", "WebSocket"]
+  let getChildren (j : Json) : Array Json :=
+    fieldArr j "statements" ++ fieldArr j "members" ++
+    fieldArr j "parameters" ++ fieldArr j "declarations" ++
+    fieldArr j "typeArguments" ++ fieldArr j "arguments" ++
+    fieldArr j "types" ++ fieldArr j "elements" ++ fieldArr j "clauses" ++
+    fieldArr j "heritageClauses" ++
+    (#["type", "body", "expression", "declarationList",
+       "initializer", "thenStatement", "elseStatement", "returnType",
+       "typeName", "constraint", "default"].filterMap (fieldNode j ·))
+  let rec go (j : Json) (fuel : Nat) : Bool :=
+    if fuel == 0 then false else
+    let kind := nodeKind j
+    if kind == "TypeReference" then
+      let tn := (fieldNode j "typeName").map nodeText |>.getD ""
+      webAPITypes.contains tn
+    else if kind == "CallExpression" then
+      let callee := (fieldNode j "expression").map nodeText |>.getD ""
+      callee == "fetch" || (getChildren j).any (go · (fuel - 1))
+    else if kind == "MethodDeclaration" then
+      let mname := (fieldNode j "name").map nodeText |>.getD ""
+      mname == "fetch" || (getChildren j).any (go · (fuel - 1))
+    else (getChildren j).any (go · (fuel - 1))
+  stmts.any (go · 25)
+
 /-- Scan JSON statements for import needs. -/
 private def scanImports (stmts : Array Json) : Array String :=
   let needs := #["TSLean.Runtime.Basic", "TSLean.Runtime.Coercions"]
@@ -2126,15 +2156,8 @@ private def scanImports (stmts : Array Json) : Array String :=
     textContains text "Promise" || hasClassMutation stmts || hasAsyncFunc stmts ||
     hasFuncVarReassign stmts
   let needs := if needsMonad then needs.push "TSLean.Runtime.Monad" else needs
-  -- WebAPI — match actual type refs or fetch calls (handle both compact and spaced JSON)
-  let needsWebAPI :=
-    #["Request", "Response", "URL", "Headers", "WebSocket"].any fun t =>
-      textContains text ("\"text\":\"" ++ t ++ "\"") ||
-      textContains text ("\"text\": \"" ++ t ++ "\"")
-  let needsWebAPI := needsWebAPI ||
-    ((textContains text "\"text\":\"fetch\"" || textContains text "\"text\": \"fetch\"") &&
-    (textContains text "CallExpression" || textContains text "MethodDeclaration"))
-  let needs := if needsWebAPI then needs.push "TSLean.Runtime.WebAPI" else needs
+  -- WebAPI — walk AST for actual type refs and fetch calls (not text search)
+  let needs := if hasWebAPIUsage stmts then needs.push "TSLean.Runtime.WebAPI" else needs
   -- HashMap
   let needs := if textContains text "Map" || textContains text "Set" then
     needs.push "TSLean.Stdlib.HashMap" else needs
