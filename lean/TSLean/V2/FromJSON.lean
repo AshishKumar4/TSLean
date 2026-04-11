@@ -396,6 +396,9 @@ private def needsDoWrap (e : LeanExpr) : Bool :=
     | _ => false
   | _ => false
 
+private def textContains (text : String) (sub : String) : Bool :=
+  (text.splitOn sub).length > 1
+
 -- ─── Declaration lowering ───────────────────────────────────────────────────────
 
 private def extractTypeParams (j : Json) : Array LeanTyParam :=
@@ -454,14 +457,40 @@ private partial def lowerInterfaceDecl (j : Json) : Array LeanDecl :=
 
 private partial def lowerClassDecl (j : Json) : Array LeanDecl :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
+  let tyParams := extractTypeParams j
   let members := fieldArr j "members"
+  let stateName := name ++ "State"
+  -- Extract property fields
   let fields := members.filterMap fun m =>
     if isPropertyDeclaration m || isPropertySignature m then
       let fn := (fieldNode m "name").map nodeText |>.getD "_"
       let fty := match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
       some (LeanField.mk fn fty none)
     else none
-  #[.Structure name #[] fields none DEFAULT_DERIVING none]
+  -- Extract methods as standalone defs
+  let methods := members.filterMap fun m =>
+    if isMethodDeclaration m then
+      let mname := (fieldNode m "name").map nodeText |>.getD "_"
+      let params := (fieldArr m "parameters").map lowerParam
+      let retTy := match fieldNode m "type" with | some tn => mapTypeNode tn | none => mapResolvedType m
+      let body := match fieldNode m "body" with | some b => lowerBody b | none => .Default (some retTy)
+      -- Detect if method mutates state (has this.x = expr patterns)
+      let bodyStr := match body with | .Lit s => s | _ => ""
+      let isMutating := textContains bodyStr "this." || textContains bodyStr "self."
+      let selfParam : LeanParam := { name := "self", ty := .TyName stateName }
+      let allParams := #[selfParam] ++ params
+      -- Wrap return type in StateT for mutating methods
+      let retTy := if isMutating then
+        .TyApp (.TyName "StateT") #[.TyName stateName, .TyName "IO", retTy]
+      else retTy
+      let body := if isMutating then .Do body else body
+      some (.Def false (name ++ "." ++ mname) tyParams allParams retTy body none none none)
+    else none
+  -- Comment + state struct + methods
+  let result := #[LeanDecl.Comment ("State for " ++ name)]
+  let result := result.push (.Structure stateName tyParams fields none DEFAULT_DERIVING none)
+  let result := result ++ methods
+  result
 
 private def hasDiscriminantField (j : Json) : Bool :=
   let members := fieldArr j "members"
@@ -555,9 +584,6 @@ private partial def lowerStatement (j : Json) : Array LeanDecl :=
   commentDecls ++ decls
 
 -- ─── Module lowering ────────────────────────────────────────────────────────────
-
-private def textContains (text : String) (sub : String) : Bool :=
-  (text.splitOn sub).length > 1
 
 /-- Scan JSON statements for import needs. -/
 private def scanImports (stmts : Array Json) : Array String :=
