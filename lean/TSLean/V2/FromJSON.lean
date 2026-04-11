@@ -529,7 +529,13 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     let params := (fieldArr j "parameters").map fun p => (fieldNode p "name").map nodeText |>.getD "_"
     let bodyJ := fieldNode j "body"
     let body := match bodyJ with
-      | some b => if isBlock b then "(block)" else re b
+      | some b =>
+        if isBlock b then
+          let stmts := (fieldArr b "statements").filter fun s =>
+            nodeKind s != "ContinueStatement" && nodeKind s != "BreakStatement"
+          let rendered := stmts.map (renderExprCtx reg ctx)
+          String.intercalate "; " rendered.toList
+        else re b
       | none => "default"
     "fun " ++ String.intercalate " " params.toList ++ " => " ++ body
   else if kind == "ElementAccessExpression" then
