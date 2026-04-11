@@ -756,7 +756,7 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     let operandJ := fieldNode j "operand"
     let operand := operandJ.map re |>.getD "default"
     let opCode := fieldNat j "operator"
-    let op := if opCode == 53 then "!" else if opCode == 40 then "-" else "!"
+    let op := if opCode == 54 then "!" else if opCode == 41 then "-" else "!"
     -- Parenthesize compound operands (matches TS lowerExprP/needsParens)
     let operand := match operandJ with
       | some oj => parenIfCompoundExpr oj operand | none => operand
