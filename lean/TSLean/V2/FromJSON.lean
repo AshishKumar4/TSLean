@@ -625,6 +625,17 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     if hasQuestionDot then
       obj ++ ".bind (fun _oc => some _oc." ++ field ++ ")"
     else
+    -- .tag on inductive/union type aliases → (sorry : String)
+    -- Matches TS IR lowerer's isInductiveType check for Effect, IRType, BinOp, UnOp
+    let isInductiveTagAccess := field == "tag" && match fieldNode j "expression" with
+      | some objJ =>
+        let alias := resolvedType objJ |>.bind (fun rt => getField rt "aliasName" |>.bind getStr)
+        match alias with
+        | some n => n == "IRType" || n == "Effect" || n == "BinOp" || n == "UnOp"
+        | none => false
+      | none => false
+    if isInductiveTagAccess then "(sorry : String)"
+    else
     -- Discriminated union field substitution: s.radius → radius
     match substFieldAccess ctx obj field with
     | some bound => bound
@@ -1439,12 +1450,21 @@ private partial def lowerMethodStmtsM (reg : UnionRegistry) (paramTypes : Array 
           let hasExplicitType := (fieldNode d "type").isSome
           let isNewExpr := match initJ with
             | some init => nodeKind init == "NewExpression" | none => false
-          let ty := if hasExplicitType then (fieldNode d "type").map mapTypeNode
+           let ty := if hasExplicitType then (fieldNode d "type").map mapTypeNode
             else if isNewExpr then
               initJ.bind fun init =>
-                (fieldNode init "expression").map fun c => .TyName (nodeText c)
+                let ctorName := (fieldNode init "expression").map nodeText |>.getD ""
+                let typeArgs := fieldArr init "typeArguments"
+                if ctorName == "Set" then
+                  let elem := if typeArgs.size > 0 then mapTypeNode (typeArgs.getD 0 default) else .TyName "String"
+                  some (.TyApp (.TyName "Array") #[elem])
+                else if ctorName == "Map" then
+                  let k := if typeArgs.size > 0 then mapTypeNode (typeArgs.getD 0 default) else .TyName "String"
+                  let v := if typeArgs.size > 1 then mapTypeNode (typeArgs.getD 1 default) else .TyName "String"
+                  some (.TyApp (.TyName "AssocMap") #[k, v])
+                else (fieldNode init "expression").map fun c => .TyName (nodeText c)
             else none
-          .Let dname ty (.Lit val) cont false
+           .Let dname ty (.Lit val) cont false
       else lowerMethodStmtsM reg paramTypes rest.toArray isMutating
     else
       let first := lowerMethodStmtM reg paramTypes s isMutating false
@@ -1514,13 +1534,27 @@ private partial def lowerMethodStmtM (reg : UnionRegistry) (paramTypes : Array (
       let hasExplicitType := (fieldNode d "type").isSome
       let isNewExpr := match initJ with
         | some init => nodeKind init == "NewExpression" | none => false
-      let ty := if hasExplicitType then (fieldNode d "type").map mapTypeNode
-        else if isNewExpr then
-          initJ.bind fun init =>
-            (fieldNode init "expression").map fun c => .TyName (nodeText c)
+           let ty := if hasExplicitType then (fieldNode d "type").map mapTypeNode
+            else if isNewExpr then
+              initJ.bind fun init =>
+                let ctorName := (fieldNode init "expression").map nodeText |>.getD ""
+                let typeArgs := fieldArr init "typeArguments"
+                -- Map TS constructor names to Lean types
+                if ctorName == "Set" then
+                  let elem := if typeArgs.size > 0 then mapTypeNode (typeArgs.getD 0 default) else .TyName "String"
+                  some (.TyApp (.TyName "Array") #[elem])
+                else if ctorName == "Map" then
+                  let k := if typeArgs.size > 0 then mapTypeNode (typeArgs.getD 0 default) else .TyName "String"
+                  let v := if typeArgs.size > 1 then mapTypeNode (typeArgs.getD 1 default) else .TyName "String"
+                  some (.TyApp (.TyName "AssocMap") #[k, v])
+                else (fieldNode init "expression").map fun c => .TyName (nodeText c)
         else none
       .Let dname ty (.Lit val) (.Lit "()") false
     else .Lit "()"
+  else if kind == "SwitchStatement" then
+    lowerSwitchR reg paramTypes j
+  else if kind == "ForOfStatement" || kind == "ForInStatement" then
+    lowerBlockStmtR reg paramTypes j
   else .Lit (renderExprCtx reg none j)
 
 private partial def lowerThisAssignM (reg : UnionRegistry) (j : Json) : Option (String × LeanExpr) :=
