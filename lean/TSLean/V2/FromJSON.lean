@@ -373,7 +373,7 @@ private def mapFieldName (field : String) : String := match field with
   | other => escapeLeanKeyword other
 
 /-- Rewrite method calls: Math.sqrt(x) → Float.sqrt x, etc. -/
-private def rewriteMethodCall (_fnJ : Option Json) (fn : String) (args : Array String) : Option String :=
+private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array String) : Option String :=
   -- Math.X(args) → matching TS stdlib table
   if fn.startsWith "Math." then
     let method := (fn.drop 5).toString
@@ -418,10 +418,34 @@ private def rewriteMethodCall (_fnJ : Option Json) (fn : String) (args : Array S
   else if fn.endsWith ".has" && args.size == 1 then
     let obj := fn.dropEnd 4 |>.toString
     some ("AssocSet.contains " ++ obj ++ " " ++ (args.getD 0 ""))
+  -- .add(x) on a Set → AssocSet.insert SET x  (TS Set.add, not Array — arrays use .push)
+  else if fn.endsWith ".add" && args.size == 1 then
+    let obj := fn.dropEnd 4 |>.toString
+    some ("AssocSet.insert " ++ obj ++ " " ++ (args.getD 0 ""))
+  -- .set(k, v) on a Map → AssocMap.insert MAP k v
+  else if fn.endsWith ".set" && args.size == 2 then
+    let obj := fn.dropEnd 4 |>.toString
+    some ("AssocMap.insert " ++ obj ++ " " ++ (args.getD 0 "") ++ " " ++ (args.getD 1 ""))
+  -- .get(k) on a Map → AssocMap.find? MAP k
+  else if fn.endsWith ".get" && args.size == 1 then
+    let obj := fn.dropEnd 4 |>.toString
+    some ("AssocMap.find? " ++ obj ++ " " ++ (args.getD 0 ""))
+  -- .keys() on a Map → AssocMap.keys MAP
+  else if fn.endsWith ".keys" && args.size == 0 then
+    let obj := fn.dropEnd 5 |>.toString
+    some ("AssocMap.keys " ++ obj)
   -- .splitOn(sep) — after mapFieldName has renamed .split → .splitOn
   else if fn.endsWith ".splitOn" && args.size == 1 then
     let obj := fn.dropEnd 8 |>.toString
     some (obj ++ ".splitOn " ++ (args.getD 0 ""))
+  -- .includes(x) → .contains for array literals (matches TS pipeline)
+  else if fn.endsWith ".includes" && args.size == 1 then
+    let objNode := fnJ.bind fun fj => fieldNode fj "expression"
+    let objKind := objNode.map nodeKind |>.getD ""
+    if objKind == "ArrayLiteralExpression" then
+      let obj := fn.dropEnd 9 |>.toString
+      some (obj ++ ".contains " ++ (args.getD 0 ""))
+    else none
   else none
 
 /-- Parenthesize a binary expression operand if it's compound.
@@ -605,12 +629,16 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
           "let " ++ left ++ " := s!\"{" ++ left ++ "}" ++ parts ++ "\""
         else "let " ++ left ++ " := " ++ left ++ " ++ " ++ right
       else "let " ++ left ++ " := " ++ left ++ " ++ " ++ right
+    -- `in` operator: "key" in obj → AssocMap.contains obj "key"
+    else if opKind == "InKeyword" then
+      "AssocMap.contains " ++ right ++ " " ++ left
     else
       -- Type-aware operator: PlusToken on strings → ++ (concat), otherwise +
       let op := if opKind == "PlusToken" then
-        match leftJ with
-        | some lj => if hasStringType lj then "++" else "+"
-        | none => mapBinOpSym opKind
+        let isStringConcat := isStringTyped j ||
+          (match leftJ with | some lj => hasStringType lj | none => false) ||
+          (match rightJ with | some rj => hasStringType rj | none => false)
+        if isStringConcat then "++" else "+"
       else mapBinOpSym opKind
       let left := match leftJ with | some lj => parenBinOperand lj left opKind | none => left
       let right := match rightJ with
@@ -905,6 +933,12 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
           let stmts := (fieldArr b "statements").filter fun s =>
             nodeKind s != "ContinueStatement" && nodeKind s != "BreakStatement"
           renderBlockStmtsInline re stmts
+        -- Strip ParenthesizedExpression around ObjectLiteral in arrow body
+        -- (TS uses parens to avoid {} being parsed as block; IR strips them)
+        else if nodeKind b == "ParenthesizedExpression" then
+          match fieldNode b "expression" with
+          | some inner => if nodeKind inner == "ObjectLiteralExpression" then re inner else re b
+          | none => re b
         else re b
       | none => "default"
     "fun " ++ String.intercalate " " params.toList ++ " => " ++ body
@@ -1412,7 +1446,14 @@ private partial def lowerMethodBodyM (reg : UnionRegistry) (paramTypes : Array (
     let inner := if isMutating && isUnitRet && !exprEndsWithReturn inner then
       .Seq #[inner, .Pure (.Lit "()")]
     else inner
-    if isMutating then .Do inner else inner
+    -- Also wrap in Do for pure let-chains (matches TS pureBodyNeedsDo)
+    let pureNeedsDo := match inner with
+      | .Let _ _ _ body _ => match body with
+        | .Let .. | .If .. | .Match .. => true
+        | _ => false
+      | .Seq stmts => stmts.size > 1 && stmts.any (fun s => match s with | .Let .. => true | _ => false)
+      | _ => false
+    if isMutating || pureNeedsDo then .Do inner else inner
 
 private partial def lowerMethodStmtsM (reg : UnionRegistry) (paramTypes : Array (String × String))
     (stmts : Array Json) (isMutating : Bool) : LeanExpr :=
@@ -2120,6 +2161,36 @@ private partial def hasFuncVarReassign (stmts : Array Json) : Bool :=
       bodyHasVarReassign bodyStmts
     else false
 
+/-- Walk JSON AST for actual WebAPI usage: TypeReference nodes with
+    Request/Response/URL/Headers/WebSocket, or fetch() calls/methods.
+    Uses AST node kinds to avoid false positives from string literals
+    like `['Request', 'Response', 'URL']` in lower.ts. -/
+private partial def hasWebAPIUsage (stmts : Array Json) : Bool :=
+  let webAPITypes := #["Request", "Response", "URL", "Headers", "WebSocket"]
+  let getChildren (j : Json) : Array Json :=
+    fieldArr j "statements" ++ fieldArr j "members" ++
+    fieldArr j "parameters" ++ fieldArr j "declarations" ++
+    fieldArr j "typeArguments" ++ fieldArr j "arguments" ++
+    fieldArr j "types" ++ fieldArr j "elements" ++ fieldArr j "clauses" ++
+    fieldArr j "heritageClauses" ++
+    (#["type", "body", "expression", "declarationList",
+       "initializer", "thenStatement", "elseStatement", "returnType",
+       "typeName", "constraint", "default"].filterMap (fieldNode j ·))
+  let rec go (j : Json) (fuel : Nat) : Bool :=
+    if fuel == 0 then false else
+    let kind := nodeKind j
+    if kind == "TypeReference" then
+      let tn := (fieldNode j "typeName").map nodeText |>.getD ""
+      webAPITypes.contains tn
+    else if kind == "CallExpression" then
+      let callee := (fieldNode j "expression").map nodeText |>.getD ""
+      callee == "fetch" || (getChildren j).any (go · (fuel - 1))
+    else if kind == "MethodDeclaration" then
+      let mname := (fieldNode j "name").map nodeText |>.getD ""
+      mname == "fetch" || (getChildren j).any (go · (fuel - 1))
+    else (getChildren j).any (go · (fuel - 1))
+  stmts.any (go · 25)
+
 /-- Scan JSON statements for import needs. -/
 private def scanImports (stmts : Array Json) : Array String :=
   let needs := #["TSLean.Runtime.Basic", "TSLean.Runtime.Coercions"]
@@ -2129,15 +2200,8 @@ private def scanImports (stmts : Array Json) : Array String :=
     textContains text "Promise" || hasClassMutation stmts || hasAsyncFunc stmts ||
     hasFuncVarReassign stmts
   let needs := if needsMonad then needs.push "TSLean.Runtime.Monad" else needs
-  -- WebAPI — match actual type refs or fetch calls (handle both compact and spaced JSON)
-  let needsWebAPI :=
-    #["Request", "Response", "URL", "Headers", "WebSocket"].any fun t =>
-      textContains text ("\"text\":\"" ++ t ++ "\"") ||
-      textContains text ("\"text\": \"" ++ t ++ "\"")
-  let needsWebAPI := needsWebAPI ||
-    ((textContains text "\"text\":\"fetch\"" || textContains text "\"text\": \"fetch\"") &&
-    (textContains text "CallExpression" || textContains text "MethodDeclaration"))
-  let needs := if needsWebAPI then needs.push "TSLean.Runtime.WebAPI" else needs
+  -- WebAPI — walk AST for actual type refs and fetch calls (not text search)
+  let needs := if hasWebAPIUsage stmts then needs.push "TSLean.Runtime.WebAPI" else needs
   -- HashMap
   let needs := if textContains text "Map" || textContains text "Set" then
     needs.push "TSLean.Stdlib.HashMap" else needs
