@@ -295,6 +295,10 @@ private def parenBinOperand (j : Json) (rendered : String) (_parentOp : String) 
   if kind == "BinaryExpression" || kind == "ConditionalExpression" ||
      kind == "AwaitExpression" ||
      (kind == "CallExpression" && (fieldArr j "arguments").size > 0) ||
+     -- Method chain: e.g. s.charAt(0).toUpper needs parens as binop operand
+     (kind == "CallExpression" && (fieldArr j "arguments").size == 0 &&
+       ((fieldNode j "expression").map nodeKind |>.getD "") == "PropertyAccessExpression" &&
+       (((fieldNode j "expression").bind (fieldNode · "expression")).map nodeKind |>.getD "") == "CallExpression") ||
      -- Float literals need parens in Lean (matches TS needsParens for LitFloat)
      (kind == "NumericLiteral" && (nodeText j).any (· == '.')) then
     "(" ++ rendered ++ ")"
@@ -390,6 +394,11 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
   else if kind == "PropertyAccessExpression" then
     let obj := (fieldNode j "expression").map re |>.getD "default"
     let field := (fieldNode j "name").map nodeText |>.getD ""
+    -- Optional chaining: obj?.field → obj.bind (fun _oc => some _oc.field)
+    let hasQuestionDot := (fieldNode j "questionDotToken").isSome
+    if hasQuestionDot then
+      obj ++ ".bind (fun _oc => some _oc." ++ field ++ ")"
+    else
     -- Discriminated union field substitution: s.radius → radius
     match substFieldAccess ctx obj field with
     | some bound => bound
@@ -1173,6 +1182,34 @@ private def paramTypeName (j : Json) : Option String :=
         if !aliasName.isEmpty then some aliasName else none
       else none
 
+/-- Check if statements contain variable reassignment (x = expr, not this.x = expr).
+    Used to detect State effect for non-async functions. -/
+private partial def bodyHasVarReassign (stmts : Array Json) : Bool :=
+  stmts.any fun s =>
+    let kind := nodeKind s
+    if kind == "ExpressionStatement" then
+      match fieldNode s "expression" with
+      | some e =>
+        if nodeKind e == "BinaryExpression" then
+          let opKind := (fieldNode e "operatorToken").map nodeKind |>.getD ""
+          let isAssign := opKind == "FirstAssignment" || opKind == "EqualsToken"
+          if isAssign then
+            match fieldNode e "left" with
+            | some l => nodeKind l == "Identifier"
+            | none => false
+          else false
+        else false
+      | none => false
+    else if kind == "IfStatement" then
+      let thenStmts := match fieldNode s "thenStatement" with
+        | some t => if nodeKind t == "Block" then fieldArr t "statements" else #[t]
+        | none => #[]
+      let elseStmts := match fieldNode s "elseStatement" with
+        | some e => if nodeKind e == "Block" then fieldArr e "statements" else #[e]
+        | none => #[]
+      bodyHasVarReassign thenStmts || bodyHasVarReassign elseStmts
+    else false
+
 private partial def lowerFuncDeclR (reg : UnionRegistry) (j : Json) : Array LeanDecl :=
   let name := (fieldNode j "name").map nodeText |>.getD "_"
   let tyParams := extractTypeParams j
@@ -1193,17 +1230,23 @@ private partial def lowerFuncDeclR (reg : UnionRegistry) (j : Json) : Array Lean
   let hasThrowInBody := textContains bodyText "ThrowStatement"
   let hasTryCatch := textContains bodyText "TryStatement"
   let hasVarReassign := textContains bodyText "FirstAssignment"
+  -- Variable reassignment detection (x = expr, not this.x = expr)
+  let hasBodyVarReassign := bodyHasVarReassign bodyStmts
   -- Combined effects: State + Except when there's try/catch + throw + mutable vars
   let retTy := if isAsync && hasThrowInBody && (hasTryCatch || hasVarReassign) then
     .TyApp (.TyName "StateT") #[.TyName "Unit",
       .TyApp (.TyName "ExceptT") #[.TyName "String", .TyName "IO"], retTy]
-  else if isAsync then .TyApp (.TyName "IO") #[retTy] else retTy
+  else if isAsync then .TyApp (.TyName "IO") #[retTy]
+  -- Non-async with variable reassignment → StateT Unit IO
+  else if hasBodyVarReassign then
+    .TyApp (.TyName "StateT") #[.TyName "Unit", .TyName "IO", retTy]
+  else retTy
   let body := match fieldNode j "body" with
     | some b => lowerBodyR reg paramTypes b
     | none => .Default (some retTy)
-  -- In async functions, wrap tail expressions with `pure`
+  -- In async functions or state functions, wrap tail expressions with `pure`
   let body := if isAsync then wrapReturnsPure body else body
-  let body := if needsDoWrap body || isAsync then .Do body else body
+  let body := if needsDoWrap body || isAsync || hasBodyVarReassign then .Do body else body
   let isPartial := exprContainsName body name
   let docComment := extractDocComment j
   let comment := if docComment.isSome then none else extractLeadingComment j
@@ -1528,13 +1571,23 @@ private def hasDurableObjectPattern (stmts : Array Json) : Bool :=
   let text := stmts.foldl (fun acc s => acc ++ toString s) ""
   textContains text "DurableObjectState" || textContains text "this.state.storage"
 
+/-- Check if any function has variable reassignment (needs Monad import). -/
+private partial def hasFuncVarReassign (stmts : Array Json) : Bool :=
+  stmts.any fun s =>
+    if nodeKind s == "FunctionDeclaration" then
+      let bodyStmts := match fieldNode s "body" with
+        | some b => fieldArr b "statements" | none => #[]
+      bodyHasVarReassign bodyStmts
+    else false
+
 /-- Scan JSON statements for import needs. -/
 private def scanImports (stmts : Array Json) : Array String :=
   let needs := #["TSLean.Runtime.Basic", "TSLean.Runtime.Coercions"]
   let text := stmts.foldl (fun acc s => acc ++ toString s) ""
-  -- Monad needed for async, class mutations, or state patterns
+  -- Monad needed for async, class mutations, variable reassignment, or state patterns
   let needsMonad := textContains text "async" || textContains text "await" ||
-    textContains text "Promise" || hasClassMutation stmts || hasAsyncFunc stmts
+    textContains text "Promise" || hasClassMutation stmts || hasAsyncFunc stmts ||
+    hasFuncVarReassign stmts
   let needs := if needsMonad then needs.push "TSLean.Runtime.Monad" else needs
   -- WebAPI
   let needsWebAPI := textContains text "fetch" || textContains text "Request" ||
