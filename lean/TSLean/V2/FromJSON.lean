@@ -266,12 +266,20 @@ private partial def renderIfCondition (render : Json → String) (j : Json) : St
       let rightJ := fieldNode j "right"
       let l := leftJ.map render |>.getD "default"
       let r := rightJ.map render |>.getD "default"
-      -- Parenthesize BinaryExpression operands (TS lowerExprP wraps BinOp in Paren)
+      -- Parenthesize compound operands (TS lowerExprP wraps BinOp/UnOp/App in Paren)
+      let wrapIfCompound := fun (oj : Json) (s : String) =>
+        let k := nodeKind oj
+        if k == "BinaryExpression" || k == "PrefixUnaryExpression" ||
+           k == "ConditionalExpression" || k == "AwaitExpression" ||
+           (k == "CallExpression" && (fieldArr oj "arguments").size > 0) ||
+           (k == "PropertyAccessExpression" && (fieldNode oj "questionDotToken").isSome) then
+          "(" ++ s ++ ")"
+        else s
       let l := match leftJ with
-        | some lj => if nodeKind lj == "BinaryExpression" then "(" ++ l ++ ")" else l
+        | some lj => wrapIfCompound lj l
         | none => l
       let r := match rightJ with
-        | some rj => if nodeKind rj == "BinaryExpression" then "(" ++ r ++ ")" else r
+        | some rj => wrapIfCompound rj r
         | none => r
       let op := if opKind == "AmpersandAmpersandToken" then "&&" else "||"
       let result := l ++ " " ++ op ++ " " ++ r
@@ -290,7 +298,17 @@ private partial def renderIfCondition (render : Json → String) (j : Json) : St
   else if kind == "PrefixUnaryExpression" then
     let opCode := fieldNat j "operator"
     if opCode == 54 then
-      let inner := (fieldNode j "operand").map (renderIfCondition render) |>.getD "default"
+      let operandJ := fieldNode j "operand"
+      let inner := operandJ.map (renderIfCondition render) |>.getD "default"
+      -- Wrap compound operand in parens (TS lowerExprP wraps via needsParens)
+      let inner := match operandJ with
+        | some oj =>
+          let k := nodeKind oj
+          if k == "CallExpression" || k == "BinaryExpression" ||
+             (k == "PropertyAccessExpression" && (fieldNode oj "questionDotToken").isSome) then
+            "(" ++ inner ++ ")"
+          else inner
+        | none => inner
       "!" ++ inner
     else wrapConditionIsSome j (render j)
   else wrapConditionIsSome j (render j)
@@ -301,7 +319,8 @@ private def parenIfCompoundExpr (j : Json) (rendered : String) : String :=
      kind == "ArrowFunction" || kind == "AwaitExpression" ||
      kind == "TemplateExpression" ||
      kind == "CallExpression" ||
-     (kind == "NewExpression" && (fieldArr j "arguments").size > 0) then
+     (kind == "NewExpression" && (fieldArr j "arguments").size > 0) ||
+     (kind == "PropertyAccessExpression" && (fieldNode j "questionDotToken").isSome) then
     "(" ++ rendered ++ ")"
   else rendered
 
@@ -460,6 +479,8 @@ private def parenBinOperand (j : Json) (rendered : String) (_parentOp : String) 
      (kind == "CallExpression" && (fieldArr j "arguments").size == 0 &&
        ((fieldNode j "expression").map nodeKind |>.getD "") == "PropertyAccessExpression" &&
        (((fieldNode j "expression").bind (fieldNode · "expression")).map nodeKind |>.getD "") == "CallExpression") ||
+     -- Optional chaining (?.field) renders as .bind(fun ...) — compound expression
+     (kind == "PropertyAccessExpression" && (fieldNode j "questionDotToken").isSome) ||
      -- Float literals need parens in Lean (matches TS needsParens for LitFloat)
      (kind == "NumericLiteral" && (nodeText j).any (· == '.')) then
     "(" ++ rendered ++ ")"
