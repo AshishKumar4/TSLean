@@ -1,10 +1,19 @@
 #!/usr/bin/env node
-// CLI entry point.
-// Single file: tsx src/cli.ts input.ts [-o output.lean] [--verify]
-// Project:     tsx src/cli.ts --project dir/ [-o outdir/] [--verify]
+// TSLean CLI — TypeScript → Lean 4 transpiler.
+//
+// Usage:
+//   tslean compile <file|dir> [--output <dir>] [--verify] [--watch] [--self-host] [--namespace <ns>]
+//   tslean self-host             — run the self-hosting pipeline
+//   tslean verify                — run fixpoint verification
+//   tslean init [dir]            — scaffold a tslean project
+//
+// Legacy (still works):
+//   tslean <file.ts> [-o output.lean] [--verify]
+//   tslean --project <dir/> [-o outdir/] [--verify]
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSync } from 'child_process';
 import { parseFile } from './parser/index.js';
 import { rewriteModule } from './rewrite/index.js';
 import { generateLean } from './codegen/index.js';
@@ -12,54 +21,151 @@ import { generateLeanV2 } from './codegen/v2.js';
 import { generateVerification } from './verification/index.js';
 import { transpileProject, writeProjectOutputs } from './project/index.js';
 
-// ─── Argument parsing ─────────────────────────────────────────────────────────
+// ─── Colors (ANSI, respects NO_COLOR) ────────────────────────────────────────
 
-interface Args {
-  mode: 'single' | 'project';
+const NO_COLOR = !!process.env['NO_COLOR'] || !process.stdout.isTTY;
+const c = {
+  bold:    (s: string) => NO_COLOR ? s : `\x1b[1m${s}\x1b[0m`,
+  dim:     (s: string) => NO_COLOR ? s : `\x1b[2m${s}\x1b[0m`,
+  red:     (s: string) => NO_COLOR ? s : `\x1b[31m${s}\x1b[0m`,
+  green:   (s: string) => NO_COLOR ? s : `\x1b[32m${s}\x1b[0m`,
+  yellow:  (s: string) => NO_COLOR ? s : `\x1b[33m${s}\x1b[0m`,
+  cyan:    (s: string) => NO_COLOR ? s : `\x1b[36m${s}\x1b[0m`,
+};
+
+// ─── Version ─────────────────────────────────────────────────────────────────
+
+function getVersion(): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+// ─── Help ────────────────────────────────────────────────────────────────────
+
+const HELP = `
+${c.bold('tslean')} — TypeScript → Lean 4 transpiler
+
+${c.bold('USAGE')}
+  tslean compile <file|dir>  [options]   Transpile TypeScript to Lean 4
+  tslean self-host                       Run the self-hosting pipeline
+  tslean verify                          Run fixpoint verification
+  tslean init [dir]                      Scaffold a new tslean project
+
+${c.bold('OPTIONS')}
+  -o, --output <path>    Output file or directory
+  -w, --watch            Watch for changes and recompile
+  --verify               Generate proof obligations
+  --self-host            Enable self-host transforms
+  --base-name <name>     Module base name (self-host mode)
+  --namespace <ns>       Root namespace (default: TSLean.Generated)
+  --no-color             Disable colored output
+  -v, --version          Show version
+  -h, --help             Show this help
+`.trimStart();
+
+// ─── Argument parsing ────────────────────────────────────────────────────────
+
+interface CompileOpts {
   input: string;
   output: string;
   verify: boolean;
+  watch: boolean;
   ns: string;
   selfHost: boolean;
   baseName: string;
+  isDir: boolean;
 }
 
-function parseArgs(argv: string[]): Args {
-  const args = argv.slice(2);
-  let mode: 'single' | 'project' = 'single';
-  let input = '', output = '', verify = false, ns = 'TSLean.Generated';
-  let selfHost = false, baseName = '';
+type Command =
+  | { cmd: 'compile'; opts: CompileOpts }
+  | { cmd: 'self-host' }
+  | { cmd: 'verify' }
+  | { cmd: 'init'; dir: string }
+  | { cmd: 'help' }
+  | { cmd: 'version' };
 
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--project') { mode = 'project'; input = args[++i] ?? ''; }
-    else if (a === '-o' || a === '--output') { output = args[++i] ?? ''; }
-    else if (a === '--verify')    { verify = true; }
-    else if (a === '--namespace') { ns = args[++i] ?? ns; }
-    else if (a === '--self-host') { selfHost = true; }
-    else if (a === '--base-name') { baseName = args[++i] ?? ''; }
+function parseArgs(argv: string[]): Command {
+  const args = argv.slice(2);
+
+  if (args.length === 0 || args.includes('-h') || args.includes('--help')) {
+    return { cmd: 'help' };
+  }
+  if (args.includes('-v') || args.includes('--version')) {
+    return { cmd: 'version' };
+  }
+
+  const sub = args[0];
+
+  if (sub === 'self-host') return { cmd: 'self-host' };
+  if (sub === 'verify')    return { cmd: 'verify' };
+  if (sub === 'init')      return { cmd: 'init', dir: args[1] ?? '.' };
+
+  // "compile" subcommand or legacy mode (positional file / --project)
+  const isCompile = sub === 'compile';
+  const rest = isCompile ? args.slice(1) : args;
+
+  let input = '', output = '', verify = false, watch = false;
+  let ns = 'TSLean.Generated', selfHost = false, baseName = '';
+  let isDir = false;
+
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === '--project')       { isDir = true; input = rest[++i] ?? ''; }
+    else if (a === '-o' || a === '--output') { output = rest[++i] ?? ''; }
+    else if (a === '--verify')   { verify = true; }
+    else if (a === '-w' || a === '--watch') { watch = true; }
+    else if (a === '--namespace'){ ns = rest[++i] ?? ns; }
+    else if (a === '--self-host'){ selfHost = true; }
+    else if (a === '--base-name'){ baseName = rest[++i] ?? ''; }
+    else if (a === '--no-color') { /* handled via NO_COLOR env */ }
     else if (!a.startsWith('-') && !input) { input = a; }
   }
 
   if (!input) {
-    process.stderr.write('Usage:\n  tsx src/cli.ts <file.ts> [-o output.lean] [--verify]\n  tsx src/cli.ts --project <dir/> [-o outdir/] [--verify]\n');
+    error('No input file or directory specified.\n\n  Usage: tslean compile <file|dir>');
     process.exit(1);
   }
 
-  if (!output) {
-    output = mode === 'single'
-      ? input.replace(/\.ts$/, '.lean')
-      : input.replace(/\/$/, '') + '_lean';
+  // Detect directory input
+  if (!isDir && fs.existsSync(input) && fs.statSync(input).isDirectory()) {
+    isDir = true;
   }
 
-  return { mode, input, output, verify, ns, selfHost, baseName };
+  if (!output) {
+    output = isDir
+      ? input.replace(/\/$/, '') + '_lean'
+      : input.replace(/\.ts$/, '.lean');
+  }
+
+  return { cmd: 'compile', opts: { input, output, verify, watch, ns, selfHost, baseName, isDir } };
 }
 
-// ─── Single file ──────────────────────────────────────────────────────────────
+// ─── Output helpers ──────────────────────────────────────────────────────────
 
-function single(opts: Args): void {
+function error(msg: string): void {
+  process.stderr.write(`${c.red('error')}: ${msg}\n`);
+}
+
+function success(msg: string): void {
+  process.stdout.write(`${c.green('✓')} ${msg}\n`);
+}
+
+function info(msg: string): void {
+  process.stdout.write(`${c.cyan('›')} ${msg}\n`);
+}
+
+// ─── Compile: single file ────────────────────────────────────────────────────
+
+function compileSingle(opts: CompileOpts): boolean {
   const { input, output, verify, selfHost, baseName } = opts;
-  if (!fs.existsSync(input)) { process.stderr.write(`File not found: ${input}\n`); process.exit(1); }
+  if (!fs.existsSync(input)) {
+    error(`File not found: ${input}`);
+    return false;
+  }
 
   try {
     const src = fs.readFileSync(input, 'utf-8');
@@ -72,42 +178,206 @@ function single(opts: Args): void {
     if (verify) {
       const { leanCode, obligations } = generateVerification(rw);
       if (leanCode) code += '\n\n-- Verification obligations\n' + leanCode;
-      if (obligations.length) process.stdout.write(`Generated ${obligations.length} proof obligation(s)\n`);
+      if (obligations.length) info(`Generated ${obligations.length} proof obligation(s)`);
     }
 
     fs.mkdirSync(path.dirname(path.resolve(output)), { recursive: true });
     fs.writeFileSync(output, code, 'utf-8');
-    process.stdout.write(`✓ ${input} → ${output}\n`);
+    success(`${input} → ${output}`);
+    return true;
   } catch (err) {
-    process.stderr.write(`Error: ${(err as Error).message}\n`);
+    error((err as Error).message);
     if (process.env['DEBUG']) process.stderr.write((err as Error).stack + '\n');
-    process.exit(1);
+    return false;
   }
 }
 
-// ─── Project mode ─────────────────────────────────────────────────────────────
+// ─── Compile: project (directory) ────────────────────────────────────────────
 
-function project(opts: Args): void {
+function compileProject(opts: CompileOpts): boolean {
   const { input, output, verify, ns } = opts;
   if (!fs.existsSync(input) || !fs.statSync(input).isDirectory()) {
-    process.stderr.write(`Directory not found: ${input}\n`); process.exit(1);
+    error(`Directory not found: ${input}`);
+    return false;
   }
 
+  const t0 = Date.now();
   const result = transpileProject({
     projectDir: path.resolve(input),
     outputDir:  path.resolve(output),
     verify, rootNS: ns,
   });
 
-  for (const e of result.errors) process.stderr.write(`Error: ${e}\n`);
+  for (const e of result.errors) error(e);
   writeProjectOutputs(result);
-  for (const { tsFile, leanFile } of result.files)
-    process.stdout.write(`✓ ${tsFile} → ${leanFile}\n`);
-  process.stdout.write(`\nTranspiled ${result.files.length} file(s), ${result.errors.length} error(s)\n`);
+  for (const { tsFile, leanFile } of result.files) {
+    success(`${tsFile} → ${leanFile}`);
+  }
+
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+  const summary = `${result.files.length} file(s) transpiled`;
+  const errSummary = result.errors.length ? `, ${c.red(String(result.errors.length) + ' error(s)')}` : '';
+  process.stdout.write(`\n${c.bold(summary)}${errSummary} ${c.dim(`(${elapsed}s)`)}\n`);
+
+  return result.errors.length === 0;
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ─── Watch mode ──────────────────────────────────────────────────────────────
 
-const opts = parseArgs(process.argv);
-if (opts.mode === 'single') single(opts);
-else project(opts);
+function watchMode(opts: CompileOpts): void {
+  const target = path.resolve(opts.input);
+
+  const run = () => {
+    process.stdout.write(`\n${c.dim('─── recompiling ' + new Date().toLocaleTimeString() + ' ───')}\n`);
+    if (opts.isDir) compileProject(opts);
+    else compileSingle(opts);
+  };
+
+  // Initial compile
+  if (opts.isDir) compileProject(opts);
+  else compileSingle(opts);
+
+  info(`Watching for changes... ${c.dim('(Ctrl+C to stop)')}`);
+
+  const debounce = new Map<string, ReturnType<typeof setTimeout>>();
+  const DEBOUNCE_MS = 200;
+
+  if (opts.isDir) {
+    fs.watch(target, { recursive: true }, (_event, filename) => {
+      if (!filename || !filename.endsWith('.ts')) return;
+      const key = filename;
+      const existing = debounce.get(key);
+      if (existing) clearTimeout(existing);
+      debounce.set(key, setTimeout(() => { debounce.delete(key); run(); }, DEBOUNCE_MS));
+    });
+  } else {
+    fs.watchFile(target, { interval: 500 }, () => {
+      const key = target;
+      const existing = debounce.get(key);
+      if (existing) clearTimeout(existing);
+      debounce.set(key, setTimeout(() => { debounce.delete(key); run(); }, DEBOUNCE_MS));
+    });
+  }
+}
+
+// ─── Self-host command ───────────────────────────────────────────────────────
+
+function selfHost(): boolean {
+  const scriptPath = path.join(__dirname, '..', 'scripts', 'self-host.sh');
+
+  if (!fs.existsSync(scriptPath)) {
+    error('Self-host script not found. Expected: scripts/self-host.sh');
+    return false;
+  }
+
+  info('Running self-hosting pipeline...');
+  try {
+    execSync(`bash "${scriptPath}"`, { stdio: 'inherit', cwd: path.join(__dirname, '..') });
+    return true;
+  } catch {
+    error('Self-hosting pipeline failed.');
+    return false;
+  }
+}
+
+// ─── Verify (fixpoint) command ───────────────────────────────────────────────
+
+function fixpointVerify(): boolean {
+  const scriptPath = path.join(__dirname, '..', 'scripts', 'fixpoint-verify.sh');
+
+  if (!fs.existsSync(scriptPath)) {
+    error('Fixpoint verify script not found. Expected: scripts/fixpoint-verify.sh');
+    return false;
+  }
+
+  info('Running fixpoint verification...');
+  try {
+    execSync(`bash "${scriptPath}"`, { stdio: 'inherit', cwd: path.join(__dirname, '..') });
+    return true;
+  } catch {
+    error('Fixpoint verification failed.');
+    return false;
+  }
+}
+
+// ─── Init command ────────────────────────────────────────────────────────────
+
+function initProject(dir: string): boolean {
+  const target = path.resolve(dir);
+
+  if (fs.existsSync(path.join(target, 'tslean.json'))) {
+    error(`Project already initialized in ${target}`);
+    return false;
+  }
+
+  fs.mkdirSync(path.join(target, 'src'), { recursive: true });
+  fs.mkdirSync(path.join(target, 'lean'), { recursive: true });
+
+  // tslean.json project config
+  fs.writeFileSync(path.join(target, 'tslean.json'), JSON.stringify({
+    compilerOptions: {
+      output: 'lean/Generated',
+      namespace: 'TSLean.Generated',
+      verify: false,
+    },
+    include: ['src/**/*.ts'],
+    exclude: ['**/*.test.ts', '**/*.spec.ts'],
+  }, null, 2) + '\n', 'utf-8');
+
+  // Example source file
+  fs.writeFileSync(path.join(target, 'src', 'example.ts'), [
+    '// Example: transpile this with `tslean compile src/`',
+    '',
+    'export interface Point {',
+    '  x: number;',
+    '  y: number;',
+    '}',
+    '',
+    'export function distance(a: Point, b: Point): number {',
+    '  const dx = a.x - b.x;',
+    '  const dy = a.y - b.y;',
+    '  return Math.sqrt(dx * dx + dy * dy);',
+    '}',
+    '',
+  ].join('\n'), 'utf-8');
+
+  success(`Initialized tslean project in ${target}`);
+  info('Created tslean.json, src/example.ts');
+  info(`Run: ${c.bold('tslean compile src/ -o lean/Generated/')}`);
+  return true;
+}
+
+// ─── Compile dispatcher ──────────────────────────────────────────────────────
+
+function runCompile(opts: CompileOpts): void {
+  if (opts.watch) {
+    watchMode(opts);
+  } else if (opts.isDir) {
+    if (!compileProject(opts)) process.exit(1);
+  } else {
+    if (!compileSingle(opts)) process.exit(1);
+  }
+}
+
+// ─── Main ────────────────────────────────────────────────────────────────────
+
+function main(): void {
+  const command = parseArgs(process.argv);
+  const cmd = command.cmd;
+
+  if (cmd === 'help') {
+    process.stdout.write(HELP);
+  } else if (cmd === 'version') {
+    process.stdout.write(`tslean ${getVersion()}\n`);
+  } else if (cmd === 'self-host') {
+    if (!selfHost()) process.exit(1);
+  } else if (cmd === 'verify') {
+    if (!fixpointVerify()) process.exit(1);
+  } else if (cmd === 'init') {
+    if (!initProject(command.dir)) process.exit(1);
+  } else if (cmd === 'compile') {
+    runCompile(command.opts);
+  }
+}
+
+main();

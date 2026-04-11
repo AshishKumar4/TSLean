@@ -12,8 +12,22 @@ open TSLean TSLean.Generated.Types TSLean.Stdlib.HashMap
 
 namespace TSLean.Generated.SelfHost.Project_index
 
-def resolveImport (from_ : String) (spec : String) : Option String := sorry
-def relToLean (rel : String) (rootNS : String) : String := sorry
+private def capSeg (s : String) : String :=
+  if s.isEmpty then s else String.mk (s.toList.head!.toUpper :: s.toList.tail!)
+private def splitCapSeg (s : String) : String :=
+  String.join ((s.splitOn "-" |>.map (fun p => p.splitOn "_")).flatten |>.map capSeg)
+def resolveImport (from_ : String) (spec : String) : Option String :=
+  if spec.startsWith "." then
+    let clean := (spec.dropWhile (fun c => c == '.' || c == '/')).toString
+    let clean := if clean.endsWith ".ts" then clean.dropRight 3
+                 else if clean.endsWith ".js" then clean.dropRight 3 else clean
+    some clean
+  else some spec
+def relToLean (rel : String) (rootNS : String) : String :=
+  let clean := if rel.endsWith ".ts" then rel.dropRight 3 else rel
+  let parts := clean.splitOn "/" |>.filter (fun s => !s.isEmpty)
+  let leanParts := parts.map splitCapSeg
+  rootNS ++ "." ++ String.intercalate "." leanParts
 structure ProjectResult where
   files : Array (String × String)
   errors : Array String

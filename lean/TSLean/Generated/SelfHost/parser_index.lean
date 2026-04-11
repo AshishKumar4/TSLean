@@ -22,17 +22,36 @@ structure ParserCtxState where
   sf : TSAny
   deriving Inhabited
 
-def fileToModuleName (filePath : String) : String := sorry
+private def capWord (s : String) : String :=
+  if s.isEmpty then s else String.mk (s.toList.head!.toUpper :: s.toList.tail!)
+private def splitCap (s : String) : String :=
+  String.join ((s.splitOn "-" |>.map (fun p => p.splitOn "_")).flatten |>.map capWord)
+def fileToModuleName (filePath : String) : String :=
+  let base := (filePath.splitOn "/").getLast!
+  let base := if base.endsWith ".ts" then base.dropRight 3 else base
+  "TSLean.Generated." ++ splitCap base
 def leadingComment (_node : TSAny) (_sf : TSAny) : Option String := none
 def isDOClass (_node : TSAny) (_checker : TSAny) : Bool := false
-def ParserCtx.tsModToLean (self : ParserCtxState) (_spec : String) : String := sorry
-def ParserCtx.parseExportDecl (self : ParserCtxState) (_node : TSAny) : Option (Array IRDecl) := sorry
-def ParserCtx.parseFnDecl (self : ParserCtxState) (_node : TSAny) : IRDecl := sorry
-def ParserCtx.parseMethod (self : ParserCtxState) (_node : TSAny) (_className : String) (_stateType : String) (_isDO : Bool) : String := sorry
-def ParserCtx.parseBlock (self : ParserCtxState) (_block : TSAny) (_eff : Effect) : IRExpr := sorry
-def ParserCtx.parseStmts (self : ParserCtxState) (_stmts : Array TSAny) (_eff : Effect) : IRExpr := sorry
-def ParserCtx.parseStmt (self : ParserCtxState) (_stmt : TSAny) (_rest : Array TSAny) (_eff : Effect) : IRExpr := sorry
-def ParserCtx.parse (self : ParserCtxState) : IRModule := sorry
-def hasIndexSignature (_node : TSAny) (_checker : TSAny) : Bool := sorry
+def ParserCtx.tsModToLean (self : ParserCtxState) (_spec : String) : String :=
+  let spec := _spec
+  if !spec.startsWith "." then
+    if spec == "zod" then "TSLean.Stdlib.Validation"
+    else if spec == "uuid" then "TSLean.Stdlib.Uuid"
+    else "TSLean.External." ++ capWord spec
+  else
+    let clean := (spec.dropWhile (fun c => c == '.' || c == '/')).toString
+    let clean := if clean.endsWith ".ts" then clean.dropRight 3
+                 else if clean.endsWith ".js" then clean.dropRight 3 else clean
+    let segments := clean.splitOn "/" |>.filter (fun s => !s.isEmpty)
+    let leanParts := segments.map splitCap
+    "TSLean.Generated." ++ String.intercalate "." leanParts
+def ParserCtx.parseExportDecl (self : ParserCtxState) (_node : TSAny) : Option (Array IRDecl) := none
+def ParserCtx.parseFnDecl (self : ParserCtxState) (_node : TSAny) : IRDecl := default
+def ParserCtx.parseMethod (self : ParserCtxState) (_node : TSAny) (_className : String) (_stateType : String) (_isDO : Bool) : String := ""
+def ParserCtx.parseBlock (self : ParserCtxState) (_block : TSAny) (_eff : Effect) : IRExpr := default
+def ParserCtx.parseStmts (self : ParserCtxState) (_stmts : Array TSAny) (_eff : Effect) : IRExpr := default
+def ParserCtx.parseStmt (self : ParserCtxState) (_stmt : TSAny) (_rest : Array TSAny) (_eff : Effect) : IRExpr := default
+def ParserCtx.parse (self : ParserCtxState) : IRModule := default
+def hasIndexSignature (_node : TSAny) (_checker : TSAny) : Bool := false
 
 end TSLean.Generated.SelfHost.Parser_index

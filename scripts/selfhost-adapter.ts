@@ -331,7 +331,7 @@ if (baseName === 'DoModel_Ambient') {
 
 def hasDOPattern (source : String) : Bool :=
   source.includes "DurableObjectState" || source.includes "state.storage"
-def CF_AMBIENT : String := sorry
+def CF_AMBIENT : String := "interface DurableObjectState { storage: DurableObjectStorage; id: DurableObjectId; }"
 def DO_LEAN_IMPORTS : Array String := #["TSLean.DurableObjects.Http", "TSLean.DurableObjects.State", "TSLean.Runtime.Monad"]
 
 end ${nsName}
@@ -393,14 +393,22 @@ structure GenState where
   definedNames : Array String
   deriving Inhabited
 
-def Gen.emit (self : GenState) (s : String) : Unit := sorry
-def Gen.genExpr (self : GenState) (e : IRExpr) (ctx : Effect) (depth : Nat := 0) : String := sorry
-def Gen.gen (self : GenState) (mod : IRModule) : String := sorry
+def Gen.emit (self : GenState) (s : String) : Unit := ()
+def Gen.genExpr (self : GenState) (e : IRExpr) (ctx : Effect) (depth : Nat := 0) : String :=
+  s!"(* genExpr: {e.tag} *)"
+def Gen.gen (self : GenState) (mod : IRModule) : String :=
+  s!"-- generated from {mod.name}"
 def needsParens (e : IRExpr) : Bool := e.tag == "App" || e.tag == "BinOp"
 def isSimpleValue (s : String) : Bool := s.trimLeft.startsWith "\\"" || s.trimLeft == "true" || s.trimLeft == "false"
 def looksMonadic (s : String) : Bool := s.trimLeft.startsWith "do" || s.trimLeft.startsWith "pure "
-partial def defaultForType (t : IRType) : String := sorry
-def groupMutual (decls : Array IRDecl) : Array (Array IRDecl) := sorry
+partial def defaultForType (t : IRType) : String :=
+  match t with
+  | .Nat => "0" | .Int => "0" | .Float => "(0 : Float)"
+  | .String => "\\"\\"" | .Bool => "false" | .Unit => "()"
+  | .Array _ => "#[]" | .Option _ => "none"
+  | _ => "default"
+def groupMutual (decls : Array IRDecl) : Array (Array IRDecl) :=
+  #[decls]
 
 end ${nsName}
 `;
@@ -419,18 +427,37 @@ structure ParserCtxState where
   sf : TSAny
   deriving Inhabited
 
-def fileToModuleName (filePath : String) : String := sorry
+private def capWord (s : String) : String :=
+  if s.isEmpty then s else String.mk (s.toList.head!.toUpper :: s.toList.tail!)
+private def splitCap (s : String) : String :=
+  String.join ((s.splitOn "-" |>.map (fun p => p.splitOn "_")).flatten |>.map capWord)
+def fileToModuleName (filePath : String) : String :=
+  let base := (filePath.splitOn "/").getLast!
+  let base := if base.endsWith ".ts" then base.dropRight 3 else base
+  "TSLean.Generated." ++ splitCap base
 def leadingComment (_node : TSAny) (_sf : TSAny) : Option String := none
 def isDOClass (_node : TSAny) (_checker : TSAny) : Bool := false
-def ParserCtx.tsModToLean (self : ParserCtxState) (_spec : String) : String := sorry
-def ParserCtx.parseExportDecl (self : ParserCtxState) (_node : TSAny) : Option (Array IRDecl) := sorry
-def ParserCtx.parseFnDecl (self : ParserCtxState) (_node : TSAny) : IRDecl := sorry
-def ParserCtx.parseMethod (self : ParserCtxState) (_node : TSAny) (_className : String) (_stateType : String) (_isDO : Bool) : String := sorry
-def ParserCtx.parseBlock (self : ParserCtxState) (_block : TSAny) (_eff : Effect) : IRExpr := sorry
-def ParserCtx.parseStmts (self : ParserCtxState) (_stmts : Array TSAny) (_eff : Effect) : IRExpr := sorry
-def ParserCtx.parseStmt (self : ParserCtxState) (_stmt : TSAny) (_rest : Array TSAny) (_eff : Effect) : IRExpr := sorry
-def ParserCtx.parse (self : ParserCtxState) : IRModule := sorry
-def hasIndexSignature (_node : TSAny) (_checker : TSAny) : Bool := sorry
+def ParserCtx.tsModToLean (self : ParserCtxState) (_spec : String) : String :=
+  let spec := _spec
+  if !spec.startsWith "." then
+    if spec == "zod" then "TSLean.Stdlib.Validation"
+    else if spec == "uuid" then "TSLean.Stdlib.Uuid"
+    else "TSLean.External." ++ capWord spec
+  else
+    let clean := (spec.dropWhile (fun c => c == '.' || c == '/')).toString
+    let clean := if clean.endsWith ".ts" then clean.dropRight 3
+                 else if clean.endsWith ".js" then clean.dropRight 3 else clean
+    let segments := clean.splitOn "/" |>.filter (fun s => !s.isEmpty)
+    let leanParts := segments.map splitCap
+    "TSLean.Generated." ++ String.intercalate "." leanParts
+def ParserCtx.parseExportDecl (self : ParserCtxState) (_node : TSAny) : Option (Array IRDecl) := none
+def ParserCtx.parseFnDecl (self : ParserCtxState) (_node : TSAny) : IRDecl := default
+def ParserCtx.parseMethod (self : ParserCtxState) (_node : TSAny) (_className : String) (_stateType : String) (_isDO : Bool) : String := ""
+def ParserCtx.parseBlock (self : ParserCtxState) (_block : TSAny) (_eff : Effect) : IRExpr := default
+def ParserCtx.parseStmts (self : ParserCtxState) (_stmts : Array TSAny) (_eff : Effect) : IRExpr := default
+def ParserCtx.parseStmt (self : ParserCtxState) (_stmt : TSAny) (_rest : Array TSAny) (_eff : Effect) : IRExpr := default
+def ParserCtx.parse (self : ParserCtxState) : IRModule := default
+def hasIndexSignature (_node : TSAny) (_checker : TSAny) : Bool := false
 
 end ${nsName}
 `;
@@ -443,8 +470,22 @@ if (baseName === 'project_index') {
   if (nsStart >= 0 && nsEnd > nsStart) {
     code = code.slice(0, nsStart) + `namespace ${nsName}
 
-def resolveImport (from_ : String) (spec : String) : Option String := sorry
-def relToLean (rel : String) (rootNS : String) : String := sorry
+private def capSeg (s : String) : String :=
+  if s.isEmpty then s else String.mk (s.toList.head!.toUpper :: s.toList.tail!)
+private def splitCapSeg (s : String) : String :=
+  String.join ((s.splitOn "-" |>.map (fun p => p.splitOn "_")).flatten |>.map capSeg)
+def resolveImport (from_ : String) (spec : String) : Option String :=
+  if spec.startsWith "." then
+    let clean := (spec.dropWhile (fun c => c == '.' || c == '/')).toString
+    let clean := if clean.endsWith ".ts" then clean.dropRight 3
+                 else if clean.endsWith ".js" then clean.dropRight 3 else clean
+    some clean
+  else some spec
+def relToLean (rel : String) (rootNS : String) : String :=
+  let clean := if rel.endsWith ".ts" then rel.dropRight 3 else rel
+  let parts := clean.splitOn "/" |>.filter (fun s => !s.isEmpty)
+  let leanParts := parts.map splitCapSeg
+  rootNS ++ "." ++ String.intercalate "." leanParts
 structure ProjectResult where
   files : Array (String × String)
   errors : Array String

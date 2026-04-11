@@ -1,20 +1,53 @@
 {
   "name": "tslean",
-  "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "test": "vitest run",
-    "lint": "tsc --noEmit"
+  "version": "0.1.0",
+  "description": "TypeScript → Lean 4 transpiler with formal verification for Cloudflare Durable Objects",
+  "main": "dist/codegen/index.js",
+  "types": "dist/codegen/index.d.ts",
+  "bin": {
+    "tslean": "dist/cli.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "files": [
+    "dist/",
+    "scripts/",
+    "lean/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "typescript",
+    "lean4",
+    "transpiler",
+    "formal-verification",
+    "durable-objects",
+    "cloudflare",
+    "proof-assistant",
+    "compiler"
+  ],
+  "author": "Ashish Kumar",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AshishKumar4/TSLean.git"
+  },
+  "homepage": "https://github.com/AshishKumar4/TSLean#readme",
+  "bugs": {
+    "url": "https://github.com/AshishKumar4/TSLean/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
-    "@types/node": "^25.5.2",
     "typescript": "^6.0.2"
   },
   "devDependencies": {
+    "@types/node": "^25.5.2",
     "tsx": "^4.21.0",
     "vitest": "^4.1.2"
   }

@@ -196,6 +196,10 @@ function serializeNode(
   // Basic properties
   const text = getNodeText(node);
   if (text !== undefined) result.text = text;
+  // For StringLiteral nodes, preserve source text with quotes for faithful sanitization
+  if (ts.isStringLiteral(node)) {
+    try { result.sourceText = node.getText(sf); } catch {}
+  }
   if (node.flags) result.flags = node.flags;
   result.pos = node.pos;
   result.end = node.end;
