@@ -289,7 +289,7 @@ private partial def renderIfCondition (render : Json → String) (j : Json) : St
     else wrapConditionIsSome j (render j)
   else if kind == "PrefixUnaryExpression" then
     let opCode := fieldNat j "operator"
-    if opCode == 53 then
+    if opCode == 54 then
       let inner := (fieldNode j "operand").map (renderIfCondition render) |>.getD "default"
       "!" ++ inner
     else wrapConditionIsSome j (render j)
@@ -576,7 +576,9 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
   else if kind == "TrueKeyword" then "true"
   else if kind == "FalseKeyword" then "false"
   else if kind == "NullKeyword" || kind == "UndefinedKeyword" then "none"
-  else if kind == "Identifier" then sanitizeId (nodeText j)
+  else if kind == "Identifier" then
+    let ident := nodeText j
+    if ident == "undefined" then "none" else sanitizeId ident
   else if kind == "ThisKeyword" then "self"
   else if kind == "AsExpression" then
     let inner := (fieldNode j "expression").map re |>.getD "default"
