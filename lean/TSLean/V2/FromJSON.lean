@@ -184,6 +184,7 @@ private def parenIfCompoundExpr (j : Json) (rendered : String) : String :=
   let kind := nodeKind j
   if kind == "BinaryExpression" || kind == "ConditionalExpression" ||
      kind == "ArrowFunction" || kind == "AwaitExpression" ||
+     kind == "TemplateExpression" ||
      (kind == "CallExpression" && (fieldArr j "arguments").size > 0) then
     "(" ++ rendered ++ ")"
   else rendered
@@ -494,6 +495,16 @@ private def isPureFieldReturn (stmts : Array Json) : Option String :=
 
 mutual
 
+/-- Check if a LeanExpr contains any Bind nodes. -/
+private partial def exprHasBindsCheck (e : LeanExpr) : Bool :=
+  match e with
+  | .Bind .. => true
+  | .Seq stmts => stmts.any exprHasBindsCheck
+  | .Let _ _ _ body _ => exprHasBindsCheck body
+  | .If _ t f => exprHasBindsCheck t || exprHasBindsCheck f
+  | .Do body => exprHasBindsCheck body
+  | _ => false
+
 /-- Check if a LeanExpr ends with a Return/Pure/Throw. -/
 private partial def exprEndsWithReturn (e : LeanExpr) : Bool :=
   match e with
@@ -582,10 +593,19 @@ private partial def lowerBlockStmtR (reg : UnionRegistry) (paramTypes : Array (S
         else renderExpr v
       | none => "_"
     let bodyExpr := (fieldNode j "statement").map (lowerBodyR reg paramTypes) |>.getD (.Lit "()")
-    .App (.Var "Array.forM") #[.Lit iter, .Lam #[varName] bodyExpr]
+    -- If body has binds (← in it), wrap in `do`
+    let hasBinds := exprHasBindsCheck bodyExpr
+    let bodyExpr := if hasBinds then .Do bodyExpr else bodyExpr
+    let lam := .Lam #[varName] bodyExpr
+    -- Wrap lambda in parens if it has do or is compound
+    let lam := if hasBinds then .Paren lam else lam
+    .App (.Var "Array.forM") #[.Lit iter, lam]
   else if kind == "ThrowStatement" then
     let expr := (fieldNode j "expression").map renderExpr |>.getD "default"
     .Throw (.Lit expr)
+  else if kind == "ExpressionStatement" then
+    -- Unwrap expression statement
+    (fieldNode j "expression").map (fun e => .Lit (renderExpr e)) |>.getD (.Lit "()")
   else .Lit (renderExpr j)
 
 /-- Lower a SwitchStatement to a Match expression.
