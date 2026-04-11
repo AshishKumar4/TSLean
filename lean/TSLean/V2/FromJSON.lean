@@ -460,36 +460,68 @@ private partial def hasStringType (j : Json) : Bool :=
     Used for arrow function bodies with local variable declarations.
     Takes a render function for expressions to avoid forward-reference issues. -/
 private partial def renderBlockStmtsInline (render : Json → String) (stmts : Array Json) : String :=
-  let parts := stmts.toList.map fun s =>
-    let kind := nodeKind s
-    if kind == "VariableStatement" then
-      let declList := fieldNode s "declarationList"
-      let decls := match declList with
-        | some dl => fieldArr dl "declarations" | none => #[]
-       let letParts := decls.toList.map fun d =>
-        let dname := escapeLeanKeyword ((fieldNode d "name").map nodeText |>.getD "_")
-        let init := (fieldNode d "initializer").map render |>.getD "default"
-        "let " ++ dname ++ " := " ++ init
-      String.intercalate "; " letParts
-    else if kind == "ReturnStatement" then
-      (fieldNode s "expression").map render |>.getD "()"
-    else if kind == "ExpressionStatement" then
-      (fieldNode s "expression").map render |>.getD "()"
-    else if kind == "IfStatement" then
-      let cond := (fieldNode s "expression").map render |>.getD "true"
-      let thenBranch := match fieldNode s "thenStatement" with
-        | some t =>
-          if isBlock t then renderBlockStmtsInline render (fieldArr t "statements")
-          else render t
-        | none => "()"
-      let elseBranch := match fieldNode s "elseStatement" with
-        | some e =>
-          if isBlock e then renderBlockStmtsInline render (fieldArr e "statements")
-          else render e
-        | none => "()"
-      "if " ++ cond ++ " then " ++ thenBranch ++ " else " ++ elseBranch
-    else render s
-  String.intercalate "; " parts
+  let rec go : List Json → List String
+    | [] => []
+    | s :: rest =>
+      let kind := nodeKind s
+      if kind == "VariableStatement" then
+        let declList := fieldNode s "declarationList"
+        let decls := match declList with
+          | some dl => fieldArr dl "declarations" | none => #[]
+        let letParts := decls.toList.map fun d =>
+          let dname := escapeLeanKeyword ((fieldNode d "name").map nodeText |>.getD "_")
+          let init := (fieldNode d "initializer").map render |>.getD "default"
+          "let " ++ dname ++ " := " ++ init
+        (String.intercalate "; " letParts) :: go rest
+      else if kind == "ReturnStatement" then
+        -- Simple return at end of block: just the expression value
+        [((fieldNode s "expression").map render |>.getD "()")]
+      else if kind == "ExpressionStatement" then
+        ((fieldNode s "expression").map render |>.getD "()") :: go rest
+      else if kind == "ForOfStatement" then
+        let iter := (fieldNode s "expression").map render |>.getD "default"
+        let varName := match fieldNode s "initializer" with
+          | some v =>
+            if nodeKind v == "VariableDeclarationList" then
+              let decls := fieldArr v "declarations"
+              (decls.getD 0 default |> (fieldNode · "name")).map nodeText |>.getD "_"
+            else render v
+          | none => "_"
+        let bodyStmts := match fieldNode s "statement" with
+          | some b => if isBlock b then fieldArr b "statements" else #[b]
+          | none => #[]
+        let body := renderBlockStmtsInline render bodyStmts
+        -- If body is a let binding (from +=), append "; ()" for Unit continuation
+        let body := if body.startsWith "let " then body ++ "; ()" else body
+        ("Array.forM " ++ iter ++ " (fun " ++ varName ++ " => " ++ body ++ ")") :: go rest
+      else if kind == "IfStatement" then
+        let cond := (fieldNode s "expression").map (renderIfCondition render) |>.getD "true"
+        let thenBranch := match fieldNode s "thenStatement" with
+          | some t =>
+            if isBlock t then renderBlockStmtsInline render (fieldArr t "statements")
+            else render t
+          | none => "()"
+        let hasElse := (fieldNode s "elseStatement").isSome
+        let elseBranch := if hasElse then
+            match fieldNode s "elseStatement" with
+            | some e =>
+              if isBlock e then renderBlockStmtsInline render (fieldArr e "statements")
+              else render e
+            | none => "()"
+          else
+            match rest with
+            | r :: _ =>
+              if nodeKind r == "ReturnStatement" then
+                "pure " ++ ((fieldNode r "expression").map render |>.getD "()")
+              else "()"
+            | [] => "()"
+        let ifStr := "if " ++ cond ++ " then " ++ thenBranch ++ " else " ++ elseBranch
+        if !hasElse && match rest with | r :: _ => nodeKind r == "ReturnStatement" | [] => false then
+          [ifStr]
+        else
+          ifStr :: go rest
+      else (render s) :: go rest
+  String.intercalate "; " (go stmts.toList)
 
 /-- Render a JSON AST expression to a Lean expression string.
     Takes a union registry for struct-literal→ctor rewriting,
@@ -508,7 +540,9 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     "\"" ++ text ++ "\""
   else if kind == "RegularExpressionLiteral" then
     -- Render regex as a string literal: /pattern/flags → "/pattern/flags"
-    "\"" ++ (nodeText j) ++ "\""
+    -- Must escape backslashes/quotes (matches TS JSON.stringify behavior)
+    let text := nodeText j
+    "\"" ++ escapeLitStr text ++ "\""
   else if kind == "TrueKeyword" then "true"
   else if kind == "FalseKeyword" then "false"
   else if kind == "NullKeyword" || kind == "UndefinedKeyword" then "none"
@@ -544,6 +578,27 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     -- Assignment: x = y → let x := y (rendered as statement context)
     else if opKind == "FirstAssignment" || opKind == "EqualsToken" then
       "let " ++ left ++ " := " ++ right
+    -- Compound +=: merge LHS into s!"..." when RHS is safe template
+    else if opKind == "FirstCompoundAssignment" || opKind == "PlusEqualsToken" then
+      let rj := rightJ.getD default
+      if nodeKind rj == "TemplateExpression" then
+        let headText := (fieldNode rj "head").map nodeText |>.getD ""
+        let spans := fieldArr rj "templateSpans"
+        let allSafe := spans.all fun span =>
+          let ek := (fieldNode span "expression").map nodeKind |>.getD ""
+          ek == "Identifier" || ek == "PropertyAccessExpression"
+        let allLitsSafe := !(headText.any (fun c => c == '{' || c == '}' || c == '"' || c == '\\')) &&
+          spans.all fun span =>
+            let lit := (fieldNode span "literal").map nodeText |>.getD ""
+            !(lit.any (fun c => c == '{' || c == '}' || c == '"' || c == '\\'))
+        if allSafe && allLitsSafe then
+          let parts := spans.foldl (fun acc span =>
+            let expr := (fieldNode span "expression").map re |>.getD ""
+            let lit := (fieldNode span "literal").map nodeText |>.getD ""
+            acc ++ "{" ++ expr ++ "}" ++ lit) headText
+          "let " ++ left ++ " := s!\"{" ++ left ++ "}" ++ parts ++ "\""
+        else "let " ++ left ++ " := " ++ left ++ " ++ " ++ right
+      else "let " ++ left ++ " := " ++ left ++ " ++ " ++ right
     else
       -- Type-aware operator: PlusToken on strings → ++ (concat), otherwise +
       let op := if opKind == "PlusToken" then
@@ -580,7 +635,27 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
         obj ++ "." ++ mapped
   else if kind == "CallExpression" then
     let fnJ := fieldNode j "expression"
-    let fn := fnJ.map re |>.getD "default"
+    -- For method calls with args, wrap multi-arg call objects in parens
+    -- (matches TS lowerMethodCall using lowerExprP for obj)
+    let fn := match fnJ with
+      | some fnNode =>
+        if nodeKind fnNode == "PropertyAccessExpression" && (fieldArr j "arguments").size > 0 then
+          let innerObjJ := fieldNode fnNode "expression"
+          let innerObj := innerObjJ.map re |>.getD "default"
+          let innerObj := match innerObjJ with
+            | some ioj =>
+              if nodeKind ioj == "CallExpression" && (fieldArr ioj "arguments").size >= 2 then
+                "(" ++ innerObj ++ ")"
+              else innerObj
+            | none => innerObj
+          let field := (fieldNode fnNode "name").map nodeText |>.getD ""
+          let objJ2 := fieldNode fnNode "expression"
+          let isStr := match objJ2 with | some oj => hasStringType oj | none => false
+          let mapped := if field == "length" then (if isStr then "length" else "size")
+            else mapFieldName field
+          innerObj ++ "." ++ mapped
+        else re fnNode
+      | none => "default"
     let args := (fieldArr j "arguments").map fun a =>
       if nodeKind a == "SpreadElement" then
         (fieldNode a "expression").map re |>.getD "default"
