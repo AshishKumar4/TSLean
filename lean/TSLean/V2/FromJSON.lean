@@ -621,6 +621,8 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
     let opKind := (fieldNode j "operatorToken").map nodeKind |>.getD ""
     -- Null coalescing: x ?? y → Option.getD x y
     if opKind == "QuestionQuestionToken" then
+      let left := match leftJ with
+        | some lj => parenIfCompoundExpr lj left | none => left
       let right := match rightJ with
         | some rj => parenIfCompoundExpr rj right | none => right
       "Option.getD " ++ left ++ " " ++ right
