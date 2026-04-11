@@ -132,30 +132,28 @@ def isArrayBindingPattern (j : Json) : Bool := nodeKind j == "ArrayBindingPatter
 
 -- ─── Type resolution ────────────────────────────────────────────────────────────
 
-/-- TypeFlags constants (matching TS compiler). -/
-namespace TypeFlags
-  def Any            : Nat := 1
-  def Unknown        : Nat := 2
-  def String         : Nat := 4
-  def Number         : Nat := 8
-  def Boolean        : Nat := 16
-  def Enum           : Nat := 32
-  def BigInt         : Nat := 64
-  def StringLiteral  : Nat := 128
-  def NumberLiteral  : Nat := 256
-  def BooleanLiteral : Nat := 512
-  def Undefined      : Nat := 1024
-  def Null           : Nat := 2048
-  def Void           : Nat := 4096
-  def Never          : Nat := 8192
-  def TypeParameter  : Nat := 16384
-  def Object         : Nat := 32768
-  def Union          : Nat := 65536
-  def Intersection   : Nat := 131072
-end TypeFlags
+-- TypeFlags constants (matching TS compiler)
+def TF_Any            : Nat := 1
+def TF_Unknown        : Nat := 2
+def TF_String         : Nat := 4
+def TF_Number         : Nat := 8
+def TF_Boolean        : Nat := 16
+def TF_Enum           : Nat := 32
+def TF_BigInt         : Nat := 64
+def TF_StringLiteral  : Nat := 128
+def TF_NumberLiteral  : Nat := 256
+def TF_BooleanLiteral : Nat := 512
+def TF_Undefined      : Nat := 1024
+def TF_Null           : Nat := 2048
+def TF_Void           : Nat := 4096
+def TF_Never          : Nat := 8192
+def TF_TypeParameter  : Nat := 16384
+def TF_Object         : Nat := 32768
+def TF_Union          : Nat := 65536
+def TF_Intersection   : Nat := 131072
 
-/-- NodeFlags.Const (for variable declarations). -/
-def NodeFlags.Const : Nat := 2
+-- NodeFlags.Const (for variable declarations)
+def NF_Const : Nat := 2
 
 /-- Get the resolved type from a JSON node. -/
 def resolvedType (j : Json) : Option Json := getField j "resolvedType"
