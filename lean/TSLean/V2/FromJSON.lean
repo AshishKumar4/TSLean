@@ -315,12 +315,13 @@ private partial def renderIfCondition (render : Json → String) (j : Json) : St
 
 private def parenIfCompoundExpr (j : Json) (rendered : String) : String :=
   let kind := nodeKind j
-  if kind == "BinaryExpression" || kind == "ConditionalExpression" ||
-     kind == "ArrowFunction" || kind == "AwaitExpression" ||
-     kind == "TemplateExpression" ||
-     kind == "CallExpression" ||
-     (kind == "NewExpression" && (fieldArr j "arguments").size > 0) ||
-     (kind == "PropertyAccessExpression" && (fieldNode j "questionDotToken").isSome) then
+   if kind == "BinaryExpression" || kind == "ConditionalExpression" ||
+      kind == "ArrowFunction" || kind == "AwaitExpression" ||
+      kind == "TemplateExpression" ||
+      kind == "CallExpression" ||
+      kind == "PrefixUnaryExpression" ||
+      (kind == "NewExpression" && (fieldArr j "arguments").size > 0) ||
+      (kind == "PropertyAccessExpression" && (fieldNode j "questionDotToken").isSome) then
     "(" ++ rendered ++ ")"
   else rendered
 
