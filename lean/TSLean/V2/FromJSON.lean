@@ -276,9 +276,10 @@ private def mapBinOpSym (kind : String) : String := match kind with
   | "AmpersandAmpersandToken" => "&&" | "BarBarToken" => "||"
   | _ => "+"
 
--- Fields with simple Option-wrapped types (string?, string[]?) that need .isSome in conditions.
--- Complex union? fields (LeanTy?, LeanExpr?) and boolean? fields do NOT get .isSome —
--- the TS type checker expands complex unions, preventing Option wrapping.
+-- Field names with simple Option-wrapped types (string?, string[]?) that need .isSome
+-- in boolean conditions. This matches the TS pipeline's behavior where the parser wraps
+-- T | undefined in Option and the lowering adds .isSome for truthiness checks.
+-- Complex union? fields (LeanTy?, LeanExpr?, Array LeanDecl?) do NOT get .isSome.
 private def isStringOptionalField (name : String) : Bool :=
   name == "banner" || name == "sourcePath" || name == "comment" || name == "docComment" ||
   name == "extends_" || name == "reason" || name == "constraints" || name == "name"
@@ -329,7 +330,9 @@ private partial def renderIfCondition (render : Json → String) (j : Json) : St
         | none => r
       let op := if opKind == "AmpersandAmpersandToken" then "&&" else "||"
       let result := l ++ " " ++ op ++ " " ++ r
-      -- Check if this || has optional operands → append .isSome to whole result
+      -- For || or && with optional Property operands: append .isSome
+      -- The nodeKind check ensures only direct PropertyAccessExpression (truthiness)
+      -- gets .isSome — not nested comparisons like `x.size > 0`
       let leftIsOpt := match leftJ with
         | some lj => nodeKind lj == "PropertyAccessExpression" &&
             isStringOptionalField ((fieldNode lj "name").map nodeText |>.getD "")
