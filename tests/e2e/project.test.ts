@@ -15,7 +15,7 @@ let files: Record<string, string> = {};
 
 beforeAll(() => {
   outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-e2e-proj-'));
-  execSync(`npx tsx ${CLI} --project ${FP_DIR} -o ${outDir}`, { stdio: 'pipe' });
+  execSync(`npx tsx ${CLI} --project ${FP_DIR} -o ${outDir} --no-lakefile`, { stdio: 'pipe' });
   function read(dir: string) {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, e.name);

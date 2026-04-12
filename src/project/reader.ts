@@ -94,6 +94,11 @@ export function readProjectDir(
   }
 
   // Fallback: discover .ts files manually (no tsconfig)
+  if (!fs.existsSync(dir)) return {
+    rootDir: dir, sourceDir: dir,
+    outDir: opts.outDir ?? path.join(dir, 'lean', 'Generated'),
+    files: [], leanNamespace: opts.namespace ?? 'Project',
+  };
   const files = discoverTsFiles(dir);
   return {
     rootDir: dir,
