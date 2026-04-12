@@ -9,6 +9,7 @@ import type { IRModule } from '../ir/types.js';
 import { lowerModule } from './lower.js';
 import { printFile } from './printer.js';
 import type { LeanFile, LeanDecl } from './lean-ast.js';
+import { capitalize } from '../utils.js';
 
 export interface CodegenOptions {
   /** Self-host mode: rewrite namespaces/imports for TSLean.Generated.SelfHost.* */
@@ -108,6 +109,4 @@ function applySelfHostTransforms(file: LeanFile, baseName: string): LeanFile {
   return { ...file, decls: newDecls };
 }
 
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
+

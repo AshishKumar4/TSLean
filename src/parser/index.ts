@@ -37,6 +37,7 @@ import { mapType, extractStructFields, extractTypeParams, detectDiscriminatedUni
 import { inferNodeEffect } from '../effects/index.js';
 import { hasDOPattern, CF_AMBIENT, makeAmbientHost, DO_LEAN_IMPORTS } from '../do-model/ambient.js';
 import { lookupGlobal } from '../stdlib/index.js';
+import { capitalize } from '../utils.js';
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -151,12 +152,12 @@ class ParserCtx {
   private tsModToLean(spec: string): string {
     if (!spec.startsWith('.')) {
       const known: Record<string, string> = { zod: 'TSLean.Stdlib.Validation', uuid: 'TSLean.Stdlib.Uuid' };
-      return known[spec] ?? `TSLean.External.${cap(spec.replace(/[^a-zA-Z0-9]/g, '_'))}`;
+      return known[spec] ?? `TSLean.External.${capitalize(spec.replace(/[^a-zA-Z0-9]/g, '_'))}`;
     }
     const parts = spec
       .replace(/^[./]+/, '').replace(/\.(ts|js)$/, '')
       .split('/').filter(Boolean)
-      .map(p => p.split(/[-_]/).map(cap).join(''));
+      .map(p => p.split(/[-_]/).map(capitalize).join(''));
     return 'TSLean.Generated.' + parts.join('.');
   }
 
@@ -498,7 +499,7 @@ class ParserCtx {
         return {
           tag: 'InductiveDef', name, typeParams: tps,
           ctors: disc.variants.map(v => ({
-            name: cap(v.literal),
+            name: capitalize(v.literal),
             fields: v.fields.map(f => ({ name: f.name, type: f.type })),
           })),
           comment: leadingComment(node, this.sf),
@@ -509,7 +510,7 @@ class ParserCtx {
       if (members.every(m => m.flags & ts.TypeFlags.StringLiteral)) {
         return {
           tag: 'InductiveDef', name, typeParams: tps,
-          ctors: members.map(m => ({ name: cap((m as ts.StringLiteralType).value), fields: [] })),
+          ctors: members.map(m => ({ name: capitalize((m as ts.StringLiteralType).value), fields: [] })),
           comment: leadingComment(node, this.sf),
         };
       }
@@ -1476,13 +1477,9 @@ function tsBinOp(kind: ts.SyntaxKind): BinOp | null {
   }
 }
 
-function cap(s: string): string {
-  return s ? s[0].toUpperCase() + s.slice(1) : s;
-}
-
 function fileToModuleName(filePath: string): string {
   const base  = path.basename(filePath, '.ts');
-  const parts = base.split(/[-_]/).map(cap);
+  const parts = base.split(/[-_]/).map(capitalize);
   return 'TSLean.Generated.' + parts.join('');
 }
 

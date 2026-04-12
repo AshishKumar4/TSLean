@@ -32,6 +32,7 @@ import {
   IRModule, IRDecl, IRExpr, IRType, IRPattern, IRCase, DoStmt,
   TyRef, TyFloat, TyString, TyUnit, Pure,
 } from '../ir/types.js';
+import { DISCRIMINANT_FIELDS as DISCRIMINANT_FIELDS_LIST } from '../utils.js';
 
 // ─── Public API ─────────────────────────────────────────────────────────────────
 
@@ -70,13 +71,8 @@ interface VariantInfo {
   fields: string[];
 }
 
-/**
- * Field names that TypeScript codebases commonly use as union discriminants.
- * The rewrite pass only fires when the match scrutinee is `obj.<discField>`.
- */
-const DISCRIMINANT_FIELDS = new Set([
-  'kind', 'type', 'tag', 'ok', 'hasValue', '_type', '__type',
-]);
+/** Set form of DISCRIMINANT_FIELDS for O(1) lookup in the rewrite pass. */
+const DISCRIMINANT_FIELDS = new Set(DISCRIMINANT_FIELDS_LIST);
 
 // ─── Rewrite context ────────────────────────────────────────────────────────────
 

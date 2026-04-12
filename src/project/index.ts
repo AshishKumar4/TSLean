@@ -10,6 +10,7 @@ import { rewriteModule } from '../rewrite/index.js';
 import { generateLean } from '../codegen/index.js';
 import { generateVerification } from '../verification/index.js';
 import { IRModule, IRImport } from '../ir/types.js';
+import { capitalize } from '../utils.js';
 
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -118,15 +119,15 @@ function specToLean(spec: string, rootNS: string): string {
 
 export function toLeanPath(tsFile: string, projectDir: string, outputDir: string, rootNS = 'TSLean.Generated'): string {
   const rel   = path.relative(projectDir, tsFile);
-  const parts = rel.replace(/\.ts$/, '').split(path.sep).map(p => p.split(/[-_]/).map(cap).join(''));
+  const parts = rel.replace(/\.ts$/, '').split(path.sep).map(p => p.split(/[-_]/).map(capitalize).join(''));
   return path.join(outputDir, ...parts) + '.lean';
 }
 
 export function toModuleName(tsFile: string, projectDir: string, rootNS = 'TSLean.Generated'): string {
   const rel   = path.relative(projectDir, tsFile);
   const parts = rel.replace(/\.ts$/, '').split(path.sep).filter(Boolean)
-    .map(p => p.split(/[-_]/).map(cap).join(''));
+    .map(p => p.split(/[-_]/).map(capitalize).join(''));
   return `${rootNS}.${parts.join('.')}`;
 }
 
-function cap(s: string): string { return s ? s[0].toUpperCase() + s.slice(1) : s; }
+

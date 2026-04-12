@@ -25,6 +25,7 @@ import {
   TyOption, TyArray, TyTuple, TyFn, TyMap, TySet, TyPromise,
   TyRef, TyVar,
 } from '../ir/types.js';
+import { DISCRIMINANT_FIELDS } from '../utils.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
 
@@ -36,12 +37,6 @@ const FALLBACK_TYPE_VAR = 'α';
 
 /** Sentinel name for anonymous object types (TypeScript uses `__type` internally). */
 const TS_ANON_TYPE = '__type';
-
-/**
- * Field names commonly used as discriminants in TypeScript discriminated unions.
- * Checked in order — the first matching field wins.
- */
-const DISCRIMINANT_FIELDS = ['kind', 'type', 'tag', 'ok', 'hasValue', '_type'];
 
 // ─── Main entry ─────────────────────────────────────────────────────────────────
 
