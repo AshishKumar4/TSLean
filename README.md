@@ -18,10 +18,10 @@ cd TSLean
 bun install
 
 # Transpile a single file
-npx tslean compile src/example.ts -o output.lean
+npx tsx src/cli.ts compile src/example.ts -o output.lean
 
 # Transpile a directory
-npx tslean compile my-workers-app/ -o lean/Generated/
+npx tsx src/cli.ts compile my-workers-app/ -o lean/Generated/
 
 # Run tests
 bun run test

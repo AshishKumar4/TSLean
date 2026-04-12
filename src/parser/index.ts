@@ -208,7 +208,7 @@ class ParserCtx {
             const fn = prop.initializer;
             const tps = extractTypeParams(fn as ts.ArrowFunction);
             const ps  = this.parseParams(fn.parameters);
-            const sig = this.checker.getSignatureFromDeclaration(fn)!;
+            const sig = this.checker.getSignatureFromDeclaration(fn);
             const ret = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
             const eff = inferNodeEffect(fn, this.checker);
             const body = ts.isBlock(fn.body as ts.Node)
@@ -225,7 +225,7 @@ class ParserCtx {
           const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
           const tps  = extractTypeParams(prop);
           const ps   = this.parseParams(prop.parameters);
-          const sig  = this.checker.getSignatureFromDeclaration(prop)!;
+          const sig  = this.checker.getSignatureFromDeclaration(prop);
           const ret  = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
           const eff  = inferNodeEffect(prop, this.checker);
           const body = prop.body ? this.parseBlock(prop.body, eff) : holeExpr(ret);
@@ -253,7 +253,7 @@ class ParserCtx {
     const name  = node.name?.text ?? 'anonymous';
     const tps   = extractTypeParams(node);
     const params = this.parseParams(node.parameters);
-    const sig   = this.checker.getSignatureFromDeclaration(node)!;
+    const sig   = this.checker.getSignatureFromDeclaration(node);
     const ret   = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
     const eff   = inferNodeEffect(node, this.checker);
     const body  = node.body ? this.parseBlock(node.body, eff) : holeExpr(ret);
@@ -431,7 +431,7 @@ class ParserCtx {
     const methodTPs = extractTypeParams(node);
     const classTPs  = node.parent && ts.isClassDeclaration(node.parent) ? extractTypeParams(node.parent) : [];
     const tps = [...new Set([...classTPs, ...methodTPs])];  // deduplicated merge
-    const sig     = this.checker.getSignatureFromDeclaration(node)!;
+    const sig     = this.checker.getSignatureFromDeclaration(node);
     const ret     = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
     const eff     = inferNodeEffect(node, this.checker);
     const params  = this.parseParams(node.parameters);
@@ -636,7 +636,7 @@ class ParserCtx {
         const fn = d.initializer;
         const tps = extractTypeParams(fn as ts.ArrowFunction);
         const ps  = this.parseParams(fn.parameters);
-        const sig = this.checker.getSignatureFromDeclaration(fn)!;
+        const sig = this.checker.getSignatureFromDeclaration(fn);
         const ret = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
         const eff = inferNodeEffect(fn, this.checker);
         const body = ts.isBlock(fn.body as ts.Node)
@@ -725,8 +725,8 @@ class ParserCtx {
     // for-of
     if (ts.isForOfStatement(stmt)) {
       const iter    = this.parseExpr(stmt.expression);
-      const binding = ts.isVariableDeclarationList(stmt.initializer)
-        ? (stmt.initializer.declarations[0].name as ts.Identifier).text : '_x';
+      const initDecl = ts.isVariableDeclarationList(stmt.initializer) ? stmt.initializer.declarations[0] : undefined;
+      const binding = initDecl && ts.isIdentifier(initDecl.name) ? initDecl.name.text : '_x';
       const body = ts.isBlock(stmt.statement)
         ? this.parseBlock(stmt.statement, eff)
         : this.parseStmt(stmt.statement as ts.Statement, [], eff);
@@ -1270,7 +1270,7 @@ class ParserCtx {
     const body   = ts.isBlock(node.body as ts.Node)
       ? this.parseBlock(node.body as ts.Block, eff)
       : this.parseExpr(node.body as ts.Expression);
-    const sig    = this.checker.getSignatureFromDeclaration(node)!;
+    const sig    = this.checker.getSignatureFromDeclaration(node);
     const ret    = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : body.type;
     return { tag: 'Lambda', params, body, type: TyFn(params.map(p => p.type), ret, eff), effect: eff };
   }
