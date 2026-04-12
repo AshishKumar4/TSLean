@@ -801,12 +801,9 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
              propName == "stateType" || propName == "errorType" || propName == "targetType")
            else false
      if hasQuestionDot then
-       let isTagOnInductive := field == "tag" && match fieldNode j "expression" with
-         | some objJ => checkInductiveAlias objJ | none => false
-       if isTagOnInductive then
-         obj ++ ".bind (fun _oc => some (sorry : String))"
-       else
-         obj ++ ".bind (fun _oc => some _oc." ++ field ++ ")"
+       -- Optional chain: always use real field name. The TS lowerer doesn't apply
+       -- isInductiveType inside optional chain closures (the _oc var is unwrapped).
+       obj ++ ".bind (fun _oc => some _oc." ++ field ++ ")"
      else
      -- .tag on inductive/union type aliases → (sorry : String)
      -- Matches TS IR lowerer's isInductiveType check for Effect, IRType, BinOp, UnOp
