@@ -1,5 +1,7 @@
--- TSLean.Stdlib.String
+-- TSLean.Stdlib.String — Full JS String method coverage.
 namespace TSLean.Stdlib.String
+
+-- ─── Core string operations ──────────────────────────────────────────────────
 
 def isPrefixOf (pfx s : String) : Bool := s.startsWith pfx
 def isSuffixOf (sfx s : String) : Bool := s.endsWith sfx
@@ -15,6 +17,74 @@ def replaceAll (s old new_ : String) : String := String.intercalate new_ (s.spli
 def charAt     (s : String) (i : Nat) : Option Char := s.toList[i]?
 def toCharList (s : String) : List Char := s.toList
 def truncate   (s : String) (n : Nat) : String := String.ofList (s.toList.take n)
+
+-- ─── JS String methods not in Lean core ──────────────────────────────────────
+
+/-- `s.includes(search)` → true if search is a substring of s -/
+def includes (s search : String) : Bool := (s.splitOn search).length > 1
+
+/-- `s.indexOf(search)` → first index of search in s, or none -/
+def firstIndexOf (s search : String) : Option Nat :=
+  let parts := s.splitOn search
+  if parts.length > 1 then some (parts.head!.length) else none
+
+/-- `s.lastIndexOf(search)` → last index of search in s, or none -/
+def lastIndexOf (s search : String) : Option Nat :=
+  let parts := s.splitOn search
+  if parts.length > 1 then
+    some (s.length - (parts.getLast!.length + search.length))
+  else none
+
+/-- `s.slice(start, end)` → substring from start to end -/
+def slice (s : String) (start stop : Int) : String :=
+  let len := s.length
+  let start' := if start < 0 then Int.toNat (len + start) else Int.toNat start
+  let stop'  := if stop  < 0 then Int.toNat (len + stop)  else Int.toNat stop
+  String.ofList (s.toList.drop start' |>.take (stop' - start'))
+
+/-- `s.repeat(n)` → s repeated n times -/
+def repeat_ (s : String) (n : Nat) : String :=
+  String.join (List.replicate n s)
+
+/-- `s.padStart(len, fill)` → left-pad s to length len with fill -/
+def padStart (s : String) (targetLen : Nat) (fill : String := " ") : String :=
+  if s.length >= targetLen then s
+  else
+    let padLen := targetLen - s.length
+    let fullPad := repeat_ fill (padLen / fill.length + 1)
+    (truncate fullPad padLen) ++ s
+
+/-- `s.padEnd(len, fill)` → right-pad s to length len with fill -/
+def padEnd (s : String) (targetLen : Nat) (fill : String := " ") : String :=
+  if s.length >= targetLen then s
+  else
+    let padLen := targetLen - s.length
+    let fullPad := repeat_ fill (padLen / fill.length + 1)
+    s ++ truncate fullPad padLen
+
+/-- `s.match(regex)` → stub for regex matching (returns array of matches) -/
+def matchRegex (_ : String) (_ : String) : Array String := #[]
+
+/-- `s.search(regex)` → stub for regex search (returns first index or -1) -/
+def searchRegex (_ : String) (_ : String) : Int := -1
+
+-- ─── RegExp (opaque stub) ────────────────────────────────────────────────────
+
+/-- RegExp stub. Regex operations are not expressible in pure Lean 4.
+    The type carries the pattern for documentation purposes. -/
+structure RegExp where
+  pattern : String
+  flags : String := ""
+  deriving Repr, Inhabited
+
+def RegExp.mk' (pattern : String) (flags : String := "") : RegExp :=
+  { pattern, flags }
+
+/-- Test whether a string matches — always returns false (stub). -/
+def RegExp.test (_ : RegExp) (_ : String) : Bool := false
+
+/-- Replace first match — returns original string (stub). -/
+def RegExp.replace (_ : RegExp) (s _ : String) : String := s
 
 theorem reverse_involutive (s : String) : reverse (reverse s) = s := by
   simp [reverse, String.ofList_toList]

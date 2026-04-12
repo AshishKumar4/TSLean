@@ -9,9 +9,9 @@ describe('lookupMethod – String', () => {
   it('toUpperCase',  () => expect(lookupMethod('String', 'toUpperCase')?.leanFn).toBe('String.toUpper'));
   it('toLowerCase',  () => expect(lookupMethod('String', 'toLowerCase')?.leanFn).toBe('String.toLower'));
   it('trim',         () => expect(lookupMethod('String', 'trim')?.leanFn).toBe('String.trim'));
-  it('includes (flip)', () => { const t = lookupMethod('String', 'includes'); expect(t?.argOrder).toBe('flip'); });
+  it('includes',      () => expect(lookupMethod('String', 'includes')?.leanFn).toBe('TSLean.Stdlib.String.includes'));
   it('split',        () => expect(lookupMethod('String', 'split')?.leanFn).toBe('String.splitOn'));
-  it('indexOf',      () => expect(lookupMethod('String', 'indexOf')?.leanFn).toBe('String.firstIndexOf'));
+  it('indexOf',      () => expect(lookupMethod('String', 'indexOf')?.leanFn).toBe('TSLean.Stdlib.String.firstIndexOf'));
   it('unknown → undefined', () => expect(lookupMethod('String', 'nonExistent')).toBeUndefined());
 });
 
