@@ -842,7 +842,12 @@ class LowerCtx {
   lowerExpr(e: IRExpr, ctx: Effect): LeanExpr {
     if (!e) return { tag: 'Sorry' };
     try { return this._lowerExpr(e, ctx); }
-    catch { return sorryForType(e.type); }
+    catch (err) {
+      const tag = (e as { tag?: string }).tag ?? 'unknown';
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[lower] failed to lower ${tag} expression: ${msg}`);
+      return sorryForType(e.type);
+    }
   }
 
   private _lowerExpr(e: IRExpr, ctx: Effect): LeanExpr {

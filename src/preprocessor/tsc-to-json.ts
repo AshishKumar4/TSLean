@@ -171,7 +171,9 @@ function serializeType(checker: ts.TypeChecker, type: ts.Type, depth = 0): JsonT
   }
   // For type names, use checker.typeToString as a fallback
   if (!result.symbol && !result.value) {
-    try { result.name = checker.typeToString(type); } catch {}
+    try { result.name = checker.typeToString(type); } catch (err) {
+      console.warn(`[tsc-to-json] failed to stringify type: ${err instanceof Error ? err.message : err}`);
+    }
   }
 
   return result;
@@ -198,7 +200,9 @@ function serializeNode(
   if (text !== undefined) result.text = text;
   // For StringLiteral nodes, preserve source text with quotes for faithful sanitization
   if (ts.isStringLiteral(node)) {
-    try { result.sourceText = node.getText(sf); } catch {}
+    try { result.sourceText = node.getText(sf); } catch (err) {
+      console.warn(`[tsc-to-json] failed to get source text: ${err instanceof Error ? err.message : err}`);
+    }
   }
   if (node.flags) result.flags = node.flags;
   result.pos = node.pos;
@@ -208,7 +212,9 @@ function serializeNode(
   try {
     const type = checker.getTypeAtLocation(node);
     if (type) result.resolvedType = serializeType(checker, type, 0);
-  } catch {}
+  } catch (err) {
+    console.warn(`[tsc-to-json] failed to resolve type at ${syntaxKindName(node.kind)}: ${err instanceof Error ? err.message : err}`);
+  }
 
   // Role-specific children
   const n = node as any;
