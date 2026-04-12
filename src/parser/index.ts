@@ -131,22 +131,32 @@ class ParserCtx {
 
   private collectImport(node: ts.ImportDeclaration): void {
     const spec = (node.moduleSpecifier as ts.StringLiteral).text;
-    // Skip type-only imports (they have no runtime value)
-    if (node.importClause?.isTypeOnly) return;
+    if (node.importClause?.isTypeOnly) return;  // type-only imports have no runtime value
     const lean = this.tsModToLean(spec);
+
+    // Side-effect import: `import './setup'`
+    if (!node.importClause) {
+      this.imports.push({ module: lean, isSideEffect: true });
+      return;
+    }
+
     const names: string[] = [];
-    if (node.importClause?.name) names.push(node.importClause.name.text);
-    if (node.importClause?.namedBindings) {
+    const imp: IRImport = { module: lean };
+
+    if (node.importClause.name) names.push(node.importClause.name.text);
+    if (node.importClause.namedBindings) {
       if (ts.isNamedImports(node.importClause.namedBindings)) {
         for (const el of node.importClause.namedBindings.elements) {
           if (!el.isTypeOnly) names.push(el.name.text);
         }
       } else if (ts.isNamespaceImport(node.importClause.namedBindings)) {
-        // import * as X from './mod' → just import the module
+        imp.isNamespace = true;
+        imp.namespaceAlias = node.importClause.namedBindings.name.text;
         names.push(node.importClause.namedBindings.name.text);
       }
     }
-    this.imports.push(names.length ? { module: lean, names } : { module: lean });
+    if (names.length) imp.names = names;
+    this.imports.push(imp);
   }
 
   private tsModToLean(spec: string): string {
