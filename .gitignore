@@ -16,6 +16,7 @@ package-lock.json
 # Generated / intermediate artifacts
 _fixpoint/
 staging/
+.tslean-cache/
 src/_debug_ir.ts
 src/**/*.lean
 tests/fixtures/**/*.lean
