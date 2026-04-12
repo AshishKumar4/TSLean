@@ -42,7 +42,8 @@ export function fileToLeanModule(filePath: string, opts: ModuleResolverOpts): st
   const rel = path.relative(opts.rootDir, filePath);
   const stripped = rel
     .replace(/\.(ts|tsx|js|jsx)$/, '')
-    .replace(/\/index$/, '');  // index files → parent directory name
+    .replace(/(^|[/\\])index$/, '$1')  // index files → parent directory name
+    .replace(/[/\\]$/, '');            // remove trailing separator
 
   if (!stripped) return opts.rootNS;  // rootDir/index.ts → root module
 
