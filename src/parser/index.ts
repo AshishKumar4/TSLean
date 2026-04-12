@@ -785,6 +785,24 @@ class ParserCtx {
       return c.tag === 'LitUnit' ? loop : seq(loop, c);
     }
 
+    // do-while: execute body once, then loop like while
+    if (ts.isDoStatement(stmt)) {
+      const body = this.parseBlock(stmt.statement as ts.Block, eff);
+      const cond = this.parseExpr(stmt.expression);
+      // do { body } while (cond) → body; while (cond) { body }
+      const whileLoop = this.buildWhileLoop('_dowhile', cond, body, eff);
+      const loop = seq(body, whileLoop);
+      const c = cont();
+      return c.tag === 'LitUnit' ? loop : seq(loop, c);
+    }
+
+    // labeled statement: preserve label for break/continue targeting
+    if (ts.isLabeledStatement(stmt)) {
+      const label = stmt.label.text;
+      const inner = this.parseStmtSingle(stmt.statement, rest, eff);
+      return { tag: 'Labeled', label, body: inner, type: inner.type, effect: inner.effect };
+    }
+
     // throw
     if (ts.isThrowStatement(stmt)) {
       const err = stmt.expression ? this.parseExpr(stmt.expression) : litStr('error');
@@ -1037,22 +1055,30 @@ class ParserCtx {
   }
 
   private parseWhile(node: ts.WhileStatement, eff: Effect): IRExpr {
-    const cond  = this.parseExpr(node.expression);
-    const body  = ts.isBlock(node.statement)
+    const cond = this.parseExpr(node.expression);
+    const body = ts.isBlock(node.statement)
       ? this.parseBlock(node.statement, eff)
       : this.parseStmt(node.statement as ts.Statement, [], eff);
-    const lName = `_while_${node.pos}`;
-    const recurse: IRExpr = { tag: 'App', fn: varExpr(lName), args: [], type: TyUnit, effect: Pure };
+    return this.buildWhileLoop(`_while_${node.pos}`, cond, body, eff);
+  }
+
+  private buildWhileLoop(name: string, cond: IRExpr, body: IRExpr, _eff: Effect): IRExpr {
+    const recurse: IRExpr = { tag: 'App', fn: varExpr(name), args: [], type: TyUnit, effect: Pure };
     const lBody: IRExpr = {
       tag: 'IfThenElse', cond, then: seq(body, recurse),
       else_: litUnit(), type: TyUnit, effect: combineEffects([cond.effect, body.effect]),
     };
     return {
-      tag: 'Let', name: lName,
+      tag: 'Let', name,
       value: { tag: 'Lambda', params: [], body: lBody, type: TyFn([], TyUnit), effect: body.effect },
-      body: { tag: 'App', fn: varExpr(lName), args: [], type: TyUnit, effect: Pure },
+      body: { tag: 'App', fn: varExpr(name), args: [], type: TyUnit, effect: Pure },
       type: TyUnit, effect: body.effect,
     };
+  }
+
+  /** Parse a single statement (not consuming rest). Used for labeled statements. */
+  private parseStmtSingle(stmt: ts.Statement, rest: ReadonlyArray<ts.Statement>, eff: Effect): IRExpr {
+    return this.parseStmt(stmt, rest, eff);
   }
 
   // ─── Expressions ──────────────────────────────────────────────────────────
