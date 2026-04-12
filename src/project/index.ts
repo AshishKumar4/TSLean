@@ -94,7 +94,7 @@ function relToLean(spec: string, fromFile: string, rootDir: string, rootNS: stri
   if (!resolved) return specToLean(spec, rootNS);
   const rel = path.relative(rootDir, resolved);
   const parts = rel.replace(/\.ts$/, '').split(path.sep).filter(Boolean)
-    .map(p => p.replace(/\.js$/, '').split(/[-_]/).map(cap).join(''));
+    .map(p => p.replace(/\.js$/, '').split(/[-_]/).map(capitalize).join(''));
   return `${rootNS}.${parts.join('.')}`;
 }
 
@@ -111,7 +111,7 @@ function resolveSpec(spec: string, fromFile: string): string | null {
 
 function specToLean(spec: string, rootNS: string): string {
   const parts = spec.replace(/^[./]+/, '').replace(/\.(ts|js)$/, '')
-    .split('/').filter(Boolean).map(p => p.split(/[-_]/).map(cap).join(''));
+    .split('/').filter(Boolean).map(p => p.split(/[-_]/).map(capitalize).join(''));
   return `${rootNS}.${parts.join('.')}`;
 }
 
