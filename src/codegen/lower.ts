@@ -792,12 +792,12 @@ class LowerCtx {
       case 'State': {
         const stTy = this.lowerType(eff.stateType);
         return { tag: 'TyApp', fn: { tag: 'TyName', name: 'StateT' },
-                 args: [stTy, { tag: 'TyName', name: 'IO' }, innerRet] };
+                 args: [stTy, { tag: 'TyApp', fn: { tag: 'TyName', name: 'IO' }, args: [innerRet] }] };
       }
       case 'Except': {
         const errTy = this.lowerType(eff.errorType);
         return { tag: 'TyApp', fn: { tag: 'TyName', name: 'ExceptT' },
-                 args: [errTy, { tag: 'TyName', name: 'IO' }, innerRet] };
+                 args: [errTy, { tag: 'TyApp', fn: { tag: 'TyName', name: 'IO' }, args: [innerRet] }] };
       }
       case 'Combined': {
         // Build the monad transformer stack as LeanTy directly.
