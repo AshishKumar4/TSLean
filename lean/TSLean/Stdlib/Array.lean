@@ -106,9 +106,6 @@ theorem shift_returns_first (a : Array α) (h : 0 < a.size) :
     (shift a).2 = some (a[0]'h) := by
   simp [shift, h]
 
-theorem flatMap_size_le (a : Array α) (f : α → Array β) :
-    True := trivial  -- flatMap can produce any size
-
 theorem unique_size_le [DecidableEq α] (a : Array α) :
     (unique a).size ≤ a.size := by
   simp only [unique]
@@ -158,13 +155,6 @@ theorem splice_size (a : Array α) (i n : Nat) (ins : Array α) :
   simp [splice, Array.size_append, Array.size_extract]; omega
 
 /-! ## Additional Array lemmas for codegen support -/
-
--- push then size
-theorem push_size_succ (a : Array α) (x : α) : (a.push x).size = a.size + 1 := by
-  simp [Array.size_push]
-
--- empty array size
-theorem empty_size_zero : (#[] : Array α).size = 0 := rfl
 
 -- filter preserves subset
 theorem filter_size_le (a : Array α) (p : α → Bool) :

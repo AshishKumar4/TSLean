@@ -66,11 +66,7 @@ theorem anyChar_empty  (p : Char → Bool) : anyChar "" p = false := by simp [an
 theorem mem_reverse_iff (s : String) (c : Char) : c ∈ (reverse s).toList ↔ c ∈ s.toList := by
   simp [reverse, List.mem_reverse]
 
-theorem isPrefixOf_hello : isPrefixOf "hello" "hello" = true := by native_decide
-
 theorem length_empty : "".length = 0 := rfl
-
-theorem reverse_of_empty : reverse "" = "" := reverse_empty
 
 theorem countChar_nonneg (s : String) (c : Char) : countChar s c ≥ 0 := Nat.zero_le _
 
@@ -84,9 +80,6 @@ theorem allChars_of_empty_pred (s : String) : allChars s (fun _ => true) = true 
 
 theorem anyChar_false_pred (s : String) : anyChar s (fun _ => false) = false := by
   simp [anyChar]
-
-theorem reverse_length_eq (s : String) : (reverse s).length = s.length :=
-  reverse_length s
 
 theorem countChar_singleton_self : countChar "a" 'a' = 1 := by native_decide
 

@@ -25,11 +25,6 @@ def Transaction.commit (t : Transaction) (s : Storage) : Storage :=
 def Transaction.rollback (t : Transaction) : Transaction :=
   { t with ops := [], committed := false }
 
--- The last write to a key wins in commit
-theorem put_commit_wins (t : Transaction) (s : Storage) (k : StorageKey) (v : StorageValue)
-    (hlast : ∀ j, j < t.ops.length → t.ops[j]!.1 = k → ∃ i, i < j ∧ t.ops[i]!.1 = k) :
-    True := trivial
-
 theorem empty_commit (s : Storage) : Transaction.empty.commit s = s := by
   simp [Transaction.empty, Transaction.commit]
 
@@ -127,18 +122,5 @@ theorem two_deletes_same_key (s : Storage) (k : StorageKey) :
     let t := (Transaction.empty.delete k).delete k
     (t.commit s).get k = none := by
   simp [Transaction.delete, Transaction.commit, Transaction.empty, Storage.get_delete_same]
-
-theorem commit_length_increases (t : Transaction) (k : StorageKey) (v : StorageValue) :
-    (t.put k v).ops.length = t.ops.length + 1 := put_increases_ops t k v
-
-theorem transaction_committed_false_initially : Transaction.empty.committed = false := rfl
-
-theorem put_then_commit_gets_value (s : Storage) (k : StorageKey) (v : StorageValue) :
-    (Transaction.empty.put k v |>.commit s).get k = some v := by
-  exact read_own_write s k v
-
-theorem ops_after_two_puts_correct (k1 k2 : StorageKey) (v1 v2 : StorageValue) :
-    ((Transaction.empty.put k1 v1).put k2 v2).ops = [(k1, some v1), (k2, some v2)] := by
-  simp [Transaction.put, Transaction.empty]
 
 end TSLean.DO.Transaction
