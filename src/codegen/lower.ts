@@ -534,11 +534,12 @@ class LowerCtx {
     // Check if body uses default (needs Inhabited constraint)
     const needsInhabited = this.exprUsesDefault(body) && d.typeParams.length > 0;
 
-    const tyParams: LeanTyParam[] = d.typeParams.map(t => ({
-      name: t.name,
-      explicit: false,
-      constraints: needsInhabited ? ['Inhabited'] : undefined,
-    }));
+    const tyParams: LeanTyParam[] = d.typeParams.map(t => {
+      const constraints: string[] = [];
+      if (needsInhabited) constraints.push('Inhabited');
+      if (t.constraint) constraints.push(...constraintToTypeClasses(t.constraint));
+      return { name: t.name, explicit: false, constraints: constraints.length ? constraints : undefined };
+    });
 
     const params: LeanParam[] = d.params.map(p => this.lowerParam(p, fixedEffect));
     const retTy = this.lowerRetSig(fixedEffect, this.lowerType(d.retType));
@@ -1562,6 +1563,33 @@ function isSafeInterp(e: IRExpr): boolean {
     case 'FieldAccess': return isSafeInterp(e.obj);
     case 'Cast': return isSafeInterp(e.expr);
     default: return false;
+  }
+}
+
+// ─── Constraint → type class mapping ────────────────────────────────────────────
+
+/**
+ * Map a TypeScript generic constraint (IRType) to Lean type class names.
+ *
+ * Tier 1 (primitive): string→ToString, number→OfNat/OfScientific, boolean→DecidableEq
+ * Tier 2 (named interface/class): Comparable→Comparable, Serializable→Serializable
+ * Tier 3 (structural): { name: string } → HasField "name" String (deferred)
+ */
+function constraintToTypeClasses(constraint: IRType): string[] {
+  switch (constraint.tag) {
+    case 'String':  return ['ToString'];
+    case 'Nat':     return ['OfNat'];
+    case 'Int':     return ['OfNat'];
+    case 'Float':   return ['OfScientific'];
+    case 'Bool':    return ['DecidableEq'];
+    case 'TypeRef':
+      // Named interface/class constraint: <T extends Comparable> → [Comparable T]
+      return [constraint.name];
+    case 'TypeVar':
+      // <T extends U> where U is another type param — not directly expressible
+      return [];
+    default:
+      return [];
   }
 }
 
