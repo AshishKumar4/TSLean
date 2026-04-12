@@ -18,6 +18,7 @@ import TSLean.Stdlib.String
 import TSLean.Stdlib.Numeric
 import TSLean.Stdlib.OptionResult
 import TSLean.Stdlib.Async
+import TSLean.Stdlib.JSON
 
 -- Effects
 import TSLean.Effects.Core

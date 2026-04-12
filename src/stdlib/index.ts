@@ -123,7 +123,7 @@ const GLOBALS: Record<string, GlobalTx> = {
   'console.error':  { leanExpr: 'IO.eprintln',          io: true },
   'console.warn':   { leanExpr: 'IO.eprintln',          io: true },
   'console.info':   { leanExpr: 'IO.println',           io: true },
-  'Date.now':       { leanExpr: '0',                        io: false },  // IO.monoNanosNow is BaseIO Nat, hard to use in pure context
+  'Date.now':       { leanExpr: '0' },
   'Math.floor':     { leanExpr: 'Float.floor' },
   'Math.ceil':      { leanExpr: 'Float.ceil' },
   'Math.round':     { leanExpr: 'Float.round' },
@@ -173,8 +173,8 @@ const GLOBALS: Record<string, GlobalTx> = {
   'Number.NaN':         { leanExpr: 'Float.nan' },
   'isNaN':          { leanExpr: 'Float.isNaN' },
   'isFinite':       { leanExpr: 'TSLean.Stdlib.Numeric.FloatExt.isFinite' },
-  'JSON.stringify': { leanExpr: 'serialize' },    // TSLean.serialize, opened via `open TSLean`
-  'JSON.parse':     { leanExpr: 'deserialize' },  // TSLean.deserialize
+  'JSON.stringify': { leanExpr: 'serialize' },
+  'JSON.parse':     { leanExpr: 'deserialize' },
   'Object.keys':    { leanExpr: 'AssocMap.keys' },
   'Object.values':  { leanExpr: 'AssocMap.values' },
   'Object.entries': { leanExpr: 'AssocMap.toList' },
