@@ -30,6 +30,7 @@ import { irTypeToLean } from '../typemap/index.js';
 
 import { translateBinOp } from '../stdlib/index.js';
 import { printTyStr, printExprStr } from './printer.js';
+import { currentTracker } from '../sorry-tracker.js';
 
 // TS utility types that require type-level computation (keyof, infer, conditional)
 // and cannot be expressed in Lean 4 when their arguments contain type variables.
@@ -874,6 +875,10 @@ class LowerCtx {
       const tag = (e as { tag?: string }).tag ?? 'unknown';
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[lower] failed to lower ${tag} expression: ${msg}`);
+      currentTracker().add({
+        location: `lower:${tag}`, reason: msg,
+        category: 'unresolved-expr', hint: 'check if the expression pattern is supported',
+      });
       return sorryForType(e.type);
     }
   }
@@ -1027,6 +1032,10 @@ class LowerCtx {
       case 'Cast': return this.lowerCast(e, ctx);
       case 'IsType': {
         const typeName = e.testType?.tag === 'TypeRef' ? e.testType.name : (e.testType?.tag ?? 'unknown');
+        currentTracker().add({
+          location: `IsType:${typeName}`, reason: `typeof/instanceof not expressible in Lean`,
+          category: 'type-test', hint: 'use pattern matching or type class dispatch instead',
+        });
         return { tag: 'Sorry', ty: { tag: 'TyName', name: 'Bool' }, reason: `type test: ${typeName}` };
       }
       case 'Panic': return { tag: 'Panic', msg: e.msg };
