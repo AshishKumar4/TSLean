@@ -27,8 +27,9 @@ import type {
   LeanMatchArm, LeanFieldVal, SInterpPart,
 } from './lean-ast.js';
 import { irTypeToLean } from '../typemap/index.js';
-import { monadString } from '../effects/index.js';
+
 import { translateBinOp } from '../stdlib/index.js';
+import { printTyStr, printExprStr } from './printer.js';
 
 // ─── Public API ─────────────────────────────────────────────────────────────────
 
@@ -799,11 +800,24 @@ class LowerCtx {
                  args: [errTy, { tag: 'TyName', name: 'IO' }, innerRet] };
       }
       case 'Combined': {
-        const ms = monadString(eff);
-        if (ms === 'IO' && alreadyIO) return retTy;
-        // Parse the monad string back into a type — this is a temporary bridge
-        // until the monad computation is done purely on LeanTy
-        return { tag: 'TyApp', fn: { tag: 'TyName', name: ms }, args: [innerRet] };
+        // Build the monad transformer stack as LeanTy directly.
+        // Stack is right-folded: [StateT S, ExceptT E, IO] → StateT S (ExceptT E (IO α))
+        const layers: LeanTy[] = [];
+        const se = eff.effects.find((e): e is Extract<Effect, { tag: 'State' }> => e.tag === 'State');
+        const ee = eff.effects.find((e): e is Extract<Effect, { tag: 'Except' }> => e.tag === 'Except');
+        if (se) layers.push({ tag: 'TyApp', fn: { tag: 'TyName', name: 'StateT' }, args: [this.lowerType(se.stateType)] });
+        else if (eff.effects.some(e => e.tag === 'State')) layers.push({ tag: 'TyApp', fn: { tag: 'TyName', name: 'StateT' }, args: [{ tag: 'TyName', name: 'σ' }] });
+        if (ee) layers.push({ tag: 'TyApp', fn: { tag: 'TyName', name: 'ExceptT' }, args: [this.lowerType(ee.errorType)] });
+        else if (eff.effects.some(e => e.tag === 'Except')) layers.push({ tag: 'TyApp', fn: { tag: 'TyName', name: 'ExceptT' }, args: [{ tag: 'TyName', name: 'TSError' }] });
+        layers.push({ tag: 'TyName', name: 'IO' });
+
+        if (layers.length === 1 && alreadyIO) return retTy;
+        // Right-fold: each transformer wraps the next as an argument
+        const stack = layers.reduceRight<LeanTy>((inner, outer) =>
+          outer.tag === 'TyName' ? { tag: 'TyApp', fn: outer, args: [inner] }
+            : { tag: 'TyApp', fn: outer.fn, args: [...outer.args, inner] }
+        , innerRet);
+        return stack;
       }
     }
   }
@@ -1380,13 +1394,12 @@ class LowerCtx {
     return false;
   }
 
-  // Temporary bridge methods — these call the old printer inline for Raw code emission
   private printTyInline(t: LeanTy): string {
-    return irTypeToLean_bridge(t);
+    return printTyStr(t);
   }
 
-  private printExprInline(_e: LeanExpr): string {
-    return 'sorry';
+  private printExprInline(e: LeanExpr): string {
+    return printExprStr(e, 0);
   }
 }
 
@@ -1552,13 +1565,4 @@ function isSafeInterp(e: IRExpr): boolean {
   }
 }
 
-/** Temporary bridge: convert LeanTy to string using the old irTypeToLean approach. */
-function irTypeToLean_bridge(t: LeanTy): string {
-  switch (t.tag) {
-    case 'TyName': return t.name;
-    case 'TyApp': return `${irTypeToLean_bridge(t.fn)} ${t.args.map(a => irTypeToLean_bridge(a)).join(' ')}`;
-    case 'TyArrow': return t.params.map(p => irTypeToLean_bridge(p)).join(' → ') + ' → ' + irTypeToLean_bridge(t.ret);
-    case 'TyTuple': return t.elems.length === 0 ? 'Unit' : t.elems.map(e => irTypeToLean_bridge(e)).join(' × ');
-    case 'TyParen': return `(${irTypeToLean_bridge(t.inner)})`;
-  }
-}
+
