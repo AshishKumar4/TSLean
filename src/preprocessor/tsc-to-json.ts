@@ -1,17 +1,21 @@
 #!/usr/bin/env npx tsx
 /**
- * tsc-to-json.ts — Serialize a TypeScript AST + type info to JSON.
+ * tsc-to-json.ts — Serialize a TypeScript AST + rich type info to JSON.
  *
- * This is the "Stage 0" preprocessor for the runnable self-host.
- * It runs the TS compiler to parse and type-check, then serializes the
- * AST and resolved types into a JSON format that the Lean transpiler
- * can read without any TS compiler dependency.
+ * v2.0: Full type resolution via ts.TypeChecker. Unlike v1 which used
+ * `noResolve: true` (stripping all cross-module types), v2 resolves
+ * imports and standard library types, providing accurate type data for:
+ * - Function signatures (parameter types + return types)
+ * - Resolved call signatures (overload resolution)
+ * - Symbol metadata (enum/namespace/type-alias flags)
+ * - Object type properties (for branded type / discriminated union detection)
  *
  * Usage: npx tsx src/preprocessor/tsc-to-json.ts <input.ts> [output.json]
  *
- * JSON Schema:
- *   { fileName, sourceText, statements: JsonNode[] }
- * where JsonNode has kind, text, flags, resolvedType, and role-specific children.
+ * JSON Schema (v2):
+ *   { version: 2, fileName, sourceText, statements: JsonNode[] }
+ * where JsonNode has kind, text, flags, resolvedType, signature,
+ * symbolFlags, callSignature, and role-specific children.
  */
 
 import * as ts from 'typescript';
@@ -29,6 +33,14 @@ interface JsonType {
   value?: string;              // for literal types
   symbol?: string;             // symbol name
   aliasName?: string;          // alias symbol name
+  // v2: structured type metadata
+  properties?: Array<{ name: string; typeFlags: number; type?: JsonType }>;
+  callSignatures?: Array<{ params: Array<{ name: string; type?: JsonType }>; returnType?: JsonType }>;
+}
+
+interface JsonSignature {
+  parameters: Array<{ name: string; type?: JsonType; optional?: boolean; rest?: boolean }>;
+  returnType?: JsonType;
 }
 
 interface JsonNode {
@@ -109,9 +121,16 @@ interface JsonNode {
 
   // Comment info
   leadingComments?: string[];
+
+  // v2: rich type metadata
+  symbolFlags?: number;          // from checker.getSymbolAtLocation().flags
+  signature?: JsonSignature;     // from checker.getSignatureFromDeclaration()
+  callSignature?: { returnType?: JsonType }; // from checker.getResolvedSignature()
+  sourceText?: string;           // preserved source text (StringLiteral)
 }
 
 interface JsonAST {
+  version: number;
   fileName: string;
   sourceText: string;
   statements: JsonNode[];
@@ -148,8 +167,11 @@ function syntaxKindName(kind: ts.SyntaxKind): string {
   return KIND_OVERRIDES[kind] ?? ts.SyntaxKind[kind] ?? `Unknown_${kind}`;
 }
 
+const MAX_TYPE_DEPTH = 4;
+const MAX_PROPERTIES = 30;
+
 function serializeType(checker: ts.TypeChecker, type: ts.Type, depth = 0): JsonType | undefined {
-  if (!type || depth > 10) return undefined;
+  if (!type || depth > MAX_TYPE_DEPTH) return undefined;
   const result: JsonType = { flags: type.flags };
 
   if (type.symbol?.name) result.symbol = type.symbol.name;
@@ -164,11 +186,57 @@ function serializeType(checker: ts.TypeChecker, type: ts.Type, depth = 0): JsonT
   if (type.isIntersection()) {
     result.types = type.types.map(t => serializeType(checker, t, depth + 1)).filter(Boolean) as JsonType[];
   }
-  if ('typeArguments' in type && (type as ts.TypeReference).typeArguments) {
+
+  // Type arguments: prefer checker-resolved, fallback to AST-level
+  if (type.flags & ts.TypeFlags.Object) {
+    const objFlags = (type as ts.ObjectType).objectFlags ?? 0;
+    // Only for Reference types (Array<T>, Map<K,V>, etc.) — not all object types
+    if (objFlags & ts.ObjectFlags.Reference) {
+      try {
+        const args = checker.getTypeArguments(type as ts.TypeReference);
+        if (args && args.length > 0) {
+          result.typeArguments = args
+            .map(t => serializeType(checker, t, depth + 1))
+            .filter(Boolean) as JsonType[];
+        }
+      } catch { /* getTypeArguments may throw for non-reference types */ }
+    }
+  }
+  if (!result.typeArguments && 'typeArguments' in type && (type as ts.TypeReference).typeArguments) {
     result.typeArguments = (type as ts.TypeReference).typeArguments!
       .map(t => serializeType(checker, t, depth + 1))
       .filter(Boolean) as JsonType[];
   }
+
+  // v2: Object type properties (only at depth 0 to avoid blowup)
+  if (depth === 0 && (type.flags & ts.TypeFlags.Object) && !(type.flags & ts.TypeFlags.Any)) {
+    try {
+      const props = checker.getPropertiesOfType(type);
+      if (props.length > 0 && props.length <= MAX_PROPERTIES) {
+        result.properties = props.map(p => {
+          const pt = checker.getTypeOfSymbol(p);
+          return { name: p.name, typeFlags: pt.flags };
+        });
+      }
+    } catch { /* getPropertiesOfType may fail on some synthetic types */ }
+  }
+
+  // v2: Call signatures (only at depth 0 — for callable object types / function types)
+  if (depth === 0 && (type.flags & ts.TypeFlags.Object)) {
+    try {
+      const sigs = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+      if (sigs.length > 0) {
+        result.callSignatures = sigs.slice(0, 2).map(sig => ({
+          params: sig.parameters.map(p => ({
+            name: p.name,
+            type: serializeType(checker, checker.getTypeOfSymbol(p), 2),
+          })),
+          returnType: serializeType(checker, checker.getReturnTypeOfSignature(sig), 2),
+        }));
+      }
+    } catch { /* getSignaturesOfType may fail on non-object types */ }
+  }
+
   // For type names, use checker.typeToString as a fallback
   if (!result.symbol && !result.value) {
     try { result.name = checker.typeToString(type); } catch (err) {
@@ -209,11 +277,61 @@ function serializeNode(
   result.end = node.end;
 
   // Resolve type via checker (for expression and declaration nodes)
-  try {
-    const type = checker.getTypeAtLocation(node);
-    if (type) result.resolvedType = serializeType(checker, type, 0);
-  } catch (err) {
-    console.warn(`[tsc-to-json] failed to resolve type at ${syntaxKindName(node.kind)}: ${err instanceof Error ? err.message : err}`);
+  // Skip type resolution for import/export clauses (type-only, no runtime type)
+  if (!ts.isImportClause(node) && !ts.isImportSpecifier(node) && !ts.isExportSpecifier(node)) {
+    try {
+      const type = checker.getTypeAtLocation(node);
+      if (type) result.resolvedType = serializeType(checker, type, 0);
+    } catch (err) {
+      console.warn(`[tsc-to-json] failed to resolve type at ${syntaxKindName(node.kind)}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  // v2: Symbol flags (enum detection, namespace detection)
+  if (ts.isIdentifier(node) || ts.isPropertyAccessExpression(node)) {
+    try {
+      const sym = checker.getSymbolAtLocation(node);
+      if (sym && sym.flags) result.symbolFlags = sym.flags;
+    } catch { /* symbol resolution may fail for synthetic nodes */ }
+  }
+
+  // v2: Function signature (parameter types + return type from checker)
+  if (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) ||
+      ts.isArrowFunction(node) || ts.isFunctionExpression(node) ||
+      ts.isGetAccessor(node) || ts.isConstructorDeclaration(node)) {
+    try {
+      const sig = checker.getSignatureFromDeclaration(node);
+      if (sig) {
+        result.signature = {
+          parameters: sig.parameters.map(p => {
+            const ptype = checker.getTypeOfSymbol(p);
+            const decl = p.valueDeclaration;
+            return {
+              name: p.name,
+              type: serializeType(checker, ptype, 0),
+              optional: !!(p.flags & ts.SymbolFlags.Optional) || (decl && ts.isParameter(decl) && !!decl.questionToken) || undefined,
+              rest: (decl && ts.isParameter(decl) && !!decl.dotDotDotToken) || undefined,
+            };
+          }),
+          returnType: serializeType(checker, checker.getReturnTypeOfSignature(sig), 0),
+        };
+      }
+    } catch { /* signature resolution may fail for abstract/overloaded */ }
+  }
+
+  // v2: Resolved call signature (overload resolution for call expressions)
+  if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+    try {
+      const sig = checker.getResolvedSignature(node);
+      if (sig) {
+        const retType = checker.getReturnTypeOfSignature(sig);
+        if (retType) {
+          result.callSignature = {
+            returnType: serializeType(checker, retType, 0),
+          };
+        }
+      }
+    } catch { /* resolved signature may fail for unresolved calls */ }
   }
 
   // Role-specific children
@@ -371,8 +489,6 @@ function main(): void {
     moduleResolution: ts.ModuleResolutionKind.NodeNext,
     strict: true,
     skipLibCheck: true,
-    noResolve: true,
-    lib: [],
   };
 
   const host = ts.createCompilerHost(compilerOpts);
@@ -385,12 +501,13 @@ function main(): void {
   }
 
   const ast: JsonAST = {
+    version: 2,
     fileName: sf.fileName,
     sourceText,
     statements: Array.from(sf.statements).map(s => serializeNode(s, checker, sf, 0)),
   };
 
-  const json = JSON.stringify(ast, null, 2);
+  const json = JSON.stringify(ast);
 
   if (outputFile) {
     fs.writeFileSync(outputFile, json, 'utf-8');
