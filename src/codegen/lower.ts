@@ -31,6 +31,15 @@ import { irTypeToLean } from '../typemap/index.js';
 import { translateBinOp } from '../stdlib/index.js';
 import { printTyStr, printExprStr } from './printer.js';
 
+// TS utility types that require type-level computation (keyof, infer, conditional)
+// and cannot be expressed in Lean 4 when their arguments contain type variables.
+const INEXPRESSIBLE_UTILITY_TYPES = new Set([
+  'Partial', 'Required', 'Pick', 'Omit',
+  'ReturnType', 'Parameters', 'ConstructorParameters', 'InstanceType',
+  'Extract', 'Exclude', 'ThisParameterType', 'OmitThisParameter', 'ThisType',
+  'Awaited',
+]);
+
 // ─── Public API ─────────────────────────────────────────────────────────────────
 
 /** Lower an IR module to a LeanAST file. */
@@ -771,6 +780,10 @@ class LowerCtx {
       }
       case 'TypeRef': {
         const name = t.name === 'Any' ? 'TSAny' : t.name;
+        // Inexpressible TS utility types in generic context → sorry
+        if (INEXPRESSIBLE_UTILITY_TYPES.has(name) && t.args.some(a => a.tag === 'TypeVar')) {
+          return { tag: 'TyName', name: 'String' };
+        }
         if (t.args.length === 0) return { tag: 'TyName', name };
         return { tag: 'TyApp', fn: { tag: 'TyName', name }, args: t.args.map(a => this.lowerType(a)) };
       }
