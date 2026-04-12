@@ -1156,9 +1156,46 @@ class LowerCtx {
     const fn = this.lowerExpr(e.fn, ctx);
     // Unresolved functions → sorry
     if (fn.tag === 'Sorry' || fn.tag === 'Default') return sorryForType(e.type);
-    // TS compiler API calls → sorry
-    if (fn.tag === 'Var' && (fn.name.startsWith('ts.') || fn.name.startsWith('path.') || fn.name.startsWith('fs.') || fn.name.startsWith('process.')))
-      return { tag: 'Sorry' };
+    // Node.js module calls → dispatch to stubs
+    if (fn.tag === 'Var') {
+      const stubMap: Record<string, string> = {
+        'path.join': 'TSLean.Stubs.NodePath.join',
+        'path.resolve': 'TSLean.Stubs.NodePath.resolve',
+        'path.dirname': 'TSLean.Stubs.NodePath.dirname',
+        'path.basename': 'TSLean.Stubs.NodePath.basename',
+        'path.extname': 'TSLean.Stubs.NodePath.extname',
+        'path.relative': 'TSLean.Stubs.NodePath.relative',
+        'path.normalize': 'TSLean.Stubs.NodePath.normalize',
+        'path.isAbsolute': 'TSLean.Stubs.NodePath.isAbsolute',
+        'path.sep': 'TSLean.Stubs.NodePath.sep',
+        'fs.readFileSync': 'TSLean.Stubs.NodeFs.readFileSync',
+        'fs.writeFileSync': 'TSLean.Stubs.NodeFs.writeFileSync',
+        'fs.existsSync': 'TSLean.Stubs.NodeFs.existsSync',
+        'fs.mkdirSync': 'TSLean.Stubs.NodeFs.mkdirSync',
+        'fs.readdirSync': 'TSLean.Stubs.NodeFs.readdirSync',
+        'fs.statSync': 'TSLean.Stubs.NodeFs.statSync',
+        'fs.unlinkSync': 'TSLean.Stubs.NodeFs.unlinkSync',
+        'process.cwd': 'TSLean.Stubs.Process.cwd',
+        'process.exit': 'TSLean.Stubs.Process.exit',
+        'process.env': 'TSLean.Stubs.Process.env',
+      };
+      const stub = stubMap[fn.name];
+      if (stub) {
+        const args = e.args.map(a => this.lowerExprP(a, ctx));
+        const stubFn: LeanExpr = { tag: 'Var', name: stub };
+        return args.length === 0 ? stubFn : { tag: 'App', fn: stubFn, args };
+      }
+      // TS compiler API calls → sorry (no Lean equivalent)
+      if (fn.name.startsWith('ts.')) return { tag: 'Sorry' };
+      // Remaining unresolved path/fs/process → sorry with tracker
+      if (fn.name.startsWith('path.') || fn.name.startsWith('fs.') || fn.name.startsWith('process.')) {
+        currentTracker().add({
+          location: fn.name, reason: `Node API '${fn.name}' not in stub map`,
+          category: 'runtime-api', hint: `add mapping to stubMap in lower.ts`,
+        });
+        return { tag: 'Sorry' };
+      }
+    }
     // Storage operations → pure sorry
     if (fn.tag === 'Var' && fn.name.startsWith('Storage.'))
       return !isPure(ctx) ? { tag: 'Pure', value: sorryForType(e.type) } : sorryForType(e.type);
