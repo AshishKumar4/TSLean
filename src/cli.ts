@@ -19,6 +19,7 @@ import { rewriteModule } from './rewrite/index.js';
 import { generateLean, generateLeanTracked } from './codegen/index.js';
 import { generateLeanV2 } from './codegen/v2.js';
 import { currentTracker } from './sorry-tracker.js';
+import { resetTimer } from './timing.js';
 import { generateVerification } from './verification/index.js';
 import { transpileProject, writeProjectOutputs } from './project/index.js';
 
@@ -67,6 +68,7 @@ ${c.bold('OPTIONS')}
   --base-name <name>     Module base name (self-host mode)
   --namespace <ns>       Root namespace (default: TSLean.Generated)
   --lakefile/--no-lakefile  Generate/skip lakefile.toml
+  --timing               Show phase-by-phase timing breakdown
   --no-color             Disable colored output
   -v, --version          Show version
   -h, --help             Show this help
@@ -86,6 +88,7 @@ interface CompileOpts {
   genLakefile: boolean;
   tsconfigPath: string;
   strict: boolean;
+  timing: boolean;
 }
 
 type Command =
@@ -116,7 +119,7 @@ function parseArgs(argv: string[]): Command {
   const isCompile = sub === 'compile';
   const rest = isCompile ? args.slice(1) : args;
 
-  let input = '', output = '', verify = false, watch = false, strict = false;
+  let input = '', output = '', verify = false, watch = false, strict = false, timing = false;
   let ns = 'TSLean.Generated', selfHost = false, baseName = '';
   let isDir = false, genLakefile = true, tsconfigPath = '';
 
@@ -133,6 +136,7 @@ function parseArgs(argv: string[]): Command {
     else if (a === '--lakefile') { genLakefile = true; }
     else if (a === '--no-lakefile') { genLakefile = false; }
     else if (a === '--strict')   { strict = true; }
+    else if (a === '--timing')   { timing = true; }
     else if (!a.startsWith('-') && !input) { input = a; }
   }
 
@@ -152,7 +156,7 @@ function parseArgs(argv: string[]): Command {
       : input.replace(/\.ts$/, '.lean');
   }
 
-  return { cmd: 'compile', opts: { input, output, verify, watch, ns, selfHost, baseName, isDir, genLakefile, tsconfigPath, strict } };
+  return { cmd: 'compile', opts: { input, output, verify, watch, ns, selfHost, baseName, isDir, genLakefile, tsconfigPath, strict, timing } };
 }
 
 // ─── Output helpers ──────────────────────────────────────────────────────────
@@ -172,26 +176,39 @@ function info(msg: string): void {
 // ─── Compile: single file ────────────────────────────────────────────────────
 
 function compileSingle(opts: CompileOpts): boolean {
-  const { input, output, verify, selfHost, baseName, strict } = opts;
+  const { input, output, verify, selfHost, baseName, strict, timing } = opts;
   if (!fs.existsSync(input)) {
     error(`File not found: ${input}`);
     return false;
   }
 
   try {
+    const timer = resetTimer();
+
+    timer.start('parse');
     const src = fs.readFileSync(input, 'utf-8');
     const mod = parseFile({ fileName: path.resolve(input), sourceText: src });
+
+    timer.start('rewrite');
     const rw  = rewriteModule(mod);
+
+    timer.start('codegen');
     const { code: rawCode, tracker } = selfHost
       ? { code: generateLeanV2(rw, { selfHost: true, baseName }), tracker: currentTracker() }
       : generateLeanTracked(rw);
     let code = rawCode;
 
     if (verify) {
+      timer.start('verify');
       const { leanCode, obligations } = generateVerification(rw);
       if (leanCode) code += '\n\n-- Verification obligations\n' + leanCode;
       if (obligations.length) info(`Generated ${obligations.length} proof obligation(s)`);
     }
+
+    timer.start('write');
+    fs.mkdirSync(path.dirname(path.resolve(output)), { recursive: true });
+    fs.writeFileSync(output, code, 'utf-8');
+    timer.end();
 
     // Summary report
     if (tracker.count > 0) {
@@ -202,9 +219,8 @@ function compileSingle(opts: CompileOpts): boolean {
       }
     }
 
-    fs.mkdirSync(path.dirname(path.resolve(output)), { recursive: true });
-    fs.writeFileSync(output, code, 'utf-8');
     success(`${input} → ${output}`);
+    if (timing) process.stdout.write(timer.report() + '\n');
     return true;
   } catch (err) {
     error((err as Error).message);
