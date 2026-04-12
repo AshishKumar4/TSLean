@@ -193,6 +193,13 @@ function mapTypeRef(t: ts.TypeReference, checker: ts.TypeChecker, depth: number)
     case 'Promise':                             return TyPromise(map1());
     case 'Record':                              return TyMap(map1(), map2(1));
     case 'Readonly':      case 'NonNullable':   return map1();
+    // Utility types that are transparent (pass through inner type)
+    case 'Required':                            return map1();
+    // Utility types that reduce to known IR types
+    case 'Partial':                             return TyRef('Partial', [map1()]);
+    case 'Pick':          case 'Omit':          return TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
+    case 'ReturnType':    case 'Parameters':    return TyRef(name, [map1()]);
+    case 'Exclude':       case 'Extract':       return TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
     default:
       return args.length === 0 ? TyRef(name) : TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
   }
