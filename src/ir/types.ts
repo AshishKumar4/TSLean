@@ -233,7 +233,7 @@ export type IRExpr =
   | ({ tag: 'StateSet'; value: IRExpr }                                    & IRNode)
   // Error handling
   | ({ tag: 'Throw';    error: IRExpr }                                    & IRNode)
-  | ({ tag: 'TryCatch'; body: IRExpr; errName: string; handler: IRExpr }   & IRNode)
+  | ({ tag: 'TryCatch'; body: IRExpr; errName: string; handler: IRExpr; finally_?: IRExpr } & IRNode)
   // Async
   | ({ tag: 'Await'; expr: IRExpr }                                        & IRNode)
   // Mutation

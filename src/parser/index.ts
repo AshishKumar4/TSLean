@@ -999,7 +999,8 @@ class ParserCtx {
     const handler = node.catchClause?.block
       ? this.parseBlock(node.catchClause.block, eff)
       : varExpr(errName);
-    const tryCatch: IRExpr = { tag: 'TryCatch', body, errName, handler, type: body.type, effect: body.effect };
+    const finally_ = node.finallyBlock ? this.parseBlock(node.finallyBlock, eff) : undefined;
+    const tryCatch: IRExpr = { tag: 'TryCatch', body, errName, handler, finally_, type: body.type, effect: body.effect };
     if (rest.length === 0) return tryCatch;
     return seq(tryCatch, this.parseStmts(rest, eff));
   }

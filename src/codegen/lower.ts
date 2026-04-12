@@ -1003,7 +1003,16 @@ class LowerCtx {
         if (isPure(ctx)) return { tag: 'Default' };
         const body = this.lowerExprP(e.body, ctx);
         const handler = this.lowerExpr(e.handler, ctx);
-        return { tag: 'TryCatch', body, errName: e.errName, handler };
+        const tc: LeanExpr = { tag: 'TryCatch', body, errName: e.errName, handler };
+        // finally: bind result, run cleanup, return result
+        if (e.finally_) {
+          const fin = this.lowerExpr(e.finally_, ctx);
+          return {
+            tag: 'Let', name: '_tc_result', value: tc,
+            body: { tag: 'Seq', stmts: [fin, { tag: 'Var', name: '_tc_result' }] },
+          };
+        }
+        return tc;
       }
 
       case 'Await': return this.lowerExpr(e.expr, ctx);
