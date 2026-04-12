@@ -450,7 +450,7 @@ class ParserCtx {
     // Fix 3: self type uses the state struct name with class type params applied.
     // E.g. for Stack<T> → (self : StackState T), not bare (self : StackState).
     const selfType = classTPs.length > 0
-      ? TyRef(stateType, classTPs.map(tp => TyVar(tp)))
+      ? TyRef(stateType, classTPs.map(tp => TyVar(tp.name)))
       : TyRef(stateType);
     const self: IRParam = { name: 'self', type: selfType };
     const allParams = isStatic ? params : [self, ...params];
