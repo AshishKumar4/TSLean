@@ -60,7 +60,6 @@ function collectExpr(e: IRExpr, fn: string, acc: ProofObligation[]): void {
     case 'TryCatch':    collectExpr(e.body, fn, acc); collectExpr(e.handler, fn, acc); break;
     case 'Return':      collectExpr(e.value, fn, acc); break;
     case 'Throw':       collectExpr(e.error, fn, acc); break;
-    case 'BinOp':       break; // handled above
     default:            break;
   }
 }

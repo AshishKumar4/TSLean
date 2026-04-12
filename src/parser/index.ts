@@ -30,7 +30,7 @@ import {
   Pure, IO, Async, stateEffect, exceptEffect, combineEffects,
   isPure, hasAsync,
   TyNat, TyFloat, TyString, TyBool, TyUnit, TyNever, TyOption, TyArray,
-  TyTuple, TyFn, TyMap, TyRef, TyVar, TyPromise,
+  TyTuple, TyFn, TyMap, TyRef, TyVar,
   litStr, litNat, litBool, litUnit, varExpr, holeExpr,
 } from '../ir/types.js';
 import { mapType, extractStructFields, extractTypeParams, detectDiscriminatedUnion } from '../typemap/index.js';
@@ -230,9 +230,6 @@ class ParserCtx {
           const body = prop.body ? this.parseBlock(prop.body, eff) : holeExpr(ret);
           decls.push({ tag: 'FuncDef', name, typeParams: tps, params: ps, retType: ret, effect: eff, body });
         } else if (ts.isShorthandPropertyAssignment(prop)) {
-          // { fetch } → already defined elsewhere, just reference
-          const name = prop.name.text;
-          const ty   = mapType(this.checker.getTypeAtLocation(prop.name), this.checker);
           // Shorthand property in export default: { createConfig } — just a re-export, skip
         }
       }

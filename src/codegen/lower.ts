@@ -20,7 +20,7 @@ import type {
   IRModule, IRDecl, IRExpr, IRType, IRParam, IRCase, IRPattern,
   DoStmt, Effect, BinOp, UnOp, IRImport,
 } from '../ir/types.js';
-import { Pure, isPure, hasAsync, hasState, hasExcept } from '../ir/types.js';
+import { Pure, isPure } from '../ir/types.js';
 import type {
   LeanFile, LeanDecl, LeanExpr, LeanTy, LeanPat,
   LeanTyParam, LeanParam, LeanField, LeanCtor,

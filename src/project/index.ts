@@ -10,7 +10,7 @@ import { rewriteModule } from '../rewrite/index.js';
 import { generateLean } from '../codegen/index.js';
 import { generateVerification } from '../verification/index.js';
 import { IRModule, IRImport } from '../ir/types.js';
-import { hasDOPattern, CF_AMBIENT, makeAmbientHost } from '../do-model/ambient.js';
+
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 

@@ -127,7 +127,6 @@ class RewriteCtx {
       case 'Lambda':      return { ...e, body: this.rewrite(e.body) };
       case 'App':         return { ...e, fn: this.rewrite(e.fn), args: e.args.map(a => this.rewrite(a)) };
       case 'Sequence':    return { ...e, stmts: e.stmts.map(s => this.rewrite(s)) };
-      case 'StructLit':   return { ...e, fields: e.fields.map(f => ({ ...f, value: this.rewrite(f.value) })) };
       case 'ArrayLit':    return { ...e, elems: e.elems.map(x => this.rewrite(x)) };
       case 'TupleLit':    return { ...e, elems: e.elems.map(x => this.rewrite(x)) };
       case 'DoBlock':     return { ...e, stmts: e.stmts.map(s => this.rewriteDoStmt(s)) };
