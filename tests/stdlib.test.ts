@@ -26,7 +26,7 @@ describe('lookupMethod – Array', () => {
   it('includes',    () => expect(lookupMethod('Array', 'includes')?.leanFn).toBe('Array.contains'));
   it('length',      () => expect(lookupMethod('Array', 'length')?.leanFn).toBe('Array.size'));
   it('reverse',     () => expect(lookupMethod('Array', 'reverse')?.leanFn).toBe('Array.reverse'));
-  it('flat',        () => expect(lookupMethod('Array', 'flat')?.leanFn).toBe('Array.join'));
+  it('flat',        () => expect(lookupMethod('Array', 'flat')?.leanFn).toBe('TSLean.Stdlib.Array.flatten'));
 });
 
 describe('lookupMethod – Map', () => {

@@ -45,25 +45,36 @@ const ARRAY_METHODS: Record<string, MethodTx> = {
   length:     { leanFn: 'Array.size',     resultType: TyNat },
   push:       { leanFn: 'Array.push',     resultType: TyUnit },
   pop:        { leanFn: 'Array.pop',      resultType: TyUnit },
+  shift:      { leanFn: 'TSLean.Stdlib.Array.shift', resultType: TyUnit },
+  unshift:    { leanFn: 'TSLean.Stdlib.Array.unshift', resultType: TyUnit },
   map:        { leanFn: 'Array.map',      resultType: TyArray({ tag: 'TypeVar', name: 'β' }) },
   filter:     { leanFn: 'Array.filter',   resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
   reduce:     { leanFn: 'Array.foldl',    resultType: { tag: 'TypeVar', name: 'β' } },
+  reduceRight:{ leanFn: 'Array.foldr',    resultType: { tag: 'TypeVar', name: 'β' } },
   forEach:    { leanFn: 'Array.forM',     resultType: TyUnit, io: true },
   find:       { leanFn: 'Array.find?',    resultType: TyOption({ tag: 'TypeVar', name: 'α' }) },
   findIndex:  { leanFn: 'Array.findIdx?', resultType: TyOption(TyNat) },
+  findLast:   { leanFn: 'TSLean.Stdlib.Array.findLast', resultType: TyOption({ tag: 'TypeVar', name: 'α' }) },
   some:       { leanFn: 'Array.any',      resultType: TyBool },
   every:      { leanFn: 'Array.all',      resultType: TyBool },
   includes:   { leanFn: 'Array.contains', resultType: TyBool },
   indexOf:    { leanFn: 'Array.indexOf',  resultType: TyOption(TyNat) },
   slice:      { leanFn: 'Array.extract',  resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
+  splice:     { leanFn: 'TSLean.Stdlib.Array.splice', resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
   concat:     { leanFn: 'Array.append',   resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
   join:       { leanFn: 'String.intercalate', argOrder: 'flip', resultType: TyString },
   reverse:    { leanFn: 'Array.reverse',  resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
-  flat:       { leanFn: 'Array.join',     resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
-  flatMap:    { leanFn: 'Array.flatMap',  resultType: TyArray({ tag: 'TypeVar', name: 'β' }) },
+  flat:       { leanFn: 'TSLean.Stdlib.Array.flatten', resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
+  flatMap:    { leanFn: 'TSLean.Stdlib.Array.flatMap', resultType: TyArray({ tag: 'TypeVar', name: 'β' }) },
+  sort:       { leanFn: 'TSLean.Stdlib.Array.sort', resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
+  fill:       { leanFn: 'TSLean.Stdlib.Array.fill', resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
+  copyWithin: { leanFn: 'TSLean.Stdlib.Array.copyWithin', resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
   at:         { leanFn: 'Array.get?',     resultType: TyOption({ tag: 'TypeVar', name: 'α' }) },
   with:       { leanFn: 'Array.set',      resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
   keys:       { leanFn: 'List.range ∘ Array.size |>.toArray', resultType: TyArray(TyNat) },
+  values:     { leanFn: 'Array.toList',   resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
+  entries:    { leanFn: 'Array.mapIdx (fun i x => (i, x))', resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
+  toString:   { leanFn: 'toString',       resultType: TyString },
 };
 
 const MAP_METHODS: Record<string, MethodTx> = {
@@ -76,6 +87,7 @@ const MAP_METHODS: Record<string, MethodTx> = {
   values:  { leanFn: 'AssocMap.values',   resultType: TyArray({ tag: 'TypeVar', name: 'β' }) },
   entries: { leanFn: 'AssocMap.toList',   resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
   forEach: { leanFn: 'AssocMap.forM',     resultType: TyUnit, io: true },
+  clear:   { leanFn: 'fun _ => AssocMap.empty', resultType: { tag: 'TypeRef', name: 'Map', args: [] } },
 };
 
 const SET_METHODS: Record<string, MethodTx> = {
@@ -85,6 +97,9 @@ const SET_METHODS: Record<string, MethodTx> = {
   size:    { leanFn: 'AssocSet.size',     resultType: TyNat },
   forEach: { leanFn: 'AssocSet.forM',     resultType: TyUnit, io: true },
   values:  { leanFn: 'AssocSet.toList',   resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
+  keys:    { leanFn: 'AssocSet.toList',   resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
+  entries: { leanFn: 'AssocSet.toList |>.map (fun x => (x, x))', resultType: TyArray({ tag: 'TypeVar', name: 'α' }) },
+  clear:   { leanFn: 'fun _ => AssocSet.empty', resultType: { tag: 'TypeRef', name: 'Set', args: [] } },
 };
 
 export type ObjKind = 'String' | 'Array' | 'Map' | 'Set' | 'unknown';
