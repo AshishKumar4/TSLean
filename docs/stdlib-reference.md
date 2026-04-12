@@ -68,6 +68,22 @@
 | `m.forEach(f)` | `AssocMap.forM` |
 | `m.clear()` | `AssocMap.empty` |
 
+## Set Methods
+
+Set is modeled as `Array T` in Lean (no native hash set in pure Lean 4).
+
+| JS Method | Lean Function |
+|-----------|--------------|
+| `s.add(x)` | `AssocSet.insert` |
+| `s.has(x)` | `AssocSet.contains` |
+| `s.delete(x)` | `AssocSet.erase` |
+| `s.size` | `AssocSet.size` |
+| `s.values()` | `AssocSet.toList` |
+| `s.keys()` | `AssocSet.toList` |
+| `s.entries()` | `AssocSet.toList \|>.map (fun x => (x, x))` |
+| `s.forEach(f)` | `AssocSet.forM` |
+| `s.clear()` | `AssocSet.empty` |
+
 ## Global Functions
 
 | JS Function | Lean Expression |
