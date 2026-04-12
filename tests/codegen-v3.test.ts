@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateLean } from '../src/codegen/index.js';
 import {
-  IRModule, IRDecl, IRExpr,
+  IRModule, tp, IRDecl, IRExpr,
   TyString, TyFloat, TyBool, TyNat, TyUnit, TyRef, TyArray, TyOption, TyMap,
   Pure, IO, Async, stateEffect, exceptEffect, combineEffects,
   litNat, litStr, litBool, litUnit, litFloat, varExpr, holeExpr, structUpdate,
@@ -160,7 +160,7 @@ describe('Codegen v3: SectionDecl', () => {
   it('SectionDecl emits section/end block', () => {
     const m = mod([{
       tag: 'SectionDecl', name: 'Basics', decls: [{
-        tag: 'FuncDef', name: 'id', typeParams: ['T'],
+        tag: 'FuncDef', name: 'id', typeParams: [tp('T')],
         params: [{ name: 'x', type: TyRef('T') }],
         retType: TyRef('T'), effect: Pure,
         body: varExpr('x'),
@@ -221,8 +221,8 @@ describe('Codegen v3: output quality', () => {
 
   it('balanced curly braces in output', () => {
     const m = mod([
-      { tag: 'StructDef', name: 'Box', typeParams: ['T'], fields: [{ name: 'val', type: TyRef('T') }] },
-      { tag: 'FuncDef', name: 'wrap', typeParams: ['T'],
+      { tag: 'StructDef', name: 'Box', typeParams: [tp('T')], fields: [{ name: 'val', type: TyRef('T') }] },
+      { tag: 'FuncDef', name: 'wrap', typeParams: [tp('T')],
         params: [{ name: 'x', type: TyRef('T') }],
         retType: TyRef('Box', [TyRef('T')]), effect: Pure,
         body: { tag: 'StructLit', typeName: 'Box', fields: [{ name: 'val', value: varExpr('x') }], type: TyRef('Box'), effect: Pure },
@@ -236,7 +236,7 @@ describe('Codegen v3: output quality', () => {
 
   it('generics: {T : Type} appears for polymorphic functions', () => {
     const m = mod([{
-      tag: 'FuncDef', name: 'id', typeParams: ['T'],
+      tag: 'FuncDef', name: 'id', typeParams: [tp('T')],
       params: [{ name: 'x', type: TyRef('T') }],
       retType: TyRef('T'), effect: Pure,
       body: varExpr('x'),

@@ -8,7 +8,7 @@ import { rewriteModule } from '../../src/rewrite/index.js';
 import { generateLean } from '../../src/codegen/index.js';
 import { generateVerification } from '../../src/verification/index.js';
 import {
-  IRModule, IRDecl, IRExpr,
+  IRModule, tp, IRDecl, IRExpr,
   TyString, TyFloat, TyBool, TyNat, TyUnit, TyRef, TyArray, TyOption,
   Pure, Async, IO, stateEffect, exceptEffect, combineEffects,
   litNat, litStr, litBool, varExpr, holeExpr,
@@ -343,7 +343,7 @@ describe('Advanced: s!"..." string interpolation', () => {
 describe('Advanced: verification obligations', () => {
   it('array access → ArrayBounds', () => {
     const mod = makeModule([{
-      tag: 'FuncDef', name: 'head', typeParams: ['T'],
+      tag: 'FuncDef', name: 'head', typeParams: [tp('T')],
       params: [{ name: 'arr', type: TyArray(TyRef('T')) }],
       retType: TyRef('T'), effect: Pure,
       body: { tag: 'IndexAccess', obj: varExpr('arr', TyArray(TyRef('T'))), index: litNat(0), type: TyRef('T'), effect: Pure },

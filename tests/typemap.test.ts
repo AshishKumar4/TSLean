@@ -145,7 +145,7 @@ describe('mapType – generics', () => {
     const src = 'function f<T,U>(a: T, b: U): [T,U] { return [a,b]; }';
     const { prog } = makeProgram(src);
     const fn = prog.getSourceFile('test.ts')!.statements[0] as ts.FunctionDeclaration;
-    expect(extractTypeParams(fn)).toEqual(['T', 'U']);
+    expect(extractTypeParams(fn).map(t => t.name)).toEqual(['T', 'U']);
   });
   it('no type params → []', () => {
     const { prog } = makeProgram('function noop(): void {}');

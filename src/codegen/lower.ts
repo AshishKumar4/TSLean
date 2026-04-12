@@ -445,7 +445,7 @@ class LowerCtx {
     return {
       tag: 'Structure',
       name: d.name,
-      tyParams: d.typeParams.map(p => ({ name: p, explicit: true })),
+      tyParams: d.typeParams.map(p => ({ name: p.name, explicit: true })),
       fields,
       extends_: d.extends_,
       deriving,
@@ -454,14 +454,14 @@ class LowerCtx {
   }
 
   private lowerInductive(d: Extract<IRDecl, { tag: 'InductiveDef' }>, inMutual: boolean): LeanDecl {
-    const tpArgs = d.typeParams.join(' ');
+    const tpArgs = d.typeParams.map(p => p.name).join(' ');
     const ctors: LeanCtor[] = d.ctors.map(c => ({
       name: c.name,
       fields: c.fields.map(f => {
         let ty = this.lowerType(f.type);
         // Fix recursive self-references: bare TypeRef matching the inductive name → apply type params
         if (f.type?.tag === 'TypeRef' && f.type.name === d.name && f.type.args.length === 0 && tpArgs) {
-          ty = { tag: 'TyApp', fn: { tag: 'TyName', name: d.name }, args: d.typeParams.map(p => ({ tag: 'TyName' as const, name: p })) };
+          ty = { tag: 'TyApp', fn: { tag: 'TyName', name: d.name }, args: d.typeParams.map(p => ({ tag: 'TyName' as const, name: p.name })) };
         }
         return { name: f.name, ty };
       }),
@@ -469,7 +469,7 @@ class LowerCtx {
     return {
       tag: 'Inductive',
       name: d.name,
-      tyParams: d.typeParams.map(p => ({ name: p, explicit: true })),
+      tyParams: d.typeParams.map(p => ({ name: p.name, explicit: true })),
       ctors,
       deriving: inMutual ? [] : DEFAULT_DERIVING,
       comment: d.comment,
@@ -503,7 +503,7 @@ class LowerCtx {
         return {
           tag: 'Structure',
           name: d.name,
-          tyParams: d.typeParams.map(p => ({ name: p, explicit: true })),
+          tyParams: d.typeParams.map(p => ({ name: p.name, explicit: true })),
           fields,
           deriving: ['Repr', 'BEq', 'Inhabited'],
           comment: d.comment,
@@ -512,7 +512,7 @@ class LowerCtx {
       return {
         tag: 'Abbrev',
         name: d.name,
-        tyParams: d.typeParams.map(p => ({ name: p, explicit: false })),
+        tyParams: d.typeParams.map(p => ({ name: p.name, explicit: false })),
         body: { tag: 'TyName', name: 'String' },
         comment: d.comment,
       };
@@ -520,7 +520,7 @@ class LowerCtx {
     return {
       tag: 'Abbrev',
       name: d.name,
-      tyParams: d.typeParams.map(p => ({ name: p, explicit: false })),
+      tyParams: d.typeParams.map(p => ({ name: p.name, explicit: false })),
       body: this.lowerType(d.body),
       comment: d.comment,
     };
@@ -535,7 +535,7 @@ class LowerCtx {
     const needsInhabited = this.exprUsesDefault(body) && d.typeParams.length > 0;
 
     const tyParams: LeanTyParam[] = d.typeParams.map(t => ({
-      name: t,
+      name: t.name,
       explicit: false,
       constraints: needsInhabited ? ['Inhabited'] : undefined,
     }));
@@ -700,7 +700,7 @@ class LowerCtx {
     return {
       tag: 'Class',
       name: d.name,
-      tyParams: d.typeParams.map(p => ({ name: p, explicit: false })),
+      tyParams: d.typeParams.map(p => ({ name: p.name, explicit: false })),
       methods: d.methods.map(m => ({ name: m.name, ty: this.lowerType(m.type) })),
       comment: d.comment,
     };

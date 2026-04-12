@@ -216,7 +216,7 @@ class ParserCtx {
           const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
           if (ts.isArrowFunction(prop.initializer) || ts.isFunctionExpression(prop.initializer)) {
             const fn = prop.initializer;
-            const tps = extractTypeParams(fn as ts.ArrowFunction);
+            const tps = extractTypeParams(fn as ts.ArrowFunction, this.checker);
             const ps  = this.parseParams(fn.parameters);
             const sig = this.checker.getSignatureFromDeclaration(fn);
             const ret = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
@@ -233,7 +233,7 @@ class ParserCtx {
         } else if (ts.isMethodDeclaration(prop)) {
           // async fetch(...) { ... } in an object literal
           const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
-          const tps  = extractTypeParams(prop);
+          const tps  = extractTypeParams(prop, this.checker);
           const ps   = this.parseParams(prop.parameters);
           const sig  = this.checker.getSignatureFromDeclaration(prop);
           const ret  = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
@@ -261,7 +261,7 @@ class ParserCtx {
 
   private parseFnDecl(node: ts.FunctionDeclaration): IRDecl {
     const name  = node.name?.text ?? 'anonymous';
-    const tps   = extractTypeParams(node);
+    const tps   = extractTypeParams(node, this.checker);
     const params = this.parseParams(node.parameters);
     const sig   = this.checker.getSignatureFromDeclaration(node);
     const ret   = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
@@ -296,7 +296,7 @@ class ParserCtx {
 
   private parseClassDecl(node: ts.ClassDeclaration): IRDecl[] {
     const name  = node.name?.text ?? 'AnonClass';
-    const classTPs = extractTypeParams(node);  // class type params (e.g. T from Stack<T>)
+    const classTPs = extractTypeParams(node, this.checker);  // class type params (e.g. T from Stack<T>)
     const isDO  = this.isDOClass(node);
     const decls: IRDecl[] = [];
 
@@ -438,9 +438,11 @@ class ParserCtx {
     const name    = node.name?.getText(this.sf) ?? 'unknown';
     const isStatic = node.modifiers?.some(m => m.kind === ts.SyntaxKind.StaticKeyword);
     // Merge class type params with method's own type params
-    const methodTPs = extractTypeParams(node);
-    const classTPs  = node.parent && ts.isClassDeclaration(node.parent) ? extractTypeParams(node.parent) : [];
-    const tps = [...new Set([...classTPs, ...methodTPs])];  // deduplicated merge
+    const methodTPs = extractTypeParams(node, this.checker);
+    const classTPs  = node.parent && ts.isClassDeclaration(node.parent) ? extractTypeParams(node.parent, this.checker) : [];
+    // Deduplicate by name, method params take priority over class params
+    const seen = new Set<string>();
+    const tps = [...methodTPs, ...classTPs].filter(t => { if (seen.has(t.name)) return false; seen.add(t.name); return true; });
     const sig     = this.checker.getSignatureFromDeclaration(node);
     const ret     = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
     const eff     = inferNodeEffect(node, this.checker);
@@ -463,7 +465,7 @@ class ParserCtx {
 
   private parseInterface(node: ts.InterfaceDeclaration): IRDecl | IRDecl[] {
     const name       = node.name.text;
-    const typeParams = extractTypeParams(node);
+    const typeParams = extractTypeParams(node, this.checker);
     const fields     = extractStructFields(node, this.checker);
     const comment    = leadingComment(node, this.sf);
 
@@ -500,7 +502,7 @@ class ParserCtx {
 
   private parseTypeAlias(node: ts.TypeAliasDeclaration): IRDecl | IRDecl[] {
     const name = node.name.text;
-    const tps  = extractTypeParams(node);
+    const tps  = extractTypeParams(node, this.checker);
     const ty   = this.checker.getTypeAtLocation(node);
 
     if (ty.isUnion()) {
@@ -644,7 +646,7 @@ class ParserCtx {
       const ty   = mapType(this.checker.getTypeAtLocation(d), this.checker);
       if (d.initializer && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))) {
         const fn = d.initializer;
-        const tps = extractTypeParams(fn as ts.ArrowFunction);
+        const tps = extractTypeParams(fn as ts.ArrowFunction, this.checker);
         const ps  = this.parseParams(fn.parameters);
         const sig = this.checker.getSignatureFromDeclaration(fn);
         const ret = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
