@@ -91,7 +91,7 @@ private def mapTypeFromFlags (flags : Nat) (name : String) : LeanTy :=
   else if name == "__type" then .TyName "String"
   else .TyName name
 
-private def mapResolvedTypeJson (rt : Json) : LeanTy :=
+private partial def mapResolvedTypeJson (rt : Json) : LeanTy :=
   let flags := typeFlags rt
   let sym := typeSymbol rt
   let name := typeName rt
@@ -100,7 +100,36 @@ private def mapResolvedTypeJson (rt : Json) : LeanTy :=
     else if !name.isEmpty then name
     else if !alias.isEmpty then alias
     else ""
-  mapTypeFromFlags flags eName
+  let typeArgs := fieldArr rt "typeArguments"
+  -- v2: handle resolved Object types with known symbol names
+  if flags &&& TF_Object != 0 then
+    -- Promise<T> → unwrap to inner type (IO wrapper added at function level)
+    if eName == "Promise" && typeArgs.size == 1 then
+      mapResolvedTypeJson (typeArgs.getD 0 default)
+    -- Error types → String in the Lean model
+    else if eName == "Error" || eName.endsWith "Error" then .TyName "String"
+    -- Array<T> → Array T
+    else if eName == "Array" then
+      if typeArgs.size >= 1 then .TyApp (.TyName "Array") #[mapResolvedTypeJson (typeArgs.getD 0 default)]
+      else .TyApp (.TyName "Array") #[.TyName "String"]
+    -- Set<T> → Array T (matches TS pipeline)
+    else if eName == "Set" then
+      if typeArgs.size >= 1 then .TyApp (.TyName "Array") #[mapResolvedTypeJson (typeArgs.getD 0 default)]
+      else .TyApp (.TyName "Array") #[.TyName "String"]
+    -- Map<K,V> → AssocMap K V
+    else if eName == "Map" && typeArgs.size >= 2 then
+      .TyApp (.TyName "AssocMap") (typeArgs.map mapResolvedTypeJson)
+    -- Record<K,V> → String (matches TS pipeline)
+    else if eName == "Record" then .TyName "String"
+    -- Generic references with type arguments
+    else if typeArgs.size > 0 then
+      .TyApp (.TyName eName) (typeArgs.map mapResolvedTypeJson)
+    -- Named object types pass through
+    else if !eName.isEmpty && eName != "__type" then
+      mapTypeFromFlags flags eName
+    else mapTypeFromFlags flags eName
+  else
+    mapTypeFromFlags flags eName
 
 private partial def mapResolvedType (j : Json) : LeanTy :=
   match resolvedType j with
@@ -540,13 +569,15 @@ private def parenBinOperand (j : Json) (rendered : String) (_parentOp : String) 
     "(" ++ rendered ++ ")"
   else rendered
 
-/-- Check if a JSON AST node has string type via resolved type flags or name. -/
+/-- Check if a JSON AST node has string type via resolved type flags, symbol, or name. -/
 private def isStringTyped (j : Json) : Bool :=
   match resolvedType j with
   | some rt =>
     let flags := typeFlags rt
     let name := typeName rt
-    flags &&& TF_String != 0 || flags &&& TF_StringLiteral != 0 || name == "string"
+    let sym := typeSymbol rt
+    flags &&& TF_String != 0 || flags &&& TF_StringLiteral != 0 ||
+    name == "string" || sym == "String"
   | none => false
 
 /-- Recursively check if an expression involves string types
@@ -2479,8 +2510,10 @@ private def scanImports (stmts : Array Json) : Array String :=
   let needs := if needsMonad then needs.push "TSLean.Runtime.Monad" else needs
   -- WebAPI — walk AST for actual type refs and fetch calls (not text search)
   let needs := if hasWebAPIUsage stmts then needs.push "TSLean.Runtime.WebAPI" else needs
-  -- HashMap
-  let needs := if textContains text "Map" || textContains text "Set" then
+  -- HashMap — detect Map/Set usage from AST identifiers.
+  -- Use space-tolerant patterns to match Lean's Json.toString formatting.
+  let needs := if textContains text "\"text\": \"Map\"" || textContains text "\"text\":\"Map\"" ||
+    textContains text "\"text\": \"Set\"" || textContains text "\"text\":\"Set\"" then
     needs.push "TSLean.Stdlib.HashMap" else needs
   -- DurableObjects
   let hasDO := hasDurableObjectPattern stmts
