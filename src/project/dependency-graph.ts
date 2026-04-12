@@ -160,18 +160,7 @@ function findCycles(nodes: Map<string, ModuleNode>): string[][] {
 // ─── Topological sort (Kahn's algorithm) ────────────────────────────────────────
 
 function topologicalSort(nodes: Map<string, ModuleNode>): string[] {
-  const inDegree = new Map<string, number>();
-  for (const [mod, node] of nodes) {
-    if (!inDegree.has(mod)) inDegree.set(mod, 0);
-    for (const dep of node.imports) {
-      inDegree.set(dep, (inDegree.get(dep) ?? 0) + 1);
-    }
-  }
-
-  // Note: inDegree counts how many modules IMPORT each module.
-  // We want dependencies first, so we start with modules nobody imports FROM.
-  // Actually for Kahn's: inDegree = number of dependencies a module has.
-  // Let me recompute correctly.
+  // depCount = number of unresolved dependencies for each module
   const depCount = new Map<string, number>();
   for (const [mod, node] of nodes) {
     depCount.set(mod, node.imports.length);

@@ -78,6 +78,8 @@ interface CompileOpts {
   selfHost: boolean;
   baseName: string;
   isDir: boolean;
+  genLakefile: boolean;
+  tsconfigPath: string;
 }
 
 type Command =
@@ -198,8 +200,8 @@ function compileSingle(opts: CompileOpts): boolean {
 
 function compileProject(opts: CompileOpts): boolean {
   const { input, output, verify, ns } = opts;
-  const tsconfigPath = (opts as any).tsconfigPath as string || '';
-  const genLakefile = (opts as any).genLakefile !== false;
+  const tsconfigPath = opts.tsconfigPath || '';
+  const genLakefile = opts.genLakefile !== false;
 
   // --project tsconfig.json mode
   const projectDir = tsconfigPath && tsconfigPath.endsWith('.json')
