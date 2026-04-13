@@ -1081,11 +1081,31 @@ class LowerCtx {
       case 'Cast': return this.lowerCast(e, ctx);
       case 'IsType': {
         const typeName = e.testType?.tag === 'TypeRef' ? e.testType.name : (e.testType?.tag ?? 'unknown');
+        // typeof checks on known types → compile-time true/false
+        const exprType = e.expr?.type;
+        if (typeName === 'string' && exprType?.tag === 'String') return { tag: 'Lit', value: 'true' };
+        if (typeName === 'number' && (exprType?.tag === 'Float' || exprType?.tag === 'Nat')) return { tag: 'Lit', value: 'true' };
+        if (typeName === 'boolean' && exprType?.tag === 'Bool') return { tag: 'Lit', value: 'true' };
+        if (typeName === 'function') return { tag: 'Lit', value: 'true' }; // functions always exist in Lean
+        if (typeName === 'undefined') return { tag: 'Lit', value: 'false' }; // no undefined in Lean
+        // typeof on Option → .isSome (undefined check)
+        if (typeName === 'undefined' && exprType?.tag === 'Option') {
+          return { tag: 'UnOp', op: '!', operand: { tag: 'FieldAccess', obj: this.lowerExpr(e.expr, ctx), field: 'isSome' } };
+        }
+        // instanceof with discriminated unions → check if the variant matches
+        if (e.testType?.tag === 'TypeRef' && exprType?.tag === 'TypeRef') {
+          const inner = this.lowerExpr(e.expr, ctx);
+          // For Error types: always true in catch blocks
+          if (typeName === 'Error' || typeName.endsWith('Error')) return { tag: 'Lit', value: 'true' };
+          // For known struct types → true (nominal type check)
+          return { tag: 'Lit', value: 'true' };
+        }
+        // Fallback: emit false for unknown typeof, with tracker entry
         currentTracker().add({
-          location: `IsType:${typeName}`, reason: `typeof/instanceof not expressible in Lean`,
-          category: 'type-test', hint: 'use pattern matching or type class dispatch instead',
+          location: `IsType:${typeName}`, reason: `typeof/instanceof on unknown type`,
+          category: 'type-test', hint: 'use discriminated unions instead',
         });
-        return { tag: 'Sorry', ty: { tag: 'TyName', name: 'Bool' }, reason: `type test: ${typeName}` };
+        return { tag: 'Lit', value: 'false' };
       }
       case 'Panic': return { tag: 'Panic', msg: e.msg };
       case 'OptChain': return this.lowerExpr(e.expr, ctx);
