@@ -1,10 +1,26 @@
-// Parser: TypeScript compiler API → IR.
-// Uses ts.createProgram + TypeChecker for fully-resolved types.
-// Key transformations:
-//   early-return CPS  :  if (cond) return x; rest  →  if cond then x else rest
-//   switch            →  match
-//   this              →  self
-//   DO ambient inject :  when DurableObjectState detected
+/**
+ * @module parser
+ *
+ * Parser: TypeScript source → fully-typed IR.
+ *
+ * Uses `ts.createProgram` + `TypeChecker` for fully-resolved types, generics,
+ * and type narrowing.  The parser performs several key transformations:
+ *
+ * - **Early-return CPS**: `if (cond) return x; rest` → `if cond then x else rest`.
+ *   This is the continuation-passing transform that converts imperative early
+ *   returns into functional if-then-else chains.
+ *
+ * - **Switch → Match**: TypeScript switch statements become Lean match expressions.
+ *
+ * - **this → self**: The `this` keyword is translated to a `self` parameter.
+ *
+ * - **DO ambient injection**: When `DurableObjectState` is detected in the source,
+ *   Cloudflare Workers type declarations are injected as ambient types.
+ *
+ * - **For/while → tail-recursive helpers**: Loops become `let rec loop i := ...`.
+ *
+ * Pipeline position:  **TS Source** → Parser → IR → Rewrite → Codegen → Lean 4
+ */
 
 import * as ts from 'typescript';
 import * as path from 'path';
@@ -20,15 +36,35 @@ import {
 import { mapType, extractStructFields, extractTypeParams, detectDiscriminatedUnion } from '../typemap/index.js';
 import { inferNodeEffect } from '../effects/index.js';
 import { hasDOPattern, CF_AMBIENT, makeAmbientHost, DO_LEAN_IMPORTS } from '../do-model/ambient.js';
+import { lookupGlobal } from '../stdlib/index.js';
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+/** Options for parsing a single TypeScript file into IR. */
 export interface ParseOptions {
+  /** Path to the TypeScript source file. */
   fileName: string;
+  /** Override source text (avoids reading from disk). */
   sourceText?: string;
+  /** Additional virtual files available during type checking. */
   extraFiles?: Map<string, string>;
 }
 
+/**
+ * Parse a TypeScript source file into a fully-typed IR module.
+ *
+ * Creates a `ts.Program` with type checking, resolves all types and effects,
+ * and produces an `IRModule` ready for the rewrite and codegen passes.
+ *
+ * @param opts - Parsing options (file path, optional source text).
+ * @returns A fully-typed IR module with all declarations and imports.
+ *
+ * @example
+ * ```ts
+ * const mod = parseFile({ fileName: 'src/counter.ts' });
+ * const lean = generateLean(rewriteModule(mod));
+ * ```
+ */
 export function parseFile(opts: ParseOptions): IRModule {
   const { fileName } = opts;
   const sourceText = opts.sourceText ?? ts.sys.readFile(fileName) ?? '';
@@ -252,6 +288,7 @@ class ParserCtx {
 
   private parseClassDecl(node: ts.ClassDeclaration): IRDecl[] {
     const name  = node.name?.text ?? 'AnonClass';
+    const classTPs = extractTypeParams(node);  // class type params (e.g. T from Stack<T>)
     const isDO  = this.isDOClass(node);
     const decls: IRDecl[] = [];
 
@@ -259,7 +296,7 @@ class ParserCtx {
     const stateType   = `${name}State`;
     if (stateFields.length > 0) {
       decls.push({
-        tag: 'StructDef', name: stateType, typeParams: [],
+        tag: 'StructDef', name: stateType, typeParams: classTPs,
         fields: stateFields, deriving: ['Repr', 'BEq'],
         comment: `State for ${name}`,
       });
@@ -380,7 +417,8 @@ class ParserCtx {
       };
     }
 
-    const self: IRParam = { name: 'self', type: TyRef(className) };
+    // Non-DO class: self type is the state struct, not the class name
+    const self: IRParam = { name: 'self', type: TyRef(stateType) };
     const body = node.body ? this.parseBlock(node.body, eff) : holeExpr(TyUnit);
     return {
       tag: 'FuncDef', name: `${className}.init`, typeParams: [],
@@ -392,12 +430,20 @@ class ParserCtx {
   private parseMethod(node: ts.MethodDeclaration, className: string, stateType: string, isDO: boolean): IRDecl | null {
     const name    = node.name?.getText(this.sf) ?? 'unknown';
     const isStatic = node.modifiers?.some(m => m.kind === ts.SyntaxKind.StaticKeyword);
-    const tps     = extractTypeParams(node);
+    // Merge class type params with method's own type params
+    const methodTPs = extractTypeParams(node);
+    const classTPs  = node.parent && ts.isClassDeclaration(node.parent) ? extractTypeParams(node.parent) : [];
+    const tps = [...new Set([...classTPs, ...methodTPs])];  // deduplicated merge
     const sig     = this.checker.getSignatureFromDeclaration(node)!;
     const ret     = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
     const eff     = inferNodeEffect(node, this.checker);
     const params  = this.parseParams(node.parameters);
-    const self: IRParam = { name: 'self', type: TyRef(isDO ? stateType : className) };
+    // Fix 3: self type uses the state struct name with class type params applied.
+    // E.g. for Stack<T> → (self : StackState T), not bare (self : StackState).
+    const selfType = classTPs.length > 0
+      ? TyRef(stateType, classTPs.map(tp => TyVar(tp)))
+      : TyRef(stateType);
+    const self: IRParam = { name: 'self', type: selfType };
     const allParams = isStatic ? params : [self, ...params];
     const body = node.body ? this.parseBlock(node.body, eff) : holeExpr(ret);
     return { tag: 'FuncDef', name: isStatic ? `${className}.${name}` : name, typeParams: tps, params: allParams, retType: ret, effect: eff, body };
@@ -482,6 +528,63 @@ class ParserCtx {
           fields: [{ name: 'val', type: TyString }],
           deriving: ['Repr', 'BEq', 'DecidableEq'],
         };
+      }
+    }
+
+    // Tuple types: [A, B, C] → already handled by mapType as Tuple
+    // Conditional types: T extends U ? A : B → approximated by the resolved type
+    // Template literal types: `prefix${string}` → String (with a comment about the constraint)
+    // Mapped types: { [K in keyof T]: V } → resolved by TypeChecker to a concrete type
+    // keyof T → String (type-level list of keys)
+
+    // Check if the type alias node has special syntax we want to annotate
+    const typeNode = node.type;
+    if (typeNode) {
+      // Conditional type node: emit as comment
+      if (ts.isConditionalTypeNode(typeNode)) {
+        const resolved = mapType(ty, this.checker);
+        return {
+          tag: 'TypeAlias', name, typeParams: tps, body: resolved,
+          comment: `-- conditional type: ${typeNode.getText(this.sf)}`,
+        };
+      }
+      // Mapped type node: emit as AssocMap or resolved struct
+      if (ts.isMappedTypeNode(typeNode)) {
+        const resolved = mapType(ty, this.checker);
+        return {
+          tag: 'TypeAlias', name, typeParams: tps, body: resolved,
+          comment: `-- mapped type: ${typeNode.getText(this.sf).substring(0, 80)}`,
+        };
+      }
+      // Template literal type
+      if (ts.isTemplateLiteralTypeNode(typeNode)) {
+        return {
+          tag: 'TypeAlias', name, typeParams: tps, body: TyString,
+          comment: `-- template literal type: ${typeNode.getText(this.sf)}`,
+        };
+      }
+      // Tuple type: [A, B, C]
+      if (ts.isTupleTypeNode(typeNode)) {
+        const elems = typeNode.elements.map(e => {
+          const elemType = this.checker.getTypeAtLocation(e);
+          return mapType(elemType, this.checker);
+        });
+        return {
+          tag: 'TypeAlias', name, typeParams: tps, body: TyTuple(elems),
+          comment: leadingComment(node, this.sf),
+        };
+      }
+      // typeof in type position: typeof x → inferred type
+      if (ts.isTypeQueryNode(typeNode)) {
+        const resolved = mapType(ty, this.checker);
+        return {
+          tag: 'TypeAlias', name, typeParams: tps, body: resolved,
+          comment: `-- typeof type: ${typeNode.getText(this.sf)}`,
+        };
+      }
+      // keyof T → String (approximation)
+      if (ts.isTypeOperatorNode(typeNode) && typeNode.operator === ts.SyntaxKind.KeyOfKeyword) {
+        return { tag: 'TypeAlias', name, typeParams: tps, body: TyString, comment: '-- keyof type' };
       }
     }
 
@@ -763,9 +866,30 @@ class ParserCtx {
         cases.push({ pattern: { tag: 'PWild' }, body });
       }
     }
-    // Add wildcard if no default
+    // Add wildcard only if the match is not exhaustive.
+    // Discriminated union switches become exhaustive after the rewrite pass
+    // (each string literal case maps to one constructor). For these, skip the wildcard.
+    // For value-level matches (numbers, arbitrary strings), add a type-safe wildcard.
     if (!hasDefault && cases.length > 0) {
-      cases.push({ pattern: { tag: 'PWild' }, body: litUnit() });
+      // Check if ALL case patterns are PString (discriminated union patterns that will
+      // be rewritten to PCtor). If so, the rewrite pass will make this exhaustive.
+      const allStringPatterns = cases.every(c =>
+        c.pattern.tag === 'PString' || c.pattern.tag === 'PLit'
+      );
+      // Also check if the scrutinee is a field access on a discriminant field
+      // (s.kind, e.type, t.tag) — these are discriminated union switches.
+      const isDiscriminantSwitch = scrutinee.tag === 'FieldAccess' && (
+        scrutinee.field === 'kind' || scrutinee.field === 'type' ||
+        scrutinee.field === 'tag' || scrutinee.field === 'ok'
+      );
+
+      // Skip wildcard for discriminated union switches (exhaustive after rewrite)
+      if (!(allStringPatterns && isDiscriminantSwitch)) {
+        // Non-discriminated: add type-safe wildcard with matching return type
+        const retType = cases[0]?.body.type ?? TyUnit;
+        const fallbackBody = retType.tag === 'Unit' ? litUnit() : holeExpr(retType);
+        cases.push({ pattern: { tag: 'PWild' }, body: fallbackBody });
+      }
     }
     return { tag: 'Match', scrutinee, cases, type: cases[0]?.body.type ?? TyUnit, effect: combineEffects(cases.map(c => c.body.effect)) };
   }
@@ -965,8 +1089,23 @@ class ParserCtx {
     if (node.expression.kind === ts.SyntaxKind.ThisKeyword)
       return { tag: 'FieldAccess', obj: varExpr('self', obj.type), field, type: ty, effect: Pure };
 
+    // Global stdlib property mapping: Math.PI → Float.pi, etc.
+    if (ts.isIdentifier(node.expression)) {
+      const fullName = `${node.expression.text}.${field}`;
+      const global = lookupGlobal(fullName);
+      if (global) {
+        return varExpr(global.leanExpr, ty);
+      }
+
+      // Enum member access: Color.Red → Color.Red (constructor application)
+      const sym = this.checker.getSymbolAtLocation(node.expression);
+      if (sym && sym.flags & ts.SymbolFlags.Enum) {
+        const enumName = node.expression.text;
+        return { tag: 'CtorApp', ctor: `${enumName}.${field}`, args: [], type: ty, effect: Pure };
+      }
+    }
+
     // Optional chaining: obj?.field  →  Option.map (·.field) obj
-    // When obj is already an Option we chain: Option.bind obj (fun o => some o.field)
     if (node.questionDotToken) {
       const accessor: IRExpr = { tag: 'Lambda', params: [{ name: '_oc', type: obj.type }],
         body: { tag: 'FieldAccess', obj: varExpr('_oc', obj.type), field, type: ty, effect: Pure },
@@ -978,8 +1117,30 @@ class ParserCtx {
   }
 
   private parseCall(node: ts.CallExpression, ty: IRType): IRExpr {
-    if (ts.isPropertyAccessExpression(node.expression))
+    // Check global stdlib table FIRST for dotted calls like Math.max(a, b), console.log(x), etc.
+    if (ts.isPropertyAccessExpression(node.expression)) {
+      const fullName = node.expression.getText(this.sf);
+      const global = lookupGlobal(fullName);
+      if (global) {
+        let args = node.arguments.map(a => this.parseExpr(a));
+        if (global.maxArgs !== undefined) args = args.slice(0, global.maxArgs);
+        const eff  = global.io ? IO : Pure;
+        return { tag: 'App', fn: varExpr(global.leanExpr, TyFn(args.map(a => a.type), ty, eff)),
+          args, type: ty, effect: combineEffects([eff, ...args.map(a => a.effect)]) };
+      }
       return this.parseMethodCall(node, node.expression, ty);
+    }
+    // Check for bare globals: fetch(url), parseInt(s), etc.
+    if (ts.isIdentifier(node.expression)) {
+      const global = lookupGlobal(node.expression.text);
+      if (global) {
+        let args = node.arguments.map(a => this.parseExpr(a));
+        if (global.maxArgs !== undefined) args = args.slice(0, global.maxArgs);
+        const eff  = global.io ? IO : Pure;
+        return { tag: 'App', fn: varExpr(global.leanExpr, TyFn(args.map(a => a.type), ty, eff)),
+          args, type: ty, effect: combineEffects([eff, ...args.map(a => a.effect)]) };
+      }
+    }
     const fn   = this.parseExpr(node.expression);
     const args = node.arguments.map(a => this.parseExpr(a));
     return { tag: 'App', fn, args, type: ty, effect: combineEffects([fn.effect, ...args.map(a => a.effect)]) };
@@ -1015,9 +1176,14 @@ class ParserCtx {
     if (name === 'Set')      return varExpr('AssocSet.empty', ty);
     if (name === 'Array')    return { tag: 'ArrayLit', elems: [], type: ty, effect: Pure };
     if (name === 'Error' || name.endsWith('Error'))
-      return { tag: 'App', fn: varExpr('TSError.mk'), args, type: ty, effect: Pure };
+      // TSError constructors: typeError, rangeError, networkError, customError
+      return { tag: 'App', fn: varExpr('TSError.typeError'), args: args.length > 0 ? [args[0]] : [litStr('error')], type: ty, effect: Pure };
     if (name === 'Response')
       return { tag: 'App', fn: varExpr('mkResponse'), args, type: ty, effect: Pure };
+    if (name === 'Promise')
+      return holeExpr(ty);  // new Promise(...) can't be directly expressed in Lean
+    if (name === 'URL')
+      return { tag: 'App', fn: varExpr('URL.parse'), args, type: ty, effect: Pure };
     return { tag: 'CtorApp', ctor: name, args, type: ty, effect: combineEffects(args.map(a => a.effect)) };
   }
 
@@ -1077,12 +1243,35 @@ class ParserCtx {
 
     for (const prop of node.properties) {
       if (ts.isPropertyAssignment(prop)) {
-        const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
-        namedFields.push({ name, value: this.parseExpr(prop.initializer) });
+        // Computed property names: { [key]: val } → AssocMap.insert pattern
+        if (ts.isComputedPropertyName(prop.name)) {
+          const keyExpr = this.parseExpr(prop.name.expression);
+          const valExpr = this.parseExpr(prop.initializer);
+          // Emit as a special field that codegen handles via AssocMap.insert
+          namedFields.push({ name: `_computed_${prop.pos}`, value: {
+            tag: 'App', fn: varExpr('AssocMap.insert'), args: [keyExpr, valExpr],
+            type: ty, effect: combineEffects([keyExpr.effect, valExpr.effect]),
+          }});
+        } else {
+          const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
+          namedFields.push({ name, value: this.parseExpr(prop.initializer) });
+        }
       } else if (ts.isShorthandPropertyAssignment(prop)) {
-        namedFields.push({ name: prop.name.text, value: varExpr(prop.name.text) });
+        // Property shorthand: { name } → { name := name }
+        const propName = prop.name.text;
+        const propTy = mapType(this.checker.getTypeAtLocation(prop.name), this.checker);
+        namedFields.push({ name: propName, value: varExpr(propName, propTy) });
       } else if (ts.isSpreadAssignment(prop)) {
         spreadExprs.push(this.parseExpr(prop.expression));
+      } else if (ts.isMethodDeclaration(prop)) {
+        // Method in object literal: { foo() {} }
+        const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
+        const body = prop.body ? this.parseBlock(prop.body, Pure) : holeExpr(TyUnit);
+        const params = this.parseParams(prop.parameters);
+        namedFields.push({ name, value: {
+          tag: 'Lambda', params, body,
+          type: TyFn(params.map(p => p.type), body.type), effect: body.effect,
+        }});
       }
     }
 

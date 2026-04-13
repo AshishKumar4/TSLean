@@ -133,4 +133,30 @@ theorem double_logout_same_as_once (s : AuthStore) (tok : SessionToken) (now : N
   simp [AuthStore.isValid, AuthStore.authenticate, AuthStore.lookup, AuthStore.logout,
         AssocMap.get?_erase]
 
+-- Login to different tokens preserves the first
+theorem login_preserves_other (s : AuthStore) (e1 e2 : SessionEntry) (now : Nat)
+    (hne : e1.token ≠ e2.token) (hfresh : e1.expiresAt > now)
+    (h1 : (s.login e1).isValid e1.token now = true) :
+    ((s.login e1).login e2).isValid e1.token now = true := by
+  simp [AuthStore.isValid, AuthStore.authenticate, AuthStore.lookup, AuthStore.login,
+        AssocMap.get?_insert_diff _ _ _ _ (Ne.symm hne), AssocMap.get?_insert_same, hfresh]
+
+-- Authenticate returns none for unregistered tokens
+theorem unregistered_not_valid (s : AuthStore) (tok : SessionToken) (now : Nat)
+    (h : s.lookup tok = none) : s.isValid tok now = false := by
+  simp [AuthStore.isValid, AuthStore.authenticate, h]
+
+-- Logout is idempotent (double logout = single logout)
+theorem logout_idempotent (s : AuthStore) (tok : SessionToken) :
+    (s.logout tok).logout tok = s.logout tok := by
+  simp only [AuthStore.logout, AssocMap.erase, AssocMap.mk.injEq]
+  induction s.entries with
+  | nil => simp
+  | cons hd tl ih =>
+    simp only [List.filter_cons]
+    by_cases hc : hd.1 == tok
+    · simp only [hc, Bool.not_true, Bool.false_eq_true, ↓reduceIte]; exact ih
+    · simp only [hc, Bool.not_false, Bool.true_eq_false, ↓reduceIte,
+                 List.filter_cons, hc, Bool.not_true]; simp [hc, ih]
+
 end TSLean.DO.Auth

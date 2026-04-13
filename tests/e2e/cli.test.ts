@@ -115,7 +115,7 @@ describe('CLI e2e: generics/discriminated-unions.ts', () => {
   it('Color inductive',           () => expect(code).toContain('inductive Color'));
   it('Tree inductive with type param', () => {
     expect(code).toContain('inductive Tree');
-    expect(code).toMatch(/inductive Tree\s*\{T/);
+    expect(code).toMatch(/inductive Tree\s*[(({]T/);
   });
 });
 

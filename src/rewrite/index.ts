@@ -1,40 +1,89 @@
-// Rewrite pass: post-parse IR transformations.
-// Primary job: string-discriminant matches → proper inductive pattern matching.
-// e.g. (match s.kind with | "circle" => ...) → (match s with | Shape.Circle r => ...)
+/**
+ * @module rewrite
+ *
+ * Post-parse IR transformation pass.
+ *
+ * Primary job: convert **string-discriminant matches** into proper inductive
+ * pattern matching — the hallmark transformation of the transpiler.
+ *
+ * Before (TS idiom):
+ * ```ts
+ * switch (shape.kind) {
+ *   case "circle": return Math.PI * shape.radius ** 2;
+ *   case "rect":   return shape.width * shape.height;
+ * }
+ * ```
+ *
+ * After (Lean 4 IR):
+ * ```lean
+ * match shape with
+ * | .Circle radius => Float.pi * radius ^ 2
+ * | .Rect width height => width * height
+ * ```
+ *
+ * The pass also substitutes field accesses (`s.radius`) with the pattern-bound
+ * variable (`radius`) inside rewritten match arms, since the scrutinee becomes
+ * an inductive value — not a structure — after matching.
+ *
+ * Pipeline position:  Parser → IR → **Rewrite** → Codegen → Lean 4
+ */
 
 import {
   IRModule, IRDecl, IRExpr, IRType, IRPattern, IRCase, DoStmt,
   TyRef, TyFloat, TyString, TyUnit, Pure,
 } from '../ir/types.js';
 
-// ─── Public API ───────────────────────────────────────────────────────────────
+// ─── Public API ─────────────────────────────────────────────────────────────────
 
+/**
+ * Apply all rewrite transformations to a parsed IR module.
+ *
+ * 1. Collects union metadata from `InductiveDef` declarations.
+ * 2. Rewrites `Match` nodes that scrutinise discriminant fields.
+ * 3. Substitutes `s.field` references with pattern-bound variables.
+ *
+ * @param mod - The parsed IR module (unmodified).
+ * @returns A new IR module with all rewrites applied.
+ */
 export function rewriteModule(mod: IRModule): IRModule {
   const ctx = new RewriteCtx();
   for (const d of mod.decls) ctx.collectUnionInfo(d);
   return { ...mod, decls: mod.decls.map(d => ctx.rewriteDecl(d)) };
 }
 
-// ─── Union registry ───────────────────────────────────────────────────────────
+// ─── Union registry ─────────────────────────────────────────────────────────────
 
+/** Metadata about a discriminated union type. */
 interface UnionInfo {
   typeName: string;
+  /** The field name used as discriminant (e.g. "kind", "tag", "type"). */
   discField: string;
+  /** Maps lowercase literal → constructor info.  Includes both `circle` and `Circle` keys. */
   variants: Map<string, VariantInfo>;
 }
 
+/** Info about one variant (constructor) of a discriminated union. */
 interface VariantInfo {
+  /** Fully-qualified constructor name: `Shape.Circle`. */
   ctorName: string;
+  /** Field names bound by the pattern. */
   fields: string[];
 }
 
-const DISC_FIELDS = new Set(['kind', 'type', 'tag', 'ok', 'hasValue', '_type', '__type']);
+/**
+ * Field names that TypeScript codebases commonly use as union discriminants.
+ * The rewrite pass only fires when the match scrutinee is `obj.<discField>`.
+ */
+const DISCRIMINANT_FIELDS = new Set([
+  'kind', 'type', 'tag', 'ok', 'hasValue', '_type', '__type',
+]);
 
-// ─── Rewrite context ──────────────────────────────────────────────────────────
+// ─── Rewrite context ────────────────────────────────────────────────────────────
 
 class RewriteCtx {
   private unions = new Map<string, UnionInfo>();
 
+  /** Extract union metadata from an InductiveDef declaration. */
   collectUnionInfo(d: IRDecl): void {
     if (d.tag !== 'InductiveDef') return;
     const variants = new Map<string, VariantInfo>();
@@ -44,12 +93,15 @@ class RewriteCtx {
         ctorName: `${d.name}.${ctor.name}`,
         fields: ctor.fields.map(f => f.name ?? '_').filter(Boolean),
       };
-      variants.set(lower,    info);
+      // Register both camelCase and PascalCase keys so "circle" and "Circle" both match
+      variants.set(lower,     info);
       variants.set(ctor.name, info);
     }
-    this.unions.set(d.name, { typeName: d.name, discField: 'kind', variants });
+    // discField starts empty and is refined when a match scrutinee is analysed
+    this.unions.set(d.name, { typeName: d.name, discField: '', variants });
   }
 
+  /** Recursively rewrite all declarations. */
   rewriteDecl(d: IRDecl): IRDecl {
     switch (d.tag) {
       case 'FuncDef':     return { ...d, body: this.rewrite(d.body) };
@@ -60,9 +112,15 @@ class RewriteCtx {
     }
   }
 
+  // ─── Expression rewriting ─────────────────────────────────────────────────
+
+  /** Recursively rewrite an IR expression tree. */
   private rewrite(e: IRExpr): IRExpr {
     switch (e.tag) {
       case 'Match':       return this.rewriteMatch(e);
+      // Rewrite struct literals that are discriminated union constructor calls.
+      // e.g. { type: "left", value: v } → CtorApp("Either.Left", [v])
+      case 'StructLit':   return this.rewriteStructLit(e) ?? this.rewriteFields(e);
       case 'IfThenElse':  return { ...e, cond: this.rewrite(e.cond), then: this.rewrite(e.then), else_: this.rewrite(e.else_) };
       case 'Let':         return { ...e, value: this.rewrite(e.value), body: this.rewrite(e.body) };
       case 'Bind':        return { ...e, monad: this.rewrite(e.monad), body: this.rewrite(e.body) };
@@ -85,6 +143,7 @@ class RewriteCtx {
       case 'Throw':       return { ...e, error: this.rewrite(e.error) };
       case 'CtorApp':     return { ...e, args: e.args.map(a => this.rewrite(a)) };
       case 'Pure_':       return { ...e, value: this.rewrite(e.value) };
+      case 'StructUpdate':return { ...e, base: this.rewrite(e.base), fields: e.fields.map(f => ({ ...f, value: this.rewrite(f.value) })) };
       default:            return e;
     }
   }
@@ -98,36 +157,46 @@ class RewriteCtx {
     }
   }
 
+  // ─── Match rewriting (the core transformation) ────────────────────────────
+
+  /**
+   * Detect whether a Match scrutinises a discriminant field (`s.kind`, `s.tag`,
+   * etc.) and, if so, rewrite the string-literal cases into proper inductive
+   * constructor patterns.
+   */
   private rewriteMatch(e: Extract<IRExpr, { tag: 'Match' }>): IRExpr {
     const disc = this.detectDiscriminant(e.scrutinee);
-    if (!disc) {
+    if (!disc?.union) {
       return { ...e, scrutinee: this.rewrite(e.scrutinee), cases: e.cases.map(c => this.rewriteCase(c)) };
     }
 
     const { obj, union } = disc;
-    if (!union) {
-      return { ...e, scrutinee: this.rewrite(e.scrutinee), cases: e.cases.map(c => this.rewriteCase(c)) };
-    }
-
-    // Pass the scrutinee variable name so case bodies can substitute s.field → patternVar
     const scrutineeName = obj.tag === 'Var' ? obj.name : null;
     const newCases = e.cases.map(c => this.rewriteDiscCase(c, union, scrutineeName));
     return { ...e, scrutinee: this.rewrite(obj), cases: newCases };
   }
 
+  /**
+   * Detect whether a match scrutinee is `obj.<discriminantField>`.
+   *
+   * If so, look up the union by the object's type name and refine its
+   * `discField` to the actual field observed (handles `tag`, `type`, `ok`, etc.).
+   */
   private detectDiscriminant(scrutinee: IRExpr): { obj: IRExpr; field: string; union: UnionInfo | null } | null {
     if (scrutinee.tag !== 'FieldAccess') return null;
-    if (!DISC_FIELDS.has(scrutinee.field)) return null;
+    if (!DISCRIMINANT_FIELDS.has(scrutinee.field)) return null;
 
     const obj   = scrutinee.obj;
     const field = scrutinee.field;
     let union: UnionInfo | null = null;
 
-    // Try by type name
     if (obj.type.tag === 'TypeRef')   union = this.unions.get(obj.type.name) ?? null;
     if (obj.type.tag === 'Inductive') union = this.unions.get(obj.type.name) ?? null;
 
-    // Try by discriminant field name
+    // Refine the discriminant field from the actual FieldAccess observed
+    if (union) union.discField = field;
+
+    // Fallback: find a union whose previously-observed discriminant matches
     if (!union) {
       for (const u of this.unions.values()) {
         if (u.discField === field) { union = u; break; }
@@ -137,16 +206,22 @@ class RewriteCtx {
     return { obj, field, union };
   }
 
+  /**
+   * Rewrite a single match case: convert `PString("circle")` to
+   * `PCtor("Shape.Circle", [radius])` using the union's variant info.
+   *
+   * Also substitutes field accesses in the case body: `s.radius` → `radius`,
+   * since the scrutinee is now an inductive value, not a structure.
+   */
   private rewriteDiscCase(c: IRCase, union: UnionInfo, scrutineeName: string | null): IRCase {
     const p = c.pattern;
-    const key = p.tag === 'PString' ? p.value : (p.tag === 'PLit' && typeof p.value === 'string') ? p.value : null;
+    const key = p.tag === 'PString' ? p.value
+              : (p.tag === 'PLit' && typeof p.value === 'string') ? p.value
+              : null;
     if (key !== null) {
       const info = union.variants.get(key);
       if (info) {
         const args = info.fields.map(f => ({ tag: 'PVar' as const, name: f }));
-        // Build substitution: scrutinee.field → pattern-bound variable for that field.
-        // This is critical for inductive types — s.radius is invalid after matching .Circle radius;
-        // the correct reference is the pattern variable `radius` directly.
         const subst: Map<string, string> = new Map(info.fields.map(f => [f, f]));
         const rewrittenBody = scrutineeName !== null
           ? substituteFieldAccesses(this.rewrite(c.body), scrutineeName, subst)
@@ -160,25 +235,67 @@ class RewriteCtx {
   private rewriteCase(c: IRCase): IRCase {
     return { ...c, guard: c.guard ? this.rewrite(c.guard) : undefined, body: this.rewrite(c.body) };
   }
+
+  /**
+   * Detect struct literals that match a union discriminant pattern and convert
+   * them to constructor applications.
+   * e.g. `{ type: "left", value: v }` → `CtorApp("Either.Left", [v])`
+   */
+  private rewriteStructLit(e: Extract<IRExpr, { tag: 'StructLit' }>): IRExpr | null {
+    // Look for a field whose value is a string literal matching a known discriminant
+    for (const f of e.fields) {
+      if (!DISCRIMINANT_FIELDS.has(f.name)) continue;
+      if (f.value.tag !== 'LitString') continue;
+      const literal = f.value.value;
+
+      // Search all unions for a variant matching this literal
+      for (const union of this.unions.values()) {
+        const variant = union.variants.get(literal);
+        if (!variant) continue;
+
+        // Found a match! Build a CtorApp with the non-discriminant fields as args.
+        const args = e.fields
+          .filter(field => field.name !== f.name)
+          .map(field => this.rewrite(field.value));
+
+        return {
+          tag: 'CtorApp',
+          ctor: variant.ctorName,
+          args,
+          type: e.type,
+          effect: e.effect,
+        };
+      }
+    }
+    return null;
+  }
+
+  /** Rewrite fields of a struct literal (when it's not a union constructor). */
+  private rewriteFields(e: Extract<IRExpr, { tag: 'StructLit' }>): IRExpr {
+    return { ...e, fields: e.fields.map(f => ({ ...f, value: this.rewrite(f.value) })) };
+  }
 }
 
-// ─── Field access substitution ────────────────────────────────────────────────
-// After `match s with | .Circle radius =>`, the variable `s` no longer has a `.radius`
-// field accessor — it's an inductive, not a structure. We substitute `s.radius` → `radius`
-// using the pattern-bound variable name from the PCtor pattern.
+// ─── Field access substitution ──────────────────────────────────────────────────
+//
+// After `match s with | .Circle radius => ...`, the variable `s` is bound to
+// the inductive value — it no longer has structure field accessors.  We
+// substitute `s.radius` → `radius` using the pattern-bound variable name.
 
 function substituteFieldAccesses(
   expr: IRExpr,
   scrutineeName: string,
-  subst: Map<string, string>
+  subst: Map<string, string>,
 ): IRExpr {
   function go(e: IRExpr): IRExpr {
+    // Direct substitution: s.field → patternVar
     if (e.tag === 'FieldAccess' &&
         e.obj.tag === 'Var' &&
         e.obj.name === scrutineeName &&
         subst.has(e.field)) {
       return { tag: 'Var', name: subst.get(e.field)!, type: e.type, effect: e.effect };
     }
+    // Recursive traversal
     switch (e.tag) {
       case 'FieldAccess':  return { ...e, obj: go(e.obj) };
       case 'IndexAccess':  return { ...e, obj: go(e.obj), index: go(e.index) };
@@ -188,7 +305,9 @@ function substituteFieldAccesses(
       case 'Let':          return { ...e, value: go(e.value), body: go(e.body) };
       case 'Bind':         return { ...e, monad: go(e.monad), body: go(e.body) };
       case 'IfThenElse':   return { ...e, cond: go(e.cond), then: go(e.then), else_: go(e.else_) };
-      case 'Match':        return { ...e, scrutinee: go(e.scrutinee), cases: e.cases.map(c => ({ ...c, body: go(c.body), guard: c.guard ? go(c.guard) : undefined })) };
+      case 'Match':        return { ...e, scrutinee: go(e.scrutinee), cases: e.cases.map(c => ({
+        ...c, body: go(c.body), guard: c.guard ? go(c.guard) : undefined,
+      })) };
       case 'Sequence':     return { ...e, stmts: e.stmts.map(go) };
       case 'StructLit':    return { ...e, fields: e.fields.map(f => ({ ...f, value: go(f.value) })) };
       case 'ArrayLit':     return { ...e, elems: e.elems.map(go) };
@@ -203,6 +322,7 @@ function substituteFieldAccesses(
       case 'Return':       return { ...e, value: go(e.value) };
       case 'CtorApp':      return { ...e, args: e.args.map(go) };
       case 'Pure_':        return { ...e, value: go(e.value) };
+      case 'StructUpdate': return { ...e, base: go(e.base), fields: e.fields.map(f => ({ ...f, value: go(f.value) })) };
       case 'DoBlock':      return { ...e, stmts: e.stmts.map(s => {
         switch (s.tag) {
           case 'DoBind':   return { ...s, expr: go(s.expr) };

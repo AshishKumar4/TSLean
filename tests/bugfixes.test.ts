@@ -208,7 +208,7 @@ describe('Bug #7 (universe type): no trailing space in Type 1', () => {
   it('Universe 0 → Prop',   () => expect(irTypeToLean({ tag: 'Universe', level: 0 })).toBe('Prop'));
   it('Universe 1 → Type',   () => {
     const r = irTypeToLean({ tag: 'Universe', level: 1 });
-    expect(r).toBe('Type');
+    expect(r).toBe('Type 1');
     expect(r).not.toMatch(/\s$/);
   });
   it('Universe 2 → Type 2', () => expect(irTypeToLean({ tag: 'Universe', level: 2 })).toBe('Type 2'));

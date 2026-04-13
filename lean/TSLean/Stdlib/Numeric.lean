@@ -69,4 +69,75 @@ theorem gcd_le_right (a b : Nat) (h : 0 < b) : gcd' a b ≤ b := Nat.gcd_le_righ
 theorem lcm_dvd_mul_left (a b : Nat) : a ∣ lcm' a b := Nat.dvd_lcm_left a b
 theorem lcm_dvd_mul_right (a b : Nat) : b ∣ lcm' a b := Nat.dvd_lcm_right a b
 
+/-! ## Float utilities -/
+
+namespace FloatExt
+
+-- Constants
+def pi    : Float := 3.14159265358979323846
+def e     : Float := 2.71828182845904523536
+def tau   : Float := 2.0 * pi
+def ln2   : Float := 0.6931471805599453
+def ln10  : Float := 2.302585092994046
+
+-- Arithmetic
+def max (a b : Float) : Float := if a ≥ b then a else b
+def min (a b : Float) : Float := if a ≤ b then a else b
+def abs (x : Float) : Float := if x ≥ 0.0 then x else -x
+def clamp (x lo hi : Float) : Float := max lo (min x hi)
+
+-- Rounding
+def floor (x : Float) : Float := Float.floor x
+def ceil  (x : Float) : Float := Float.ceil x
+def round (x : Float) : Float := Float.round x
+def trunc (x : Float) : Float := if x ≥ 0.0 then Float.floor x else Float.ceil x
+
+-- Classification
+def isNaN      (x : Float) : Bool := Float.isNaN x
+def isInfinite (x : Float) : Bool := Float.isInf x
+def isFinite   (x : Float) : Bool := !(isNaN x) && !(isInfinite x)
+
+-- Math functions
+def sqrt  (x : Float) : Float := Float.sqrt x
+def log   (x : Float) : Float := Float.log x
+def log2  (x : Float) : Float := Float.log x / ln2
+def log10 (x : Float) : Float := Float.log x / ln10
+def exp   (x : Float) : Float := Float.exp x
+def pow   (base exp_ : Float) : Float := Float.pow base exp_
+def sin   (x : Float) : Float := Float.sin x
+def cos   (x : Float) : Float := Float.cos x
+def tan   (x : Float) : Float := Float.tan x
+def atan2 (y x : Float) : Float := Float.atan2 y x
+
+-- Integer conversion
+def toInt (x : Float) : Int := x.toUInt64.toNat
+def toNat (x : Float) : Nat := x.toUInt64.toNat
+def ofInt (n : Int) : Float := Float.ofInt n
+def ofNat (n : Nat) : Float := Float.ofNat n
+
+-- Comparison
+def approxEq (a b : Float) (eps : Float := 1e-10) : Bool :=
+  abs (a - b) < eps
+
+-- Safe division (returns 0 for division by zero)
+def safeDiv (a b : Float) : Float :=
+  if b == 0.0 then 0.0 else a / b
+
+-- Percentage
+def pct (value total : Float) : Float :=
+  safeDiv (value * 100.0) total
+
+end FloatExt
+
+-- Concrete tests via native_decide
+theorem FloatExt.pi_positive : FloatExt.pi > 0.0 := by native_decide
+theorem FloatExt.e_positive  : FloatExt.e > 0.0 := by native_decide
+theorem FloatExt.abs_nonneg_concrete : FloatExt.abs (-3.0) == 3.0 := by native_decide
+theorem FloatExt.max_comm_concrete : FloatExt.max 1.0 2.0 == FloatExt.max 2.0 1.0 := by native_decide
+theorem FloatExt.min_le_max_concrete : FloatExt.min 1.0 2.0 ≤ FloatExt.max 1.0 2.0 := by native_decide
+theorem FloatExt.floor_le_concrete : FloatExt.floor 3.7 ≤ 3.7 := by native_decide
+theorem FloatExt.ceil_ge_concrete  : FloatExt.ceil 3.2 ≥ 3.2 := by native_decide
+theorem FloatExt.round_half_concrete : FloatExt.round 2.5 == 3.0 := by native_decide
+theorem FloatExt.safeDiv_zero : FloatExt.safeDiv 1.0 0.0 == 0.0 := by native_decide
+
 end TSLean.Stdlib.Numeric

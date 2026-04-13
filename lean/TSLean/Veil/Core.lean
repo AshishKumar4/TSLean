@@ -192,6 +192,52 @@ theorem isInvariant_exists [TransitionSystem σ] (P : α → σ → Prop)
     (a : α) (h : isInvariant (P a)) : isInvariant (fun s => ∃ b, P b s) :=
   fun s hr => ⟨a, h s hr⟩
 
+/-! ## Refinement -/
+
+/-- A simulation relation between two transition systems.
+    If `R s t` holds for correlated states, every step in the concrete system
+    has a matching step in the abstract system. -/
+def Simulation (σ τ : Type) [TransitionSystem σ] [TransitionSystem τ]
+    (R : σ → τ → Prop) : Prop :=
+  (∀ s t, TransitionSystem.init (σ := σ) s → R s t → TransitionSystem.init (σ := τ) t) ∧
+  (∀ s s' t, R s t → TransitionSystem.next (σ := σ) s s' →
+    ∃ t', TransitionSystem.next (σ := τ) t t' ∧ R s' t')
+
+/-- If concrete states always have a paired abstract state, and the abstract system
+    is safe, and safety transfers across R, then the concrete system is safe.
+    This is the forward simulation theorem. -/
+theorem safety_via_simulation (σ τ : Type) [TransitionSystem σ] [TransitionSystem τ]
+    (R : σ → τ → Prop)
+    (hsim : Simulation σ τ R)
+    (habstract : isInvariant (σ := τ) TransitionSystem.safe)
+    (hsafe_transfer : ∀ s t, R s t → TransitionSystem.safe (σ := τ) t →
+                      TransitionSystem.safe (σ := σ) s)
+    -- Every reachable concrete state has a paired reachable abstract state
+    (hpair : ∀ s, reachable (σ := σ) s → ∃ t, reachable (σ := τ) t ∧ R s t) :
+    isInvariant (σ := σ) TransitionSystem.safe := by
+  intro s hr
+  obtain ⟨t, hrt, hR⟩ := hpair s hr
+  exact hsafe_transfer s t hR (habstract t hrt)
+
+/-! ## Temporal properties -/
+
+/-- After at least `n` steps from an initial state, property `p` holds.
+    This is a bounded liveness variant. -/
+def HoldsAfterN [TransitionSystem σ] (n : Nat) (p : σ → Prop) : Prop :=
+  ∀ s, reachableIn n s → p s
+
+theorem holdsAfterN_zero [TransitionSystem σ] (p : σ → Prop)
+    (h : ∀ s, TransitionSystem.init s → p s) :
+    HoldsAfterN 0 p := by
+  intro s hr; cases hr; exact h _ ‹_›
+
+theorem holdsAfterN_of_invariant [TransitionSystem σ] (p : σ → Prop) (n : Nat)
+    (h : isInvariant p) : HoldsAfterN n p :=
+  fun s hr => h s (reachableIn_implies_reachable n s hr)
+
+theorem isInvariant_not_false [TransitionSystem σ] :
+    isInvariant (fun _ : σ => ¬False) := fun _ _ h => h
+
 end TransitionSystem
 
 end TSLean.Veil

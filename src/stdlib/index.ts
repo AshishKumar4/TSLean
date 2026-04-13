@@ -93,7 +93,7 @@ export function lookupMethod(kind: ObjKind, method: string): MethodTx | undefine
 
 // ─── Global function translations ─────────────────────────────────────────────
 
-export interface GlobalTx { leanExpr: string; io?: boolean }
+export interface GlobalTx { leanExpr: string; io?: boolean; maxArgs?: number }
 
 const GLOBALS: Record<string, GlobalTx> = {
   'console.log':    { leanExpr: 'IO.println',           io: true },
@@ -111,13 +111,13 @@ const GLOBALS: Record<string, GlobalTx> = {
   'Math.pow':       { leanExpr: 'Float.pow' },
   'Math.log':       { leanExpr: 'Float.log' },
   'Math.random':    { leanExpr: 'IO.rand',              io: true },
-  'Math.PI':        { leanExpr: 'Float.pi' },
-  'parseInt':       { leanExpr: 'String.toInt?' },
-  'parseFloat':     { leanExpr: 'String.toFloat?' },
+  'Math.PI':        { leanExpr: '3.14159265358979' },
+  'parseInt':       { leanExpr: 'sorry', maxArgs: 0 },   // parseInt returns different type (Option Int vs Float)
+  'parseFloat':     { leanExpr: 'String.toFloat?', maxArgs: 1 },
   'isNaN':          { leanExpr: 'Float.isNaN' },
   'isFinite':       { leanExpr: 'Float.isFinite' },
-  'JSON.stringify': { leanExpr: 'TSLean.serialize' },
-  'JSON.parse':     { leanExpr: 'TSLean.deserialize' },
+  'JSON.stringify': { leanExpr: 'serialize' },    // TSLean.serialize, opened via `open TSLean`
+  'JSON.parse':     { leanExpr: 'deserialize' },  // TSLean.deserialize
   'Object.keys':    { leanExpr: 'AssocMap.keys' },
   'Object.values':  { leanExpr: 'AssocMap.values' },
   'Object.entries': { leanExpr: 'AssocMap.toList' },
@@ -130,7 +130,7 @@ const GLOBALS: Record<string, GlobalTx> = {
   'structuredClone':{ leanExpr: 'id' },
   'encodeURIComponent': { leanExpr: 'TSLean.encodeURI' },
   'decodeURIComponent': { leanExpr: 'TSLean.decodeURI' },
-  'fetch':          { leanExpr: 'TSLean.fetch',          io: true },
+  'fetch':          { leanExpr: 'WebAPI.fetch',           io: true },
 };
 
 export function lookupGlobal(name: string): GlobalTx | undefined { return GLOBALS[name]; }

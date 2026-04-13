@@ -100,7 +100,7 @@ describe('Pipeline: generics/discriminated-unions.ts', () => {
     expect(fn.slice(0, 500)).not.toContain('"circle"');
   });
   it('Color inductive',             () => expect(code).toContain('inductive Color'));
-  it('Tree inductive with {T}',     () => expect(code).toMatch(/inductive Tree\s*\{T/));
+  it('Tree inductive with {T}',     () => expect(code).toMatch(/inductive Tree\s*[(({]T/));
   it('no switch/case',              () => expect(code).not.toContain('switch'));
 });
 

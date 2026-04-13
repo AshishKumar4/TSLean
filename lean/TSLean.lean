@@ -6,6 +6,8 @@ import TSLean.Runtime.Monad
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.BrandedTypes
 import TSLean.Runtime.Validation
+import TSLean.Runtime.WebAPI
+import TSLean.Runtime.Inhabited
 
 -- Stdlib
 import TSLean.Stdlib.Array
@@ -42,7 +44,7 @@ import TSLean.Verification.ProofObligation
 import TSLean.Verification.Invariants
 import TSLean.Verification.Tactics
 
--- Generated
+-- Generated (hand-written)
 import TSLean.Generated.Hello
 import TSLean.Generated.Interfaces
 import TSLean.Generated.Classes
@@ -58,3 +60,21 @@ import TSLean.Generated.FullProject.Backend.ChatRoomDo
 import TSLean.Generated.FullProject.Backend.RateLimiterDo
 import TSLean.Generated.FullProject.Backend.AnalyticsDo
 import TSLean.Generated.FullProject.Backend.Router
+
+-- Transpiler output (compiles with lake build — separate namespace from hand-written)
+-- Note: not imported here to avoid name clashes with hand-written Generated/ files.
+-- Import individually: `import TSLean.Generated.Basic.Hello` etc.
+-- TODO: merge hand-written and transpiler-generated into single namespace
+
+-- Veil Transition Systems
+import TSLean.Veil.Core
+import TSLean.Veil.AuthDO
+import TSLean.Veil.ChatRoomDO
+import TSLean.Veil.CounterDO
+import TSLean.Veil.QueueDO
+import TSLean.Veil.RateLimiterDO
+import TSLean.Veil.SessionStoreDO
+
+-- Specification & Tests
+import TSLean.Specification
+import TSLean.Tests

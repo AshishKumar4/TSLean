@@ -1,5 +1,22 @@
-// Type mapper: TypeScript compiler types → IR types.
-// Uses the TypeChecker for fully resolved types.
+/**
+ * @module typemap
+ *
+ * Type mapper: TypeScript compiler types → IR types.
+ *
+ * Uses the TypeChecker for fully-resolved types, handling generics, mapped
+ * types, branded newtypes, discriminated unions, and conditional types.
+ *
+ * Key mappings:
+ *   `number`              → `Float` (default; `Nat`/`Int` when context implies)
+ *   `string`              → `String`
+ *   `boolean`             → `Bool`
+ *   `T | undefined`       → `Option T`
+ *   `Promise<T>`          → `IO T`
+ *   `Map<K, V>`           → `AssocMap K V`
+ *   `string & {__brand:X}`→ branded newtype (`TyRef(alias)`)
+ *
+ * Pipeline position:  TS AST → **Type Mapper** → IR types → Codegen
+ */
 
 import * as ts from 'typescript';
 import {
@@ -9,10 +26,38 @@ import {
   TyRef, TyVar,
 } from '../ir/types.js';
 
-// ─── Main entry ───────────────────────────────────────────────────────────────
+// ─── Constants ──────────────────────────────────────────────────────────────────
 
+/** Recursion depth limit to prevent infinite loops on circular types. */
+const MAX_TYPE_DEPTH = 20;
+
+/** Fallback name for type parameters when the symbol has no name. */
+const FALLBACK_TYPE_VAR = 'α';
+
+/** Sentinel name for anonymous object types (TypeScript uses `__type` internally). */
+const TS_ANON_TYPE = '__type';
+
+/**
+ * Field names commonly used as discriminants in TypeScript discriminated unions.
+ * Checked in order — the first matching field wins.
+ */
+const DISCRIMINANT_FIELDS = ['kind', 'type', 'tag', 'ok', 'hasValue', '_type'];
+
+// ─── Main entry ─────────────────────────────────────────────────────────────────
+
+/**
+ * Map a TypeScript compiler type to an IR type.
+ *
+ * Handles primitives, unions, intersections, arrays, tuples, object types,
+ * generic references, conditional types, and branded newtypes.
+ *
+ * @param t       - The TypeScript type from the type checker.
+ * @param checker - The TypeChecker instance for the program.
+ * @param depth   - Current recursion depth (guards against circular types).
+ * @returns The corresponding IR type.
+ */
 export function mapType(t: ts.Type, checker: ts.TypeChecker, depth = 0): IRType {
-  if (depth > 20) return TyRef('Any');
+  if (depth > MAX_TYPE_DEPTH) return TyRef('Any');
 
   const f = t.flags;
   if (f & ts.TypeFlags.String)         return TyString;
@@ -28,7 +73,7 @@ export function mapType(t: ts.Type, checker: ts.TypeChecker, depth = 0): IRType 
   if (f & ts.TypeFlags.StringLiteral)  return TyString;
   if (f & ts.TypeFlags.NumberLiteral)  return TyFloat;
   if (f & ts.TypeFlags.BooleanLiteral) return TyBool;
-  if (f & ts.TypeFlags.TypeParameter)  return TyVar(t.symbol?.name ?? 'α');
+  if (f & ts.TypeFlags.TypeParameter)  return TyVar(t.symbol?.name ?? FALLBACK_TYPE_VAR);
 
   if (t.isUnion())        return mapUnion(t, checker, depth);
   if (t.isIntersection()) return mapIntersection(t, checker, depth);
@@ -44,55 +89,72 @@ export function mapType(t: ts.Type, checker: ts.TypeChecker, depth = 0): IRType 
 
   if (f & ts.TypeFlags.Object) return mapObject(t as ts.ObjectType, checker, depth);
   if (f & ts.TypeFlags.Conditional) {
+    // Access the resolved true branch — this is an internal TS API property
+    // that's stable across TS versions but not in the public typings.
     const c = t as ts.ConditionalType;
-    return mapType((c as any).resolvedTrueType ?? c.checkType, checker, depth + 1);
+    const resolved = (c as { resolvedTrueType?: ts.Type }).resolvedTrueType;
+    return mapType(resolved ?? c.checkType, checker, depth + 1);
   }
   if (f & ts.TypeFlags.Index) return TyString;
 
   return TyRef(checker.typeToString(t));
 }
 
+// ─── Union types ────────────────────────────────────────────────────────────────
+
 function mapUnion(t: ts.UnionType, checker: ts.TypeChecker, depth: number): IRType {
   const types = t.types;
-  // Filter out undefined/null → Option T
+
+  // T | undefined/null → Option T
   const withoutNil = types.filter(x => !(x.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)));
   if (withoutNil.length === 1 && withoutNil.length < types.length)
     return TyOption(mapType(withoutNil[0], checker, depth + 1));
 
-  // All string literals → alias name or string
+  // All string literals → use the alias name if available
   if (types.every(x => x.flags & ts.TypeFlags.StringLiteral)) {
-    const alias = (t as any).aliasSymbol?.name;
+    const alias = getAliasName(t);
     return alias ? TyRef(alias) : TyString;
   }
 
-  // Boolean union
+  // true | false → Bool
   if (types.length === 2 && types.every(x => x.flags & ts.TypeFlags.BooleanLiteral))
     return TyBool;
 
-  // Named alias
-  const alias = (t as any).aliasSymbol?.name;
-  if (alias) return TyRef(alias);
+  // Named alias (e.g. `type Status = "active" | "inactive"`, `Tree<T>`)
+  const alias = getAliasName(t);
+  if (alias) {
+    // Propagate alias type arguments (e.g. Tree<T> → TyRef('Tree', [TyVar('T')]))
+    const aliasArgs = (t as any).aliasTypeArguments as ts.Type[] | undefined;
+    if (aliasArgs && aliasArgs.length > 0) {
+      return TyRef(alias, aliasArgs.map(a => mapType(a, checker, depth + 1)));
+    }
+    return TyRef(alias);
+  }
 
   return withoutNil.length > 0 ? mapType(withoutNil[0], checker, depth + 1) : TyRef('Any');
 }
 
+// ─── Intersection types ─────────────────────────────────────────────────────────
+
 function mapIntersection(t: ts.IntersectionType, checker: ts.TypeChecker, depth: number): IRType {
-  // Branded type: string & { __brand: "X" }
+  // Branded newtype: `string & { __brand: "UserId" }`
   const base  = t.types.find(x => x.flags & (ts.TypeFlags.String | ts.TypeFlags.Number));
   const brand = t.types.find(x => (x.flags & ts.TypeFlags.Object) &&
     (x as ts.ObjectType).getProperties().some(p => p.name.startsWith('__brand') || p.name.startsWith('_brand')));
   if (base && brand) {
-    const alias = (t as any).aliasSymbol?.name;
+    const alias = getAliasName(t);
     return alias ? TyRef(alias) : (base.flags & ts.TypeFlags.String ? TyString : TyFloat);
   }
 
-  const alias = (t as any).aliasSymbol?.name;
+  const alias = getAliasName(t);
   if (alias) return TyRef(alias);
 
   const concrete = t.types.find(x => !(x.flags & ts.TypeFlags.Object) ||
     (x as ts.ObjectType).getProperties().length > 0);
   return concrete ? mapType(concrete, checker, depth + 1) : TyRef('Any');
 }
+
+// ─── Object types ───────────────────────────────────────────────────────────────
 
 function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IRType {
   if (t.objectFlags & ts.ObjectFlags.Reference)
@@ -112,8 +174,16 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
     return TyFn(params, mapType(checker.getReturnTypeOfSignature(sig), checker, depth + 1), Pure);
   }
 
-  return TyRef(sym.name === '__type' ? 'AnonStruct' : sym.name);
+  // Anonymous object types (e.g. { name: string }) can't be directly expressed in Lean.
+  // Map them to String (serialised) as a compilable approximation.
+  // Map well-known JS types to Lean equivalents
+  const name = sym.name;
+  if (name === TS_ANON_TYPE) return TyRef('String');
+  if (name === 'Error' || name.endsWith('Error')) return TyString;  // JS Error → String for Lean
+  return TyRef(name);
 }
+
+// ─── Generic type references ────────────────────────────────────────────────────
 
 function mapTypeRef(t: ts.TypeReference, checker: ts.TypeChecker, depth: number): IRType {
   const name = t.target.symbol?.name ?? '';
@@ -127,20 +197,26 @@ function mapTypeRef(t: ts.TypeReference, checker: ts.TypeChecker, depth: number)
     case 'Set':           case 'WeakSet':       return TySet(map1());
     case 'Promise':                             return TyPromise(map1());
     case 'Record':                              return TyMap(map1(), map2(1));
-    case 'Readonly':                            return map1();
-    case 'NonNullable':                         return map1();
-    case 'Partial':
-    case 'Required':
-    case 'Pick':
-    case 'Omit':
-      return args.length === 0 ? TyRef(name) : TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
+    case 'Readonly':      case 'NonNullable':   return map1();
     default:
       return args.length === 0 ? TyRef(name) : TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
   }
 }
 
-// ─── irTypeToLean ─────────────────────────────────────────────────────────────
+// ─── IR type → Lean 4 syntax ────────────────────────────────────────────────────
 
+/**
+ * Convert an IR type to its Lean 4 syntax string.
+ *
+ * @param t      - The IR type to render.
+ * @param parens - If true, wrap multi-word types in parentheses for
+ *                 use as function arguments (e.g. `(Array Nat)`).
+ * @returns A valid Lean 4 type expression.
+ *
+ * @example
+ * irTypeToLean({ tag: 'Array', elem: { tag: 'Nat' } })       // "Array Nat"
+ * irTypeToLean({ tag: 'Array', elem: { tag: 'Nat' } }, true) // "(Array Nat)"
+ */
 export function irTypeToLean(t: IRType, parens = false): string {
   const s = typeStr(t);
   return parens && s.includes(' ') ? `(${s})` : s;
@@ -148,44 +224,60 @@ export function irTypeToLean(t: IRType, parens = false): string {
 
 function typeStr(t: IRType): string {
   switch (t.tag) {
-    case 'Nat':    return 'Nat';
-    case 'Int':    return 'Int';
-    case 'Float':  return 'Float';
-    case 'String': return 'String';
-    case 'Bool':   return 'Bool';
-    case 'Unit':   return 'Unit';
-    case 'Never':  return 'Empty';
-    case 'Option': return `Option ${irTypeToLean(t.inner, true)}`;
-    case 'Array':  return `Array ${irTypeToLean(t.elem, true)}`;
-    case 'Tuple':  return t.elems.length === 0 ? 'Unit' : `(${t.elems.map(e => typeStr(e)).join(' × ')})`;
+    case 'Nat':       return 'Nat';
+    case 'Int':       return 'Int';
+    case 'Float':     return 'Float';
+    case 'String':    return 'String';
+    case 'Bool':      return 'Bool';
+    case 'Unit':      return 'Unit';
+    case 'Never':     return 'Empty';
+    case 'Option':    return `Option ${irTypeToLean(t.inner, true)}`;
+    case 'Array':     return `Array ${irTypeToLean(t.elem, true)}`;
+    case 'Tuple':     return t.elems.length === 0 ? 'Unit' : `(${t.elems.map(typeStr).join(' × ')})`;
     case 'Function': {
-      const ps = t.params.map(p => irTypeToLean(p, true)).join(' → ');
-      return `${ps} → ${typeStr(t.ret)}`;
+      // Empty params () → T becomes Unit → T in Lean
+      const paramStr = t.params.length === 0 ? 'Unit' : t.params.map(p => irTypeToLean(p, true)).join(' → ');
+      return `${paramStr} → ${typeStr(t.ret)}`;
     }
-    case 'Map':      return `AssocMap ${irTypeToLean(t.key, true)} ${irTypeToLean(t.value, true)}`;
-    case 'Set':      return `AssocSet ${irTypeToLean(t.elem, true)}`;
-    case 'Promise':  return `IO ${irTypeToLean(t.inner, true)}`;
-    case 'Result':   return `Except ${irTypeToLean(t.err, true)} ${irTypeToLean(t.ok, true)}`;
-    case 'TypeRef':
-      return t.args.length === 0 ? t.name : `${t.name} ${t.args.map(a => irTypeToLean(a, true)).join(' ')}`;
-    case 'TypeVar':  return t.name;
+    case 'Map':       return `AssocMap ${irTypeToLean(t.key, true)} ${irTypeToLean(t.value, true)}`;
+    case 'Set':       return `AssocSet ${irTypeToLean(t.elem, true)}`;
+    case 'Promise': {
+      // Flatten nested IO: Promise<Promise<T>> → IO T (not IO (IO T))
+      const inner = t.inner;
+      if (inner.tag === 'Promise') return `IO ${irTypeToLean(inner.inner, true)}`;
+      return `IO ${irTypeToLean(inner, true)}`;
+    }
+    case 'Result':    return `Except ${irTypeToLean(t.err, true)} ${irTypeToLean(t.ok, true)}`;
+    case 'TypeRef':   return t.args.length === 0 ? t.name : `${t.name} ${t.args.map(a => irTypeToLean(a, true)).join(' ')}`;
+    case 'TypeVar':   return t.name;
     case 'Structure': return t.name;
     case 'Inductive': return t.name;
     case 'Dependent': return `(${t.param} : ${typeStr(t.paramType)}) → ${typeStr(t.body)}`;
     case 'Subtype':   return `{x : ${typeStr(t.base)} // ${t.refinement}}`;
-    case 'Universe':
-      return t.level === 0 ? 'Prop' : (t.level === 1 ? 'Type' : `Type ${t.level}`);
-    default: return 'Any';
+    case 'Universe':  return t.level === 0 ? 'Prop' : `Type ${t.level}`;
+    default:          return 'Any';
   }
 }
 
-// ─── Struct field extraction ──────────────────────────────────────────────────
+// ─── Struct field extraction ────────────────────────────────────────────────────
 
-export interface StructField { name: string; type: IRType; optional: boolean; mutable: boolean }
+/** A single field extracted from a TypeScript interface or class declaration. */
+export interface StructField {
+  name: string;
+  type: IRType;
+  optional: boolean;
+  mutable: boolean;
+}
 
+/**
+ * Extract struct fields from a TypeScript interface or class declaration.
+ *
+ * Handles optional fields (`?`), readonly modifiers, and resolves types
+ * via the type checker.
+ */
 export function extractStructFields(
   node: ts.InterfaceDeclaration | ts.ClassDeclaration,
-  checker: ts.TypeChecker
+  checker: ts.TypeChecker,
 ): StructField[] {
   const out: StructField[] = [];
   for (const m of node.members) {
@@ -195,28 +287,44 @@ export function extractStructFields(
     const ty   = sym ? checker.getTypeOfSymbol(sym) : checker.getAnyType();
     const opt  = !!m.questionToken;
     const mut  = !m.modifiers?.some(mod => mod.kind === ts.SyntaxKind.ReadonlyKeyword);
-    out.push({ name, type: opt ? TyOption(mapType(ty, checker)) : mapType(ty, checker), optional: opt, mutable: mut });
+    out.push({
+      name,
+      type: opt ? TyOption(mapType(ty, checker)) : mapType(ty, checker),
+      optional: opt,
+      mutable: mut,
+    });
   }
   return out;
 }
 
-// ─── Discriminated union detection ───────────────────────────────────────────
+// ─── Discriminated union detection ──────────────────────────────────────────────
 
-const DISC_FIELDS = ['kind', 'type', 'tag', 'ok', 'hasValue', '_type'];
-
+/** Result of detecting a discriminated union in a TypeScript union type. */
 export interface DiscriminantInfo {
+  /** The field name used as the discriminant (e.g. "kind"). */
   field: string;
+  /** Each variant with its literal value and non-discriminant fields. */
   variants: Array<{ literal: string; fields: StructField[] }>;
 }
 
+/**
+ * Detect whether a TypeScript union type is a discriminated union.
+ *
+ * Checks each known discriminant field name in priority order.  Returns
+ * the first field for which every union member has a unique string literal value.
+ *
+ * @param t       - The TypeScript union type.
+ * @param checker - The TypeChecker for resolving field types.
+ * @returns Discriminant info if detected, or `null`.
+ */
 export function detectDiscriminatedUnion(
   t: ts.UnionType,
-  checker: ts.TypeChecker
+  checker: ts.TypeChecker,
 ): DiscriminantInfo | null {
   const objTypes = t.types.filter(x => x.flags & ts.TypeFlags.Object) as ts.ObjectType[];
   if (objTypes.length < 2) return null;
 
-  for (const field of DISC_FIELDS) {
+  for (const field of DISCRIMINANT_FIELDS) {
     const info = tryField(objTypes, field, checker);
     if (info) return info;
   }
@@ -236,18 +344,40 @@ function tryField(types: ts.ObjectType[], field: string, checker: ts.TypeChecker
       if (sym.name === field) continue;
       const st = checker.getTypeOfSymbol(sym);
       const opt = !!(sym.flags & ts.SymbolFlags.Optional);
-      fields.push({ name: sym.name, type: opt ? TyOption(mapType(st, checker)) : mapType(st, checker), optional: opt, mutable: true });
+      fields.push({
+        name: sym.name,
+        type: opt ? TyOption(mapType(st, checker)) : mapType(st, checker),
+        optional: opt,
+        mutable: true,
+      });
     }
     variants.push({ literal: lit, fields });
   }
   return variants.length === types.length ? { field, variants } : null;
 }
 
-// ─── Type param extraction ────────────────────────────────────────────────────
+// ─── Type parameter extraction ──────────────────────────────────────────────────
 
+/**
+ * Extract type parameter names from a TypeScript declaration.
+ * @returns Array of parameter names (e.g. `["T", "U"]`).
+ */
 export function extractTypeParams(
   node: ts.InterfaceDeclaration | ts.ClassDeclaration | ts.TypeAliasDeclaration |
-        ts.FunctionDeclaration | ts.MethodDeclaration | ts.ArrowFunction | ts.FunctionExpression
+        ts.FunctionDeclaration | ts.MethodDeclaration | ts.ArrowFunction | ts.FunctionExpression,
 ): string[] {
   return (node.typeParameters ?? []).map(tp => tp.name.text);
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────────
+
+/**
+ * Access the `aliasSymbol.name` on a TypeScript type.
+ *
+ * This property is not in the public TS API typings but is stable across
+ * TypeScript versions (4.x–5.x).  It gives the user-defined alias name
+ * for union and intersection types.
+ */
+function getAliasName(t: ts.Type): string | undefined {
+  return (t as { aliasSymbol?: ts.Symbol }).aliasSymbol?.name;
 }
