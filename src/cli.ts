@@ -21,6 +21,7 @@ import { generateLeanV2 } from './codegen/v2.js';
 import { currentTracker } from './sorry-tracker.js';
 import { resetTimer } from './timing.js';
 import { generateVerification } from './verification/index.js';
+import { generateVeilStub } from './verification/veil-gen.js';
 import { transpileProject, writeProjectOutputs } from './project/index.js';
 
 // ─── Colors (ANSI, respects NO_COLOR and --no-color) ─────────────────────────
@@ -62,7 +63,8 @@ ${c.bold('OPTIONS')}
   -w, --watch            Watch for changes and recompile
   --lake                 Auto-run lake build after each watch recompile
   --strict               Error on sorry instead of continuing
-  --verify               Generate proof obligations
+   --verify               Generate proof obligations
+   --veil                 Generate Veil transition system stubs for DO classes
   --project <path>       Use tsconfig.json for multi-file compilation
   --self-host            Enable self-host transforms
   --base-name <name>     Module base name (self-host mode)
@@ -80,6 +82,7 @@ interface CompileOpts {
   input: string;
   output: string;
   verify: boolean;
+  veil: boolean;
   watch: boolean;
   ns: string;
   selfHost: boolean;
@@ -119,7 +122,7 @@ function parseArgs(argv: string[]): Command {
   const isCompile = sub === 'compile';
   const rest = isCompile ? args.slice(1) : args;
 
-  let input = '', output = '', verify = false, watch = false, strict = false, timing = false;
+  let input = '', output = '', verify = false, veil = false, watch = false, strict = false, timing = false;
   let ns = 'TSLean.Generated', selfHost = false, baseName = '';
   let isDir = false, genLakefile = true, tsconfigPath = '';
 
@@ -128,6 +131,7 @@ function parseArgs(argv: string[]): Command {
     if (a === '--project')       { isDir = true; tsconfigPath = rest[++i] ?? ''; input = tsconfigPath; }
     else if (a === '-o' || a === '--output') { output = rest[++i] ?? ''; }
     else if (a === '--verify')   { verify = true; }
+    else if (a === '--veil')     { veil = true; }
     else if (a === '-w' || a === '--watch') { watch = true; }
     else if (a === '--namespace'){ ns = rest[++i] ?? ns; }
     else if (a === '--self-host'){ selfHost = true; }
@@ -156,7 +160,7 @@ function parseArgs(argv: string[]): Command {
       : input.replace(/\.ts$/, '.lean');
   }
 
-  return { cmd: 'compile', opts: { input, output, verify, watch, ns, selfHost, baseName, isDir, genLakefile, tsconfigPath, strict, timing } };
+  return { cmd: 'compile', opts: { input, output, verify, veil, watch, ns, selfHost, baseName, isDir, genLakefile, tsconfigPath, strict, timing } };
 }
 
 // ─── Output helpers ──────────────────────────────────────────────────────────
@@ -176,7 +180,7 @@ function info(msg: string): void {
 // ─── Compile: single file ────────────────────────────────────────────────────
 
 function compileSingle(opts: CompileOpts): boolean {
-  const { input, output, verify, selfHost, baseName, strict, timing } = opts;
+  const { input, output, verify, veil, selfHost, baseName, strict, timing } = opts;
   if (!fs.existsSync(input)) {
     error(`File not found: ${input}`);
     return false;
@@ -203,6 +207,23 @@ function compileSingle(opts: CompileOpts): boolean {
       const { leanCode, obligations } = generateVerification(rw);
       if (leanCode) code += '\n\n-- Verification obligations\n' + leanCode;
       if (obligations.length) info(`Generated ${obligations.length} proof obligation(s)`);
+    }
+
+    // Generate Veil transition system stubs for DO classes
+    if (veil) {
+      timer.start('veil');
+      for (const d of rw.decls) {
+        if (d.tag === 'Namespace') {
+          const doName = d.name;
+          const leanModule = `TSLean.Generated.${path.basename(input, '.ts').replace(/[^a-zA-Z0-9]/g, '_')}`;
+          const result = generateVeilStub(rw, doName, leanModule);
+          if (result) {
+            const veilPath = output.replace(/\.lean$/, '_veil.lean');
+            fs.writeFileSync(veilPath, result.leanCode, 'utf-8');
+            info(`Generated Veil stub: ${veilPath} (${result.actions.length} actions)`);
+          }
+        }
+      }
     }
 
     timer.start('write');
