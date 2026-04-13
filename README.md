@@ -382,19 +382,33 @@ bun run build            # Compile to dist/
 cd lean && lake build    # 112 Lean build jobs
 ```
 
+## Real-World Validation: Cloudflare Agents SDK
+
+TSLean was validated against the full [Cloudflare Agents SDK](https://github.com/cloudflare/agents) — 68 source files, 20K+ lines of production TypeScript.
+
+| Metric | Value |
+|--------|-------|
+| Files transpiled | 68/68 (100%) |
+| Zero-sorry files | 66/68 (97%) |
+| Actual sorry axioms | 4 (in 2 files: JSX + ReadableStream) |
+| Default placeholders | ~25 across all files |
+| Lean compilation (types.ts) | Compiles correctly (enums, unions) |
+
+The 4 remaining sorrys are in `react.tsx` (JSX rendering) and `mcp/worker-transport.ts` (ReadableStream async iterators) — patterns with no pure Lean equivalent.
+
 ## Project Stats
 
 | Metric | Value |
 |--------|-------|
-| TypeScript tests | 1,557 |
-| Lean build jobs | 112 |
+| TypeScript tests | 1,588 |
+| Lean build jobs | 118 |
 | Fixpoint accuracy | 9/10 identical |
 | Stdlib methods | 130+ |
 | Verified DO models | 7 |
-| Example projects | 10 |
+| Example projects | 12 |
 | Proof theorems | 50+ (0 sorry in runtime) |
-| Lines of Lean | ~9,000 |
-| Lines of TypeScript | ~7,000 |
+| Lines of Lean | ~9,500 |
+| Lines of TypeScript | ~8,000 |
 
 ## License
 
