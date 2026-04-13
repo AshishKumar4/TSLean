@@ -936,7 +936,7 @@ class LowerCtx {
       const tag = (e as { tag?: string }).tag ?? 'unknown';
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[lower] failed to lower ${tag} expression: ${msg}`);
-      currentTracker().add({
+      currentTracker().addSorry({
         location: `lower:${tag}`, reason: msg,
         category: 'unresolved-expr', hint: 'check if the expression pattern is supported',
       });
@@ -1139,7 +1139,7 @@ class LowerCtx {
           return { tag: 'Lit', value: 'true' };
         }
         // Fallback: emit false for unknown typeof, with tracker entry
-        currentTracker().add({
+        currentTracker().addDefault({
           location: `IsType:${typeName}`, reason: `typeof/instanceof on unknown type`,
           category: 'type-test', hint: 'use discriminated unions instead',
         });
@@ -1316,7 +1316,7 @@ class LowerCtx {
       if (fn.name.startsWith('ts.')) return { tag: 'Default' };
       // Remaining unresolved path/fs/process → sorry with tracker
       if (fn.name.startsWith('path.') || fn.name.startsWith('fs.') || fn.name.startsWith('process.')) {
-        currentTracker().add({
+        currentTracker().addDefault({
           location: fn.name, reason: `Node API '${fn.name}' not in stub map`,
           category: 'runtime-api', hint: `add mapping to stubMap in lower.ts`,
         });
@@ -1716,7 +1716,7 @@ class LowerCtx {
         }
         return { tag: 'Default' };
       default:
-        currentTracker().add({ location: `Storage.${method}`, reason: `Storage method '${method}' not mapped`, category: 'runtime-api', hint: 'add mapping in lowerStorageOp' });
+        currentTracker().addDefault({ location: `Storage.${method}`, reason: `Storage method '${method}' not mapped`, category: 'runtime-api', hint: 'add mapping in lowerStorageOp' });
         return { tag: 'Default' };
     }
   }

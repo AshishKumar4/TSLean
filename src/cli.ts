@@ -231,11 +231,17 @@ function compileSingle(opts: CompileOpts): boolean {
     fs.writeFileSync(output, code, 'utf-8');
     timer.end();
 
-    // Summary report
+    // Summary report: distinguish sorry (blocks proofs) from default (type-correct placeholder)
     if (tracker.count > 0) {
-      process.stdout.write(`${c.yellow('warn')}: ${tracker.count} sorry expression(s) in output\n`);
-      if (strict) {
-        error(`--strict: ${tracker.count} sorry(s) found — aborting. Use without --strict to emit anyway.`);
+      const defaults = tracker.defaultCount;
+      const sorrys = tracker.sorryCount;
+      const parts: string[] = [];
+      if (defaults > 0) parts.push(`${defaults} default placeholder(s)`);
+      if (sorrys > 0) parts.push(`${sorrys} sorry axiom(s)`);
+      const severity = sorrys > 0 ? c.yellow('warn') : c.dim('info');
+      process.stdout.write(`${severity}: ${parts.join(', ')} in output\n`);
+      if (strict && sorrys > 0) {
+        error(`--strict: ${sorrys} sorry axiom(s) found — aborting. Use without --strict to emit anyway.`);
         return false;
       }
     }
