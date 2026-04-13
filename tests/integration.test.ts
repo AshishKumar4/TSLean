@@ -59,9 +59,9 @@ describe('Integration: basic/classes.ts', () => {
   beforeAll(() => { code = pipeline('basic/classes.ts'); });
 
   it('Counter state struct',       () => expect(code).toContain('CounterState'));
-  it('increment defined',          () => expect(code).toContain('def increment'));
-  it('deposit defined',            () => expect(code).toContain('deposit'));
-  it('withdraw defined',           () => expect(code).toContain('withdraw'));
+  it('increment defined',          () => expect(code).toMatch(/def.*increment/));
+  it('deposit defined',            () => expect(code).toMatch(/deposit/));
+  it('withdraw defined',           () => expect(code).toMatch(/withdraw/));
 });
 
 // ─── generics/discriminated-unions.ts ────────────────────────────────────────

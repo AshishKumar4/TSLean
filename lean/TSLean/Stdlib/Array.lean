@@ -157,4 +157,65 @@ theorem splice_size (a : Array α) (i n : Nat) (ins : Array α) :
     (splice a i n ins).size = min i a.size + ins.size + (a.size - min (i + n) a.size) := by
   simp [splice, Array.size_append, Array.size_extract]; omega
 
+/-! ## Additional Array lemmas for codegen support -/
+
+-- push then size
+theorem push_size_succ (a : Array α) (x : α) : (a.push x).size = a.size + 1 := by
+  simp [Array.size_push]
+
+-- empty array size
+theorem empty_size_zero : (#[] : Array α).size = 0 := rfl
+
+-- filter preserves subset
+theorem filter_size_le (a : Array α) (p : α → Bool) :
+    (a.filter p).size ≤ a.size := Array.size_filter_le
+
+-- map preserves size
+theorem map_size (a : Array α) (f : α → β) :
+    (a.map f).size = a.size := Array.size_map
+
+-- append size
+theorem append_size (a b : Array α) :
+    (a ++ b).size = a.size + b.size := Array.size_append
+
+-- foldl on empty
+theorem foldl_empty_eq (f : β → α → β) (init : β) :
+    (#[] : Array α).foldl f init = init := rfl
+
+-- singleton array
+theorem singleton_size_one (x : α) : #[x].size = 1 := rfl
+theorem singleton_get (x : α) : #[x][0]? = some x := rfl
+
+-- contains after push
+theorem contains_push_eq [BEq α] (a : Array α) (x y : α) :
+    (a.push x).contains y = (a.contains y || (y == x)) :=
+  Array.contains_push
+
+-- pop size
+theorem pop_size_pred (a : Array α) :
+    a.pop.size = a.size - 1 := Array.size_pop
+
+-- any/all basics
+theorem any_empty_false (p : α → Bool) : (#[] : Array α).any p = false := by simp
+theorem all_empty_true (p : α → Bool) : (#[] : Array α).all p = true := by simp
+
+-- reverse preserves size
+theorem reverse_size_eq (a : Array α) : a.reverse.size = a.size := Array.size_reverse
+
+-- getOpt is the same as Array.get?
+theorem getOpt_eq_get? (a : Array α) (i : Nat) : getOpt a i = a[i]? := rfl
+
+-- push on empty gives singleton
+theorem push_empty (x : α) : (#[] : Array α).push x = #[x] := rfl
+
+-- two pushes: size is original + 2
+theorem push_push_size (a : Array α) (x y : α) :
+    (a.push x |>.push y).size = a.size + 2 := by simp [Array.size_push]
+
+-- filter empty is empty
+theorem filter_empty (p : α → Bool) : (#[] : Array α).filter p = #[] := by simp
+
+-- map empty is empty
+theorem map_empty (f : α → β) : (#[] : Array α).map f = #[] := by simp
+
 end TSLean.Stdlib.Array

@@ -136,6 +136,12 @@ def empty : Request := { method := "GET", url := "/", headers := [] }
 
 def parsedUrl (r : Request) : URL := URL.parse r.url
 
+/-- Parse request body as JSON (stub — returns body as-is). -/
+def toJson (r : Request) : IO String := pure (r.body.getD "")
+
+/-- Get request body as text. -/
+def text (r : Request) : IO String := pure (r.body.getD "")
+
 instance : Inhabited Request := ⟨empty⟩
 
 end Request
@@ -210,5 +216,50 @@ theorem Response.json_has_content_type (body : String) :
 theorem Response.redirect_has_location (url : String) :
     (Response.redirect url).headers.has "Location" = true := by
   simp [Response.redirect, Headers.has, List.any]
+
+/-! ## Request/Response composition -/
+
+theorem Response.ok_body (body : String) :
+    (Response.ok body).body = body := rfl
+
+theorem Response.badRequest_status :
+    Response.badRequest.status = 400 := rfl
+
+theorem Response.serverError_status :
+    Response.serverError.status = 500 := rfl
+
+theorem Response.json_status (body : String) :
+    (Response.json body).status = 200 := rfl
+
+theorem Response.json_custom_status (body : String) (s : Nat) :
+    (Response.json body s).status = s := rfl
+
+theorem Response.redirect_status (url : String) :
+    (Response.redirect url).status = 302 := rfl
+
+theorem Response.redirect_body_empty (url : String) :
+    (Response.redirect url).body = "" := rfl
+
+theorem mkResponse_default_status (body : String) :
+    (mkResponse body).status = 200 := rfl
+
+-- Request
+theorem Request.empty_method : Request.empty.method = "GET" := rfl
+theorem Request.empty_url : Request.empty.url = "/" := rfl
+
+-- Headers append then has is true
+theorem Headers.has_append_self (h : Headers) (k v : String) :
+    (h.append k v).has k = true := by
+  simp [Headers.append, Headers.has, List.any_append, String.toLower]
+
+-- URL parse preserves href
+theorem URL.parse_href (s : String) : (URL.parse s).href = s := rfl
+
+-- SearchParams
+theorem SearchParams.get_empty (k : String) : SearchParams.empty.get k = none := by
+  simp [SearchParams.empty, SearchParams.get]
+
+theorem SearchParams.has_empty (k : String) : SearchParams.empty.has k = false := by
+  simp [SearchParams.empty, SearchParams.has]
 
 end TSLean.WebAPI

@@ -8,6 +8,7 @@ import TSLean.Runtime.BrandedTypes
 import TSLean.Runtime.Validation
 import TSLean.Runtime.WebAPI
 import TSLean.Runtime.Inhabited
+import TSLean.Runtime.JSTypes
 
 -- Stdlib
 import TSLean.Stdlib.Array
@@ -68,12 +69,34 @@ import TSLean.Generated.FullProject.Backend.Router
 
 -- Veil Transition Systems
 import TSLean.Veil.Core
+import TSLean.Veil.DSL
+import TSLean.Veil.DSLExamples
+import TSLean.Veil.DSLAdoption
 import TSLean.Veil.AuthDO
 import TSLean.Veil.ChatRoomDO
 import TSLean.Veil.CounterDO
 import TSLean.Veil.QueueDO
 import TSLean.Veil.RateLimiterDO
 import TSLean.Veil.SessionStoreDO
+
+-- External stubs (TS compiler API, Node.js path/fs)
+import TSLean.External.Typescript
+import TSLean.External.Path
+import TSLean.External.Fs
+
+-- Self-hosting (all 11 transpiled source files compile)
+import TSLean.Generated.SelfHost.IR_Types
+import TSLean.Generated.SelfHost.ir_types
+import TSLean.Generated.SelfHost.DoModel_Ambient
+import TSLean.Generated.SelfHost.verification_index
+import TSLean.Generated.SelfHost.stdlib_index
+import TSLean.Generated.SelfHost.effects_index
+import TSLean.Generated.SelfHost.typemap_index
+import TSLean.Generated.SelfHost.rewrite_index
+import TSLean.Generated.SelfHost.codegen_index
+import TSLean.Generated.SelfHost.parser_index
+import TSLean.Generated.SelfHost.project_index
+import TSLean.Generated.SelfHost.src_cli
 
 -- Specification & Tests
 import TSLean.Specification

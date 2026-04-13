@@ -14,16 +14,19 @@ namespace TSLean.Generated.Async
 def fetchUser (id : String) : IO String :=
   do
     let response ← WebAPI.fetch (s!"https://api.example.com/users/{id}")
-      let data ← response.toJson
-      pure data
+    let data ← response.toJson
+    pure data
 
 def fetchAndProcess (ids : Array String) : IO (Array String) :=
-  pure default
+  do
+    pure default
 
 def delay (ms : Float) : IO Unit :=
-  default
+  do
+    pure default
 
 def withRetry {T : Type} [Inhabited T] (op : Unit → IO T) (maxRetries : Float) : StateT Unit (ExceptT String IO) T :=
-  pure default
+  do
+    pure default
 
 end TSLean.Generated.Async

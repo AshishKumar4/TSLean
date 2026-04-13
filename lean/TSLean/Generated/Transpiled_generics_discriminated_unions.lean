@@ -13,45 +13,45 @@ inductive Shape where
   | Circle (radius : Float)
   | Rectangle (width : Float) (height : Float)
   | Triangle (base : Float) (height : Float)
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 inductive Color where
   | Red
   | Green
   | Blue
   | Yellow
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 inductive Tree (T : Type) where
   | Leaf (value : T)
   | Node (left : Tree T) (right : Tree T) (value : T)
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 inductive Either (L : Type) (R : Type) where
   | Left (value : L)
   | Right (value : R)
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 def areaShape (s : Shape) : Float :=
   match s with
-      | .Circle radius => (3.14159265358979 * radius) * radius
-      | .Rectangle width height => width * height
-      | .Triangle base height => ((0.5) * base) * height
+    | .Circle radius => (3.14159265358979 * radius) * radius
+    | .Rectangle width height => width * height
+    | .Triangle base height => ((0.5) * base) * height
 
 def perimeter (s : Shape) : Float :=
   match s with
-      | .Circle radius => (2 * 3.14159265358979) * radius
-      | .Rectangle width height => 2 * (width + height)
-      | .Triangle base height => base * 3
+    | .Circle radius => (2 * 3.14159265358979) * radius
+    | .Rectangle width height => 2 * (width + height)
+    | .Triangle base height => base * 3
 
 partial def treeDepth {T : Type} (t : Tree T) : Float :=
   match t with
-      | .Leaf value => 1
-      | .Node left right value => 1 + (max (treeDepth left) (treeDepth right))
+    | .Leaf value => 1
+    | .Node left right value => 1 + (max (treeDepth left) (treeDepth right))
 
 def mapEither {L : Type} {R : Type} {S : Type} (e : Either L R) (f : R → S) : Either L S :=
   match e with
-      | .Left value => Either.Left value
-      | .Right value => Either.Right (f value)
+    | .Left value => Either.Left value
+    | .Right value => Either.Right (f value)
 
 end TSLean.Generated.DiscriminatedUnions

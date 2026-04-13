@@ -183,7 +183,7 @@ describe('Bug #4: DO constructor clean init', () => {
 
   it('DO method still has self param', () => {
     const code = pipeline('durable-objects/counter.ts');
-    const fn = code.slice(code.indexOf('def fetch') || 0);
+    const fn = code.slice(code.search(/def.*fetch/) || 0);
     expect(fn.slice(0, 200)).toContain('self');
   });
 

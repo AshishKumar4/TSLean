@@ -18,15 +18,16 @@ namespace TSLean.Generated.Counter
 structure CounterDOState where
   mk ::
   count : Float
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
 namespace CounterDO
 
 def CounterDO.init : CounterDOState :=
   { count := (0 : Float) }
 
-def fetch (self : CounterDOState) (request : Request) : StateT CounterDOState IO Response :=
-  pure default
+def CounterDO.fetch (self : CounterDOState) (request : Request) : StateT CounterDOState IO Response :=
+  do
+    pure default
 
 end CounterDO
 

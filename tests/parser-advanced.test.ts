@@ -215,7 +215,7 @@ describe('Parser: class inheritance', () => {
       }
     `);
     expect(code).toMatch(/structure Dog|structure Animal/);
-    expect(code).toMatch(/def bark/);
+    expect(code).toMatch(/def.*bark/);
   });
 
   it('child class has own state struct', () => {
@@ -250,8 +250,8 @@ describe('Parser: static methods', () => {
         increment(): void { this.n++; }
       }
     `);
-    expect(code).toMatch(/def increment/);
-    const fn = code.slice(code.indexOf('def increment'));
+    expect(code).toMatch(/def.*increment/);
+    const fn = code.slice(code.search(/def.*increment/));
     expect(fn.slice(0, 100)).toContain('self');
   });
 });
@@ -384,8 +384,314 @@ describe('Parser: re-exports', () => {
 describe('Parser: comma expressions', () => {
   it('comma expression parsed as sequence', () => {
     const mod = parsedInline(`const x = (console.log('a'), 42);`);
-    // Should not throw; produces some form of sequence
     expect(mod).toBeDefined();
     expect(mod.decls.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── Nested destructuring ────────────────────────────────────────────────────
+
+describe('Parser: nested destructuring', () => {
+  it('nested object destructuring: const {a: {b, c}} = x', () => {
+    const code = inline(`
+      function test(obj: { inner: { x: number; y: number } }): number {
+        const { inner: { x, y } } = obj;
+        return x + y;
+      }
+    `);
+    expect(code).toMatch(/let x|let _ds/);
+    expect(code).toMatch(/let y|let _ds/);
+    expect(code).toMatch(/def test/);
+  });
+
+  it('nested array in object destructuring', () => {
+    const code = inline(`
+      function test(obj: { items: number[] }): number {
+        const { items: [first, second] } = obj;
+        return first + second;
+      }
+    `);
+    expect(code).toMatch(/let first|let _ds|let _ai/);
+    expect(code).toMatch(/def test/);
+  });
+
+  it('destructuring with defaults', () => {
+    const code = inline(`
+      function test(opts: { timeout?: number }): number {
+        const { timeout = 5000 } = opts;
+        return timeout;
+      }
+    `);
+    expect(code).toMatch(/let timeout|getD|Option/);
+  });
+
+  it('mixed object and array destructuring', () => {
+    const mod = parsedInline(`
+      function unpack(data: { coords: [number, number]; label: string }): string {
+        const { coords: [x, y], label } = data;
+        return label;
+      }
+    `);
+    expect(mod.decls.length).toBeGreaterThan(0);
+    const fn = mod.decls.find(d => d.tag === 'FuncDef' && d.name === 'unpack');
+    expect(fn).toBeDefined();
+  });
+});
+
+// ─── Ternary expressions ────────────────────────────────────────────────────
+
+describe('Parser: ternary expressions', () => {
+  it('simple ternary → IfThenElse', () => {
+    const code = inline(`
+      function max(a: number, b: number): number {
+        return a > b ? a : b;
+      }
+    `);
+    expect(code).toMatch(/if.*then/s);
+    expect(code).toMatch(/else/);
+  });
+
+  it('nested ternary', () => {
+    const code = inline(`
+      function classify(n: number): string {
+        return n > 0 ? "positive" : n < 0 ? "negative" : "zero";
+      }
+    `);
+    expect(code).toMatch(/if.*then/s);
+    expect(code).toMatch(/"positive"|"negative"|"zero"/);
+  });
+
+  it('ternary in assignment', () => {
+    const code = inline(`
+      function abs(n: number): number {
+        const result = n >= 0 ? n : -n;
+        return result;
+      }
+    `);
+    expect(code).toMatch(/let result|if.*then/);
+  });
+});
+
+// ─── Method chains ──────────────────────────────────────────────────────────
+
+describe('Parser: method chains', () => {
+  it('map then filter', () => {
+    const code = inline(`
+      function doubled(arr: number[]): number[] {
+        return arr.map(x => x * 2).filter(x => x > 0);
+      }
+    `);
+    expect(code).toMatch(/map|filter/);
+    expect(code).toMatch(/def doubled/);
+  });
+
+  it('split then join', () => {
+    const code = inline(`
+      function transform(s: string): string {
+        return s.split(',').join(';');
+      }
+    `);
+    expect(code).toMatch(/split|join|splitOn|intercalate/);
+  });
+});
+
+// ─── Type assertions ────────────────────────────────────────────────────────
+
+describe('Parser: type assertions and casts', () => {
+  it('as expression is transparent', () => {
+    const code = inline(`
+      function cast(x: unknown): number {
+        return (x as number);
+      }
+    `);
+    expect(code).toMatch(/def cast/);
+    // Should not produce a sorry — as-expression is a type annotation
+  });
+
+  it('non-null assertion passes through', () => {
+    const code = inline(`
+      function first(arr: (number | undefined)[]): number {
+        return arr[0]!;
+      }
+    `);
+    expect(code).toMatch(/def first/);
+  });
+
+  it('satisfies expression is transparent', () => {
+    const mod = parsedInline(`
+      const config = { port: 3000, host: "localhost" } satisfies { port: number; host: string };
+    `);
+    expect(mod.decls.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── Switch patterns ─────────────────────────────────────────────────────────
+
+describe('Parser: switch patterns (extended)', () => {
+  it('switch on enum-like values produces Match', () => {
+    const mod = parsedInline(`
+      function describe(kind: string): string {
+        switch (kind) {
+          case "circle": return "round";
+          case "square": return "boxy";
+          default: return "unknown";
+        }
+      }
+    `);
+    const fn = mod.decls.find(d => d.tag === 'FuncDef');
+    expect(fn).toBeDefined();
+    if (fn?.tag === 'FuncDef') {
+      // The body should contain a Match node
+      const hasMatch = JSON.stringify(fn.body).includes('"Match"');
+      expect(hasMatch).toBe(true);
+    }
+  });
+
+  it('switch with fall-through groups cases', () => {
+    const code = inline(`
+      function isVowel(c: string): boolean {
+        switch (c) {
+          case 'a': case 'e': case 'i': case 'o': case 'u':
+            return true;
+          default:
+            return false;
+        }
+      }
+    `);
+    expect(code).toMatch(/match|"a"|"e"/);
+  });
+
+  it('switch on discriminated union field', () => {
+    const mod = parsedInline(`
+      type Shape = { kind: "circle"; r: number } | { kind: "rect"; w: number; h: number };
+      function area(s: Shape): number {
+        switch (s.kind) {
+          case "circle": return Math.PI * s.r * s.r;
+          case "rect": return s.w * s.h;
+        }
+      }
+    `);
+    expect(mod.decls.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── Regular expressions ────────────────────────────────────────────────────
+
+describe('Parser: regular expressions', () => {
+  it('regex literal as argument to split', () => {
+    const code = inline(`
+      function splitHyphens(s: string): string[] {
+        return s.split(/[-_]/);
+      }
+    `);
+    expect(code).toMatch(/split/);
+    expect(code).not.toMatch(/default/);  // should NOT fall back to sorry/default
+    expect(code).toMatch(/\[-_\]/);       // regex pattern preserved as string
+  });
+
+  it('regex literal in variable', () => {
+    const code = inline(`
+      const pattern = /^[a-z]+$/i;
+    `);
+    expect(code).toMatch(/\^.a-z/);  // pattern preserved
+  });
+
+  it('regex in test method', () => {
+    const code = inline(`
+      function isAlpha(s: string): boolean {
+        return /^[a-zA-Z]+$/.test(s);
+      }
+    `);
+    expect(code).toMatch(/def isAlpha/);
+  });
+
+  it('no holes from regex in self-host files', () => {
+    // The parser's own source uses regex; verify zero holes
+    const mod = parsedInline(`
+      function fileToModuleName(filePath: string): string {
+        const base = filePath.replace(/\\.ts$/, '');
+        const parts = base.split(/[-_]/).map((s: string) => s.charAt(0).toUpperCase() + s.slice(1));
+        return 'TSLean.Generated.' + parts.join('');
+      }
+    `);
+    const fn = mod.decls.find(d => d.tag === 'FuncDef');
+    expect(fn).toBeDefined();
+    // Verify no Hole nodes in the function body
+    const json = JSON.stringify(fn);
+    const holeCount = (json.match(/"tag":"Hole"/g) || []).length;
+    expect(holeCount).toBe(0);
+  });
+});
+
+// ─── Parser completeness ────────────────────────────────────────────────────
+
+describe('Parser: self-host completeness', () => {
+  it('parser/index.ts produces zero holes', () => {
+    const mod = parseFile({ fileName: 'src/parser/index.ts' });
+    let holes = 0;
+    function count(e: any) {
+      if (!e || typeof e !== 'object') return;
+      if (e.tag === 'Hole') holes++;
+      for (const v of Object.values(e)) {
+        if (Array.isArray(v)) v.forEach(count);
+        else if (v && typeof v === 'object' && 'tag' in (v as any)) count(v);
+      }
+    }
+    for (const d of mod.decls) {
+      if (d.tag === 'FuncDef') count(d.body);
+      if (d.tag === 'Namespace') for (const inner of d.decls) {
+        if (inner.tag === 'FuncDef') count(inner.body);
+      }
+    }
+    expect(holes).toBe(0);
+  });
+
+  it('codegen/index.ts produces zero holes', () => {
+    const mod = parseFile({ fileName: 'src/codegen/index.ts' });
+    let holes = 0;
+    function count(e: any) {
+      if (!e || typeof e !== 'object') return;
+      if (e.tag === 'Hole') holes++;
+      for (const v of Object.values(e)) {
+        if (Array.isArray(v)) v.forEach(count);
+        else if (v && typeof v === 'object' && 'tag' in (v as any)) count(v);
+      }
+    }
+    for (const d of mod.decls) {
+      if (d.tag === 'FuncDef') count(d.body);
+      if (d.tag === 'Namespace') for (const inner of d.decls) {
+        if (inner.tag === 'FuncDef') count(inner.body);
+      }
+    }
+    expect(holes).toBe(0);
+  });
+
+  it('all 11 self-host files produce zero holes', () => {
+    const files = [
+      'src/ir/types.ts', 'src/parser/index.ts', 'src/codegen/index.ts',
+      'src/effects/index.ts', 'src/rewrite/index.ts', 'src/stdlib/index.ts',
+      'src/typemap/index.ts', 'src/verification/index.ts',
+      'src/project/index.ts', 'src/cli.ts', 'src/do-model/ambient.ts'
+    ];
+    for (const file of files) {
+      const mod = parseFile({ fileName: file });
+      let holes = 0;
+      function count(e: any) {
+        if (!e || typeof e !== 'object') return;
+        if (e.tag === 'Hole') holes++;
+        for (const v of Object.values(e)) {
+          if (Array.isArray(v)) v.forEach(count);
+          else if (v && typeof v === 'object' && 'tag' in (v as any)) count(v);
+        }
+      }
+      for (const d of mod.decls) {
+        if (d.tag === 'FuncDef') count(d.body);
+        if (d.tag === 'Namespace') for (const inner of d.decls) {
+          if (inner.tag === 'FuncDef') count(inner.body);
+        }
+      }
+      if (holes > 0) throw new Error(`${file}: ${holes} holes found`);
+      expect(holes).toBe(0);
+    }
   });
 });

@@ -1,0 +1,1 @@
+-- Stub: do-model_ambient

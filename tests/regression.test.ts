@@ -178,7 +178,7 @@ describe('Bug #2 regression: for-loop incrementor as recursive argument', () => 
     `;
     const code = pipeline(src);
     // Must produce a let _loop_ := fun i => ...
-    expect(code).toMatch(/let _loop_\d+ := fun \w+ =>/);
+    expect(code).toMatch(/let (rec )?_loop_\d+ := fun \w+ =>/);
   });
 });
 
@@ -304,7 +304,7 @@ describe('Bug #4 regression: DO constructor synthesises clean state struct', () 
     `;
     const code = pipeline(src, 'store.ts');
     // The fetch method (not init) should have a self parameter
-    const fetchFn = sectionOf(code, 'def fetch');
+    const fetchFn = sectionOf(code, 'fetch');
     expect(fetchFn).toContain('self');
   });
 

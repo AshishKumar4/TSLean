@@ -233,7 +233,7 @@ class ParserCtx {
           // { fetch } → already defined elsewhere, just reference
           const name = prop.name.text;
           const ty   = mapType(this.checker.getTypeAtLocation(prop.name), this.checker);
-          decls.push({ tag: 'VarDecl', name: `_ref_${name}`, type: ty, value: varExpr(name, ty), mutable: false });
+          // Shorthand property in export default: { createConfig } — just a re-export, skip
         }
       }
       return decls;
@@ -332,8 +332,9 @@ class ParserCtx {
     const fieldName = node.name?.getText(this.sf) ?? 'unknown';
     const sig  = this.checker.getSignatureFromDeclaration(node);
     const ret  = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
-    const self: IRParam = { name: 'self', type: TyRef(className) };
-    const body = node.body ? this.parseBlock(node.body, Pure) : { tag: 'FieldAccess' as const, obj: varExpr('self', TyRef(className)), field: fieldName, type: ret, effect: Pure };
+    // Use stateType not className — the struct is e.g. DogState, not Dog
+    const self: IRParam = { name: 'self', type: TyRef(stateType) };
+    const body = node.body ? this.parseBlock(node.body, Pure) : { tag: 'FieldAccess' as const, obj: varExpr('self', TyRef(stateType)), field: fieldName, type: ret, effect: Pure };
     return { tag: 'FuncDef', name: `get_${fieldName}`, typeParams: [], params: [self], retType: ret, effect: Pure, body };
   }
 
@@ -341,18 +342,16 @@ class ParserCtx {
   private parseSetter(node: ts.SetAccessorDeclaration, className: string, stateType: string): IRDecl | null {
     const fieldName = node.name?.getText(this.sf) ?? 'unknown';
     const params    = this.parseParams(node.parameters);
-    const self: IRParam = { name: 'self', type: TyRef(className) };
+    // Use stateType for self and return — the struct is e.g. CircleState, not Circle
+    const self: IRParam = { name: 'self', type: TyRef(stateType) };
     const valType = params[0]?.type ?? TyUnit;
     const valName = params[0]?.name ?? 'v';
-    const retType = TyRef(className);
-    // Emit `{ self with fieldName := v }` — Lean 4 record update syntax.
-    // We use a StructLit that the codegen recognises as a "with-update" when it has
-    // exactly one field and a `_base` field pointing to `self`.
+    const retType = TyRef(stateType);
     const body: IRExpr = {
       tag: 'StructLit',
-      typeName: className,
+      typeName: stateType,
       fields: [
-        { name: '_base', value: varExpr('self', TyRef(className)) },
+        { name: '_base', value: varExpr('self', TyRef(stateType)) },
         { name: fieldName, value: varExpr(valName, valType) },
       ],
       type: retType, effect: Pure,
@@ -446,7 +445,10 @@ class ParserCtx {
     const self: IRParam = { name: 'self', type: selfType };
     const allParams = isStatic ? params : [self, ...params];
     const body = node.body ? this.parseBlock(node.body, eff) : holeExpr(ret);
-    return { tag: 'FuncDef', name: isStatic ? `${className}.${name}` : name, typeParams: tps, params: allParams, retType: ret, effect: eff, body };
+    // All methods get ClassName.methodName prefix to avoid collisions
+    // when multiple classes in the same file have methods with the same name.
+    const fullName = `${className}.${name}`;
+    return { tag: 'FuncDef', name: fullName, typeParams: tps, params: allParams, retType: ret, effect: eff, body };
   }
 
   // ─── Interface ─────────────────────────────────────────────────────────────
@@ -701,36 +703,18 @@ class ParserCtx {
        }
        // Destructuring: const { x, y } = obj  →  let x := obj.x; let y := obj.y; body
        if (decl && ts.isObjectBindingPattern(decl.name) && decl.initializer) {
-         const rhs = this.parseExpr(decl.initializer);
-         // Build a chain of lets for each binding element
-         let body = cont();
-         const elems = [...decl.name.elements].reverse();
-         for (const el of elems) {
-           const propName = el.propertyName
-             ? (ts.isIdentifier(el.propertyName) ? el.propertyName.text : el.propertyName.getText(this.sf))
-             : (ts.isIdentifier(el.name) ? el.name.text : `_el${el.pos}`);
-           const bindName = ts.isIdentifier(el.name) ? el.name.text : `_el${el.pos}`;
-           const ty = mapType(this.checker.getTypeAtLocation(el.name), this.checker);
-           const fieldVal: IRExpr = { tag: 'FieldAccess', obj: rhs, field: propName, type: ty, effect: rhs.effect };
-           body = { tag: 'Let', name: bindName, annot: ty, value: fieldVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
-         }
-         return body;
-       }
+          const rhs = this.parseExpr(decl.initializer);
+          let body = cont();
+          body = this.flattenObjectBinding(decl.name, rhs, body);
+          return body;
+        }
        // Array destructuring: const [a, b] = arr  →  let a := arr[0]!; let b := arr[1]!
        if (decl && ts.isArrayBindingPattern(decl.name) && decl.initializer) {
-         const rhs = this.parseExpr(decl.initializer);
-         let body = cont();
-         const elems = [...decl.name.elements].reverse();
-         elems.forEach((el, revIdx) => {
-           const idx = elems.length - 1 - revIdx;
-           if (ts.isOmittedExpression(el)) return;
-           const bindName = ts.isBindingElement(el) && ts.isIdentifier(el.name) ? el.name.text : `_ai${idx}`;
-           const ty = mapType(this.checker.getTypeAtLocation(el), this.checker);
-           const indexVal: IRExpr = { tag: 'IndexAccess', obj: rhs, index: litNat(idx), type: ty, effect: rhs.effect };
-           body = { tag: 'Let', name: bindName, annot: ty, value: indexVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
-         });
-         return body;
-       }
+          const rhs = this.parseExpr(decl.initializer);
+          let body = cont();
+          body = this.flattenArrayBinding(decl.name, rhs, body);
+          return body;
+        }
      }
 
     // if (CPS early-return)
@@ -915,6 +899,85 @@ class ParserCtx {
     return this.parseStmts(stmts, Pure);
   }
 
+  /**
+   * Flatten an ObjectBindingPattern into nested Let expressions.
+   * Handles nested destructuring: `const {a: {b, c}, d} = x`
+   * → `let a_obj := x.a; let b := a_obj.b; let c := a_obj.c; let d := x.d; body`
+   */
+  private flattenObjectBinding(pattern: ts.ObjectBindingPattern, rhs: IRExpr, body: IRExpr): IRExpr {
+    const elems = [...pattern.elements].reverse();
+    for (const el of elems) {
+      const propName = el.propertyName
+        ? (ts.isIdentifier(el.propertyName) ? el.propertyName.text : el.propertyName.getText(this.sf))
+        : (ts.isIdentifier(el.name) ? el.name.text : `_el${el.pos}`);
+      const ty = mapType(this.checker.getTypeAtLocation(el.name), this.checker);
+      const fieldVal: IRExpr = { tag: 'FieldAccess', obj: rhs, field: propName, type: ty, effect: rhs.effect };
+
+      if (ts.isObjectBindingPattern(el.name)) {
+        // Nested object destructuring: const {a: {b, c}} = x
+        // → let _tmp := x.a; let b := _tmp.b; let c := _tmp.c; ...
+        const tmpName = `_ds_${propName}`;
+        const tmpRef: IRExpr = { tag: 'Var', name: tmpName, type: ty, effect: Pure };
+        body = this.flattenObjectBinding(el.name, tmpRef, body);
+        body = { tag: 'Let', name: tmpName, annot: ty, value: fieldVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
+      } else if (ts.isArrayBindingPattern(el.name)) {
+        // Nested array destructuring: const {a: [b, c]} = x
+        const tmpName = `_ds_${propName}`;
+        const tmpRef: IRExpr = { tag: 'Var', name: tmpName, type: ty, effect: Pure };
+        body = this.flattenArrayBinding(el.name, tmpRef, body);
+        body = { tag: 'Let', name: tmpName, annot: ty, value: fieldVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
+      } else {
+        // Simple binding: const {a} = x → let a := x.a
+        const bindName = ts.isIdentifier(el.name) ? el.name.text : `_el${el.pos}`;
+        // Handle default values: const {a = 42} = x → let a := x.a.getD 42
+        if (el.initializer) {
+          const defaultVal = this.parseExpr(el.initializer);
+          const withDefault: IRExpr = {
+            tag: 'App', fn: varExpr('Option.getD', TyUnit), args: [fieldVal, defaultVal],
+            type: ty, effect: combineEffects([fieldVal.effect, defaultVal.effect])
+          };
+          body = { tag: 'Let', name: bindName, annot: ty, value: withDefault, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
+        } else {
+          body = { tag: 'Let', name: bindName, annot: ty, value: fieldVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
+        }
+      }
+    }
+    return body;
+  }
+
+  /**
+   * Flatten an ArrayBindingPattern into nested Let expressions.
+   * Handles: `const [a, b, c] = arr` → indexed access via arr[0], arr[1], arr[2]
+   * Also handles nested patterns: `const [a, {b, c}] = arr`
+   */
+  private flattenArrayBinding(pattern: ts.ArrayBindingPattern, rhs: IRExpr, body: IRExpr): IRExpr {
+    const elems = [...pattern.elements].reverse();
+    elems.forEach((el, revIdx) => {
+      const idx = elems.length - 1 - revIdx;
+      if (ts.isOmittedExpression(el)) return;
+      const ty = mapType(this.checker.getTypeAtLocation(el), this.checker);
+      const indexVal: IRExpr = { tag: 'IndexAccess', obj: rhs, index: litNat(idx), type: ty, effect: rhs.effect };
+
+      if (ts.isBindingElement(el) && ts.isObjectBindingPattern(el.name)) {
+        // const [, {a, b}] = arr → let _tmp := arr[1]; let a := _tmp.a; ...
+        const tmpName = `_ds_${idx}`;
+        const tmpRef: IRExpr = { tag: 'Var', name: tmpName, type: ty, effect: Pure };
+        body = this.flattenObjectBinding(el.name, tmpRef, body);
+        body = { tag: 'Let', name: tmpName, annot: ty, value: indexVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
+      } else if (ts.isBindingElement(el) && ts.isArrayBindingPattern(el.name)) {
+        // const [[a, b], c] = arr → nested array destructuring
+        const tmpName = `_ds_${idx}`;
+        const tmpRef: IRExpr = { tag: 'Var', name: tmpName, type: ty, effect: Pure };
+        body = this.flattenArrayBinding(el.name, tmpRef, body);
+        body = { tag: 'Let', name: tmpName, annot: ty, value: indexVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
+      } else {
+        const bindName = ts.isBindingElement(el) && ts.isIdentifier(el.name) ? el.name.text : `_ai${idx}`;
+        body = { tag: 'Let', name: bindName, annot: ty, value: indexVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
+      }
+    });
+    return body;
+  }
+
   private parseTry(node: ts.TryStatement, rest: ReadonlyArray<ts.Statement>, eff: Effect): IRExpr {
     const body = this.parseBlock(node.tryBlock, eff);
     const errName = node.catchClause?.variableDeclaration?.name
@@ -1077,6 +1140,11 @@ class ParserCtx {
     // Delete expression: delete obj.prop
     if (ts.isDeleteExpression(node)) return litBool(true);
 
+    // Regular expression literal: /pattern/flags → string representation
+    if (ts.isRegularExpressionLiteral(node)) {
+      return litStr(node.text);
+    }
+
     // Destructuring assignment: [a, b] = ... or { x } = ...
     if (node.kind === ts.SyntaxKind.ObjectLiteralExpression) return this.parseObjLit(node as ts.ObjectLiteralExpression, ty);
 
@@ -1105,12 +1173,19 @@ class ParserCtx {
       }
     }
 
-    // Optional chaining: obj?.field  →  Option.map (·.field) obj
+    // Optional chaining: obj?.field → obj.bind (fun v => some v.field) [or .map for non-optional]
+    // Using .bind handles both optional and non-optional field types correctly.
     if (node.questionDotToken) {
+      // Use dot notation: obj.bind (fun _oc => _oc.field) — works for Option types
+      const fieldAccess: IRExpr = { tag: 'FieldAccess', obj: varExpr('_oc', obj.type), field, type: ty, effect: Pure };
+      const lambdaBody = ty.tag === 'Option'
+        ? fieldAccess  // field is already Option → bind returns Option
+        : { tag: 'App' as const, fn: varExpr('some'), args: [fieldAccess], type: TyOption(ty), effect: Pure };
       const accessor: IRExpr = { tag: 'Lambda', params: [{ name: '_oc', type: obj.type }],
-        body: { tag: 'FieldAccess', obj: varExpr('_oc', obj.type), field, type: ty, effect: Pure },
-        type: TyFn([obj.type], ty), effect: Pure };
-      return { tag: 'App', fn: varExpr('Option.map'), args: [accessor, obj], type: TyOption(ty), effect: obj.effect };
+        body: lambdaBody, type: TyFn([obj.type], TyOption(ty)), effect: Pure };
+      // Emit as: obj.bind (fun _oc => ...)  — dot notation avoids argument order issues
+      return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'bind', type: TyFn([TyFn([obj.type], TyOption(ty))], TyOption(ty)), effect: Pure },
+        args: [accessor], type: TyOption(ty), effect: obj.effect };
     }
 
     return { tag: 'FieldAccess', obj, field, type: ty, effect: Pure };

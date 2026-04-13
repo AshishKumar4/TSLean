@@ -4,13 +4,25 @@
 
 import TSLean.Stdlib.HashMap
 import TSLean.Stdlib.HashSet
+import TSLean.Stdlib.Numeric
+import TSLean.Runtime.Basic
 import TSLean.Runtime.BrandedTypes
 import TSLean.Runtime.Validation
+import TSLean.Runtime.WebAPI
+import TSLean.Runtime.Inhabited
 import TSLean.DurableObjects.Queue
 import TSLean.DurableObjects.RateLimiter
 import TSLean.DurableObjects.Auth
 import TSLean.DurableObjects.SessionStore
 import TSLean.DurableObjects.Model
+import TSLean.DurableObjects.Http
+import TSLean.DurableObjects.RPC
+import TSLean.DurableObjects.Alarm
+import TSLean.DurableObjects.Analytics
+import TSLean.DurableObjects.WebSocket
+import TSLean.DurableObjects.MultiDO
+import TSLean.Veil.DSL
+import TSLean.Veil.DSLExamples
 
 open TSLean TSLean.Stdlib.HashMap TSLean.DO
 
@@ -313,6 +325,232 @@ private def testSessionStore : IO Unit := do
   IO.println "  ✓ SessionStore model"
 
 #eval testSessionStore
+
+/-! ## DSL macro output tests -/
+
+private def testDSLMacros : IO Unit := do
+  -- veil_action generates correct structures (test via state manipulation)
+  let s0 : NatCounter.State := { count := 5, max := 10 }
+  let s1 : NatCounter.State := { count := 6, max := 10 }
+  assert! s1.count == s0.count + 1
+  assert! s1.max == s0.max
+
+  -- BoundedQueue states
+  let q0 : BoundedQueue.State := { size := 3, capacity := 5 }
+  assert! q0.size < q0.capacity
+  let q1 : BoundedQueue.State := { size := 5, capacity := 5 }
+  assert! q1.size ≤ q1.capacity
+
+  -- TokenRing states
+  let t0 : TokenRing.State := { hasToken := true, inCS := false }
+  assert! t0.hasToken == true
+  assert! t0.inCS == false
+
+  -- Default instances work
+  let _ : NatCounter.State := default
+  let _ : BoundedQueue.State := default
+  let _ : TokenRing.State := default
+
+  IO.println "  ✓ DSL macro outputs"
+
+#eval testDSLMacros
+
+/-! ## Float comparison tests -/
+
+private def testFloatOps : IO Unit := do
+  -- Ord instance
+  assert! (compare (1.0 : Float) 2.0) == .lt
+  assert! (compare (2.0 : Float) 2.0) == .eq
+  assert! (compare (3.0 : Float) 2.0) == .gt
+
+  -- Float helpers
+  assert! Float.blt 1.0 2.0 == true
+  assert! Float.blt 2.0 1.0 == false
+  assert! Float.ble 1.0 1.0 == true
+  assert! Float.bge 2.0 1.0 == true
+  assert! Float.bgt 2.0 1.0 == true
+
+  -- Float.clamp
+  assert! Float.clamp 5.0 0.0 10.0 == 5.0
+  assert! Float.clamp (-1.0) 0.0 10.0 == 0.0
+  assert! Float.clamp 15.0 0.0 10.0 == 10.0
+
+  IO.println "  ✓ Float comparison & ops"
+
+#eval testFloatOps
+
+/-! ## Serialize/deserialize tests -/
+
+private def testSerialize : IO Unit := do
+  assert! TSLean.serialize (42 : Nat) == "42"
+  assert! TSLean.serialize "hello" == "hello"
+  assert! TSLean.deserialize "test" == some "test"
+  assert! TSLean.deserializeNat "123" == some 123
+  assert! TSLean.deserializeNat "abc" == none
+  assert! TSLean.deserializeInt "-5" == some (-5)
+  assert! TSLean.deserializeInt "xyz" == none
+
+  IO.println "  ✓ Serialize/deserialize"
+
+#eval testSerialize
+
+/-! ## WebAPI tests -/
+
+open TSLean.WebAPI in
+private def testWebAPI : IO Unit := do
+  -- Headers
+  let h : Headers := Headers.empty
+  assert! h.get "X-Foo" == none
+  assert! h.has "X-Foo" == false
+
+  let h1 := Headers.set h "Content-Type" "application/json"
+  assert! Headers.has h1 "Content-Type" == true
+
+  let h2 := Headers.delete h1 "Content-Type"
+  assert! Headers.has h2 "Content-Type" == false
+
+  -- Response constructors
+  assert! (Response.ok "body").status == 200
+  assert! Response.notFound.status == 404
+  assert! Response.badRequest.status == 400
+  assert! Response.serverError.status == 500
+
+  let rjson := Response.json "{}" 201
+  assert! rjson.status == 201
+
+  let redir := Response.redirect "/home"
+  assert! redir.status == 302
+
+  -- URL.parse
+  let url := URL.parse "https://example.com/api/v1?key=val"
+  assert! url.protocol == "https:"
+
+  -- mkResponse
+  let r := mkResponse "ok" { status := 201 }
+  assert! r.status == 201
+  assert! r.body == "ok"
+
+  IO.println "  ✓ WebAPI (Headers, Response, URL)"
+
+#eval testWebAPI
+
+/-! ## Numeric extensions tests -/
+
+open TSLean.Stdlib.Numeric.FloatExt in
+private def testNumericExt : IO Unit := do
+  assert! pi > 3.14
+  assert! pi < 3.15
+  assert! e > 2.71
+  assert! e < 2.72
+  assert! abs (-5.0) == 5.0
+  assert! abs 3.0 == 3.0
+  assert! TSLean.Stdlib.Numeric.FloatExt.max 3.0 7.0 == 7.0
+  assert! TSLean.Stdlib.Numeric.FloatExt.min 3.0 7.0 == 3.0
+  assert! safeDiv 10.0 2.0 == 5.0
+  assert! safeDiv 1.0 0.0 == 0.0
+  assert! approxEq 1.0 1.0 == true
+  assert! isFinite 42.0 == true
+
+  IO.println "  ✓ Numeric extensions"
+
+#eval testNumericExt
+
+/-! ## Inhabited instance tests -/
+
+private def testInhabited : IO Unit := do
+  -- Every DO type should have a default
+  let _ : TSLean.TSValue := default
+  let _ : TSLean.TSError := default
+  let _ : TSLean.UserId := default
+  let _ : TSLean.SessionToken := default
+  let _ : TSLean.DO.Queue.QueueMessage := default
+  let _ : TSLean.DO.Queue.DurableQueue := default
+  let _ : TSLean.DO.RateLimiter.RateLimiter := default
+  let _ : TSLean.DO.Auth.SessionEntry := default
+  let _ : TSLean.DO.Http.HttpRequest := default
+  let _ : TSLean.DO.Http.HttpResponse := default
+  let _ : TSLean.DO.RPC.RPCRequest := default
+  let _ : TSLean.DO.RPC.RPCResponse := default
+  let _ : TSLean.DO.Alarm.AlarmState := default
+  let _ : TSLean.DO.Analytics.AnalyticsState := default
+  let _ : TSLean.DO.WebSocket.WsDoState := default
+  let _ : TSLean.DO.MultiDO.DONetwork := default
+
+  IO.println "  ✓ Inhabited instances (16 types)"
+
+#eval testInhabited
+
+/-! ## Advanced HashMap tests -/
+
+open TSLean.Stdlib.HashMap in
+private def testAdvancedHashMap : IO Unit := do
+  let m : AssocMap String Nat := AssocMap.empty
+  -- double insert same key
+  let m1 := m.insert "k" 1 |>.insert "k" 2
+  assert! m1.get? "k" == some 2  -- second insert wins
+  assert! m1.size == 1
+
+  -- insert then erase then get
+  let m2 := m.insert "a" 10 |>.insert "b" 20
+  let m3 := m2.erase "a"
+  assert! m3.get? "a" == none
+  assert! m3.get? "b" == some 20
+
+  -- contains
+  assert! m2.contains "a" == true
+  assert! m2.contains "c" == false
+
+  -- singleton
+  let s := AssocMap.singleton "only" 99
+  assert! s.get? "only" == some 99
+  assert! s.size == 1
+
+  -- keys
+  let k := (m.insert "x" 1 |>.insert "y" 2).keys
+  assert! k.length == 2
+
+  IO.println "  ✓ Advanced HashMap"
+
+#eval testAdvancedHashMap
+
+/-! ## Queue advanced tests -/
+
+open TSLean.DO.Queue in
+private def testAdvancedQueue : IO Unit := do
+  -- enqueue multiple, deliver in order
+  let q := DurableQueue.empty
+    |>.enqueue "a" 0
+    |>.enqueue "b" 1
+    |>.enqueue "c" 2
+  assert! q.total == 3
+  assert! q.nextId == 3
+
+  -- deliver returns first
+  let (m1, q1) := q.deliver
+  assert! (m1.map (·.payload)) == some "a"
+  assert! q1.inflight.length == 1
+  assert! q1.pending.length == 2
+
+  -- deliver second
+  let (m2, q2) := q1.deliver
+  assert! (m2.map (·.payload)) == some "b"
+  assert! q2.inflight.length == 2
+
+  -- ack first message
+  let q3 := q2.ack 0
+  assert! q3.inflight.length == 1
+  assert! q3.total == 2
+
+  -- nack puts message to deadletter or back to pending
+  let q4 := DurableQueue.empty.enqueue "x" 0 (maxAttempts := 1)
+  let (_, q5) := q4.deliver
+  let q6 := q5.nack 0
+  -- after nack with maxAttempts=1, message goes to deadLetter
+  assert! q6.deadLetter.length == 1
+
+  IO.println "  ✓ Advanced Queue"
+
+#eval testAdvancedQueue
 
 /-! ## Test runner -/
 

@@ -72,9 +72,9 @@ describe('Parser: basic/classes.ts', () => {
     const d = mod.decls.find(d => d.tag === 'StructDef' && d.name === 'CounterState');
     expect(d).toBeDefined();
   });
-  it('increment method defined', () => expect(find(mod, 'increment')).toBeDefined());
-  it('BankAccount.deposit defined', () => expect(find(mod, 'deposit')).toBeDefined());
-  it('BankAccount.withdraw defined', () => expect(find(mod, 'withdraw')).toBeDefined());
+  it('increment method defined', () => expect(find(mod, 'Counter.increment') ?? find(mod, 'increment')).toBeDefined());
+  it('BankAccount.deposit defined', () => expect(find(mod, 'BankAccount.deposit') ?? find(mod, 'deposit')).toBeDefined());
+  it('BankAccount.withdraw defined', () => expect(find(mod, 'BankAccount.withdraw') ?? find(mod, 'withdraw')).toBeDefined());
 });
 
 // ─── generics/discriminated-unions.ts ────────────────────────────────────────

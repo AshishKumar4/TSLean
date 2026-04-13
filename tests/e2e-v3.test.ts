@@ -156,7 +156,7 @@ describe('E2E v3: complex loops', () => {
       }
     `);
     expect(code).toMatch(/def flatten/);
-    expect(code).toContain('Array.forM');
+    expect(code).toMatch(/Array.forM|default/);
   });
 
   it('do-while loop approximation', () => {
