@@ -161,7 +161,7 @@ class ParserCtx {
 
   private tsModToLean(spec: string): string {
     if (!spec.startsWith('.')) {
-      const known: Record<string, string> = { zod: 'TSLean.Stdlib.Validation', uuid: 'TSLean.Stdlib.Uuid' };
+      const known: Record<string, string> = { zod: 'TSLean.Runtime.Validation', uuid: 'TSLean.Stdlib.Uuid' };
       return known[spec] ?? `TSLean.External.${capitalize(spec.replace(/[^a-zA-Z0-9]/g, '_'))}`;
     }
     const parts = spec

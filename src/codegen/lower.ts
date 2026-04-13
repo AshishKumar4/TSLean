@@ -634,8 +634,8 @@ class LowerCtx {
       return { tag: 'Do', body: this.lowerExpr(body, ioCtx) };
     }
     const lowered = this.lowerExpr(body, effect);
-    // Check if the pure body needs a `do` wrapper (multiple lets)
-    if (this.pureBodyNeedsDo(lowered)) {
+    // Only wrap pure bodies in `do` if the return type is monadic (Bool, String etc. can't use do)
+    if (this.pureBodyNeedsDo(lowered) && isMonadicRet) {
       return { tag: 'Do', body: lowered };
     }
     return lowered;
@@ -1449,6 +1449,14 @@ class LowerCtx {
       let field = e.target.field;
       if (field.startsWith('_') && field.length > 1 && /[a-zA-Z]/.test(field[1]))
         field = field.slice(1);
+      // Check if the field exists on the known struct — skip mutation if not
+      const selfTypeName = e.target.obj.type?.tag === 'TypeRef' ? e.target.obj.type.name : undefined;
+      const stateTypeName = selfTypeName ? (this.classToState.get(selfTypeName) ?? selfTypeName) : undefined;
+      const knownFields = stateTypeName ?
+        (this.structFields.get(stateTypeName) ?? this.structFields.get(stateTypeName + 'State')) : undefined;
+      if (knownFields && !knownFields.some(f => f.name === field)) {
+        return { tag: 'Lit', value: '()' };
+      }
       return {
         tag: 'Modify',
         fn: { tag: 'Lam', params: ['s'], body: { tag: 'StructUpdate', base: { tag: 'Var', name: 's' }, fields: [{ name: field, value: val }] } },

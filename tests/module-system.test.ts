@@ -93,7 +93,7 @@ describe('Module Resolver: resolveImportModule', () => {
 
   it('external package → TSLean.External.*', () => {
     const result = resolveImportModule('zod', '/some/file.ts', opts);
-    expect(result).toBe('TSLean.Stdlib.Validation');
+    expect(result).toBe('TSLean.Runtime.Validation');
   });
 
   it('unknown external → TSLean.External.PackageName', () => {

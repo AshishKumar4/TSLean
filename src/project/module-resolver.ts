@@ -137,7 +137,7 @@ function resolvePathAlias(specifier: string, aliases: Record<string, string[]>, 
 
 // Well-known npm packages with TSLean runtime equivalents.
 const KNOWN_EXTERNALS: Record<string, string> = {
-  'zod': 'TSLean.Stdlib.Validation',
+  'zod': 'TSLean.Runtime.Validation',
   'uuid': 'TSLean.Stdlib.Uuid',
   'hono': 'TSLean.External.Hono',
 };
