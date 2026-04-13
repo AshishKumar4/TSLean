@@ -499,12 +499,14 @@ class LowerCtx {
     });
     const isBranded = allFields.length === 1 && allFields[0].name === 'val';
     const deriving = inMutual ? [] : safeDeriving(fields, isBranded);
+    // When parent fields are merged into the child, don't emit `extends` — fields are already flat
+    const emitExtends = d.extends_ && allFields.length === enrichedFields.length;
     return {
       tag: 'Structure',
       name: d.name,
       tyParams: d.typeParams.map(p => ({ name: p.name, explicit: true })),
       fields,
-      extends_: d.extends_,
+      extends_: emitExtends ? d.extends_ : undefined,
       deriving,
       comment: d.comment,
     };
@@ -1796,6 +1798,14 @@ function defaultForType(t: IRType): LeanExpr {
     case 'Unit': return { tag: 'Lit', value: '()' };
     case 'Array': return { tag: 'ArrayLit', elems: [] };
     case 'Option': return { tag: 'None' };
+    case 'TypeRef': {
+      // Emit type-annotated default: (default : TypeName)
+      // This helps Lean's elaborator resolve Inhabited instances
+      const ty: LeanTy = t.args.length > 0
+        ? { tag: 'TyApp', fn: { tag: 'TyName', name: t.name }, args: t.args.map(a => ({ tag: 'TyName' as const, name: a.tag === 'TypeRef' ? a.name : 'String' })) }
+        : { tag: 'TyName', name: t.name };
+      return { tag: 'TypeAnnot', expr: { tag: 'Default' }, ty };
+    }
     default: return { tag: 'Default' };
   }
 }
