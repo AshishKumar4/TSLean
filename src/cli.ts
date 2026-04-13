@@ -16,8 +16,9 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import { parseFile } from './parser/index.js';
 import { rewriteModule } from './rewrite/index.js';
-import { generateLean } from './codegen/index.js';
+import { generateLean, generateLeanTracked } from './codegen/index.js';
 import { generateLeanV2 } from './codegen/v2.js';
+import { currentTracker } from './sorry-tracker.js';
 import { generateVerification } from './verification/index.js';
 import { transpileProject, writeProjectOutputs } from './project/index.js';
 
@@ -80,6 +81,7 @@ interface CompileOpts {
   isDir: boolean;
   genLakefile: boolean;
   tsconfigPath: string;
+  strict: boolean;
 }
 
 type Command =
@@ -110,7 +112,7 @@ function parseArgs(argv: string[]): Command {
   const isCompile = sub === 'compile';
   const rest = isCompile ? args.slice(1) : args;
 
-  let input = '', output = '', verify = false, watch = false;
+  let input = '', output = '', verify = false, watch = false, strict = false;
   let ns = 'TSLean.Generated', selfHost = false, baseName = '';
   let isDir = false, genLakefile = true, tsconfigPath = '';
 
@@ -126,6 +128,7 @@ function parseArgs(argv: string[]): Command {
     else if (a === '--no-color') { noColor = true; }
     else if (a === '--lakefile') { genLakefile = true; }
     else if (a === '--no-lakefile') { genLakefile = false; }
+    else if (a === '--strict')   { strict = true; }
     else if (!a.startsWith('-') && !input) { input = a; }
   }
 
@@ -145,7 +148,7 @@ function parseArgs(argv: string[]): Command {
       : input.replace(/\.ts$/, '.lean');
   }
 
-  return { cmd: 'compile', opts: { input, output, verify, watch, ns, selfHost, baseName, isDir, genLakefile, tsconfigPath } };
+  return { cmd: 'compile', opts: { input, output, verify, watch, ns, selfHost, baseName, isDir, genLakefile, tsconfigPath, strict } };
 }
 
 // ─── Output helpers ──────────────────────────────────────────────────────────
@@ -165,7 +168,7 @@ function info(msg: string): void {
 // ─── Compile: single file ────────────────────────────────────────────────────
 
 function compileSingle(opts: CompileOpts): boolean {
-  const { input, output, verify, selfHost, baseName } = opts;
+  const { input, output, verify, selfHost, baseName, strict } = opts;
   if (!fs.existsSync(input)) {
     error(`File not found: ${input}`);
     return false;
@@ -175,14 +178,24 @@ function compileSingle(opts: CompileOpts): boolean {
     const src = fs.readFileSync(input, 'utf-8');
     const mod = parseFile({ fileName: path.resolve(input), sourceText: src });
     const rw  = rewriteModule(mod);
-    let code  = selfHost
-      ? generateLeanV2(rw, { selfHost: true, baseName })
-      : generateLean(rw);
+    const { code: rawCode, tracker } = selfHost
+      ? { code: generateLeanV2(rw, { selfHost: true, baseName }), tracker: currentTracker() }
+      : generateLeanTracked(rw);
+    let code = rawCode;
 
     if (verify) {
       const { leanCode, obligations } = generateVerification(rw);
       if (leanCode) code += '\n\n-- Verification obligations\n' + leanCode;
       if (obligations.length) info(`Generated ${obligations.length} proof obligation(s)`);
+    }
+
+    // Summary report
+    if (tracker.count > 0) {
+      process.stdout.write(`${c.yellow('warn')}: ${tracker.count} sorry expression(s) in output\n`);
+      if (strict) {
+        error(`--strict: ${tracker.count} sorry(s) found — aborting. Use without --strict to emit anyway.`);
+        return false;
+      }
     }
 
     fs.mkdirSync(path.dirname(path.resolve(output)), { recursive: true });
