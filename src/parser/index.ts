@@ -30,13 +30,14 @@ import {
   Pure, IO, Async, stateEffect, exceptEffect, combineEffects,
   isPure, hasAsync,
   TyNat, TyFloat, TyString, TyBool, TyUnit, TyNever, TyOption, TyArray,
-  TyTuple, TyFn, TyMap, TyRef, TyVar, TyPromise,
+  TyTuple, TyFn, TyMap, TyRef, TyVar,
   litStr, litNat, litBool, litUnit, varExpr, holeExpr,
 } from '../ir/types.js';
 import { mapType, extractStructFields, extractTypeParams, detectDiscriminatedUnion } from '../typemap/index.js';
 import { inferNodeEffect } from '../effects/index.js';
 import { hasDOPattern, CF_AMBIENT, makeAmbientHost, DO_LEAN_IMPORTS } from '../do-model/ambient.js';
 import { lookupGlobal } from '../stdlib/index.js';
+import { capitalize } from '../utils.js';
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -151,12 +152,12 @@ class ParserCtx {
   private tsModToLean(spec: string): string {
     if (!spec.startsWith('.')) {
       const known: Record<string, string> = { zod: 'TSLean.Stdlib.Validation', uuid: 'TSLean.Stdlib.Uuid' };
-      return known[spec] ?? `TSLean.External.${cap(spec.replace(/[^a-zA-Z0-9]/g, '_'))}`;
+      return known[spec] ?? `TSLean.External.${capitalize(spec.replace(/[^a-zA-Z0-9]/g, '_'))}`;
     }
     const parts = spec
       .replace(/^[./]+/, '').replace(/\.(ts|js)$/, '')
       .split('/').filter(Boolean)
-      .map(p => p.split(/[-_]/).map(cap).join(''));
+      .map(p => p.split(/[-_]/).map(capitalize).join(''));
     return 'TSLean.Generated.' + parts.join('.');
   }
 
@@ -207,7 +208,7 @@ class ParserCtx {
             const fn = prop.initializer;
             const tps = extractTypeParams(fn as ts.ArrowFunction);
             const ps  = this.parseParams(fn.parameters);
-            const sig = this.checker.getSignatureFromDeclaration(fn)!;
+            const sig = this.checker.getSignatureFromDeclaration(fn);
             const ret = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
             const eff = inferNodeEffect(fn, this.checker);
             const body = ts.isBlock(fn.body as ts.Node)
@@ -224,15 +225,12 @@ class ParserCtx {
           const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
           const tps  = extractTypeParams(prop);
           const ps   = this.parseParams(prop.parameters);
-          const sig  = this.checker.getSignatureFromDeclaration(prop)!;
+          const sig  = this.checker.getSignatureFromDeclaration(prop);
           const ret  = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
           const eff  = inferNodeEffect(prop, this.checker);
           const body = prop.body ? this.parseBlock(prop.body, eff) : holeExpr(ret);
           decls.push({ tag: 'FuncDef', name, typeParams: tps, params: ps, retType: ret, effect: eff, body });
         } else if (ts.isShorthandPropertyAssignment(prop)) {
-          // { fetch } → already defined elsewhere, just reference
-          const name = prop.name.text;
-          const ty   = mapType(this.checker.getTypeAtLocation(prop.name), this.checker);
           // Shorthand property in export default: { createConfig } — just a re-export, skip
         }
       }
@@ -255,7 +253,7 @@ class ParserCtx {
     const name  = node.name?.text ?? 'anonymous';
     const tps   = extractTypeParams(node);
     const params = this.parseParams(node.parameters);
-    const sig   = this.checker.getSignatureFromDeclaration(node)!;
+    const sig   = this.checker.getSignatureFromDeclaration(node);
     const ret   = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
     const eff   = inferNodeEffect(node, this.checker);
     const body  = node.body ? this.parseBlock(node.body, eff) : holeExpr(ret);
@@ -433,7 +431,7 @@ class ParserCtx {
     const methodTPs = extractTypeParams(node);
     const classTPs  = node.parent && ts.isClassDeclaration(node.parent) ? extractTypeParams(node.parent) : [];
     const tps = [...new Set([...classTPs, ...methodTPs])];  // deduplicated merge
-    const sig     = this.checker.getSignatureFromDeclaration(node)!;
+    const sig     = this.checker.getSignatureFromDeclaration(node);
     const ret     = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
     const eff     = inferNodeEffect(node, this.checker);
     const params  = this.parseParams(node.parameters);
@@ -501,7 +499,7 @@ class ParserCtx {
         return {
           tag: 'InductiveDef', name, typeParams: tps,
           ctors: disc.variants.map(v => ({
-            name: cap(v.literal),
+            name: capitalize(v.literal),
             fields: v.fields.map(f => ({ name: f.name, type: f.type })),
           })),
           comment: leadingComment(node, this.sf),
@@ -512,7 +510,7 @@ class ParserCtx {
       if (members.every(m => m.flags & ts.TypeFlags.StringLiteral)) {
         return {
           tag: 'InductiveDef', name, typeParams: tps,
-          ctors: members.map(m => ({ name: cap((m as ts.StringLiteralType).value), fields: [] })),
+          ctors: members.map(m => ({ name: capitalize((m as ts.StringLiteralType).value), fields: [] })),
           comment: leadingComment(node, this.sf),
         };
       }
@@ -638,7 +636,7 @@ class ParserCtx {
         const fn = d.initializer;
         const tps = extractTypeParams(fn as ts.ArrowFunction);
         const ps  = this.parseParams(fn.parameters);
-        const sig = this.checker.getSignatureFromDeclaration(fn)!;
+        const sig = this.checker.getSignatureFromDeclaration(fn);
         const ret = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
         const eff = inferNodeEffect(fn, this.checker);
         const body = ts.isBlock(fn.body as ts.Node)
@@ -727,8 +725,8 @@ class ParserCtx {
     // for-of
     if (ts.isForOfStatement(stmt)) {
       const iter    = this.parseExpr(stmt.expression);
-      const binding = ts.isVariableDeclarationList(stmt.initializer)
-        ? (stmt.initializer.declarations[0].name as ts.Identifier).text : '_x';
+      const initDecl = ts.isVariableDeclarationList(stmt.initializer) ? stmt.initializer.declarations[0] : undefined;
+      const binding = initDecl && ts.isIdentifier(initDecl.name) ? initDecl.name.text : '_x';
       const body = ts.isBlock(stmt.statement)
         ? this.parseBlock(stmt.statement, eff)
         : this.parseStmt(stmt.statement as ts.Statement, [], eff);
@@ -1272,7 +1270,7 @@ class ParserCtx {
     const body   = ts.isBlock(node.body as ts.Node)
       ? this.parseBlock(node.body as ts.Block, eff)
       : this.parseExpr(node.body as ts.Expression);
-    const sig    = this.checker.getSignatureFromDeclaration(node)!;
+    const sig    = this.checker.getSignatureFromDeclaration(node);
     const ret    = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : body.type;
     return { tag: 'Lambda', params, body, type: TyFn(params.map(p => p.type), ret, eff), effect: eff };
   }
@@ -1479,13 +1477,9 @@ function tsBinOp(kind: ts.SyntaxKind): BinOp | null {
   }
 }
 
-function cap(s: string): string {
-  return s ? s[0].toUpperCase() + s.slice(1) : s;
-}
-
 function fileToModuleName(filePath: string): string {
   const base  = path.basename(filePath, '.ts');
-  const parts = base.split(/[-_]/).map(cap);
+  const parts = base.split(/[-_]/).map(capitalize);
   return 'TSLean.Generated.' + parts.join('');
 }
 

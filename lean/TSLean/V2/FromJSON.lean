@@ -458,10 +458,15 @@ private def rewriteMethodCall (fnJ : Option Json) (fn : String) (args : Array St
     let obj := fn.dropEnd 12 |>.toString
     let obj := if obj.any (· == ' ') then "(" ++ obj ++ ")" else obj
     some ("String.intercalate " ++ (args.getD 0 "") ++ " " ++ obj)
-  -- .has(x) on a Set → AssocSet.contains SET x
+  -- .has(x) on a collection → AssocSet.contains (Set) or AssocMap.contains (Map)
+  -- Default to AssocSet since most .has() calls are on Sets; detect Maps via type info.
   else if fn.endsWith ".has" && args.size == 1 then
     let obj := fn.dropEnd 4 |>.toString
-    some ("AssocSet.contains " ++ obj ++ " " ++ (args.getD 0 ""))
+    let objJ := fnJ.bind (fun fj => fieldNode fj "expression")
+    let tag := objJ.bind (fun oj => resolvedType oj) |>.bind (fun rt => getField rt "aliasName" |>.bind getStr) |>.getD ""
+    let rtName := objJ.bind (fun oj => resolvedType oj) |>.bind (fun rt => getField rt "name" |>.bind getStr) |>.getD ""
+    let isMap := tag == "Map" || tag == "AssocMap" || rtName == "Map" || rtName == "AssocMap"
+    some ((if isMap then "AssocMap.contains " else "AssocSet.contains ") ++ obj ++ " " ++ (args.getD 0 ""))
   -- .add(x) on a Set → AssocSet.insert SET x  (TS Set.add, not Array — arrays use .push)
   else if fn.endsWith ".add" && args.size == 1 then
     let obj := fn.dropEnd 4 |>.toString
@@ -623,8 +628,8 @@ private partial def renderBlockStmtsInline (render : Json → String) (stmts : A
           else
             match rest with
             | r :: _ =>
-              if nodeKind r == "ReturnStatement" then
-                "pure " ++ ((fieldNode r "expression").map render |>.getD "()")
+              if nodeKind r == "ReturnStatement"
+              then "pure " ++ ((fieldNode r "expression").map render |>.getD "()")
               else "()"
             | [] => "()"
         let ifStr := "if " ++ cond ++ " then " ++ thenBranch ++ " else " ++ elseBranch
@@ -783,7 +788,7 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
       -- Global property rewriting: Math.PI → literal, etc.
       let fullName := obj ++ "." ++ field
       match fullName with
-      | "Math.PI" => "3.14159265358979"
+      | "Math.PI" => "3.141592653589793"
       | _ =>
         let objJ := fieldNode j "expression"
         let isStr := match objJ with | some oj => hasStringType oj | none => false
@@ -1608,11 +1613,13 @@ private partial def lowerMethodBodyM (reg : UnionRegistry) (paramTypes : Array (
   | some field => .FieldAccess (.Var "self") field
   | none =>
     let inner := lowerMethodStmtsM reg paramTypes stmts isMutating
-    -- Extract the inner return type from StateT/ExceptT wrapping
-    let innerRetTy := match retTy with
-      | .TyApp (.TyName "StateT") args => args.getD (args.size - 1) (.TyName "Unit")
-      | .TyApp (.TyName "ExceptT") args => args.getD (args.size - 1) (.TyName "Unit")
-      | _ => retTy
+    -- Extract the innermost return type from nested StateT/ExceptT/IO wrapping
+    let rec extractInnerRet : LeanTy → LeanTy
+      | .TyApp (.TyName "StateT") args => extractInnerRet (args.getD (args.size - 1) (.TyName "Unit"))
+      | .TyApp (.TyName "ExceptT") args => extractInnerRet (args.getD (args.size - 1) (.TyName "Unit"))
+      | .TyApp (.TyName "IO") args => args.getD 0 (.TyName "Unit")
+      | other => other
+    let innerRetTy := extractInnerRet retTy
     let isUnitRet := match innerRetTy with | .TyName "Unit" => true | _ => false
     -- For mutating Unit-return methods, append `pure ()` if body doesn't end with return
     let inner := if isMutating && isUnitRet && !exprEndsWithReturn inner then
@@ -2060,13 +2067,15 @@ private partial def lowerFuncDeclR (reg : UnionRegistry) (j : Json) : Array Lean
   -- Variable reassignment detection (x = expr, not this.x = expr)
   let hasBodyVarReassign := bodyHasVarReassign bodyStmts
   -- Combined effects: State + Except when there's try/catch + throw + mutable vars
+  -- Return type is nested inside IO: StateT S (ExceptT E (IO retTy))
   let retTy := if isAsync && hasThrowInBody && (hasTryCatch || hasVarReassign) then
     .TyApp (.TyName "StateT") #[.TyName "Unit",
-      .TyApp (.TyName "ExceptT") #[.TyName "String", .TyName "IO"], retTy]
+      .TyApp (.TyName "ExceptT") #[.TyName "String",
+        .TyApp (.TyName "IO") #[retTy]]]
   else if isAsync then .TyApp (.TyName "IO") #[retTy]
-  -- Non-async with variable reassignment → StateT Unit IO
+  -- Non-async with variable reassignment → StateT Unit (IO retTy)
   else if hasBodyVarReassign then
-    .TyApp (.TyName "StateT") #[.TyName "Unit", .TyName "IO", retTy]
+    .TyApp (.TyName "StateT") #[.TyName "Unit", .TyApp (.TyName "IO") #[retTy]]
   else retTy
   let body := match fieldNode j "body" with
     | some b => lowerBodyR reg paramTypes b
@@ -2218,7 +2227,7 @@ private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array Lean
           | some b => fieldArr b "statements" | none => #[]
         let selfParam : LeanParam := { name := "self", ty := stateType }
         let allParams := #[selfParam] ++ params
-        let retTy := .TyApp (.TyName "StateT") #[stateType, .TyName "IO", .TyName "Unit"]
+        let retTy := .TyApp (.TyName "StateT") #[stateType, .TyApp (.TyName "IO") #[.TyName "Unit"]]
         let body := lowerMethodBodyM reg #[] stmts true retTy
         some (.Def false (name ++ ".init") tyParams allParams retTy body none none none)
       else none
@@ -2254,9 +2263,10 @@ private partial def lowerClassDecl (reg : UnionRegistry) (j : Json) : Array Lean
       | none =>
         -- Determine effect-based return type
         let wrappedRet := if hasStateEffect && hasThrow then
-            .TyApp (.TyName "StateT") #[stateType, .TyApp (.TyName "ExceptT") #[.TyName "String", .TyName "IO"], retTy]
+            .TyApp (.TyName "StateT") #[stateType, .TyApp (.TyName "ExceptT") #[.TyName "String",
+              .TyApp (.TyName "IO") #[retTy]]]
           else if hasStateEffect then
-            .TyApp (.TyName "StateT") #[stateType, .TyName "IO", retTy]
+            .TyApp (.TyName "StateT") #[stateType, .TyApp (.TyName "IO") #[retTy]]
           else retTy
         (wrappedRet, lowerMethodBodyM reg #[] stmts hasStateEffect wrappedRet)
       some (.Def false (name ++ "." ++ mname) tyParams allParams retTy body none none none)

@@ -109,6 +109,11 @@ import TSLean.Generated.SelfHost.Prelude
 -- Self-hosting: all 12 transpiled source files compile (Bootstrap imports them all)
 import TSLean.Generated.SelfHost.Bootstrap
 
+-- Proofs (TSLean.Proofs.*) are excluded from the default build target.
+-- They reference SelfHost generated namespaces that require a successful
+-- self-host pipeline run before compilation.  Build separately:
+--   lake build TSLean.Proofs.StdlibProperties  (etc.)
+
 -- Specification & Tests
 import TSLean.Specification
 import TSLean.Tests

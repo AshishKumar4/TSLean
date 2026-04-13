@@ -21,16 +21,16 @@ import { generateLeanV2 } from './codegen/v2.js';
 import { generateVerification } from './verification/index.js';
 import { transpileProject, writeProjectOutputs } from './project/index.js';
 
-// ─── Colors (ANSI, respects NO_COLOR) ────────────────────────────────────────
+// ─── Colors (ANSI, respects NO_COLOR and --no-color) ─────────────────────────
 
-const NO_COLOR = !!process.env['NO_COLOR'] || !process.stdout.isTTY;
+let noColor = !!process.env['NO_COLOR'] || !process.stdout.isTTY;
 const c = {
-  bold:    (s: string) => NO_COLOR ? s : `\x1b[1m${s}\x1b[0m`,
-  dim:     (s: string) => NO_COLOR ? s : `\x1b[2m${s}\x1b[0m`,
-  red:     (s: string) => NO_COLOR ? s : `\x1b[31m${s}\x1b[0m`,
-  green:   (s: string) => NO_COLOR ? s : `\x1b[32m${s}\x1b[0m`,
-  yellow:  (s: string) => NO_COLOR ? s : `\x1b[33m${s}\x1b[0m`,
-  cyan:    (s: string) => NO_COLOR ? s : `\x1b[36m${s}\x1b[0m`,
+  bold:    (s: string) => noColor ? s : `\x1b[1m${s}\x1b[0m`,
+  dim:     (s: string) => noColor ? s : `\x1b[2m${s}\x1b[0m`,
+  red:     (s: string) => noColor ? s : `\x1b[31m${s}\x1b[0m`,
+  green:   (s: string) => noColor ? s : `\x1b[32m${s}\x1b[0m`,
+  yellow:  (s: string) => noColor ? s : `\x1b[33m${s}\x1b[0m`,
+  cyan:    (s: string) => noColor ? s : `\x1b[36m${s}\x1b[0m`,
 };
 
 // ─── Version ─────────────────────────────────────────────────────────────────
@@ -121,7 +121,7 @@ function parseArgs(argv: string[]): Command {
     else if (a === '--namespace'){ ns = rest[++i] ?? ns; }
     else if (a === '--self-host'){ selfHost = true; }
     else if (a === '--base-name'){ baseName = rest[++i] ?? ''; }
-    else if (a === '--no-color') { /* handled via NO_COLOR env */ }
+    else if (a === '--no-color') { noColor = true; }
     else if (!a.startsWith('-') && !input) { input = a; }
   }
 

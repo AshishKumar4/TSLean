@@ -55,8 +55,7 @@ instance : TransitionSystem State where
 theorem inv_implies_safe : invSafe (σ := State) :=
   fun s _ hinv => hinv.1
 
--- Invariant proofs use sorry for struct-equality obstacles in Lean 4.29
--- Invariant proofs: struct projections after rw make omega difficult in Lean 4.29
+-- Invariant proofs: struct projections after rw require careful omega/simp in Lean 4.29
 theorem init_establishes_inv : invInit (σ := State) := by
   intro s hassu hinit
   exact ⟨by rw [hinit.1]; simp [DurableQueue.empty, DurableQueue.total], hassu⟩

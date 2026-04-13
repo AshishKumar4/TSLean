@@ -124,31 +124,9 @@ theorem DOEvent.fetch_ne_alarm : ∀ (s : String) (n : Nat), DOEvent.fetch s ≠
 theorem DOEvent.alarm_ne_message : ∀ (n : Nat) (s : String), DOEvent.alarm n ≠ DOEvent.message s := by
   intro n s h; cases h
 
--- Additional Storage theorems (non-duplicate)
--- put is idempotent on same key (alias)
-theorem Storage.put_put_idempotent (s : Storage) (k : StorageKey) (v1 v2 : StorageValue) :
-    (s.put k v1).put k v2 = s.put k v2 :=
-  Storage.put_put_same s k v1 v2
-
--- delete then get same key returns none (alias)
-theorem Storage.delete_get_none (s : Storage) (k : StorageKey) :
-    (s.delete k).get? k = none :=
-  Storage.get_delete_same s k
-
--- put doesn't affect other keys
-theorem Storage.put_other_key (s : Storage) (k k' : StorageKey) (v : StorageValue)
-    (hne : k ≠ k') :
-    (s.put k v).get? k' = s.get? k' :=
-  Storage.get_put_diff s k k' v hne
-
 -- clear has no keys
 theorem Storage.clear_no_keys : Storage.clear.keys = [] := by
   simp [Storage.clear, Storage.keys, AssocMap.empty, AssocMap.keys]
-
--- A key after put is in the keys list
-theorem Storage.key_in_keys_after_put (s : Storage) (k : StorageKey) (v : StorageValue) :
-    k ∈ (s.put k v).keys :=
-  Storage.keys_after_put s k v
 
 -- StorageValue equality: null ≠ bool
 theorem StorageValue.null_ne_bool (b : Bool) : StorageValue.svNull ≠ StorageValue.svBool b :=

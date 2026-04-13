@@ -11,3 +11,11 @@ lean/build/
 .DS_Store
 /tmp/
 bun.lock
+package-lock.json
+
+# Generated / intermediate artifacts
+_fixpoint/
+staging/
+src/_debug_ir.ts
+src/**/*.lean
+tests/fixtures/**/*.lean

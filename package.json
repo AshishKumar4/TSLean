@@ -1,6 +1,7 @@
 {
   "name": "tslean",
   "version": "0.1.0",
+  "type": "module",
   "description": "TypeScript → Lean 4 transpiler with formal verification for Cloudflare Durable Objects",
   "main": "dist/codegen/index.js",
   "types": "dist/codegen/index.d.ts",
@@ -17,8 +18,10 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "lint": "tsc --noEmit && eslint src/",
+    "format": "prettier --write 'src/**/*.ts'",
+    "format:check": "prettier --check 'src/**/*.ts'",
+    "prepublishOnly": "bun run build"
   },
   "keywords": [
     "typescript",
@@ -47,8 +50,13 @@
     "typescript": "^6.0.2"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^25.5.2",
+    "eslint": "^10.2.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.2",
     "tsx": "^4.21.0",
+    "typescript-eslint": "^8.58.1",
     "vitest": "^4.1.2"
   }
 }

@@ -149,8 +149,6 @@ theorem eval_deterministic (fuel : Nat) (env : Env) (e : Expr) (v1 v2 : Val) :
 @[simp] theorem eval_pureE (fuel : Nat) (env : Env) (e : Expr) :
     eval fuel env (Expr.pureE e) = eval fuel env e := by rfl
 
-@[simp] theorem eval_lam_not_exists : True := trivial  -- placeholder for the no-closure design
-
 /-! ## Compound expression reduction rules -/
 
 theorem eval_binOp_succ (n : Nat) (env : Env) (op : BinOp) (l r : Expr) :

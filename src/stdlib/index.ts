@@ -111,7 +111,7 @@ const GLOBALS: Record<string, GlobalTx> = {
   'Math.pow':       { leanExpr: 'Float.pow' },
   'Math.log':       { leanExpr: 'Float.log' },
   'Math.random':    { leanExpr: 'IO.rand',              io: true },
-  'Math.PI':        { leanExpr: '3.14159265358979' },
+  'Math.PI':        { leanExpr: '3.141592653589793' },
   'parseInt':       { leanExpr: 'sorry', maxArgs: 0 },   // parseInt returns different type (Option Int vs Float)
   'parseFloat':     { leanExpr: 'String.toFloat?', maxArgs: 1 },
   'isNaN':          { leanExpr: 'Float.isNaN' },

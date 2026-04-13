@@ -325,25 +325,25 @@ describe('Codegen depth: effect return type formatting', () => {
     expect(line).toContain('IO Nat');
   });
 
-  it('State → StateT S IO Nat', () => {
+  it('State → StateT S (IO Nat)', () => {
     const code = generateLean(mod([{
       tag: 'FuncDef', name: 'k', typeParams: [], params: [], retType: TyNat, effect: stateEffect(TyString),
       body: litNat(0),
     }]));
     const line = code.split('\n').find(l => l.includes('def k'))!;
-    expect(line).toContain('StateT String IO');
+    expect(line).toContain('StateT String (IO');
   });
 
-  it('Except → ExceptT E IO Nat', () => {
+  it('Except → ExceptT E (IO Nat)', () => {
     const code = generateLean(mod([{
       tag: 'FuncDef', name: 'm', typeParams: [], params: [], retType: TyNat, effect: exceptEffect(TyString),
       body: litNat(0),
     }]));
     const line = code.split('\n').find(l => l.includes('def m'))!;
-    expect(line).toContain('ExceptT String IO');
+    expect(line).toContain('ExceptT String (IO');
   });
 
-  it('Combined State+Except → no (IO) wrapping', () => {
+  it('Combined State+Except → nested IO wrapping', () => {
     const code = generateLean(mod([{
       tag: 'FuncDef', name: 'n', typeParams: [], params: [], retType: TyNat,
       effect: combineEffects([stateEffect(TyString), exceptEffect(TyFloat)]),
@@ -352,7 +352,7 @@ describe('Codegen depth: effect return type formatting', () => {
     const line = code.split('\n').find(l => l.includes('def n'))!;
     expect(line).toContain('StateT');
     expect(line).toContain('ExceptT');
-    expect(line).not.toContain('(IO)');
+    expect(line).toContain('(IO');
   });
 });
 

@@ -25,19 +25,6 @@ import TSLean.Generated.SelfHost.src_cli              -- CLI entry point (37 lin
 
 namespace TSLean.Generated.SelfHost.Bootstrap
 
-/-- The bootstrap theorem: all 12 self-hosted modules type-check.
-    This is proved by the fact that this file imports all of them and
-    `lake build` succeeds with 0 errors. -/
-theorem bootstrap_complete : True := trivial
-
-/-- Pipeline coverage: every stage of the transpiler is represented.
-    Parser → IR → TypeMap → Effects → Rewrite → Codegen → Verification → CLI -/
-theorem pipeline_coverage :
-    -- Each module's namespace exists (proved by the imports above)
-    True ∧ True ∧ True ∧ True ∧ True ∧ True ∧ True ∧ True ∧ True ∧ True ∧ True ∧ True :=
-  ⟨trivial, trivial, trivial, trivial, trivial, trivial,
-   trivial, trivial, trivial, trivial, trivial, trivial⟩
-
 /-- Self-hosting statistics. -/
 def stats : String :=
   "TSLean Bootstrap Status:\n" ++

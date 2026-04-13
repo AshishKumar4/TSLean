@@ -76,10 +76,6 @@ theorem selfhost_modules_typecheck : True := by
   -- this file would not compile.
   trivial
 
-/-- The transpiler pipeline has no sorry terms.
-    Verified by `lake build` producing 0 sorry warnings. -/
-theorem no_sorry_in_pipeline : True := by trivial
-
 -- ─── Opaque API specification ────────────────────────────────────────────────────
 -- For modules with opaque bindings, we state the specification axiomatically.
 -- These axioms document the contract that the TypeScript runtime must satisfy.

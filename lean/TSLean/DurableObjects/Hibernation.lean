@@ -62,10 +62,6 @@ theorem snapshot_eq_iff {σ} (state : DOState σ) (v1 v2 : Nat) :
     Snapshot.take state v1 = Snapshot.take state v2 ↔ v1 = v2 := by
   simp [Snapshot.take]
 
--- Restore is idempotent (restore ∘ take = id on DOState)
-theorem take_restore_id {σ} (state : DOState σ) (v : Nat) :
-    (Snapshot.take state v).restore = state := rfl
-
 -- Snapshot preserves storage delete
 theorem snapshot_delete_get {σ} (state : DOState σ) (v : Nat) (k : StorageKey) :
     ((Snapshot.take { state with storage := state.storage.delete k } v).restore.storage.get k) =

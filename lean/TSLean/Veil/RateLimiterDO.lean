@@ -258,10 +258,6 @@ theorem reject_preserves_count (pre post : State)
   obtain ⟨_, hev, hwp, _, hnowp⟩ := h
   simp [State.countInWindow, hev, hwp, hnowp]
 
--- Time advance preserves window size
-theorem window_ms_invariant (s : State) (hr : reachable s) :
-    s.windowMs = s.windowMs := rfl
-
 -- Consecutive allowRequests grow the count
 theorem two_allows_double_count (s1 s2 s3 : State)
     (h1 : allowRequest s1 s2) (h2 : allowRequest s2 s3)
