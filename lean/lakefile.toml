@@ -6,6 +6,10 @@ defaultTargets = ["TSLean"]
 name = "TSLean"
 roots = ["TSLean"]
 
+[[lean_exe]]
+name = "tslean"
+root = "TSLean.Main"
+
 # Note: Veil (verse-lab/veil) requires Lean v4.24.0 + Mathlib + lean-smt.
 # Our runtime targets Lean v4.29.0 (no external deps).
 # We implement the Veil transition-system core natively in TSLean/Veil/
