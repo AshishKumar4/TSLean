@@ -106,6 +106,13 @@ import TSLean.External.Typescript
 import TSLean.External.Path
 import TSLean.External.Fs
 
+-- Pre-built npm type stubs
+import TSLean.Stubs.NodeFs
+import TSLean.Stubs.NodePath
+import TSLean.Stubs.NodeHttp
+import TSLean.Stubs.Console
+import TSLean.Stubs.Process
+
 -- Self-hosting prelude (forward declarations for cross-file references)
 import TSLean.Generated.SelfHost.Prelude
 -- Self-hosting: all 12 transpiled source files compile (Bootstrap imports them all)
