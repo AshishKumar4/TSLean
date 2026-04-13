@@ -395,6 +395,20 @@ export function varExpr(name: string, type: IRType = TyUnit): IRExpr {
 export function holeExpr(type: IRType = TyUnit): IRExpr {
   return { tag: 'Hole', type, effect: Pure };
 }
+/** Type-appropriate default value for uninitialized variables. */
+export function defaultForIRType(type: IRType): IRExpr {
+  switch (type.tag) {
+    case 'String':  return litStr('');
+    case 'Nat':     return litNat(0);
+    case 'Int':     return litNat(0);
+    case 'Float':   return { tag: 'LitFloat', value: 0, type, effect: Pure };
+    case 'Bool':    return litBool(false);
+    case 'Unit':    return litUnit();
+    case 'Option':  return { tag: 'LitNull', type, effect: Pure };
+    case 'Array':   return { tag: 'ArrayLit', elems: [], type, effect: Pure };
+    default:        return holeExpr(type);
+  }
+}
 /** Struct update: `{ base with field₁ := v₁, … }`. */
 export function structUpdate(base: IRExpr, fields: Array<{ name: string; value: IRExpr }>, type: IRType): IRExpr {
   return { tag: 'StructUpdate', base, fields, type, effect: base.effect };

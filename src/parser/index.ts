@@ -31,7 +31,7 @@ import {
   isPure, hasAsync,
   TyNat, TyFloat, TyString, TyBool, TyUnit, TyNever, TyOption, TyArray,
   TyTuple, TyFn, TyMap, TyRef, TyVar,
-  litStr, litNat, litBool, litUnit, varExpr, holeExpr,
+  litStr, litNat, litBool, litUnit, varExpr, holeExpr, defaultForIRType,
 } from '../ir/types.js';
 import { mapType, extractStructFields, extractTypeParams, detectDiscriminatedUnion } from '../typemap/index.js';
 import { inferNodeEffect } from '../effects/index.js';
@@ -665,7 +665,7 @@ class ParserCtx {
           : this.parseExpr(fn.body as ts.Expression);
         out.push({ tag: 'FuncDef', name, typeParams: tps, params: ps, retType: ret, effect: eff, body });
       } else {
-        const val = d.initializer ? this.parseExpr(d.initializer) : holeExpr(ty);
+        const val = d.initializer ? this.parseExpr(d.initializer) : defaultForIRType(ty);
         out.push({ tag: 'VarDecl', name, type: ty, value: val, mutable: !isConst });
       }
     }
@@ -712,7 +712,7 @@ class ParserCtx {
        if (decl && ts.isIdentifier(decl.name)) {
          const name = decl.name.text;
          const ty   = mapType(this.checker.getTypeAtLocation(decl), this.checker);
-         const val  = decl.initializer ? this.parseExpr(decl.initializer) : holeExpr(ty);
+         const val  = decl.initializer ? this.parseExpr(decl.initializer) : defaultForIRType(ty);
          const body = cont();
          const combined = combineEffects([val.effect, body.effect]);
          if (!isPure(val.effect) && hasAsync(eff)) {
@@ -747,10 +747,58 @@ class ParserCtx {
     if (ts.isForOfStatement(stmt)) {
       const iter    = this.parseExpr(stmt.expression);
       const initDecl = ts.isVariableDeclarationList(stmt.initializer) ? stmt.initializer.declarations[0] : undefined;
-      const binding = initDecl && ts.isIdentifier(initDecl.name) ? initDecl.name.text : '_x';
-      const body = ts.isBlock(stmt.statement)
+      let binding = '_x';
+      let desugarBody = (body: IRExpr) => body;
+      if (initDecl) {
+        if (ts.isIdentifier(initDecl.name)) {
+          binding = initDecl.name.text;
+        } else if (ts.isArrayBindingPattern(initDecl.name)) {
+          // for (const [a, b] of items) → for _item of items; let a = _item[0]; let b = _item[1]
+          binding = '_item';
+          const elems = initDecl.name.elements;
+          desugarBody = (body: IRExpr) => {
+            let result = body;
+            for (let i = elems.length - 1; i >= 0; i--) {
+              const el = elems[i];
+              if (ts.isBindingElement(el) && ts.isIdentifier(el.name)) {
+                const eName = el.name.text;
+                const eType = mapType(this.checker.getTypeAtLocation(el), this.checker);
+                result = {
+                  tag: 'Let', name: eName, type: eType, effect: Pure,
+                  value: { tag: 'IndexAccess', obj: varExpr(binding), index: litNat(i), type: eType, effect: Pure },
+                  body: result,
+                };
+              }
+            }
+            return result;
+          };
+        } else if (ts.isObjectBindingPattern(initDecl.name)) {
+          // for (const { a, b } of items) → for _item of items; let a = _item.a; let b = _item.b
+          binding = '_item';
+          const elems = initDecl.name.elements;
+          desugarBody = (body: IRExpr) => {
+            let result = body;
+            for (let i = elems.length - 1; i >= 0; i--) {
+              const el = elems[i];
+              if (ts.isIdentifier(el.name)) {
+                const eName = el.name.text;
+                const propName = el.propertyName && ts.isIdentifier(el.propertyName) ? el.propertyName.text : eName;
+                const eType = mapType(this.checker.getTypeAtLocation(el), this.checker);
+                result = {
+                  tag: 'Let', name: eName, type: eType, effect: Pure,
+                  value: { tag: 'FieldAccess', obj: varExpr(binding), field: propName, type: eType, effect: Pure },
+                  body: result,
+                };
+              }
+            }
+            return result;
+          };
+        }
+      }
+      const rawBody = ts.isBlock(stmt.statement)
         ? this.parseBlock(stmt.statement, eff)
         : this.parseStmt(stmt.statement as ts.Statement, [], eff);
+      const body = desugarBody(rawBody);
       const loop: IRExpr = {
         tag: 'App',
         fn: varExpr('Array.forM', TyFn([TyArray(TyUnit), TyFn([TyUnit], TyUnit)], TyUnit)),
@@ -1197,6 +1245,27 @@ class ParserCtx {
 
     // Destructuring assignment: [a, b] = ... or { x } = ...
     if (node.kind === ts.SyntaxKind.ObjectLiteralExpression) return this.parseObjLit(node as ts.ObjectLiteralExpression, ty);
+
+    // super keyword → reference to parent class (used in inheritance calls)
+    if (node.kind === ts.SyntaxKind.SuperKeyword) {
+      return varExpr('super', ty);
+    }
+
+    // import.meta → opaque module metadata
+    if (ts.isMetaProperty(node)) {
+      return varExpr('importMeta', ty);
+    }
+
+    // BigInt literal → Nat
+    if (ts.isBigIntLiteral(node)) {
+      const value = node.text.replace(/n$/, '');
+      return litNat(parseInt(value) || 0);
+    }
+
+    // class expression → structure (simplified)
+    if (ts.isClassExpression(node)) {
+      return varExpr(node.name?.text ?? '_AnonymousClass', ty);
+    }
 
     return holeExpr(ty);
   }
