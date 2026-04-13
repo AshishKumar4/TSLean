@@ -89,6 +89,9 @@ private def mapTypeFromFlags (flags : Nat) (name : String) : LeanTy :=
   else if name.isEmpty then .TyName "Unit"
   -- Anonymous object types (TS internal __type) → String as compilable approximation
   else if name == "__type" then .TyName "String"
+  -- Intersection types ({ ... } & T) and inline object types ({ ... }) → String
+  -- These are TS checker string representations that don't map to Lean types
+  else if name.startsWith "{" || name.contains " & " then .TyName "String"
   else .TyName name
 
 private partial def mapResolvedTypeJson (rt : Json) : LeanTy :=
@@ -128,6 +131,10 @@ private partial def mapResolvedTypeJson (rt : Json) : LeanTy :=
     else if !eName.isEmpty && eName != "__type" then
       mapTypeFromFlags flags eName
     else mapTypeFromFlags flags eName
+  -- v2: handle intersection types ({ ... } & T) by taking the alias or mapping to String
+  else if flags &&& TF_Intersection != 0 then
+    if !alias.isEmpty then .TyName alias
+    else .TyName "String"
   else
     mapTypeFromFlags flags eName
 
@@ -284,10 +291,23 @@ private def isStringOptionalField (name : String) : Bool :=
   name == "banner" || name == "sourcePath" || name == "comment" || name == "docComment" ||
   name == "extends_" || name == "reason" || name == "constraints" || name == "name"
 
+private def isOptionalResolvedType (j : Json) : Bool :=
+  match resolvedType j with
+  | some rt =>
+    let flags := typeFlags rt
+    if flags &&& TF_Union != 0 then
+      let types := fieldArr rt "types"
+      types.any fun t => typeFlags t &&& TF_Undefined != 0 || typeFlags t &&& TF_Null != 0
+    else false
+  | none => false
+
 private def wrapConditionIsSome (j : Json) (rendered : String) : String :=
-  if nodeKind j == "PropertyAccessExpression" then
+  if rendered.endsWith ".isSome" then rendered
+  else if nodeKind j == "PropertyAccessExpression" then
     let fieldName := (fieldNode j "name").map nodeText |>.getD ""
-    if isStringOptionalField fieldName && !rendered.endsWith ".isSome" then rendered ++ ".isSome"
+    -- Only wrap known string-optional fields and direct optional property accesses
+    -- that aren't already inside .bind() chains (which handle optionality themselves)
+    if isStringOptionalField fieldName then rendered ++ ".isSome"
     else rendered
   else rendered
 
@@ -801,12 +821,9 @@ private partial def renderExprCtx (reg : UnionRegistry) (ctx : SubstCtx) (j : Js
              propName == "stateType" || propName == "errorType" || propName == "targetType")
            else false
      if hasQuestionDot then
-       let isTagOnInductive := field == "tag" && match fieldNode j "expression" with
-         | some objJ => checkInductiveAlias objJ | none => false
-       if isTagOnInductive then
-         obj ++ ".bind (fun _oc => some (sorry : String))"
-       else
-         obj ++ ".bind (fun _oc => some _oc." ++ field ++ ")"
+       -- Optional chain: always use real field name. The TS lowerer doesn't apply
+       -- isInductiveType inside optional chain closures (the _oc var is unwrapped).
+       obj ++ ".bind (fun _oc => some _oc." ++ field ++ ")"
      else
      -- .tag on inductive/union type aliases → (sorry : String)
      -- Matches TS IR lowerer's isInductiveType check for Effect, IRType, BinOp, UnOp
@@ -1348,8 +1365,11 @@ private partial def lowerStmtSeqR (reg : UnionRegistry) (paramTypes : Array (Str
             | some init => nodeKind init == "NewExpression" | none => false
           let ty := if hasExplicitType then (fieldNode d "type").map mapTypeNode
             else if isNewExpr then
-              initJ.bind fun init =>
+              -- v2: prefer resolved type (has full generic args) over just constructor name
+              let fromResolved := initJ.bind resolvedType |>.map mapResolvedTypeJson
+              let fromCtor := initJ.bind fun init =>
                 (fieldNode init "expression").map fun c => .TyName (nodeText c)
+              fromResolved.orElse (fun _ => fromCtor)
             else none
           .Let name ty (.Lit val) cont false
       else lowerStmtSeqR reg paramTypes rest

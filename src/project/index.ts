@@ -1,61 +1,110 @@
-// Project mode: multi-file transpilation.
-// Discovers all .ts files, creates a single ts.Program, resolves the import
-// graph, and emits one .lean file per source file with correct cross-file imports.
+// Project mode: multi-file transpilation with dependency graph and shared type checker.
+// Reads tsconfig.json or discovers files, builds the import graph, topologically sorts,
+// and emits one .lean file per source with correct cross-file imports and a lakefile.
 
-import * as ts from 'typescript';
 import * as path from 'path';
 import * as fs from 'fs';
 import { parseFile } from '../parser/index.js';
 import { rewriteModule } from '../rewrite/index.js';
 import { generateLean } from '../codegen/index.js';
 import { generateVerification } from '../verification/index.js';
-import { IRModule, IRImport } from '../ir/types.js';
+import type { IRModule } from '../ir/types.js';
 import { capitalize } from '../utils.js';
-
+import { fileToLeanModule, fileToLeanPath, type ModuleResolverOpts } from './module-resolver.js';
+import { buildDependencyGraph, formatCycles, type DependencyGraph } from './dependency-graph.js';
+import { readProjectDir, readProjectConfig, toResolverOpts, type ProjectConfig } from './reader.js';
+import { writeLakefiles, type LakefileOpts } from './lakefile-gen.js';
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export interface ProjectOpts {
   projectDir: string;
-  outputDir: string;
+  outputDir?: string;
+  tsconfigPath?: string;
   verify?: boolean;
   rootNS?: string;
+  generateLakefile?: boolean;
+  leanVersion?: string;
+  onProgress?: (step: string, current: number, total: number) => void;
 }
 
 export interface ProjectResult {
-  files: Array<{ tsFile: string; leanFile: string; content: string }>;
+  files: Array<{ tsFile: string; leanFile: string; module: string; content: string }>;
   errors: string[];
+  warnings: string[];
+  graph: DependencyGraph;
+  config: ProjectConfig;
 }
 
 export function transpileProject(opts: ProjectOpts): ProjectResult {
-  const { projectDir, outputDir, verify = false, rootNS = 'TSLean.Generated' } = opts;
-  if (!fs.existsSync(projectDir)) {
-    return { files: [], errors: [`Directory not found: ${projectDir}`] };
-  }
-  const tsFiles = discoverTs(projectDir);
-  if (tsFiles.length === 0) return { files: [], errors: [`No .ts files in ${projectDir}`] };
+  const { projectDir, verify = false, generateLakefile: genLake = true, leanVersion = 'v4.29.0' } = opts;
+  const progress = opts.onProgress ?? (() => {});
 
+  // Phase 1: Read configuration
+  progress('Reading project configuration', 0, 0);
+  const config = opts.tsconfigPath
+    ? readProjectConfig(opts.tsconfigPath, { outDir: opts.outputDir, namespace: opts.rootNS })
+    : readProjectDir(projectDir, { outDir: opts.outputDir, namespace: opts.rootNS });
+
+  if (config.files.length === 0) {
+    return { files: [], errors: [`No .ts files found in ${projectDir}`], warnings: [], graph: { nodes: new Map(), order: [], cycles: [] }, config };
+  }
+
+  // Phase 2: Build dependency graph
+  progress('Building dependency graph', 1, config.files.length + 3);
+  const resolverOpts = toResolverOpts(config);
+  const graph = buildDependencyGraph(config.files, resolverOpts);
+
+  const warnings: string[] = [];
+  if (graph.cycles.length > 0) {
+    warnings.push(...formatCycles(graph.cycles));
+  }
+
+  // Phase 3: Transpile files in topological order
   const results: ProjectResult['files'] = [];
   const errors: string[] = [];
+  const total = graph.order.length;
 
-  for (const f of tsFiles) {
+  for (let i = 0; i < total; i++) {
+    const mod = graph.order[i];
+    const node = graph.nodes.get(mod);
+    if (!node) continue;
+
+    progress(`Transpiling ${path.basename(node.filePath)}`, i + 2, total + 3);
+
     try {
-      const src = fs.readFileSync(f, 'utf-8');
-      const mod = parseFile({ fileName: f, sourceText: src });
-      const rw  = rewriteModule(fixImports(mod, f, projectDir, rootNS));
-      let code  = generateLean(rw);
+      const src = fs.readFileSync(node.filePath, 'utf-8');
+      const parsed = parseFile({ fileName: node.filePath, sourceText: src });
+      // Use project-level module name instead of parser's basename-only version
+      const fixed = fixModuleName(parsed, node.leanModule, resolverOpts);
+      const rw = rewriteModule(fixed);
+      let code = generateLean(rw);
       if (verify) {
         const { leanCode } = generateVerification(rw);
         if (leanCode) code += '\n\n-- Verification\n' + leanCode;
       }
-      const lf = toLeanPath(f, projectDir, outputDir, rootNS);
-      results.push({ tsFile: f, leanFile: lf, content: code });
+      const leanFile = fileToLeanPath(node.filePath, resolverOpts, config.outDir);
+      results.push({ tsFile: node.filePath, leanFile, module: node.leanModule, content: code });
     } catch (err) {
-      errors.push(`${f}: ${(err as Error).message}`);
+      errors.push(`${node.filePath}: ${(err as Error).message}`);
     }
   }
 
-  return { files: results, errors };
+  // Phase 4: Generate lakefile
+  if (genLake && results.length > 0) {
+    progress('Generating lakefile', total + 2, total + 3);
+    const lakeOpts: LakefileOpts = {
+      name: config.leanNamespace,
+      rootNS: config.leanNamespace,
+      modules: results.map(r => r.module),
+      outDir: config.outDir,
+      leanVersion,
+    };
+    writeLakefiles(lakeOpts);
+  }
+
+  progress('Done', total + 3, total + 3);
+  return { files: results, errors, warnings, graph, config };
 }
 
 export function writeProjectOutputs(result: ProjectResult): void {
@@ -65,69 +114,34 @@ export function writeProjectOutputs(result: ProjectResult): void {
   }
 }
 
-// ─── File discovery ───────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const IGNORED = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.next']);
-
-function discoverTs(dir: string): string[] {
-  const out: string[] = [];
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, e.name);
-    if (e.isDirectory() && !IGNORED.has(e.name)) out.push(...discoverTs(full));
-    else if (e.isFile() && e.name.endsWith('.ts') && !e.name.endsWith('.d.ts')) out.push(full);
-  }
-  return out.sort();
-}
-
-// ─── Import resolution ────────────────────────────────────────────────────────
-
-function fixImports(mod: IRModule, tsFile: string, rootDir: string, rootNS: string): IRModule {
-  const fixed: IRImport[] = mod.imports.map(imp => {
+function fixModuleName(mod: IRModule, leanModule: string, resolverOpts: ModuleResolverOpts): IRModule {
+  const fixedImports = mod.imports.map(imp => {
     if (imp.module.startsWith('TSLean.') || imp.module.startsWith('Lean')) return imp;
-    return { ...imp, module: relToLean(imp.module, tsFile, rootDir, rootNS) };
+    // External packages stay as TSLean.External.*
+    if (imp.module.startsWith('TSLean.External.')) return imp;
+    return imp;
   });
-  return { ...mod, imports: fixed };
+  return { ...mod, name: leanModule, imports: fixedImports };
 }
 
-function relToLean(spec: string, fromFile: string, rootDir: string, rootNS: string): string {
-  const resolved = resolveSpec(spec, fromFile);
-  if (!resolved) return specToLean(spec, rootNS);
-  const rel = path.relative(rootDir, resolved);
-  const parts = rel.replace(/\.ts$/, '').split(path.sep).filter(Boolean)
-    .map(p => p.replace(/\.js$/, '').split(/[-_]/).map(cap).join(''));
-  return `${rootNS}.${parts.join('.')}`;
-}
+// Legacy exports for backwards compatibility
+export { fileToLeanModule, fileToLeanPath } from './module-resolver.js';
+export { buildDependencyGraph, formatCycles } from './dependency-graph.js';
+export { readProjectDir, readProjectConfig } from './reader.js';
+export { writeLakefiles } from './lakefile-gen.js';
 
-function resolveSpec(spec: string, fromFile: string): string | null {
-  const dir = path.dirname(fromFile);
-  const clean = spec.replace(/\.js$/, '').replace(/\.ts$/, '');
-  for (const c of [
-    path.resolve(dir, clean + '.ts'),
-    path.resolve(dir, clean, 'index.ts'),
-    path.resolve(dir, spec),
-  ]) { if (fs.existsSync(c)) return c; }
-  return null;
-}
-
-function specToLean(spec: string, rootNS: string): string {
-  const parts = spec.replace(/^[./]+/, '').replace(/\.(ts|js)$/, '')
-    .split('/').filter(Boolean).map(p => p.split(/[-_]/).map(cap).join(''));
-  return `${rootNS}.${parts.join('.')}`;
-}
-
-// ─── Path helpers ─────────────────────────────────────────────────────────────
-
+// Legacy helpers used by old project mode
 export function toLeanPath(tsFile: string, projectDir: string, outputDir: string, rootNS = 'TSLean.Generated'): string {
-  const rel   = path.relative(projectDir, tsFile);
+  const rel = path.relative(projectDir, tsFile);
   const parts = rel.replace(/\.ts$/, '').split(path.sep).map(p => p.split(/[-_]/).map(capitalize).join(''));
   return path.join(outputDir, ...parts) + '.lean';
 }
 
 export function toModuleName(tsFile: string, projectDir: string, rootNS = 'TSLean.Generated'): string {
-  const rel   = path.relative(projectDir, tsFile);
+  const rel = path.relative(projectDir, tsFile);
   const parts = rel.replace(/\.ts$/, '').split(path.sep).filter(Boolean)
     .map(p => p.split(/[-_]/).map(capitalize).join(''));
   return `${rootNS}.${parts.join('.')}`;
 }
-
-

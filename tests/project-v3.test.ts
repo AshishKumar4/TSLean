@@ -19,7 +19,7 @@ describe('Project v3: content quality', () => {
 
   beforeAll(() => {
     outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-'));
-    execSync(`npx tsx ${CLI} --project ${FP_DIR} -o ${outDir}`, { stdio: 'pipe' });
+    execSync(`npx tsx ${CLI} --project ${FP_DIR} -o ${outDir} --no-lakefile`, { stdio: 'pipe' });
     function read(dir: string) {
       for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, e.name);
@@ -32,6 +32,8 @@ describe('Project v3: content quality', () => {
 
   it('all files non-empty (>10 lines)', () => {
     for (const [n, content] of Object.entries(files)) {
+      // Skip build artifacts (lakefile, root barrel)
+      if (n.endsWith('lakefile.toml') || n === 'lean-toolchain') continue;
       expect(content.split('\n').length, `${n} is too thin`).toBeGreaterThan(10);
     }
   });
@@ -93,7 +95,7 @@ describe('Project v3: cross-file imports (no .js suffix)', () => {
   let files: Record<string, string> = {};
   beforeAll(() => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-imp-'));
-    execSync(`npx tsx ${CLI} --project ${FP_DIR} -o ${outDir}`, { stdio: 'pipe' });
+    execSync(`npx tsx ${CLI} --project ${FP_DIR} -o ${outDir} --no-lakefile`, { stdio: 'pipe' });
     function read(dir: string) {
       for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, e.name);
@@ -136,27 +138,57 @@ describe('Project v3: cross-file imports (no .js suffix)', () => {
 describe('Project v3: CLI project mode', () => {
   it('--project on basic/ transpiles 3 files', () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-basic-'));
-    execSync(`npx tsx ${CLI} --project ${path.join(ROOT, 'tests/fixtures/basic')} -o ${outDir}`, { stdio: 'pipe' });
-    const leans = fs.readdirSync(outDir).filter(f => f.endsWith('.lean'));
+    execSync(`npx tsx ${CLI} --project ${path.join(ROOT, 'tests/fixtures/basic')} -o ${outDir} --no-lakefile`, { stdio: 'pipe' });
+    // Files are in hierarchical module structure, find all .lean recursively
+    const findLean = (dir: string): string[] => {
+      const out: string[] = [];
+      if (!fs.existsSync(dir)) return out;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) out.push(...findLean(full));
+        else if (e.name.endsWith('.lean')) out.push(full);
+      }
+      return out;
+    };
+    const leans = findLean(outDir);
     expect(leans.length).toBe(3);
     fs.rmSync(outDir, { recursive: true });
   });
 
   it('--project on advanced/ transpiles fixtures', () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-adv-'));
-    execSync(`npx tsx ${CLI} --project ${path.join(ROOT, 'tests/fixtures/advanced')} -o ${outDir}`, { stdio: 'pipe' });
-    const leans = fs.readdirSync(outDir).filter(f => f.endsWith('.lean'));
+    execSync(`npx tsx ${CLI} --project ${path.join(ROOT, 'tests/fixtures/advanced')} -o ${outDir} --no-lakefile`, { stdio: 'pipe' });
+    const findLean = (dir: string): string[] => {
+      const out: string[] = [];
+      if (!fs.existsSync(dir)) return out;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) out.push(...findLean(full));
+        else if (e.name.endsWith('.lean')) out.push(full);
+      }
+      return out;
+    };
+    const leans = findLean(outDir);
     expect(leans.length).toBeGreaterThan(0);
     fs.rmSync(outDir, { recursive: true });
   });
 
   it('--project with --verify adds obligations', () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-verify-'));
-    execSync(`npx tsx ${CLI} --project ${path.join(ROOT, 'tests/fixtures/basic')} -o ${outDir} --verify`, { stdio: 'pipe' });
-    const leans = fs.readdirSync(outDir).filter(f => f.endsWith('.lean'));
+    execSync(`npx tsx ${CLI} --project ${path.join(ROOT, 'tests/fixtures/basic')} -o ${outDir} --verify --no-lakefile`, { stdio: 'pipe' });
+    const findLean = (dir: string): string[] => {
+      const out: string[] = [];
+      if (!fs.existsSync(dir)) return out;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) out.push(...findLean(full));
+        else if (e.name.endsWith('.lean')) out.push(full);
+      }
+      return out;
+    };
+    const leans = findLean(outDir);
     expect(leans.length).toBe(3);
-    // At least one file should have verification content
-    const contents = leans.map(f => fs.readFileSync(path.join(outDir, f), 'utf8'));
+    const contents = leans.map(f => fs.readFileSync(f, 'utf8'));
     expect(contents.some(c => c.includes('open TSLean'))).toBe(true);
     fs.rmSync(outDir, { recursive: true });
   });

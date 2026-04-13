@@ -330,12 +330,29 @@ export type IRDecl =
 // ─── Module ─────────────────────────────────────────────────────────────────────
 
 /** A Lean 4 import — corresponds to `import Module.Path`. */
-export interface IRImport { module: string; names?: string[] }
+export interface IRImport {
+  module: string;             // Lean module path (e.g., 'Project.Utils')
+  names?: string[];           // specific named imports (for `open ... (X Y)`)
+  isTypeOnly?: boolean;       // true for `import type { X } from '...'`
+  isNamespace?: boolean;      // true for `import * as X from '...'`
+  namespaceAlias?: string;    // the alias name for namespace imports
+  isSideEffect?: boolean;     // true for `import './setup'` (no bindings)
+  isReExport?: boolean;       // true for `export { X } from '...'`
+  isReExportAll?: boolean;    // true for `export * from '...'`
+}
+
+/** An exported declaration from a module. */
+export interface IRExport {
+  name: string;
+  isDefault: boolean;
+  isType: boolean;
+}
 
 /** Top-level IR module — one per `.ts` source file. */
 export interface IRModule {
   name: string;
   imports: IRImport[];
+  exports?: IRExport[];
   decls: IRDecl[];
   comments: string[];
   sourceFile?: string;

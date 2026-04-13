@@ -78,6 +78,8 @@ interface CompileOpts {
   selfHost: boolean;
   baseName: string;
   isDir: boolean;
+  genLakefile: boolean;
+  tsconfigPath: string;
 }
 
 type Command =
@@ -110,11 +112,11 @@ function parseArgs(argv: string[]): Command {
 
   let input = '', output = '', verify = false, watch = false;
   let ns = 'TSLean.Generated', selfHost = false, baseName = '';
-  let isDir = false;
+  let isDir = false, genLakefile = true, tsconfigPath = '';
 
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
-    if (a === '--project')       { isDir = true; input = rest[++i] ?? ''; }
+    if (a === '--project')       { isDir = true; tsconfigPath = rest[++i] ?? ''; input = tsconfigPath; }
     else if (a === '-o' || a === '--output') { output = rest[++i] ?? ''; }
     else if (a === '--verify')   { verify = true; }
     else if (a === '-w' || a === '--watch') { watch = true; }
@@ -122,6 +124,8 @@ function parseArgs(argv: string[]): Command {
     else if (a === '--self-host'){ selfHost = true; }
     else if (a === '--base-name'){ baseName = rest[++i] ?? ''; }
     else if (a === '--no-color') { noColor = true; }
+    else if (a === '--lakefile') { genLakefile = true; }
+    else if (a === '--no-lakefile') { genLakefile = false; }
     else if (!a.startsWith('-') && !input) { input = a; }
   }
 
@@ -141,7 +145,7 @@ function parseArgs(argv: string[]): Command {
       : input.replace(/\.ts$/, '.lean');
   }
 
-  return { cmd: 'compile', opts: { input, output, verify, watch, ns, selfHost, baseName, isDir } };
+  return { cmd: 'compile', opts: { input, output, verify, watch, ns, selfHost, baseName, isDir, genLakefile, tsconfigPath } };
 }
 
 // ─── Output helpers ──────────────────────────────────────────────────────────
@@ -196,28 +200,48 @@ function compileSingle(opts: CompileOpts): boolean {
 
 function compileProject(opts: CompileOpts): boolean {
   const { input, output, verify, ns } = opts;
-  if (!fs.existsSync(input) || !fs.statSync(input).isDirectory()) {
-    error(`Directory not found: ${input}`);
+  const tsconfigPath = opts.tsconfigPath || '';
+  const genLakefile = opts.genLakefile !== false;
+
+  // --project tsconfig.json mode
+  const projectDir = tsconfigPath && tsconfigPath.endsWith('.json')
+    ? path.dirname(path.resolve(tsconfigPath))
+    : path.resolve(input);
+
+  if (!fs.existsSync(projectDir)) {
+    error(`Directory not found: ${projectDir}`);
     return false;
   }
 
   const t0 = Date.now();
   const result = transpileProject({
-    projectDir: path.resolve(input),
-    outputDir:  path.resolve(output),
-    verify, rootNS: ns,
+    projectDir,
+    outputDir: path.resolve(output),
+    tsconfigPath: tsconfigPath && tsconfigPath.endsWith('.json') ? path.resolve(tsconfigPath) : undefined,
+    verify,
+    rootNS: ns,
+    generateLakefile: genLakefile,
+    onProgress: (step, cur, total) => {
+      if (total > 0) info(`[${cur}/${total}] ${step}`);
+      else info(step);
+    },
   });
 
+  for (const w of result.warnings) process.stdout.write(`${c.yellow('warn')}: ${w}\n`);
   for (const e of result.errors) error(e);
   writeProjectOutputs(result);
   for (const { tsFile, leanFile } of result.files) {
-    success(`${tsFile} → ${leanFile}`);
+    success(`${path.relative(projectDir, tsFile)} → ${path.relative(process.cwd(), leanFile)}`);
   }
 
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-  const summary = `${result.files.length} file(s) transpiled`;
-  const errSummary = result.errors.length ? `, ${c.red(String(result.errors.length) + ' error(s)')}` : '';
-  process.stdout.write(`\n${c.bold(summary)}${errSummary} ${c.dim(`(${elapsed}s)`)}\n`);
+  const nFiles = result.files.length;
+  const nCycles = result.graph.cycles.length;
+  const summary = `${nFiles} file(s) transpiled`;
+  const cycleSummary = nCycles > 0 ? `, ${c.yellow(nCycles + ' cycle(s)')}` : '';
+  const errSummary = result.errors.length ? `, ${c.red(result.errors.length + ' error(s)')}` : '';
+  const lakeSummary = genLakefile && nFiles > 0 ? `, lakefile generated` : '';
+  process.stdout.write(`\n${c.bold(summary)}${cycleSummary}${errSummary}${lakeSummary} ${c.dim(`(${elapsed}s)`)}\n`);
 
   return result.errors.length === 0;
 }

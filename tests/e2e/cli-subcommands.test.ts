@@ -100,23 +100,36 @@ describe('CLI: compile single file', () => {
 // ─── compile subcommand: directory ───────────────────────────────────────────
 
 describe('CLI: compile directory', () => {
+  // Recursively find all .lean files under a directory
+  function findLean(dir: string): string[] {
+    const out: string[] = [];
+    if (!fs.existsSync(dir)) return out;
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) out.push(...findLean(full));
+      else if (e.name.endsWith('.lean')) out.push(e.name);
+    }
+    return out;
+  }
+
   it('compile <dir> -o <outdir> transpiles all .ts files', () => {
     const outDir = tmpDir();
     cleanup.push(outDir);
     const stdout = execSync(
-      `npx tsx ${CLI} compile ${FIX}/basic/ -o ${outDir}`, execOpts
+      `npx tsx ${CLI} compile ${FIX}/basic/ -o ${outDir} --no-lakefile`, execOpts
     ).toString();
     expect(stdout).toContain('file(s) transpiled');
-    expect(fs.existsSync(path.join(outDir, 'Hello.lean'))).toBe(true);
-    expect(fs.existsSync(path.join(outDir, 'Interfaces.lean'))).toBe(true);
-    expect(fs.existsSync(path.join(outDir, 'Classes.lean'))).toBe(true);
+    const leans = findLean(outDir);
+    expect(leans).toContain('Hello.lean');
+    expect(leans).toContain('Interfaces.lean');
+    expect(leans).toContain('Classes.lean');
   });
 
   it('compile detects directory input without --project flag', () => {
     const outDir = tmpDir();
     cleanup.push(outDir);
     const stdout = execSync(
-      `npx tsx ${CLI} compile ${FIX}/basic -o ${outDir}`, execOpts
+      `npx tsx ${CLI} compile ${FIX}/basic -o ${outDir} --no-lakefile`, execOpts
     ).toString();
     expect(stdout).toContain('file(s) transpiled');
   });
@@ -136,8 +149,18 @@ describe('CLI: legacy mode', () => {
   it('--project <dir> -o <out> still works', () => {
     const outDir = tmpDir();
     cleanup.push(outDir);
-    execSync(`npx tsx ${CLI} --project ${FIX}/basic/ -o ${outDir}`, execOpts);
-    expect(fs.existsSync(path.join(outDir, 'Hello.lean'))).toBe(true);
+    execSync(`npx tsx ${CLI} --project ${FIX}/basic/ -o ${outDir} --no-lakefile`, execOpts);
+    // Files are in hierarchical module structure
+    const findLean = (dir: string): string[] => {
+      const out: string[] = [];
+      if (!fs.existsSync(dir)) return out;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) out.push(...findLean(path.join(dir, e.name)));
+        else if (e.name.endsWith('.lean')) out.push(e.name);
+      }
+      return out;
+    };
+    expect(findLean(outDir)).toContain('Hello.lean');
   });
 });
 
