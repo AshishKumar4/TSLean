@@ -480,12 +480,24 @@ class LowerCtx {
 
   private lowerStruct(d: Extract<IRDecl, { tag: 'StructDef' }>, inMutual: boolean): LeanDecl {
     const enrichedFields = this.structFields.get(d.name) ?? d.fields;
-    const fields: LeanField[] = enrichedFields.map(f => {
+
+    // Merge parent fields if this struct extends another
+    let allFields = [...enrichedFields];
+    if (d.extends_) {
+      const parentFields = this.structFields.get(d.extends_) ??
+        this.structFields.get(d.extends_ + 'State') ?? [];
+      // Prepend parent fields that aren't redeclared in the child
+      const childNames = new Set(allFields.map(f => f.name));
+      const inherited = parentFields.filter(f => !childNames.has(f.name));
+      allFields = [...inherited, ...allFields];
+    }
+
+    const fields: LeanField[] = allFields.map(f => {
       const rawName = (f.name.startsWith('_') && f.name.length > 1 && /[a-zA-Z]/.test(f.name[1]))
         ? f.name.slice(1) : f.name;
       return { name: rawName, ty: this.lowerType(f.type) };
     });
-    const isBranded = enrichedFields.length === 1 && enrichedFields[0].name === 'val';
+    const isBranded = allFields.length === 1 && allFields[0].name === 'val';
     const deriving = inMutual ? [] : safeDeriving(fields, isBranded);
     return {
       tag: 'Structure',
@@ -1245,6 +1257,16 @@ class LowerCtx {
   }
 
   private lowerApp(e: Extract<IRExpr, { tag: 'App' }>, ctx: Effect): LeanExpr {
+    // super() → emit unit (parent initialization is handled by field merging in lowerStruct)
+    if (e.fn.tag === 'Var' && e.fn.name === 'super') {
+      return { tag: 'Lit', value: '()' };
+    }
+    // super.method(args) → ParentClass.method self args
+    if (e.fn.tag === 'FieldAccess' && e.fn.obj.tag === 'Var' && e.fn.obj.name === 'super') {
+      const args = e.args.map(a => this.lowerExprP(a, ctx));
+      return { tag: 'App', fn: { tag: 'Var', name: e.fn.field },
+               args: [{ tag: 'Var', name: 'self' }, ...args] };
+    }
     // self.method(args) → method self args
     if (e.fn.tag === 'FieldAccess' && e.fn.obj.tag === 'Var' && e.fn.obj.name === 'self') {
       const args = e.args.map(a => this.lowerExprP(a, ctx));
