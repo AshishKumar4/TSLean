@@ -133,24 +133,27 @@ def isArrayBindingPattern (j : Json) : Bool := nodeKind j == "ArrayBindingPatter
 -- ─── Type resolution ────────────────────────────────────────────────────────────
 
 -- TypeFlags constants (matching TS compiler)
+-- Values from typescript/lib/typescript.d.ts TypeFlags enum
 def TF_Any            : Nat := 1
 def TF_Unknown        : Nat := 2
-def TF_String         : Nat := 4
-def TF_Number         : Nat := 8
-def TF_Boolean        : Nat := 16
-def TF_Enum           : Nat := 32
-def TF_BigInt         : Nat := 64
-def TF_StringLiteral  : Nat := 128
-def TF_NumberLiteral  : Nat := 256
-def TF_BooleanLiteral : Nat := 512
-def TF_Undefined      : Nat := 1024
-def TF_Null           : Nat := 2048
-def TF_Void           : Nat := 4096
-def TF_Never          : Nat := 8192
-def TF_TypeParameter  : Nat := 16384
-def TF_Object         : Nat := 32768
-def TF_Union          : Nat := 65536
-def TF_Intersection   : Nat := 131072
+def TF_Undefined      : Nat := 4
+def TF_Null           : Nat := 8
+def TF_Void           : Nat := 16
+def TF_String         : Nat := 32
+def TF_Number         : Nat := 64
+def TF_BigInt         : Nat := 128
+def TF_Boolean        : Nat := 256
+def TF_ESSymbol       : Nat := 512
+def TF_StringLiteral  : Nat := 1024
+def TF_NumberLiteral  : Nat := 2048
+def TF_BooleanLiteral : Nat := 8192
+def TF_UniqueESSymbol : Nat := 16384
+def TF_Enum           : Nat := 65536
+def TF_Never          : Nat := 262144
+def TF_TypeParameter  : Nat := 524288
+def TF_Object         : Nat := 1048576
+def TF_Union          : Nat := 134217728
+def TF_Intersection   : Nat := 268435456
 
 -- NodeFlags.Const (for variable declarations)
 def NF_Const : Nat := 2
@@ -166,6 +169,9 @@ def typeName (j : Json) : String := fieldStr j "name"
 
 /-- Get the symbol name from a resolved type JSON. -/
 def typeSymbol (j : Json) : String := fieldStr j "symbol"
+
+/-- Get the alias name from a resolved type JSON (e.g. type alias name). -/
+def typeAliasName (j : Json) : String := fieldStr j "aliasName"
 
 -- ─── File reading ───────────────────────────────────────────────────────────────
 

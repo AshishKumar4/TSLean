@@ -6,8 +6,9 @@ import TSLean.Generated.SelfHost.ir_types
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
+import TSLean.Stdlib.HashMap
 
-open TSLean TSLean.Generated.Types
+open TSLean TSLean.Generated.Types TSLean.Stdlib.HashMap
 
 namespace TSLean.Generated.SelfHost.Src_cli
 

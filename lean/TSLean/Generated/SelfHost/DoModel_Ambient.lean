@@ -18,7 +18,7 @@ namespace TSLean.Generated.SelfHost.DoModel_Ambient
 
 def hasDOPattern (source : String) : Bool :=
   source.includes "DurableObjectState" || source.includes "state.storage"
-def CF_AMBIENT : String := sorry
+def CF_AMBIENT : String := "interface DurableObjectState { storage: DurableObjectStorage; id: DurableObjectId; }"
 def DO_LEAN_IMPORTS : Array String := #["TSLean.DurableObjects.Http", "TSLean.DurableObjects.State", "TSLean.Runtime.Monad"]
 
 end TSLean.Generated.SelfHost.DoModel_Ambient

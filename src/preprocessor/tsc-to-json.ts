@@ -196,6 +196,10 @@ function serializeNode(
   // Basic properties
   const text = getNodeText(node);
   if (text !== undefined) result.text = text;
+  // For StringLiteral nodes, preserve source text with quotes for faithful sanitization
+  if (ts.isStringLiteral(node)) {
+    try { result.sourceText = node.getText(sf); } catch {}
+  }
   if (node.flags) result.flags = node.flags;
   result.pos = node.pos;
   result.end = node.end;
@@ -273,6 +277,7 @@ function serializeNode(
   if (n.argumentExpression && isNode(n.argumentExpression))
     result.argumentExpression = serializeNode(n.argumentExpression, checker, sf, depth + 1);
   if (n.questionDotToken) result.questionDotToken = { kind: 'QuestionDotToken' };
+  if (n.questionToken) (result as any).questionToken = true;
   if (n.whenTrue && isNode(n.whenTrue)) result.whenTrue = serializeNode(n.whenTrue, checker, sf, depth + 1);
   if (n.whenFalse && isNode(n.whenFalse)) result.whenFalse = serializeNode(n.whenFalse, checker, sf, depth + 1);
 
@@ -299,12 +304,16 @@ function serializeNode(
   if (n.propertyName && isNode(n.propertyName))
     result.propertyName = serializeNode(n.propertyName, checker, sf, depth + 1);
 
-  // Heritage clauses
+  // Heritage clauses and union types
   if (typeof n.token === 'number') result.token = n.token;
-  if (n.types && Array.isArray(n.types) && n !== node)
+  if (n.types && Array.isArray(n.types))
     result.types = serializeArray(n.types, checker, sf, depth);
-  else if (n.types && Array.isArray(n.types) && ts.isHeritageClause(node))
-    result.types = serializeArray(n.types, checker, sf, depth);
+
+  // Type-specific children: ArrayType, TupleType, etc.
+  if (n.elementType && isNode(n.elementType))
+    (result as any).elementType = serializeNode(n.elementType, checker, sf, depth + 1);
+  if (n.typeName && isNode(n.typeName))
+    (result as any).typeName = serializeNode(n.typeName, checker, sf, depth + 1);
 
   // Leading comments
   const comments = getLeadingComments(node, sf);

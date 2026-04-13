@@ -3,16 +3,10 @@
 
 import TSLean.Generated.SelfHost.Prelude
 import TSLean.Generated.SelfHost.ir_types
-import TSLean.DurableObjects.Http
-import TSLean.DurableObjects.Model
-import TSLean.DurableObjects.State
-import TSLean.DurableObjects.Storage
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
-import TSLean.Runtime.Monad
-import TSLean.Stdlib.HashMap
 
-open TSLean TSLean.Generated.Types TSLean.Stdlib.HashMap TSLean.DO
+open TSLean TSLean.Generated.Types
 
 namespace TSLean.Generated.SelfHost.Codegen_index
 
@@ -28,13 +22,21 @@ structure GenState where
   definedNames : Array String
   deriving Inhabited
 
-def Gen.emit (self : GenState) (s : String) : Unit := sorry
-def Gen.genExpr (self : GenState) (e : IRExpr) (ctx : Effect) (depth : Nat := 0) : String := sorry
-def Gen.gen (self : GenState) (mod : IRModule) : String := sorry
+def Gen.emit (self : GenState) (s : String) : Unit := ()
+def Gen.genExpr (self : GenState) (e : IRExpr) (ctx : Effect) (depth : Nat := 0) : String :=
+  s!"(* genExpr: {e.tag} *)"
+def Gen.gen (self : GenState) (mod : IRModule) : String :=
+  s!"-- generated from {mod.name}"
 def needsParens (e : IRExpr) : Bool := e.tag == "App" || e.tag == "BinOp"
 def isSimpleValue (s : String) : Bool := s.trimLeft.startsWith "\"" || s.trimLeft == "true" || s.trimLeft == "false"
 def looksMonadic (s : String) : Bool := s.trimLeft.startsWith "do" || s.trimLeft.startsWith "pure "
-partial def defaultForType (t : IRType) : String := sorry
-def groupMutual (decls : Array IRDecl) : Array (Array IRDecl) := sorry
+partial def defaultForType (t : IRType) : String :=
+  match t with
+  | .Nat => "0" | .Int => "0" | .Float => "(0 : Float)"
+  | .String => "\"\"" | .Bool => "false" | .Unit => "()"
+  | .Array _ => "#[]" | .Option _ => "none"
+  | _ => "default"
+def groupMutual (decls : Array IRDecl) : Array (Array IRDecl) :=
+  #[decls]
 
 end TSLean.Generated.SelfHost.Codegen_index

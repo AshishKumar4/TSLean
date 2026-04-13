@@ -18,16 +18,64 @@ cd TSLean
 bun install
 
 # Transpile a single file
-npx tsx src/cli.ts examples/counter.ts -o output.lean
+npx tslean compile src/example.ts -o output.lean
 
-# Transpile a multi-file project
-npx tsx src/cli.ts --project my-workers-app/ -o lean/Generated/
+# Transpile a directory
+npx tslean compile my-workers-app/ -o lean/Generated/
 
 # Run tests
 bun run test
 
 # Build & verify the Lean library (requires Lean 4.29.0)
 cd lean && lake build
+```
+
+Or use it without cloning:
+
+```bash
+npx tslean compile src/
+```
+
+## CLI
+
+```
+tslean compile <file|dir>  [options]   Transpile TypeScript to Lean 4
+tslean self-host                       Run the self-hosting pipeline
+tslean verify                          Run fixpoint verification
+tslean init [dir]                      Scaffold a new tslean project
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `-o, --output <path>` | Output file or directory |
+| `-w, --watch` | Watch for changes and recompile |
+| `--verify` | Generate proof obligations |
+| `--self-host` | Enable self-host transforms |
+| `--namespace <ns>` | Root namespace (default: `TSLean.Generated`) |
+| `--no-color` | Disable colored output |
+
+**Examples:**
+
+```bash
+# Transpile a single file
+tslean compile counter.ts -o counter.lean
+
+# Transpile a project directory with proof obligations
+tslean compile src/ -o lean/Generated/ --verify
+
+# Watch mode — recompile on changes
+tslean compile src/ -o lean/Generated/ --watch
+
+# Scaffold a new project
+tslean init my-project
+
+# Run the self-hosting pipeline (transpile TSLean itself to Lean)
+tslean self-host
+
+# Fixpoint verification (compare TS and Lean transpiler outputs)
+tslean verify
 ```
 
 ## Architecture
@@ -119,7 +167,7 @@ Seven DO models (Counter, Auth, RateLimiter, ChatRoom, Queue, SessionStore, plus
 TSLean resolves TypeScript import graphs and generates Lean module imports:
 
 ```bash
-npx tsx src/cli.ts --project my-workers-app/ -o lean/Generated/MyApp/
+tslean compile my-workers-app/ -o lean/Generated/MyApp/
 ```
 
 ```typescript
@@ -155,7 +203,10 @@ TSLean can transpile all of its own source modules to Lean 4. The 12 self-hosted
 **Requirements:** Node.js ≥ 18, Lean 4.29.0
 
 ```bash
-# TypeScript tests (1415 passing)
+# Build the CLI (compiles to dist/)
+bun run build
+
+# TypeScript tests
 bun run test
 
 # Lean library (105 build jobs, 0 sorry)
