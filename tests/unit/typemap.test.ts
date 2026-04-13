@@ -183,7 +183,7 @@ describe('mapType: generics', () => {
     const prog = makeProgram('function f<T,U>(a: T, b: U): [T,U] { return [a,b]; }');
     const sf = prog.getSourceFile('test.ts')!;
     const fn = sf.statements[0] as ts.FunctionDeclaration;
-    expect(extractTypeParams(fn)).toEqual(['T', 'U']);
+    expect(extractTypeParams(fn).map(t => t.name)).toEqual(['T', 'U']);
   });
   it('no type params → []', () => {
     const prog = makeProgram('function noop(): void {}');
@@ -193,7 +193,7 @@ describe('mapType: generics', () => {
   it('interface type params', () => {
     const prog = makeProgram('interface Box<T> { value: T; }');
     const sf = prog.getSourceFile('test.ts')!;
-    expect(extractTypeParams(sf.statements[0] as ts.InterfaceDeclaration)).toEqual(['T']);
+    expect(extractTypeParams(sf.statements[0] as ts.InterfaceDeclaration).map(t => t.name)).toEqual(['T']);
   });
 });
 

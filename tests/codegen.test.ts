@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateLean } from '../src/codegen/index.js';
 import {
-  IRModule, IRDecl, IRExpr,
+  IRModule, tp, IRDecl, IRExpr,
   TyString, TyFloat, TyBool, TyUnit, TyNat, TyArray, TyOption, TyRef, TyMap, TySet, TyTuple,
   Pure, IO, Async, stateEffect, exceptEffect, combineEffects,
   litStr, litNat, litBool, litUnit, varExpr, holeExpr,
@@ -44,7 +44,7 @@ describe('generateLean – structures', () => {
 
   it('structure with type params', () => {
     const code = generateLean(mod([{
-      tag: 'StructDef', name: 'Box', typeParams: ['T'],
+      tag: 'StructDef', name: 'Box', typeParams: [tp('T')],
       fields: [{ name: 'val', type: TyRef('T') }],
     }]));
     expect(code).toContain('structure Box');
@@ -104,7 +104,7 @@ describe('generateLean – inductives', () => {
 
   it('inductive with type param', () => {
     const code = generateLean(mod([{
-      tag: 'InductiveDef', name: 'Maybe', typeParams: ['T'],
+      tag: 'InductiveDef', name: 'Maybe', typeParams: [tp('T')],
       ctors: [{ name: 'Nothing', fields: [] }, { name: 'Just', fields: [{ type: TyRef('T') }] }],
     }]));
     expect(code).toContain('inductive Maybe (T : Type)');  // inductives use explicit params for proper lake build
@@ -121,7 +121,7 @@ describe('generateLean – type aliases', () => {
 
   it('abbrev with type param', () => {
     const code = generateLean(mod([{
-      tag: 'TypeAlias', name: 'Opt', typeParams: ['T'],
+      tag: 'TypeAlias', name: 'Opt', typeParams: [tp('T')],
       body: { tag: 'Option', inner: TyRef('T') },
     }]));
     expect(code).toContain('abbrev Opt {T : Type} := Option T');
@@ -154,7 +154,7 @@ describe('generateLean – functions', () => {
 
   it('function with type params', () => {
     const code = generateLean(mod([{
-      tag: 'FuncDef', name: 'identity', typeParams: ['T'],
+      tag: 'FuncDef', name: 'identity', typeParams: [tp('T')],
       params: [{ name: 'x', type: TyRef('T') }],
       retType: TyRef('T'), effect: Pure, body: varExpr('x', TyRef('T')),
     }]));
@@ -688,7 +688,7 @@ describe('generateLean – declaration coverage', () => {
 
   it('ClassDecl → class Name where methods', () => {
     const code = generateLean(mod([{
-      tag: 'ClassDecl', name: 'Serializable', typeParams: ['T'],
+      tag: 'ClassDecl', name: 'Serializable', typeParams: [tp('T')],
       methods: [{ name: 'serialize', type: { tag: 'Function', params: [TyRef('T')], ret: TyString, effect: Pure } }],
     }]));
     expect(code).toContain('class Serializable');

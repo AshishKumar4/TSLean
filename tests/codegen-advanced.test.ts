@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateLean } from '../src/codegen/index.js';
 import {
-  IRModule, IRDecl, IRExpr,
+  IRModule, tp, IRDecl, IRExpr,
   TyString, TyFloat, TyBool, TyNat, TyUnit, TyRef, TyArray, TyOption,
   TyMap, TySet, TyTuple, TyFn,
   Pure, IO, Async, stateEffect, exceptEffect, combineEffects,
@@ -301,7 +301,7 @@ describe('Codegen: default parameters', () => {
 describe('Codegen: advanced match patterns', () => {
   it('PNone → .none', () => {
     const code = generateLean(mod([{
-      tag: 'FuncDef', name: 'test', typeParams: ['T'],
+      tag: 'FuncDef', name: 'test', typeParams: [tp('T')],
       params: [{ name: 'o', type: TyOption(TyRef('T')) }],
       retType: TyBool, effect: Pure,
       body: {

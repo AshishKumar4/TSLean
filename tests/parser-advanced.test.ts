@@ -350,9 +350,10 @@ describe('Parser: complex generic types', () => {
     `);
     const fn = findDecl(mod, 'zipWith');
     if (fn?.tag === 'FuncDef') {
-      expect(fn.typeParams).toContain('A');
-      expect(fn.typeParams).toContain('B');
-      expect(fn.typeParams).toContain('C');
+      const names = fn.typeParams.map(t => t.name);
+      expect(names).toContain('A');
+      expect(names).toContain('B');
+      expect(names).toContain('C');
     }
   });
 

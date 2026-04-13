@@ -23,7 +23,7 @@ import {
   IRType, Pure,
   TyNat, TyInt, TyFloat, TyString, TyBool, TyUnit, TyNever,
   TyOption, TyArray, TyTuple, TyFn, TyMap, TySet, TyPromise,
-  TyRef, TyVar,
+  TyRef, TyVar, TypeParam,
 } from '../ir/types.js';
 import { DISCRIMINANT_FIELDS } from '../utils.js';
 
@@ -193,6 +193,13 @@ function mapTypeRef(t: ts.TypeReference, checker: ts.TypeChecker, depth: number)
     case 'Promise':                             return TyPromise(map1());
     case 'Record':                              return TyMap(map1(), map2(1));
     case 'Readonly':      case 'NonNullable':   return map1();
+    // Utility types that are transparent (pass through inner type)
+    case 'Required':                            return map1();
+    // Utility types that reduce to known IR types
+    case 'Partial':                             return TyRef('Partial', [map1()]);
+    case 'Pick':          case 'Omit':          return TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
+    case 'ReturnType':    case 'Parameters':    return TyRef(name, [map1()]);
+    case 'Exclude':       case 'Extract':       return TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
     default:
       return args.length === 0 ? TyRef(name) : TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
   }
@@ -366,14 +373,22 @@ function tryField(types: ts.ObjectType[], field: string, checker: ts.TypeChecker
 // ─── Type parameter extraction ──────────────────────────────────────────────────
 
 /**
- * Extract type parameter names from a TypeScript declaration.
- * @returns Array of parameter names (e.g. `["T", "U"]`).
+ * Extract type parameters from a TypeScript declaration.
+ * When a checker is provided, also extracts constraint and default types.
  */
 export function extractTypeParams(
   node: ts.InterfaceDeclaration | ts.ClassDeclaration | ts.TypeAliasDeclaration |
         ts.FunctionDeclaration | ts.MethodDeclaration | ts.ArrowFunction | ts.FunctionExpression,
-): string[] {
-  return (node.typeParameters ?? []).map(tp => tp.name.text);
+  checker?: ts.TypeChecker,
+): TypeParam[] {
+  return (node.typeParameters ?? []).map(tpNode => {
+    const name = tpNode.name.text;
+    const constraint = checker && tpNode.constraint
+      ? safeMapType(checker, tpNode.constraint) : undefined;
+    const default_ = checker && tpNode.default
+      ? safeMapType(checker, tpNode.default) : undefined;
+    return { name, constraint, default_ };
+  });
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
@@ -387,4 +402,9 @@ export function extractTypeParams(
  */
 function getAliasName(t: ts.Type): string | undefined {
   return (t as { aliasSymbol?: ts.Symbol }).aliasSymbol?.name;
+}
+
+function safeMapType(checker: ts.TypeChecker, node: ts.TypeNode): IRType | undefined {
+  const type = checker.getTypeAtLocation(node);
+  return type ? mapType(type, checker, 0) : undefined;
 }

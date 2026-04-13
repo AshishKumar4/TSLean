@@ -31,6 +31,15 @@ import { irTypeToLean } from '../typemap/index.js';
 import { translateBinOp } from '../stdlib/index.js';
 import { printTyStr, printExprStr } from './printer.js';
 
+// TS utility types that require type-level computation (keyof, infer, conditional)
+// and cannot be expressed in Lean 4 when their arguments contain type variables.
+const INEXPRESSIBLE_UTILITY_TYPES = new Set([
+  'Partial', 'Required', 'Pick', 'Omit',
+  'ReturnType', 'Parameters', 'ConstructorParameters', 'InstanceType',
+  'Extract', 'Exclude', 'ThisParameterType', 'OmitThisParameter', 'ThisType',
+  'Awaited',
+]);
+
 // ─── Public API ─────────────────────────────────────────────────────────────────
 
 /** Lower an IR module to a LeanAST file. */
@@ -445,7 +454,7 @@ class LowerCtx {
     return {
       tag: 'Structure',
       name: d.name,
-      tyParams: d.typeParams.map(p => ({ name: p, explicit: true })),
+      tyParams: d.typeParams.map(p => ({ name: p.name, explicit: true })),
       fields,
       extends_: d.extends_,
       deriving,
@@ -454,14 +463,14 @@ class LowerCtx {
   }
 
   private lowerInductive(d: Extract<IRDecl, { tag: 'InductiveDef' }>, inMutual: boolean): LeanDecl {
-    const tpArgs = d.typeParams.join(' ');
+    const tpArgs = d.typeParams.map(p => p.name).join(' ');
     const ctors: LeanCtor[] = d.ctors.map(c => ({
       name: c.name,
       fields: c.fields.map(f => {
         let ty = this.lowerType(f.type);
         // Fix recursive self-references: bare TypeRef matching the inductive name → apply type params
         if (f.type?.tag === 'TypeRef' && f.type.name === d.name && f.type.args.length === 0 && tpArgs) {
-          ty = { tag: 'TyApp', fn: { tag: 'TyName', name: d.name }, args: d.typeParams.map(p => ({ tag: 'TyName' as const, name: p })) };
+          ty = { tag: 'TyApp', fn: { tag: 'TyName', name: d.name }, args: d.typeParams.map(p => ({ tag: 'TyName' as const, name: p.name })) };
         }
         return { name: f.name, ty };
       }),
@@ -469,7 +478,7 @@ class LowerCtx {
     return {
       tag: 'Inductive',
       name: d.name,
-      tyParams: d.typeParams.map(p => ({ name: p, explicit: true })),
+      tyParams: d.typeParams.map(p => ({ name: p.name, explicit: true })),
       ctors,
       deriving: inMutual ? [] : DEFAULT_DERIVING,
       comment: d.comment,
@@ -503,7 +512,7 @@ class LowerCtx {
         return {
           tag: 'Structure',
           name: d.name,
-          tyParams: d.typeParams.map(p => ({ name: p, explicit: true })),
+          tyParams: d.typeParams.map(p => ({ name: p.name, explicit: true })),
           fields,
           deriving: ['Repr', 'BEq', 'Inhabited'],
           comment: d.comment,
@@ -512,7 +521,7 @@ class LowerCtx {
       return {
         tag: 'Abbrev',
         name: d.name,
-        tyParams: d.typeParams.map(p => ({ name: p, explicit: false })),
+        tyParams: d.typeParams.map(p => ({ name: p.name, explicit: false })),
         body: { tag: 'TyName', name: 'String' },
         comment: d.comment,
       };
@@ -520,7 +529,7 @@ class LowerCtx {
     return {
       tag: 'Abbrev',
       name: d.name,
-      tyParams: d.typeParams.map(p => ({ name: p, explicit: false })),
+      tyParams: d.typeParams.map(p => ({ name: p.name, explicit: false })),
       body: this.lowerType(d.body),
       comment: d.comment,
     };
@@ -534,11 +543,12 @@ class LowerCtx {
     // Check if body uses default (needs Inhabited constraint)
     const needsInhabited = this.exprUsesDefault(body) && d.typeParams.length > 0;
 
-    const tyParams: LeanTyParam[] = d.typeParams.map(t => ({
-      name: t,
-      explicit: false,
-      constraints: needsInhabited ? ['Inhabited'] : undefined,
-    }));
+    const tyParams: LeanTyParam[] = d.typeParams.map(t => {
+      const constraints: string[] = [];
+      if (needsInhabited) constraints.push('Inhabited');
+      if (t.constraint) constraints.push(...constraintToTypeClasses(t.constraint));
+      return { name: t.name, explicit: false, constraints: constraints.length ? constraints : undefined };
+    });
 
     const params: LeanParam[] = d.params.map(p => this.lowerParam(p, fixedEffect));
     const retTy = this.lowerRetSig(fixedEffect, this.lowerType(d.retType));
@@ -700,7 +710,7 @@ class LowerCtx {
     return {
       tag: 'Class',
       name: d.name,
-      tyParams: d.typeParams.map(p => ({ name: p, explicit: false })),
+      tyParams: d.typeParams.map(p => ({ name: p.name, explicit: false })),
       methods: d.methods.map(m => ({ name: m.name, ty: this.lowerType(m.type) })),
       comment: d.comment,
     };
@@ -770,6 +780,10 @@ class LowerCtx {
       }
       case 'TypeRef': {
         const name = t.name === 'Any' ? 'TSAny' : t.name;
+        // Inexpressible TS utility types in generic context → sorry
+        if (INEXPRESSIBLE_UTILITY_TYPES.has(name) && t.args.some(a => a.tag === 'TypeVar')) {
+          return { tag: 'TyName', name: 'String' };
+        }
         if (t.args.length === 0) return { tag: 'TyName', name };
         return { tag: 'TyApp', fn: { tag: 'TyName', name }, args: t.args.map(a => this.lowerType(a)) };
       }
@@ -1562,6 +1576,33 @@ function isSafeInterp(e: IRExpr): boolean {
     case 'FieldAccess': return isSafeInterp(e.obj);
     case 'Cast': return isSafeInterp(e.expr);
     default: return false;
+  }
+}
+
+// ─── Constraint → type class mapping ────────────────────────────────────────────
+
+/**
+ * Map a TypeScript generic constraint (IRType) to Lean type class names.
+ *
+ * Tier 1 (primitive): string→ToString, number→OfNat/OfScientific, boolean→DecidableEq
+ * Tier 2 (named interface/class): Comparable→Comparable, Serializable→Serializable
+ * Tier 3 (structural): { name: string } → HasField "name" String (deferred)
+ */
+function constraintToTypeClasses(constraint: IRType): string[] {
+  switch (constraint.tag) {
+    case 'String':  return ['ToString'];
+    case 'Nat':     return ['OfNat'];
+    case 'Int':     return ['OfNat'];
+    case 'Float':   return ['OfScientific'];
+    case 'Bool':    return ['DecidableEq'];
+    case 'TypeRef':
+      // Named interface/class constraint: <T extends Comparable> → [Comparable T]
+      return [constraint.name];
+    case 'TypeVar':
+      // <T extends U> where U is another type param — not directly expressible
+      return [];
+    default:
+      return [];
   }
 }
 

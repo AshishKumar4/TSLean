@@ -92,6 +92,18 @@ export function hasExcept(e: Effect): boolean { return e.tag === 'Except' || (e.
 /** True when the effect tree contains `IO` (recursively). */
 export function hasIO(e: Effect): boolean     { return e.tag === 'IO'     || (e.tag === 'Combined' && e.effects.some(hasIO)); }
 
+// ─── Type parameters ────────────────────────────────────────────────────────────
+
+/** A generic type parameter with optional constraint and default. */
+export interface TypeParam {
+  name: string;
+  constraint?: IRType;    // from <T extends X>
+  default_?: IRType;      // from <T = Y>
+}
+
+/** Create a TypeParam from a bare name (no constraint/default). */
+export function tp(name: string): TypeParam { return { name }; }
+
 // ─── Types ──────────────────────────────────────────────────────────────────────
 //
 // IRType is the type universe of the IR.  Primitive types map 1:1 to Lean 4 types.
@@ -119,7 +131,7 @@ export type IRType =
   | { tag: 'Tuple';     elems: IRType[] }
   | { tag: 'Function';  params: IRType[]; ret: IRType; effect: Effect }
   | { tag: 'Structure'; name: string; fields: Array<{ name: string; type: IRType }> }
-  | { tag: 'Inductive'; name: string; typeParams: string[]; ctors: Array<{ name: string; fields: IRType[] }> }
+  | { tag: 'Inductive'; name: string; typeParams: TypeParam[]; ctors: Array<{ name: string; fields: IRType[] }> }
   | { tag: 'TypeRef';   name: string; args: IRType[] }
   | { tag: 'TypeVar';   name: string }
   | { tag: 'Map';       key: IRType; value: IRType }
@@ -313,13 +325,13 @@ export type UnOp = 'Not' | 'Neg' | 'BitNot';
  * - `Namespace`    → `namespace Foo ... end Foo`
  */
 export type IRDecl =
-  | { tag: 'TypeAlias';    name: string; typeParams: string[]; body: IRType;  comment?: string }
-  | { tag: 'StructDef';    name: string; typeParams: string[]; fields: Array<{ name: string; type: IRType; mutable?: boolean }>; deriving?: string[]; comment?: string; extends_?: string }
-  | { tag: 'InductiveDef'; name: string; typeParams: string[]; ctors: Array<{ name: string; fields: Array<{ name?: string; type: IRType }> }>; comment?: string }
-  | { tag: 'FuncDef';      name: string; typeParams: string[]; params: IRParam[]; retType: IRType; effect: Effect; body: IRExpr; comment?: string; isPartial?: boolean; where_?: IRDecl[]; docComment?: string }
+  | { tag: 'TypeAlias';    name: string; typeParams: TypeParam[]; body: IRType;  comment?: string }
+  | { tag: 'StructDef';    name: string; typeParams: TypeParam[]; fields: Array<{ name: string; type: IRType; mutable?: boolean }>; deriving?: string[]; comment?: string; extends_?: string }
+  | { tag: 'InductiveDef'; name: string; typeParams: TypeParam[]; ctors: Array<{ name: string; fields: Array<{ name?: string; type: IRType }> }>; comment?: string }
+  | { tag: 'FuncDef';      name: string; typeParams: TypeParam[]; params: IRParam[]; retType: IRType; effect: Effect; body: IRExpr; comment?: string; isPartial?: boolean; where_?: IRDecl[]; docComment?: string }
   | { tag: 'InstanceDef';  typeClass: string; typeArgs: IRType[]; methods: IRDecl[]; comment?: string }
   | { tag: 'TheoremDef';   name: string; statement: string; proof: string; comment?: string }
-  | { tag: 'ClassDecl';    name: string; typeParams: string[]; supers?: string[]; methods: Array<{ name: string; type: IRType; default_?: IRExpr }>; comment?: string }
+  | { tag: 'ClassDecl';    name: string; typeParams: TypeParam[]; supers?: string[]; methods: Array<{ name: string; type: IRType; default_?: IRExpr }>; comment?: string }
   | { tag: 'Namespace';    name: string; decls: IRDecl[] }
   | { tag: 'RawLean';      code: string }
   | { tag: 'VarDecl';      name: string; type: IRType; value: IRExpr; mutable: boolean }
