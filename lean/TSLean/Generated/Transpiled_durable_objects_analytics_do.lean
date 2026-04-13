@@ -14,6 +14,11 @@ open TSLean TSLean.WebAPI TSLean.DO
 
 namespace TSLean.Generated.AnalyticsDo
 
+-- Auto-generated empty state struct for AnalyticsDOState
+structure AnalyticsDOState where
+  mk ::
+  deriving Repr, BEq, Inhabited
+
 structure Metric where
   mk ::
   count : Float
@@ -28,7 +33,7 @@ namespace AnalyticsDO
 mutual
 
 def AnalyticsDO.init : AnalyticsDOState :=
-  {  }
+  default
 
 def AnalyticsDO.fetch (self : AnalyticsDOState) (request : Request) : IO Response :=
   do
@@ -39,33 +44,27 @@ def AnalyticsDO.fetch (self : AnalyticsDOState) (request : Request) : IO Respons
         do
           trackEvent self event
           return mkResponse ("<serialized>") ({ headers := default })
-      else
-        pure ()
-      do
-        if (request.method == "GET") && (url.pathname == "/count") then
-          let name : String := Option.getD (url.searchParams.get "event") ""
-          let metric ← Storage.get default (s!"metric:{name}")
-          pure (mkResponse ("<serialized>") ({ headers := default }))
-        else
-          pure ()
-        if (request.method == "DELETE") && (url.pathname == "/reset") then do
-            Storage.deleteAll default
-            return mkResponse ("<serialized>") ({ headers := default })
-        else
-          pure (mkResponse "Not Found" ({ status := 404 }))
+      else do
+          if (request.method == "GET") && (url.pathname == "/count") then
+            let name : String := Option.getD (url.searchParams.get "event") ""
+            let metric : Metric := default
+            pure (mkResponse ("<serialized>") ({ headers := default }))
+          else
+            if (request.method == "DELETE") && (url.pathname == "/reset") then do
+                pure default
+                return mkResponse ("<serialized>") ({ headers := default })
+            else
+              pure (mkResponse "Not Found" ({ status := 404 }))
 
 def AnalyticsDO.trackEvent (self : AnalyticsDOState) (event : String) : IO Unit :=
   do
-    let key : String := s!"metric:{event.name}"
-    let existing ← Storage.get default key
-    let value : Float := Option.getD event.value 1
-    let updated : Metric := if existing then
-      pure ({ count := existing.count + 1, sum := existing.sum + value, min := min existing.min value, max := max existing.max value, lastSeen := event.timestamp })
-    else
-      pure ({ count := 1, sum := value, min := value, max := value, lastSeen := event.timestamp })
-    do
-      Storage.put default key updated
-      let total ← Option.getD Storage.get default "total:events" 0
+    let key : String := s!"metric:{(default : String)}"
+    let existing : Option Metric := none
+    let value : Float := 1
+    let updated : Metric := match existing with
+      | some m => { count := m.count + 1, sum := m.sum + value, min := min m.min value, max := max m.max value, lastSeen := default }
+      | none => { count := 1, sum := value, min := value, max := value, lastSeen := default }
+    pure ()
 
 end
 end AnalyticsDO

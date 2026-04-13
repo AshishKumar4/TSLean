@@ -30,39 +30,67 @@ structure VerificationResult where
   leanCode    : String
   deriving Repr, BEq, Inhabited
 
--- Expression summary for error messages
+-- Expression summary for error messages (mirrors TS exprSummary exactly)
 partial def exprSummary : IRExpr → String
   | .Var name _            => name
   | .FieldAccess obj f _   => exprSummary obj ++ "." ++ f
+  | .IndexAccess obj idx _ => exprSummary obj ++ "[" ++ exprSummary idx ++ "]"
   | .LitNat v _            => toString v
   | .LitString v _         => s!"\"{v}\""
+  | .LitBool true _        => "true"
+  | .LitBool false _       => "false"
+  | .LitFloat v _          => toString v
+  | .LitUnit _             => "()"
+  | .LitNull _             => "null"
+  | .App fn args _         => exprSummary fn ++ "(" ++
+      String.intercalate ", " (args.toList.map exprSummary) ++ ")"
+  | .UnOp _ operand _      => "!" ++ exprSummary operand
   | _                      => "_"
 
--- Collect proof obligations from an expression tree
+-- Collect proof obligations from an expression tree.
+-- Mirrors the TS switch(e.tag) in collectExpr exactly: 15 cases.
 partial def collectExpr (e : IRExpr) (fn : String) : Array ProofObligation :=
   match e with
+  -- Array bounds: arr[idx] → obligation that idx < arr.size
   | .IndexAccess obj idx _ =>
     #[{ kind := .ArrayBounds, funcName := fn,
         detail := exprSummary obj ++ "[" ++ exprSummary idx ++ "]" }]
       ++ collectExpr obj fn ++ collectExpr idx fn
+  -- Division safety: a / b or a % b → obligation that b ≠ 0
   | .BinOp op left right _ =>
     let divObl : Array ProofObligation :=
       if op == TSLean.Generated.Types.BinOp.Div || op == TSLean.Generated.Types.BinOp.Mod then
         #[{ kind := .DivisionSafe, funcName := fn, detail := exprSummary right }]
       else #[]
     divObl ++ collectExpr left fn ++ collectExpr right fn
+  -- Option safety: x.value or x.get when x : Option → obligation that x.isSome
+  | .FieldAccess obj field nd =>
+    let optionObl : Array ProofObligation :=
+      if (field == "value" || field == "get") && nd.type == .Option nd.type then
+        #[{ kind := .OptionIsSome, funcName := fn, detail := exprSummary obj }]
+      else #[]
+    optionObl ++ collectExpr obj fn
+  -- Recursive cases: walk all sub-expressions
   | .Let _ value body _       => collectExpr value fn ++ collectExpr body fn
   | .Bind _ monad body _      => collectExpr monad fn ++ collectExpr body fn
   | .IfThenElse c t el _      => collectExpr c fn ++ collectExpr t fn ++ collectExpr el fn
-  | .Match scr _ _             => collectExpr scr fn
-  | .App f args _              => collectExpr f fn ++ args.foldl (fun a x => a ++ collectExpr x fn) #[]
-  | .Lambda _ body _           => collectExpr body fn
-  | .Assign _ v _              => collectExpr v fn
-  | .TryCatch body handler _   => collectExpr body fn ++ collectExpr handler fn
-  | .Return v _                => collectExpr v fn
-  | .Throw err _               => collectExpr err fn
-  | .Sequence stmts _          => stmts.foldl (fun a s => a ++ collectExpr s fn) #[]
-  | _                          => #[]
+  | .Match scr _ _            => collectExpr scr fn
+  | .Sequence stmts _         => stmts.foldl (fun a s => a ++ collectExpr s fn) #[]
+  | .App f args _             => collectExpr f fn ++ args.foldl (fun a x => a ++ collectExpr x fn) #[]
+  | .Lambda _ body _          => collectExpr body fn
+  | .Assign _ v _             => collectExpr v fn
+  | .TryCatch body handler _  => collectExpr body fn ++ collectExpr handler fn
+  | .Return v _               => collectExpr v fn
+  | .Throw err _              => collectExpr err fn
+  -- Cast/Await: recurse into inner expression
+  | .Cast inner _ _           => collectExpr inner fn
+  | .Await inner _            => collectExpr inner fn
+  -- Struct/Array literals: recurse into field values
+  | .StructLit _ fields _     => fields.foldl (fun a (_, v) => a ++ collectExpr v fn) #[]
+  | .StructUpdate base upd _  => collectExpr base fn ++ upd.foldl (fun a (_, v) => a ++ collectExpr v fn) #[]
+  | .ArrayLit elems _         => elems.foldl (fun a e => a ++ collectExpr e fn) #[]
+  -- Leaf nodes: no sub-expressions
+  | _                         => #[]
 
 -- Collect from a declaration
 partial def collectDecl : IRDecl → Array ProofObligation

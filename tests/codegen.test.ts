@@ -523,12 +523,13 @@ describe('generateLean – expression coverage', () => {
     expect(code).toContain('.val');
   });
 
-  it('IsType → True.intro (type-safe approximation)', () => {
+  it('IsType → sorry proof obligation with type name', () => {
     const code = expr({
       tag: 'IsType', expr: varExpr('x', TyRef('Shape')), testType: TyRef('Circle'),
       type: TyBool, effect: Pure,
     });
-    expect(code).toContain('True.intro');
+    expect(code).toContain('sorry');
+    expect(code).toContain('Circle');
   });
 
   it('TypeNarrow → inner expression (type narrowing is erased)', () => {

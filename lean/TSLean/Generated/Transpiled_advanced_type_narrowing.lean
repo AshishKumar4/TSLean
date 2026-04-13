@@ -4,10 +4,21 @@
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
+import TSLean.Stdlib.HashMap
 
-open TSLean
+open TSLean TSLean.Stdlib.HashMap
 
 namespace TSLean.Generated.TypeNarrowing
+
+-- Auto-generated empty state struct for DogState
+structure DogState where
+  mk ::
+  deriving Repr, BEq, Inhabited
+
+-- Auto-generated empty state struct for CatState
+structure CatState where
+  mk ::
+  deriving Repr, BEq, Inhabited
 
 -- // Type narrowing: typeof, instanceof, in, discriminated by value
 abbrev StringOrNumber := String
@@ -35,11 +46,11 @@ def Cat.meow (self : CatState) : IO Unit :=
     pure ()
 
 def makeSound (animal : AnimalState) : Unit :=
-  if True.intro then
-    animal.bark
+  if (sorry : Bool) /- animal matches Dog -/ then
+    default
   else
-    if True.intro then
-      animal.meow
+    if (sorry : Bool) /- animal matches Cat -/ then
+      default
     else
       ()
 
@@ -54,15 +65,12 @@ structure HasAge where
   deriving Repr, BEq, Inhabited
 
 def describeEntity (entity : HasName) : String :=
-  if AssocMap.contains entity "name" then
-    s!"Named: {entity.name}"
-  else
-    s!"Age: {entity.age}"
+  s!"Named: {entity.name}"
 
 def isString (x : Any) : Bool :=
   (TSLean.typeOf x) == "string"
 
 def isPositiveNumber (x : Any) : Bool :=
-  ((TSLean.typeOf x) == "number") && (x > 0)
+  (TSLean.typeOf x) == "number"
 
 end TSLean.Generated.TypeNarrowing

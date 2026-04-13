@@ -10,29 +10,24 @@ open TSLean TSLean.Stdlib.HashMap
 
 namespace TSLean.Generated.ForLoops
 
--- // For loops, for-of, for-in, while, destructuring in loops
-def rangeSum (n : Float) : StateT Unit IO Float :=
+-- For loops, for-of, for-in, while, destructuring in loops
+def rangeSum (n : Float) : IO Float :=
   do
-    let total : Float := 0
-    do
-      let rec _loop_116 := fun i => do
-        if i < n then do
-          let total := total + i
-          _loop_116 (i + 1)
-      else
-        pure ()
-      return total
+    let mut total : Float := 0
+    let mut i : Float := 0
+    while i < n do
+      total := total + i
+      i := i + 1
+    return total
 
-def countDown (n : Float) : StateT Unit IO (Array Float) :=
+def countDown (n : Float) : IO (Array Float) :=
   do
-    let result : Array Float := #[]
-    do
-      let rec _loop_260 := fun i => if i > 0 then
-        result.push i
-        _loop_260 (i - 1)
-      else
-        ()
-      return result
+    let mut result : Array Float := #[]
+    let mut i : Float := n
+    while i > 0 do
+      result := result.push i
+      i := i - 1
+    return result
 
 def processItems (items : Array String) : Array String :=
   default
@@ -40,17 +35,17 @@ def processItems (items : Array String) : Array String :=
 def objectKeys (obj : String) : Array String :=
   default
 
-def fibonacci (n : Float) : StateT Unit IO Float :=
+def fibonacci (n : Float) : IO Float :=
   do
-    let a : Float := 0
-    do
-      let rec _while_719 := fun _ => do
-        if let n := n - 1 > 0 then do
-          let tmp := b
-          _while_719
-      else
-        pure ()
-      return a
+    let mut a : Float := 0
+    let mut b : Float := 1
+    let mut count : Float := n
+    while count > 0 do
+      let tmp := b
+      b := a + b
+      a := tmp
+      count := count - 1
+    return a
 
 def findFirst {T : Type} (items : Array T) (pred : T → Bool) : Option T :=
   default

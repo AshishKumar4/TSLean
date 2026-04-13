@@ -11,27 +11,27 @@ namespace TSLean.Generated.BrandedTypes
 structure UserId where
   mk ::
   val : String
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, Inhabited, DecidableEq
 
 structure RoomId where
   mk ::
   val : String
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, Inhabited, DecidableEq
 
 structure MessageId where
   mk ::
   val : String
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, Inhabited, DecidableEq
 
 structure SessionToken where
   mk ::
   val : String
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, Inhabited, DecidableEq
 
 structure EmailAddress where
   mk ::
   val : String
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, Inhabited, DecidableEq
 
 def makeUserId (raw : String) : UserId :=
   UserId.mk raw

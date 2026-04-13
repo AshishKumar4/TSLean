@@ -42,57 +42,50 @@ def AuthDO.fetch (self : AuthDOState) (request : Request) : IO Response :=
     do
       if (request.method == "POST") && (url.pathname == "/login") then
         let creds ← request.toJson
-        pure (handleLogin self creds)
+        handleLogin self creds
       else
-        pure ()
-      if (request.method == "POST") && (url.pathname == "/logout") then
-        let token : Option String := request.headers.get "Authorization".replace "Bearer " ""
-        if !token then
-          pure (mkResponse ("<serialized>") ({ status := 401 }))
+        if (request.method == "POST") && (url.pathname == "/logout") then
+          let token : Option String := (request.headers.get "Authorization").map (·.replace "Bearer " "")
+          match token with
+          | none => pure (mkResponse ("<serialized>") ({ status := 401 }))
+          | some t => do
+              logout self t
+              return mkResponse ("<serialized>") ({ headers := default })
         else do
-            logout self token
-            return mkResponse ("<serialized>") ({ headers := default })
-      else do
-          if (request.method == "GET") && (url.pathname == "/verify") then
-            let token : Option String := request.headers.get "Authorization".replace "Bearer " ""
-            if !token then
-              pure (mkResponse ("<serialized>") ({ status := 401 }))
+            if (request.method == "GET") && (url.pathname == "/verify") then
+              let token : Option String := (request.headers.get "Authorization").map (·.replace "Bearer " "")
+              match token with
+              | none => pure (mkResponse ("<serialized>") ({ status := 401 }))
+              | some t => do
+                let session ← authenticate self t
+                match session with
+                | none => pure (mkResponse ("<serialized>") ({ status := 401 }))
+                | some _ => pure (mkResponse ("<serialized>") ({ headers := default }))
             else
-              let session ← authenticate self token
-              if !session then
-                pure (mkResponse ("<serialized>") ({ status := 401 }))
-              else
-                pure (mkResponse ("<serialized>") ({ headers := default }))
-          else
-            pure ()
-          return mkResponse "Not Found" ({ status := 404 })
+              pure (mkResponse "Not Found" ({ status := 404 }))
 
 def AuthDO.handleLogin (self : AuthDOState) (creds : String) : IO Response :=
   do
-    if (!creds.username) || (!creds.password) then
-      pure (mkResponse ("<serialized>") ({ status := 401 }))
-    else
-      let token : String := _uuid_stub_
-      let session : AuthSession := { userId := creds.username, token := token, createdAt := 0, expiresAt := (0) + self.TOKEN_TTL, roles := #["user"] }
-      do
-        Storage.put default (s!"token:{token}") session
-        return mkResponse ("<serialized>") ({ headers := default })
+    let token : String := "uuid-stub"
+    let session : AuthSession := { userId := default, token := token, createdAt := 0, expiresAt := (0) + self.TOKEN_TTL, roles := #["user"] }
+    pure default
+    return mkResponse ("<serialized>") ({ headers := default })
 
 def AuthDO.logout (self : AuthDOState) (token : String) : IO Unit :=
   do
-    Storage.delete default (s!"token:{token}")
+    pure default
 
 def AuthDO.authenticate (self : AuthDOState) (token : String) : IO (Option AuthSession) :=
   do
-    let session ← Storage.get default (s!"token:{token}")
-    if !session then
-      pure none
-    else
-      if (0) > session.expiresAt then do
-          Storage.delete default (s!"token:{token}")
+    let session : Option AuthSession := none
+    match session with
+    | none => pure none
+    | some s =>
+      if (0) > s.expiresAt then do
+          pure default
           return none
       else
-        pure session
+        pure (some s)
 
 end
 end AuthDO

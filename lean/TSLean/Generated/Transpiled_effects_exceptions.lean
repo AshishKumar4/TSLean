@@ -9,6 +9,11 @@ open TSLean
 
 namespace TSLean.Generated.Exceptions
 
+-- Auto-generated empty state struct for ValidationErrorState
+structure ValidationErrorState where
+  mk ::
+  deriving Repr, BEq, Inhabited
+
 def ValidationError.init (self : ValidationErrorState) (field : String) (reason : String) : Unit :=
   default
 

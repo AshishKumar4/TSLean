@@ -9,6 +9,11 @@ open TSLean
 
 namespace TSLean.Generated.ClassFeatures
 
+-- Auto-generated empty state struct for CatState
+structure CatState where
+  mk ::
+  deriving Repr, BEq, Inhabited
+
 -- // Class inheritance, static methods, getters/setters, string enums
 inductive Status where
   | Active

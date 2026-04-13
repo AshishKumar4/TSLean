@@ -65,6 +65,9 @@ class Gen {
       this.emit('');
     }
 
+    // Emit missing state structs (referenced in method signatures but not defined)
+    this.emitMissingStateStructs(mod.decls);
+
     for (const d of mod.decls) { this.emitDecl(d); this.emit(''); }
 
     if (ns && ns !== 'T' && ns !== 'Test') {
@@ -138,6 +141,56 @@ class Gen {
       ty = ty.replace(new RegExp(`\\b${cls}\\b`, 'g'), state);
     }
     return ty;
+  }
+
+  /** Match a variable name to a known struct type for `default` type annotations.
+   *  Heuristic: "metric" → "Metric", "session" → "Session", etc. */
+  private inferTypeForDefault(varName: string): string | null {
+    const capitalized = varName.charAt(0).toUpperCase() + varName.slice(1);
+    if (this.structFields.has(capitalized)) return capitalized;
+    // Try common suffixes: "existingMetric" → "Metric"
+    for (const [name] of this.structFields) {
+      if (name === 'default' || name.endsWith('State')) continue;
+      if (varName.toLowerCase().endsWith(name.toLowerCase())) return name;
+    }
+    return null;
+  }
+
+  /** Emit structure definitions for State types that are referenced but not defined. */
+  private emitMissingStateStructs(decls: IRDecl[]): void {
+    const definedTypes = new Set<string>();
+    const referencedTypes = new Set<string>();
+    for (const d of decls) {
+      if (d.tag === 'StructDef') definedTypes.add(d.name);
+      if (d.tag === 'FuncDef') {
+        for (const p of d.params) {
+          if (p.type.tag === 'TypeRef') referencedTypes.add(p.type.name);
+        }
+        if (d.retType.tag === 'TypeRef') referencedTypes.add(d.retType.name);
+      }
+      if (d.tag === 'Namespace') {
+        for (const inner of d.decls) {
+          if (inner.tag === 'FuncDef') {
+            for (const p of inner.params) {
+              if (p.type.tag === 'TypeRef') referencedTypes.add(p.type.name);
+            }
+            if (inner.retType.tag === 'TypeRef') referencedTypes.add(inner.retType.name);
+          }
+        }
+      }
+    }
+    for (const name of referencedTypes) {
+      if (!definedTypes.has(name) && name.endsWith('State')) {
+        this.emit(`-- Auto-generated empty state struct for ${name}`);
+        this.emit(`structure ${name} where`);
+        this.ind++;
+        this.emit(`mk ::`);
+        this.ind--;
+        this.emit(`  deriving ${DEFAULT_DERIVING}`);
+        this.emit('');
+        this.structFields.set(name, []);
+      }
+    }
   }
 
   // ─── Import resolver (Fix 1 + Fix 5) ───────────────────────────────────────
@@ -259,6 +312,7 @@ class Gen {
       this.collectExprImportNeeds(e.body, needs);
     }
     if (e.tag === 'IfThenElse') {
+      this.collectExprImportNeeds(e.cond, needs);
       this.collectExprImportNeeds(e.then, needs);
       this.collectExprImportNeeds(e.else_, needs);
     }
@@ -323,8 +377,10 @@ class Gen {
       this.emit(`${fieldName} : ${irTypeToLean(f.type)}`);
     }
     this.ind--;
-    // Always derive Repr, BEq, Inhabited for compilability (default needs Inhabited)
-    this.emit(`  deriving ${DEFAULT_DERIVING}`);
+    // Branded types (single val field) also need DecidableEq for use as map keys
+    const isBranded = enrichedFields.length === 1 && enrichedFields[0].name === 'val';
+    const deriving = isBranded ? `${DEFAULT_DERIVING}, DecidableEq` : DEFAULT_DERIVING;
+    this.emit(`  deriving ${deriving}`);
   }
 
   private emitInductive(d: Extract<IRDecl, { tag: 'InductiveDef' }>): void {
@@ -571,7 +627,11 @@ class Gen {
         // Emit type-appropriate default instead of sorry
         return defaultForType(e.type);
       }
-      case 'Var':       return sanitize(e.name);
+      case 'Var': {
+        // If the name is a quoted string literal (from stdlib mapping), emit as-is
+        if (e.name.startsWith('"') && e.name.endsWith('"')) return e.name;
+        return sanitize(e.name);
+      }
 
       case 'FieldAccess': {
         // Pattern 3: Strip `.state` prefix in DO methods.
@@ -620,7 +680,8 @@ class Gen {
           'concat': 'append',
           'indexOf': 'indexOf?',
           'slice': 'extract',
-          'join': 'foldl (· ++ ·) ""',   // Array.join with separator
+          'split': isString ? 'splitOn' : 'split',  // String.splitOn, Array doesn't have split
+          'join': isString ? 'intercalate' : 'foldl (· ++ ·) ""',  // String.intercalate, Array.join with separator
           // Type-dependent mappings:
           'length': isString ? 'length' : 'size',   // String.length, Array.size
           'size': isString ? 'length' : 'size',
@@ -639,6 +700,27 @@ class Gen {
         // Strip leading underscore from private field names (TS _radius → Lean radius)
         if (mappedField.startsWith('_') && mappedField.length > 1 && /[a-zA-Z]/.test(mappedField[1])) {
           mappedField = mappedField.slice(1);
+        }
+        // Check if the field exists on the known struct type.
+        // If not (e.g. accessing inherited method on wrong subclass), use default.
+        if (e.obj.type.tag === 'TypeRef') {
+          const rawName = e.obj.type.name;
+          const stateName = this.classToState.get(rawName) ?? rawName;
+          const knownFields = this.structFields.get(stateName) ??
+            this.structFields.get(rawName) ??
+            this.structFields.get(rawName + 'State');
+          if (knownFields) {
+            if (!knownFields.some(f => f.name === mappedField)) return 'default';
+          }
+        }
+        // String/Any types don't have arbitrary fields — emit default
+        const isStringType = e.obj.type.tag === 'String' ||
+          (e.obj.type.tag === 'TypeRef' && e.obj.type.name === 'String');
+        const isAnyType = e.obj.type.tag === 'TypeRef' && e.obj.type.name === 'Any';
+        const stringMethods = ['length', 'size', 'includes', 'trim',
+          'toLower', 'toUpper', 'startsWith', 'endsWith', 'splitOn', 'replace'];
+        if ((isStringType || isAnyType) && !stringMethods.includes(mappedField)) {
+          return 'default';
         }
         return `${obj}.${mappedField}`;
       }
@@ -671,17 +753,46 @@ class Gen {
           const args = e.args.map(a => this.genP(a, ctx, depth));
           return `${method} self ${args.join(' ')}`.trim();
         }
+        // Rewrite method calls on known types to Lean function-call style
+        if (e.fn.tag === 'FieldAccess') {
+          const obj = this.genExpr(e.fn.obj, ctx, depth);
+          const method = e.fn.field;
+          const isStr = e.fn.obj.type.tag === 'String';
+          const isArr = e.fn.obj.type.tag === 'Array';
+          const args = e.args.map(a => this.genP(a, ctx, depth));
+          // String methods → Lean function-style calls
+          if (isStr && method === 'split')
+            return args.length > 0 ? `${obj}.splitOn ${args[0]}` : `${obj}.splitOn ""`;
+          if (isStr && method === 'replace' && args.length >= 2)
+            return `${obj}.replace ${args[0]} ${args[1]}`;
+          if (isStr && method === 'startsWith' && args.length > 0)
+            return `${obj}.startsWith ${args[0]}`;
+          if (isStr && method === 'endsWith' && args.length > 0)
+            return `${obj}.endsWith ${args[0]}`;
+          if (isStr && method === 'includes' && args.length > 0)
+            return `${obj}.includes ${args[0]}`;
+          // Array.join(sep) → String.intercalate sep arr
+          if (isArr && method === 'join' && args.length > 0)
+            return `String.intercalate ${args[0]} ${obj}`;
+          // Array.push → let _ := arr.push val (handled downstream)
+          if (isArr && method === 'push' && args.length > 0)
+            return `${obj}.push ${args[0]}`;
+        }
         const fn   = this.genExpr(e.fn, ctx, depth);
+        // AssocMap.contains on a non-map struct type → true (field existence is static)
+        if (fn === 'AssocMap.contains' && e.args.length >= 1 &&
+            e.args[0].type.tag === 'TypeRef' && e.args[0].type.name !== 'Map' &&
+            !e.args[0].type.name.includes('AssocMap')) {
+          return 'true';
+        }
         // Unresolved functions emit default
         if (fn === 'sorry' || fn === 'default') return 'default';
         // TS compiler API calls have no Lean equivalent
         if (fn.startsWith('ts.') || fn.startsWith('path.') || fn.startsWith('fs.') || fn.startsWith('process.'))
           return 'default';
-        // Storage operations: emit as pure function calls on the state
-        if (fn.startsWith('Storage.')) {
-          const args = e.args.map(a => this.genP(a, ctx, depth));
-          return `${fn} ${args.join(' ')}`;
-        }
+        // Storage operations → pure default in monadic context
+        // (Storage API needs deep DO monad integration that we can't express simply)
+        if (fn.startsWith('Storage.')) return !isPure(ctx) ? 'pure default' : 'default';
         // serialize on struct literals: use toString on a string representation
         if ((fn === 'serialize' || fn === 'toString') && e.args.some(a => a.tag === 'StructLit')) {
           return `"<serialized>"`;
@@ -714,7 +825,18 @@ class Gen {
       case 'Bind': {
         const m    = this.genExpr(e.monad, ctx, depth);
         const body = this.genExpr(e.body, ctx, depth);
-        return `let ${e.name} ← ${m}\n${indent}${body}`;
+        // If the "monad" is actually a pure value (array literal, struct, default, number),
+        // use := instead of ← (no monadic bind needed for pure expressions)
+        const isPureValue = m.startsWith('#[') || m.startsWith('{') || m === 'default' ||
+          m.startsWith('"') || /^\d/.test(m) || m === 'true' || m === 'false' || m === 'none';
+        // When monad is `pure default`, Lean can't infer the type — add annotation
+        // by matching variable name to known struct types (heuristic for storage.get)
+        if (m === 'pure default' || (isPureValue && m === 'default')) {
+          const typeAnn = this.inferTypeForDefault(e.name);
+          if (typeAnn) return `let ${e.name} : ${typeAnn} := default\n${indent}${body}`;
+        }
+        const op = isPureValue ? ':=' : '←';
+        return `let ${e.name} ${op} ${m}\n${indent}${body}`;
       }
 
       case 'IfThenElse': {
@@ -776,6 +898,8 @@ class Gen {
           }
           return `${f.name} := ${val}`;
         }).join(', ');
+        // Empty struct literal → default (needs Inhabited instance)
+        if (!fieldStrs) return 'default';
         return `{ ${fieldStrs} }`;
       }
 
@@ -875,16 +999,13 @@ class Gen {
         return inner;
       }
       case 'IsType': {
-        // instanceof / type guard — approximated with a decidable check.
-        // In Lean 4 there is no runtime type inspection for opaque types, so we emit a sorry
-        // that signals a proof obligation: the caller must supply the type proof.
+        // instanceof / type guard — no runtime type inspection in Lean 4, so emit sorry
+        // as a proof obligation: the caller must supply evidence of the type relationship.
         const typeName = e.testType.tag === 'TypeRef' ? e.testType.name
                        : e.testType.tag === 'Structure' ? e.testType.name
                        : irTypeToLean(e.testType);
         const expr = this.genExpr(e.expr, ctx, depth);
-        // Emit as a decision procedure stub
-        // IsType check: approximate with equality (always true, type-safe)
-        return `True.intro`;
+        return `(sorry : Bool) /- ${expr} matches ${typeName} -/`;
       }
 
       case 'Return': {
@@ -997,9 +1118,22 @@ class Gen {
   private genDoSeq(stmts: IRExpr[], ctx: Effect, depth: number): string {
     const ind = '  '.repeat(this.ind + depth + 1);
     const lines = ['do'];
-    for (const s of stmts) {
+
+    // Pre-process: chain sequential IfThenElse(cond, body, LitUnit) nodes
+    // into a single if-else-if chain. This is the key DO pattern:
+    //   if cond1 then return resp1
+    //   if cond2 then return resp2
+    //   return defaultResp
+    // becomes: if cond1 then ... else if cond2 then ... else ...
+    const processed = this.chainSequentialIfs(stmts);
+
+    for (const s of processed) {
       if (s.tag === 'Bind') {
-        lines.push(`${ind}let ${s.name} ← ${this.genExpr(s.monad, ctx, depth + 1)}`);
+        const mStr = this.genExpr(s.monad, ctx, depth + 1);
+        const isPureVal = mStr.startsWith('#[') || mStr.startsWith('{') || mStr === 'default' ||
+          mStr.startsWith('"') || /^\d/.test(mStr) || mStr === 'true' || mStr === 'false' || mStr === 'none';
+        const op = isPureVal ? ':=' : '←';
+        lines.push(`${ind}let ${s.name} ${op} ${mStr}`);
       } else if (s.tag === 'Let') {
         const isRec = s.value.tag === 'Lambda' && bodyContainsVarRef(s.value.body, s.name);
         const kw = isRec ? 'let rec' : 'let';
@@ -1007,16 +1141,68 @@ class Gen {
       } else if (s.tag === 'Return') {
         lines.push(`${ind}return ${this.genExpr(s.value, ctx, depth + 1)}`);
       } else {
-        lines.push(`${ind}${this.genExpr(s, ctx, depth + 1)}`);
+        const expr = this.genExpr(s, ctx, depth + 1);
+        // In do blocks, non-last expressions that return non-Unit (like Array.push)
+        // need `let _ :=` to discard the return value
+        if (expr.includes('.push ') || expr.includes('.push(')) {
+          lines.push(`${ind}let _ := ${expr}`);
+        } else {
+          lines.push(`${ind}${expr}`);
+        }
       }
     }
     return lines.join('\n');
+  }
+
+  /** Chain sequential if-then-unit statements into a single if-else-if chain.
+   *  Input:  [IfThenElse(c1, b1, ()), IfThenElse(c2, b2, ()), returnDefault]
+   *  Output: [IfThenElse(c1, b1, IfThenElse(c2, b2, returnDefault))] */
+  private chainSequentialIfs(stmts: IRExpr[]): IRExpr[] {
+    // Find runs of IfThenElse where else_ is LitUnit or pure ()
+    const result: IRExpr[] = [];
+    let i = 0;
+    while (i < stmts.length) {
+      const s = stmts[i];
+      if (s.tag === 'IfThenElse' && isEmptyElse(s.else_) && i + 1 < stmts.length) {
+        // Start of an if-chain. Collect all consecutive if-then-() patterns.
+        const chain: Array<{ cond: IRExpr; then: IRExpr }> = [{ cond: s.cond, then: s.then }];
+        i++;
+        while (i < stmts.length && stmts[i].tag === 'IfThenElse' && isEmptyElse((stmts[i] as any).else_)) {
+          const next = stmts[i] as Extract<IRExpr, { tag: 'IfThenElse' }>;
+          chain.push({ cond: next.cond, then: next.then });
+          i++;
+        }
+        // The remaining statement (if any) becomes the final else
+        const finalElse: IRExpr = i < stmts.length ? stmts[i] : { tag: 'LitUnit', type: s.type, effect: s.effect };
+        if (i < stmts.length) i++;  // consume the final else statement
+
+        // Build the chained if-else-if from right to left
+        let chained: IRExpr = finalElse;
+        for (let j = chain.length - 1; j >= 0; j--) {
+          chained = {
+            tag: 'IfThenElse',
+            cond: chain[j].cond,
+            then: chain[j].then,
+            else_: chained,
+            type: s.type,
+            effect: s.effect,
+          };
+        }
+        result.push(chained);
+      } else {
+        result.push(s);
+        i++;
+      }
+    }
+    return result;
   }
 
   private genBinOp(e: Extract<IRExpr, { tag: 'BinOp' }>, ctx: Effect, depth: number): string {
     if (e.op === 'NullCoalesce') {
       const l = this.genP(e.left, ctx, depth);
       const r = this.genP(e.right, ctx, depth);
+      // When left is default/pure default (from Storage stub), use the fallback directly
+      if (l === 'default' || l === '(pure default)' || l === 'pure default') return r;
       return `Option.getD ${l} ${r}`;
     }
     // Equality with none/null: use Option.isNone/isSome instead of ==
@@ -1036,6 +1222,14 @@ class Gen {
     }
     const l = this.genP(e.left, ctx, depth);
     const r = this.genP(e.right, ctx, depth);
+    // Comparison on Any type: no Ord/OfNat instance → default
+    const isAnyL = (e.left.type.tag === 'TypeRef' && e.left.type.name === 'Any') ||
+      (e.left.tag === 'TypeNarrow' && e.left.expr.type.tag === 'TypeRef' && e.left.expr.type.name === 'Any');
+    const isAnyR = (e.right.type.tag === 'TypeRef' && e.right.type.name === 'Any') ||
+      (e.right.tag === 'TypeNarrow' && e.right.expr.type.tag === 'TypeRef' && e.right.expr.type.name === 'Any');
+    if ((e.op === 'Lt' || e.op === 'Le' || e.op === 'Gt' || e.op === 'Ge') && (isAnyL || isAnyR)) {
+      return '(sorry : Bool)';
+    }
     const op = translateBinOp(e.op, e.left.type);
     return `${l} ${op} ${r}`;
   }
@@ -1257,6 +1451,13 @@ function collectFieldAccesses(expr: IRExpr, varName: string): Map<string, IRType
   // Remove method calls from field set
   for (const m of methodCalls) fields.delete(m);
   return fields;
+}
+
+/** Check if an else branch is "empty" (LitUnit, pure (), or trivial). */
+function isEmptyElse(e: IRExpr): boolean {
+  if (e.tag === 'LitUnit') return true;
+  if (e.tag === 'Pure_' && e.value.tag === 'LitUnit') return true;
+  return false;
 }
 
 function looksMonadic(s: string): boolean {

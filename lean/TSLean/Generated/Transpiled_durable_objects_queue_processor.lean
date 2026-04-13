@@ -14,6 +14,11 @@ open TSLean TSLean.WebAPI TSLean.DO
 
 namespace TSLean.Generated.QueueProcessor
 
+-- Auto-generated empty state struct for QueueProcessorDOState
+structure QueueProcessorDOState where
+  mk ::
+  deriving Repr, BEq, Inhabited
+
 structure QueueItem where
   mk ::
   id : String
@@ -29,7 +34,7 @@ namespace QueueProcessorDO
 mutual
 
 def QueueProcessorDO.init : QueueProcessorDOState :=
-  {  }
+  default
 
 def QueueProcessorDO.fetch (self : QueueProcessorDOState) (request : Request) : IO Response :=
   do
@@ -37,31 +42,24 @@ def QueueProcessorDO.fetch (self : QueueProcessorDOState) (request : Request) : 
     do
       if (request.method == "POST") && (url.pathname == "/enqueue") then
         let body ← request.toJson
-        let id ← enqueue self body.payload (Option.getD body.maxAttempts 3)
+        let id ← enqueue self default (3)
         pure (mkResponse ("<serialized>") ({ headers := default }))
-      else
-        pure ()
-      do
-        if (request.method == "POST") && (url.pathname == "/process") then
-          let processed ← processNext self
-          pure (mkResponse ("<serialized>") ({ headers := default }))
-        else
-          pure ()
-        do
-          if (request.method == "GET") && (url.pathname == "/size") then
-            let ids ← Option.getD Storage.get default "queue:ids" #[]
+      else do
+          if (request.method == "POST") && (url.pathname == "/process") then
+            let processed ← StateT.run' (processNext self) self
             pure (mkResponse ("<serialized>") ({ headers := default }))
-          else
-            pure ()
-          return mkResponse "Not Found" ({ status := 404 })
+          else do
+              if (request.method == "GET") && (url.pathname == "/size") then
+                let ids : Array String := #[]
+                pure (mkResponse ("<serialized>") ({ headers := default }))
+              else
+                pure (mkResponse "Not Found" ({ status := 404 }))
 
 def QueueProcessorDO.enqueue (self : QueueProcessorDOState) (payload : Any) (maxAttempts : Float) : IO String :=
   do
-    let id : String := _uuid_stub_
+    let id : String := "uuid-stub"
     let item : QueueItem := { id := id, payload := payload, enqueuedAt := 0, attempts := 0, maxAttempts := maxAttempts, nextRetryAt := 0 }
-    do
-      Storage.put default (s!"queue:{id}") item
-      let ids ← Option.getD Storage.get default "queue:ids" #[]
+    pure default
 
 def QueueProcessorDO.processNext (self : QueueProcessorDOState) : StateT QueueProcessorDOState IO Bool :=
   do
