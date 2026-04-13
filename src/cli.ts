@@ -59,10 +59,14 @@ ${c.bold('USAGE')}
 ${c.bold('OPTIONS')}
   -o, --output <path>    Output file or directory
   -w, --watch            Watch for changes and recompile
+  --lake                 Auto-run lake build after each watch recompile
+  --strict               Error on sorry instead of continuing
   --verify               Generate proof obligations
+  --project <path>       Use tsconfig.json for multi-file compilation
   --self-host            Enable self-host transforms
   --base-name <name>     Module base name (self-host mode)
   --namespace <ns>       Root namespace (default: TSLean.Generated)
+  --lakefile/--no-lakefile  Generate/skip lakefile.toml
   --no-color             Disable colored output
   -v, --version          Show version
   -h, --help             Show this help
@@ -263,37 +267,65 @@ function compileProject(opts: CompileOpts): boolean {
 
 function watchMode(opts: CompileOpts): void {
   const target = path.resolve(opts.input);
+  const autoLake = process.argv.includes('--lake');
+  let compileCount = 0;
 
-  const run = () => {
-    process.stdout.write(`\n${c.dim('─── recompiling ' + new Date().toLocaleTimeString() + ' ───')}\n`);
-    if (opts.isDir) compileProject(opts);
-    else compileSingle(opts);
+  const clearScreen = () => process.stdout.write('\x1b[2J\x1b[H');
+
+  const runLakeBuild = () => {
+    if (!autoLake) return;
+    info('Running lake build...');
+    try {
+      const { execSync } = require('child_process') as typeof import('child_process');
+      execSync('lake build', { cwd: path.join(process.cwd(), 'lean'), stdio: 'pipe', timeout: 120000 });
+      success('lake build passed');
+    } catch (err) {
+      error('lake build failed');
+    }
+  };
+
+  const run = (changedFile?: string) => {
+    compileCount++;
+    const time = new Date().toLocaleTimeString();
+    const fileInfo = changedFile ? ` ${c.cyan(changedFile)}` : '';
+    clearScreen();
+    process.stdout.write(`${c.dim(`─── #${compileCount} ${time}`)}${fileInfo} ${c.dim('───')}\n\n`);
+
+    const t0 = Date.now();
+    const ok = opts.isDir ? compileProject(opts) : compileSingle(opts);
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+
+    if (ok) {
+      process.stdout.write(`\n${c.green('✓')} Compiled in ${elapsed}s\n`);
+      runLakeBuild();
+    } else {
+      process.stdout.write(`\n${c.red('✗')} Failed in ${elapsed}s\n`);
+    }
+    process.stdout.write(`\n${c.dim('Watching for changes... (Ctrl+C to stop)')}\n`);
   };
 
   // Initial compile
-  if (opts.isDir) compileProject(opts);
-  else compileSingle(opts);
-
-  info(`Watching for changes... ${c.dim('(Ctrl+C to stop)')}`);
+  run();
 
   const debounce = new Map<string, ReturnType<typeof setTimeout>>();
-  const DEBOUNCE_MS = 200;
+  const DEBOUNCE_MS = 250;
+
+  const onFileChange = (filename: string) => {
+    if (!filename.endsWith('.ts') && !filename.endsWith('.tsx')) return;
+    const existing = debounce.get(filename);
+    if (existing) clearTimeout(existing);
+    debounce.set(filename, setTimeout(() => {
+      debounce.delete(filename);
+      run(filename);
+    }, DEBOUNCE_MS));
+  };
 
   if (opts.isDir) {
     fs.watch(target, { recursive: true }, (_event, filename) => {
-      if (!filename || !filename.endsWith('.ts')) return;
-      const key = filename;
-      const existing = debounce.get(key);
-      if (existing) clearTimeout(existing);
-      debounce.set(key, setTimeout(() => { debounce.delete(key); run(); }, DEBOUNCE_MS));
+      if (filename) onFileChange(filename);
     });
   } else {
-    fs.watchFile(target, { interval: 500 }, () => {
-      const key = target;
-      const existing = debounce.get(key);
-      if (existing) clearTimeout(existing);
-      debounce.set(key, setTimeout(() => { debounce.delete(key); run(); }, DEBOUNCE_MS));
-    });
+    fs.watchFile(target, { interval: 500 }, () => onFileChange(path.basename(target)));
   }
 }
 
