@@ -1432,8 +1432,10 @@ class LowerCtx {
         fn: { tag: 'Lam', params: ['s'], body: { tag: 'StructUpdate', base: { tag: 'Var', name: 's' }, fields: [{ name: field, value: val }] } },
       };
     }
-    if (e.target.tag === 'Var')
+    if (e.target.tag === 'Var') {
+      // Variable reassignment → let rebinding (Lean is immutable, this shadows the old value)
       return { tag: 'Let', name: e.target.name, value: val, body: { tag: 'Lit', value: '()' } };
+    }
     // FieldAccess on a non-self variable → struct update via let rebinding
     if (e.target.tag === 'FieldAccess' && e.target.obj.tag === 'Var') {
       const objName = e.target.obj.name;
