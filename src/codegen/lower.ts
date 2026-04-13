@@ -1188,6 +1188,16 @@ class LowerCtx {
     }
 
     const obj = this.lowerExpr(e.obj, ctx);
+
+    // Optional chaining: .bind on sorry/default → none (chain terminates gracefully)
+    if (e.field === 'bind' && (obj.tag === 'Sorry' || obj.tag === 'Default')) {
+      return { tag: 'None' };
+    }
+    // .getD on sorry → return the default value directly
+    if (e.field === 'getD' && (obj.tag === 'Sorry' || obj.tag === 'Default')) {
+      return obj;
+    }
+
     const isString = e.obj?.type?.tag === 'String';
 
     // Map JS field/method names to Lean equivalents
@@ -1371,7 +1381,8 @@ class LowerCtx {
     if (e.op === 'NullCoalesce') {
       const l = this.lowerExprP(e.left, ctx);
       const r = this.lowerExprP(e.right, ctx);
-      if (l.tag === 'Default') return r;
+      // Sorry/Default LHS → use RHS directly (graceful degradation)
+      if (l.tag === 'Default' || l.tag === 'Sorry' || l.tag === 'None') return r;
       return { tag: 'App', fn: { tag: 'Var', name: 'Option.getD' }, args: [l, r] };
     }
     // Equality with none → .isNone/.isSome
