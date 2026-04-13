@@ -8,6 +8,7 @@ import * as path from 'path';
 import { parseFile } from './parser/index.js';
 import { rewriteModule } from './rewrite/index.js';
 import { generateLean } from './codegen/index.js';
+import { generateLeanV2 } from './codegen/v2.js';
 import { generateVerification } from './verification/index.js';
 import { transpileProject, writeProjectOutputs } from './project/index.js';
 
@@ -19,12 +20,15 @@ interface Args {
   output: string;
   verify: boolean;
   ns: string;
+  selfHost: boolean;
+  baseName: string;
 }
 
 function parseArgs(argv: string[]): Args {
   const args = argv.slice(2);
   let mode: 'single' | 'project' = 'single';
   let input = '', output = '', verify = false, ns = 'TSLean.Generated';
+  let selfHost = false, baseName = '';
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -32,6 +36,8 @@ function parseArgs(argv: string[]): Args {
     else if (a === '-o' || a === '--output') { output = args[++i] ?? ''; }
     else if (a === '--verify')    { verify = true; }
     else if (a === '--namespace') { ns = args[++i] ?? ns; }
+    else if (a === '--self-host') { selfHost = true; }
+    else if (a === '--base-name') { baseName = args[++i] ?? ''; }
     else if (!a.startsWith('-') && !input) { input = a; }
   }
 
@@ -46,20 +52,22 @@ function parseArgs(argv: string[]): Args {
       : input.replace(/\/$/, '') + '_lean';
   }
 
-  return { mode, input, output, verify, ns };
+  return { mode, input, output, verify, ns, selfHost, baseName };
 }
 
 // ─── Single file ──────────────────────────────────────────────────────────────
 
 function single(opts: Args): void {
-  const { input, output, verify } = opts;
+  const { input, output, verify, selfHost, baseName } = opts;
   if (!fs.existsSync(input)) { process.stderr.write(`File not found: ${input}\n`); process.exit(1); }
 
   try {
     const src = fs.readFileSync(input, 'utf-8');
     const mod = parseFile({ fileName: path.resolve(input), sourceText: src });
     const rw  = rewriteModule(mod);
-    let code  = generateLean(rw);
+    let code  = selfHost
+      ? generateLeanV2(rw, { selfHost: true, baseName })
+      : generateLean(rw);
 
     if (verify) {
       const { leanCode, obligations } = generateVerification(rw);

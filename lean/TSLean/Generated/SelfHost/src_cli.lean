@@ -9,25 +9,19 @@ import TSLean.Runtime.Monad
 
 open TSLean TSLean.Generated.Types
 
-namespace TSLean.Generated.SelfHost.SrcCli
+namespace TSLean.Generated.SelfHost.Src_cli
 
 structure Args where
+  mk ::
   mode : String
   input : String
   output : String
   verify : Bool
   ns : String
-  deriving Repr, BEq, Inhabited
+  deriving Inhabited
 
-opaque parseArgs_impl (argv : Array String) : StateT Unit IO Args
-def parseArgs (argv : Array String) : StateT Unit IO Args := parseArgs_impl argv
+def parseArgs (_argv : Array String) : Args := default
+def single (_opts : Args) : IO Unit := pure ()
+def project (_opts : Args) : IO Unit := pure ()
 
-opaque single_impl (opts : Args) : StateT Unit IO Unit
-def single (opts : Args) : StateT Unit IO Unit := single_impl opts
-
-opaque project_impl (opts : Args) : Unit
-def project (opts : Args) : Unit := project_impl opts
-
-def opts : Args := default
-
-end TSLean.Generated.SelfHost.SrcCli
+end TSLean.Generated.SelfHost.Src_cli

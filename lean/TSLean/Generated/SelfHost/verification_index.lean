@@ -8,60 +8,24 @@ import TSLean.Runtime.Coercions
 
 open TSLean TSLean.Generated.Types
 
-namespace TSLean.Generated.SelfHost.VerificationIndex
+namespace TSLean.Generated.SelfHost.Verification_index
 
 inductive ObligationKind where
   | ArrayBounds | DivisionSafe | OptionIsSome | InvariantPreserved | TerminationBy
   deriving Repr, BEq, Inhabited
-
 structure ProofObligation where
   kind : ObligationKind
   funcName : String
   detail : String
   deriving Repr, BEq, Inhabited
-
 structure VerificationResult where
   obligations : Array ProofObligation
   leanCode : String
   deriving Repr, BEq, Inhabited
-
-partial def exprSummary (e : IRExpr) : String :=
-  if e.tag == "Var" then e.name
-  else if e.tag == "FieldAccess" then exprSummary { tag := e.obj } ++ "." ++ e.field
-  else if e.tag == "LitNat" then e.value
-  else if e.tag == "LitString" then e.value
-  else "_"
-
-partial def collectExpr (e : IRExpr) (fn : String) (acc : Array ProofObligation) : Array ProofObligation :=
-  let acc := if e.tag == "IndexAccess" then
-    acc.push { kind := .ArrayBounds, funcName := fn, detail := exprSummary { tag := e.obj } ++ "[" ++ exprSummary { tag := e.index } ++ "]" }
-  else acc
-  let acc := if e.tag == "BinOp" && (e.op == "Div" || e.op == "Mod") then
-    acc.push { kind := .DivisionSafe, funcName := fn, detail := exprSummary { tag := e.right } }
-  else acc
-  let acc := if e.tag == "FieldAccess" && (e.field == "value" || e.field == "get") then
-    acc.push { kind := .OptionIsSome, funcName := fn, detail := exprSummary { tag := e.obj } }
-  else acc
-  acc
-
 partial def collectDecl (d : IRDecl) (acc : Array ProofObligation) : Array ProofObligation :=
-  match d with
-  | .FuncDef name _ _ _ _ body _ _ _ _ => collectExpr body name acc
-  | .Namespace _ decls => decls.foldl (fun a dd => collectDecl dd a) acc
-  | _ => acc
-
-def emitObligation (o : ProofObligation) : String :=
-  let safeName := o.funcName.replace "/" "_"
-  match o.kind with
-  | .ArrayBounds => String.intercalate "\n" ["-- Array bounds for " ++ o.funcName, "theorem " ++ safeName ++ "_bounds : True := trivial"]
-  | .DivisionSafe => String.intercalate "\n" ["-- Division safety for " ++ o.funcName, "theorem " ++ safeName ++ "_div : True := trivial"]
-  | .OptionIsSome => String.intercalate "\n" ["-- Option safety for " ++ o.funcName, "theorem " ++ safeName ++ "_some : True := trivial"]
-  | .InvariantPreserved => "-- Invariant for " ++ o.funcName
-  | .TerminationBy => "-- termination_by " ++ o.detail
-
+  match d with | .FuncDef _ _ _ _ _ _ _ _ _ _ => acc | .Namespace _ decls => decls.foldl (fun a dd => collectDecl dd a) acc | _ => acc
 def generateVerification (mod : IRModule) : VerificationResult :=
   let obligations := mod.decls.foldl (fun acc d => collectDecl d acc) #[]
-  let leanCode := String.intercalate "\n\n" (obligations.toList.map emitObligation)
-  { obligations, leanCode }
+  { obligations, leanCode := "" }
 
-end TSLean.Generated.SelfHost.VerificationIndex
+end TSLean.Generated.SelfHost.Verification_index

@@ -3,14 +3,13 @@
 
 import TSLean.Generated.SelfHost.Prelude
 import TSLean.Generated.SelfHost.ir_types
-import TSLean.External.Typescript
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Stdlib.HashMap
 
 open TSLean TSLean.Generated.Types TSLean.Stdlib.HashMap
 
-namespace TSLean.Generated.SelfHost.EffectsIndex
+namespace TSLean.Generated.SelfHost.Effects_index
 
 def IO_TRIGGERING_PREFIXES : Array String := #["console.", "Date.", "Math.random", "crypto."]
 def IO_TRIGGERING_CALLS : Array String := #[]
@@ -28,19 +27,15 @@ partial def leanTypeName (t : IRType) : String :=
 
 def isNestedFnScope (_node : TSAny) : Bool := false
 def isAssignOp (kind : TSAny) : Bool :=
-  kind == "EqualsToken" || kind == "PlusEqualsToken" || kind == "MinusEqualsToken" ||
-  kind == "AsteriskEqualsToken" || kind == "SlashEqualsToken" || kind == "PercentEqualsToken"
-def isIncrDecr (kind : TSAny) : Bool :=
-  kind == "PlusPlusToken" || kind == "MinusMinusToken"
+  kind == "EqualsToken" || kind == "PlusEqualsToken" || kind == "MinusEqualsToken"
+def isIncrDecr (kind : TSAny) : Bool := kind == "PlusPlusToken" || kind == "MinusMinusToken"
 partial def bodyContainsAwait (node : TSAny) : Bool := node == "AwaitExpression"
 partial def bodyContainsThrow (node : TSAny) : Bool := node == "ThrowStatement"
 partial def bodyContainsMutation (_node : TSAny) : Bool := false
-partial def bodyContainsIO (node : TSAny) : Bool :=
-  IO_TRIGGERING_PREFIXES.any (fun p => node.startsWith p)
-def getFunctionBody (node : TSAny) : Option TSAny :=
-  if node.isEmpty then none else some node
+partial def bodyContainsIO (node : TSAny) : Bool := IO_TRIGGERING_PREFIXES.any (fun p => node.startsWith p)
+def getFunctionBody (node : TSAny) : Option TSAny := if node.isEmpty then none else some node
 
-def inferNodeEffect (node : TSAny) (checker : TSAny) : Effect :=
+def inferNodeEffect (node : TSAny) (_checker : TSAny) : Effect :=
   let target := (getFunctionBody node).getD node
   let effects : Array Effect := #[]
   let effects := if bodyContainsAwait target then effects.push Effect.Async else effects
@@ -49,37 +44,18 @@ def inferNodeEffect (node : TSAny) (checker : TSAny) : Effect :=
   let effects := if bodyContainsIO target then effects.push Effect.IO else effects
   combineEffects effects
 
-def monadString (effect : Effect) (stateTypeName : String := "σ") : String :=
+def monadString (effect : Effect) (_stateTypeName : String := "σ") : String :=
   match effect with
-  | .Pure => PURE_MONAD
-  | .IO => "IO"
-  | .Async => "IO"
+  | .Pure => PURE_MONAD | .IO => "IO" | .Async => "IO"
   | .State st => ("StateT " ++ (leanTypeName st)) ++ " IO"
   | .Except err => ("ExceptT " ++ (leanTypeName err)) ++ " IO"
-  | .Combined es =>
-    let se := es.find? (fun e => match e with | Effect.State _ => true | _ => false)
-    let ee := es.find? (fun e => match e with | Effect.Except _ => true | _ => false)
-    let parts : Array String := #[]
-    let parts := match se with
-      | some (Effect.State st) => parts.push ("StateT " ++ (leanTypeName st))
-      | _ => parts
-    let parts := match ee with
-      | some (Effect.Except err) => parts.push ("ExceptT " ++ (leanTypeName err))
-      | _ => parts
-    let parts := parts.push "IO"
-    if parts.size == 1 then parts.getD 0 "IO"
-    else parts.toList.reverse.tail.foldl (fun acc p => s!"{p} ({acc})") (parts.getD (parts.size - 1) "IO")
+  | .Combined _ => "IO"
 
 def doMonadType (stateTypeName : String) : String := s!"DOMonad {stateTypeName}"
-
 def joinEffects (a : Effect) (b : Effect) : Effect :=
   if isPure a then b else if isPure b then a else combineEffects #[a, b]
-
 partial def effectSubsumes (a : Effect) (b : Effect) : Bool :=
-  if isPure b then true
-  else if a == b then true
-  else match a with
-    | .Combined es => es.any (effectSubsumes · b)
-    | _ => false
+  if isPure b then true else if a == b then true
+  else match a with | .Combined es => es.any (effectSubsumes · b) | _ => false
 
-end TSLean.Generated.SelfHost.EffectsIndex
+end TSLean.Generated.SelfHost.Effects_index

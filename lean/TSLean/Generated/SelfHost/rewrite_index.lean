@@ -10,56 +10,32 @@ import TSLean.Stdlib.HashMap
 
 open TSLean TSLean.Generated.Types TSLean.Stdlib.HashMap
 
-namespace TSLean.Generated.SelfHost.RewriteIndex
+namespace TSLean.Generated.SelfHost.Rewrite_index
 
 def DISCRIMINANT_FIELDS : Array String := #["kind", "type", "tag", "ok", "hasValue", "_type"]
-
 structure VariantInfo where
   ctorName : String
   fields : Array String
   deriving Repr, BEq, Inhabited
-
 structure UnionInfo where
   typeName : String
   discField : String
-  variants : AssocMap String VariantInfo
+  variants : Array (String × String)
   deriving Inhabited
-
 structure RewriteCtxState where
-  unions : AssocMap String UnionInfo
+  unions : Array (String × String)
   deriving Inhabited
 
 def RewriteCtx.collectUnionInfo (self : RewriteCtxState) (d : IRDecl) : RewriteCtxState :=
-  match d with
-  | .InductiveDef name _ _ _ =>
-    let u : UnionInfo := { typeName := name, discField := "", variants := default }
-    { unions := AssocMap.insert self.unions name u }
-  | _ => self
-
+  match d with | .InductiveDef name _ _ _ => { unions := self.unions.push (name, name) } | _ => self
 def RewriteCtx.rwExpr (_ : RewriteCtxState) (e : IRExpr) : IRExpr := e
-def RewriteCtx.rewriteCase (_ : RewriteCtxState) (c : IRCase) : IRCase := c
-def RewriteCtx.rewriteDoStmt (_ : RewriteCtxState) (s : DoStmt) : DoStmt := s
-
 def RewriteCtx.rewriteDecl (self : RewriteCtxState) (d : IRDecl) : IRDecl :=
   match d with
-  | .FuncDef n tp ps rt eff body cm ip w dc =>
-    .FuncDef n tp ps rt eff (RewriteCtx.rwExpr self body) cm ip w dc
+  | .FuncDef n tp ps rt eff body cm ip w dc => .FuncDef n tp ps rt eff (RewriteCtx.rwExpr self body) cm ip w dc
   | .Namespace n ds => .Namespace n (ds.map (fun x => RewriteCtx.rewriteDecl self x))
-  | .VarDecl n ty val m => .VarDecl n ty (RewriteCtx.rwExpr self val) m
-  | other => other
-
-def RewriteCtx.rewriteMatch (self : RewriteCtxState) (e : IRExpr) : IRExpr :=
-  RewriteCtx.rwExpr self e
-def RewriteCtx.detectDiscriminant (_ : RewriteCtxState) (scrutinee : IRExpr) : Option String :=
-  if scrutinee.tag == "FieldAccess" && DISCRIMINANT_FIELDS.any (· == scrutinee.field)
-  then some scrutinee.field else none
-def RewriteCtx.rewriteDiscCase (_ : RewriteCtxState) (c : IRCase) (_ : UnionInfo) (_ : Option String) : IRCase := c
-def RewriteCtx.rewriteStructLit (_ : RewriteCtxState) (_ : IRExpr) : Option IRExpr := none
-def RewriteCtx.rewriteFields (_ : RewriteCtxState) (e : IRExpr) : IRExpr := e
-def substituteFieldAccesses (expr : IRExpr) (_ : String) (_ : AssocMap String String) : IRExpr := expr
-
+  | .VarDecl n ty val m => .VarDecl n ty (RewriteCtx.rwExpr self val) m | other => other
 def rewriteModule (mod : IRModule) : IRModule :=
-  let ctx := mod.decls.foldl (fun c d => RewriteCtx.collectUnionInfo c d) ({ unions := default } : RewriteCtxState)
+  let ctx := mod.decls.foldl (fun c d => RewriteCtx.collectUnionInfo c d) ({ unions := #[] } : RewriteCtxState)
   { mod with decls := mod.decls.map (fun d => RewriteCtx.rewriteDecl ctx d) }
 
-end TSLean.Generated.SelfHost.RewriteIndex
+end TSLean.Generated.SelfHost.Rewrite_index
