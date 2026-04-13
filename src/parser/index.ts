@@ -209,8 +209,13 @@ class ParserCtx {
     // export default expr
     const expr = node.expression;
     if (ts.isObjectLiteralExpression(expr)) {
-      // export default { fetch: handler, ... } → parse each property as a top-level def
+      // export default { fetch: handler, ... } → Worker namespace with handler defs
+      const isWorkerEntry = expr.properties.some(p => {
+        const n = ts.isIdentifier(p.name!) ? p.name!.text : p.name?.getText(this.sf);
+        return n === 'fetch' || n === 'scheduled' || n === 'queue';
+      });
       const decls: IRDecl[] = [];
+      const methods: IRDecl[] = [];
       for (const prop of expr.properties) {
         if (ts.isPropertyAssignment(prop)) {
           const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
@@ -224,14 +229,13 @@ class ParserCtx {
             const body = ts.isBlock(fn.body as ts.Node)
               ? this.parseBlock(fn.body as ts.Block, eff)
               : this.parseExpr(fn.body as ts.Expression);
-            decls.push({ tag: 'FuncDef', name, typeParams: tps, params: ps, retType: ret, effect: eff, body });
+            methods.push({ tag: 'FuncDef', name, typeParams: tps, params: ps, retType: ret, effect: eff, body });
           } else {
             const ty  = mapType(this.checker.getTypeAtLocation(prop.initializer), this.checker);
             const val = this.parseExpr(prop.initializer);
-            decls.push({ tag: 'VarDecl', name, type: ty, value: val, mutable: false });
+            methods.push({ tag: 'VarDecl', name, type: ty, value: val, mutable: false });
           }
         } else if (ts.isMethodDeclaration(prop)) {
-          // async fetch(...) { ... } in an object literal
           const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
           const tps  = extractTypeParams(prop, this.checker);
           const ps   = this.parseParams(prop.parameters);
@@ -239,10 +243,15 @@ class ParserCtx {
           const ret  = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
           const eff  = inferNodeEffect(prop, this.checker);
           const body = prop.body ? this.parseBlock(prop.body, eff) : holeExpr(ret);
-          decls.push({ tag: 'FuncDef', name, typeParams: tps, params: ps, retType: ret, effect: eff, body });
+          methods.push({ tag: 'FuncDef', name, typeParams: tps, params: ps, retType: ret, effect: eff, body });
         } else if (ts.isShorthandPropertyAssignment(prop)) {
           // Shorthand property in export default: { createConfig } — just a re-export, skip
         }
+      }
+      if (isWorkerEntry) {
+        decls.push({ tag: 'Namespace', name: 'Worker', decls: methods });
+      } else {
+        decls.push(...methods);
       }
       return decls;
     }
@@ -1267,11 +1276,22 @@ class ParserCtx {
     const method = acc.name.text;
     const args   = node.arguments.map(a => this.parseExpr(a));
     const allEff = combineEffects([obj.effect, ...args.map(a => a.effect)]);
-    // DO storage operations
+    // DO storage operations: this.ctx.storage.get/put/delete/etc.
     const storageTarget = this.isStorageAccess(acc.expression);
     if (storageTarget) {
       const fn = `Storage.${method}`;
-      return { tag: 'App', fn: varExpr(fn), args: [obj, ...args], type: ty, effect: Async };
+      return { tag: 'App', fn: varExpr(fn), args: [...args], type: ty, effect: Async };
+    }
+    // DO state operations: this.ctx.acceptWebSocket/getWebSockets/getTags/blockConcurrencyWhile
+    const ctxTarget = this.isDOCtxAccess(acc.expression);
+    if (ctxTarget) {
+      const DO_CTX_METHODS = ['acceptWebSocket', 'getWebSockets', 'getTags', 'setWebSocketAutoResponse',
+        'getWebSocketAutoResponse', 'setHibernatableWebSocketEventTimeout', 'getHibernatableWebSocketEventTimeout',
+        'blockConcurrencyWhile', 'waitUntil'];
+      if (DO_CTX_METHODS.includes(method)) {
+        const fn = `DOCtx.${method}`;
+        return { tag: 'App', fn: varExpr(fn), args: [...args], type: ty, effect: Async };
+      }
     }
     return {
       tag: 'App',
@@ -1282,7 +1302,13 @@ class ParserCtx {
 
   private isStorageAccess(node: ts.Expression): boolean {
     const text = node.getText(this.sf);
-    return text.includes('.storage') || text === 'storage' || text.includes('this.state.storage');
+    return text.includes('.storage') || text === 'storage' || text.includes('this.state.storage')
+      || text.includes('this.ctx.storage') || text.includes('ctx.storage');
+  }
+
+  private isDOCtxAccess(node: ts.Expression): boolean {
+    const text = node.getText(this.sf);
+    return text === 'this.ctx' || text === 'this.state' || text === 'ctx' || text === 'state';
   }
 
   private parseNew(node: ts.NewExpression, ty: IRType): IRExpr {
@@ -1296,6 +1322,8 @@ class ParserCtx {
       return { tag: 'App', fn: varExpr('TSError.typeError'), args: args.length > 0 ? [args[0]] : [litStr('error')], type: ty, effect: Pure };
     if (name === 'Response')
       return { tag: 'App', fn: varExpr('mkResponse'), args, type: ty, effect: Pure };
+    if (name === 'WebSocketPair')
+      return { tag: 'App', fn: varExpr('WebSocketPair.new'), args: [], type: ty, effect: Pure };
     if (name === 'Promise')
       return holeExpr(ty);  // new Promise(...) can't be directly expressed in Lean
     if (name === 'URL')

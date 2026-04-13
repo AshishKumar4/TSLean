@@ -229,6 +229,12 @@ class LowerCtx {
           needs.add('TSLean.Runtime.WebAPI');
         if (['DurableObjectState', 'DurableObjectId', 'DurableObjectNamespace', 'DurableObjectStub'].includes(t.name))
           needs.add('TSLean.DurableObjects.State');
+        if (t.name === 'KVNamespace') needs.add('TSLean.Workers.KV');
+        if (t.name === 'R2Bucket' || t.name === 'R2Object') needs.add('TSLean.Workers.R2');
+        if (t.name === 'D1Database' || t.name === 'D1PreparedStatement') needs.add('TSLean.Workers.D1');
+        if (t.name === 'QueueSender' || t.name === 'MessageBatch' || t.name === 'Queue') needs.add('TSLean.Workers.Queue');
+        if (t.name === 'AlarmInvocationInfo' || t.name === 'ScheduledEvent') needs.add('TSLean.Workers.Scheduler');
+        if (t.name === 'ExecutionContext') needs.add('TSLean.Runtime.WebAPI');
         for (const a of t.args) this.scanTypeImports(a, needs);
         break;
       case 'Array': this.scanTypeImports(t.elem, needs); break;
@@ -248,10 +254,23 @@ class LowerCtx {
         needs.add('TSLean.DurableObjects.Storage');
         needs.add('TSLean.DurableObjects.Model');
       }
+      if (e.name.startsWith('DOCtx.')) {
+        if (e.name.includes('WebSocket') || e.name.includes('WsDoState') || e.name.includes('acceptWebSocket') || e.name.includes('getWebSockets') || e.name.includes('getTags'))
+          needs.add('TSLean.DurableObjects.WebSocket');
+        needs.add('TSLean.DurableObjects.State');
+        needs.add('TSLean.Runtime.Monad');
+      }
+      if (e.name.startsWith('AlarmState.'))
+        needs.add('TSLean.DurableObjects.Alarm');
+      if (e.name.startsWith('Transaction.'))
+        needs.add('TSLean.DurableObjects.Transaction');
       if (e.name.startsWith('AssocMap.') || e.name.startsWith('AssocSet.'))
         needs.add('TSLean.Stdlib.HashMap');
-      if (e.name === 'mkResponse' || e.name.startsWith('WebAPI.') || e.name === 'TSLean.fetch' || e.name === 'URL.parse')
+      if (e.name === 'mkResponse' || e.name.startsWith('WebAPI.') || e.name === 'TSLean.fetch' || e.name === 'URL.parse' || e.name === 'WebSocketPair.new')
         needs.add('TSLean.Runtime.WebAPI');
+      if (e.name.startsWith('KV.')) needs.add('TSLean.Workers.KV');
+      if (e.name.startsWith('R2.')) needs.add('TSLean.Workers.R2');
+      if (e.name.startsWith('D1.')) needs.add('TSLean.Workers.D1');
     }
     if (e.tag === 'App') {
       this.scanExprImports(e.fn, needs);
@@ -1196,9 +1215,18 @@ class LowerCtx {
         return { tag: 'Sorry' };
       }
     }
-    // Storage operations → pure sorry
-    if (fn.tag === 'Var' && fn.name.startsWith('Storage.'))
-      return !isPure(ctx) ? { tag: 'Pure', value: sorryForType(e.type) } : sorryForType(e.type);
+    // Storage operations → DOMonad calls against the storage model
+    if (fn.tag === 'Var' && fn.name.startsWith('Storage.')) {
+      const storageMethod = fn.name.slice('Storage.'.length);
+      const args = e.args.map(a => this.lowerExprP(a, ctx));
+      return this.lowerStorageOp(storageMethod, args, e.type, ctx);
+    }
+    // DO context operations → DOMonad calls
+    if (fn.tag === 'Var' && fn.name.startsWith('DOCtx.')) {
+      const ctxMethod = fn.name.slice('DOCtx.'.length);
+      const args = e.args.map(a => this.lowerExprP(a, ctx));
+      return this.lowerDOCtxOp(ctxMethod, args, e.type);
+    }
 
     const args = e.args.map(a => this.lowerExprP(a, ctx));
     return args.length === 0 ? fn : { tag: 'App', fn, args };
@@ -1469,6 +1497,94 @@ class LowerCtx {
 
   private printExprInline(e: LeanExpr): string {
     return printExprStr(e, 0);
+  }
+
+  // ─── Storage operation lowering ───────────────────────────────────────────────
+  // Maps DO storage method calls to Lean DurableObjects.Model operations.
+  // Storage is modeled as AssocMap StorageKey StorageValue in the DOMonad.
+
+  private lowerStorageOp(method: string, args: LeanExpr[], ty: IRType, ctx: Effect): LeanExpr {
+    switch (method) {
+      case 'get':
+        // Storage.get key → do let s ← get; pure (Storage.get s.storage key)
+        return args.length > 0
+          ? { tag: 'App', fn: { tag: 'Var', name: 'Storage.get' }, args: [{ tag: 'FieldAccess', obj: { tag: 'Var', name: 'self' }, field: 'storage' }, ...args] }
+          : { tag: 'Sorry' };
+      case 'put':
+        // Storage.put key value → modify fun s => { s with storage := Storage.put s.storage key value }
+        if (args.length >= 2) {
+          return {
+            tag: 'Modify', fn: {
+              tag: 'Lam', params: ['s'], body: {
+                tag: 'StructUpdate', base: { tag: 'Var', name: 's' },
+                fields: [{ name: 'storage', value: { tag: 'App', fn: { tag: 'Var', name: 'Storage.put' }, args: [{ tag: 'FieldAccess', obj: { tag: 'Var', name: 's' }, field: 'storage' }, ...args] } }]
+              }
+            }
+          };
+        }
+        return { tag: 'Sorry' };
+      case 'delete':
+        return args.length > 0
+          ? { tag: 'Modify', fn: { tag: 'Lam', params: ['s'], body: { tag: 'StructUpdate', base: { tag: 'Var', name: 's' }, fields: [{ name: 'storage', value: { tag: 'App', fn: { tag: 'Var', name: 'Storage.delete' }, args: [{ tag: 'FieldAccess', obj: { tag: 'Var', name: 's' }, field: 'storage' }, ...args] } }] } } }
+          : { tag: 'Sorry' };
+      case 'deleteAll':
+        return { tag: 'Modify', fn: { tag: 'Lam', params: ['s'], body: { tag: 'StructUpdate', base: { tag: 'Var', name: 's' }, fields: [{ name: 'storage', value: { tag: 'Var', name: 'Storage.clear' } }] } } };
+      case 'list':
+        return { tag: 'App', fn: { tag: 'Var', name: 'Storage.keys' }, args: [{ tag: 'FieldAccess', obj: { tag: 'Var', name: 'self' }, field: 'storage' }] };
+      case 'getAlarm':
+        return { tag: 'App', fn: { tag: 'Var', name: 'AlarmState.next' }, args: [{ tag: 'FieldAccess', obj: { tag: 'Var', name: 'self' }, field: 'alarms' }] };
+      case 'setAlarm':
+        return args.length > 0
+          ? { tag: 'Modify', fn: { tag: 'Lam', params: ['s'], body: { tag: 'StructUpdate', base: { tag: 'Var', name: 's' }, fields: [{ name: 'alarms', value: { tag: 'App', fn: { tag: 'Var', name: 'AlarmState.schedule' }, args: [{ tag: 'FieldAccess', obj: { tag: 'Var', name: 's' }, field: 'alarms' }, ...args, { tag: 'Lit', value: '0' }] } }] } } }
+          : { tag: 'Sorry' };
+      case 'deleteAlarm':
+        return { tag: 'Modify', fn: { tag: 'Lam', params: ['s'], body: { tag: 'StructUpdate', base: { tag: 'Var', name: 's' }, fields: [{ name: 'alarms', value: { tag: 'Var', name: 'AlarmState.empty' } }] } } };
+      case 'transaction':
+        // Storage.transaction(fn) → Transaction model
+        return args.length > 0
+          ? { tag: 'App', fn: { tag: 'Var', name: 'Transaction.commit' }, args: [{ tag: 'App', fn: args[0], args: [{ tag: 'Var', name: 'Transaction.empty' }] }, { tag: 'FieldAccess', obj: { tag: 'Var', name: 'self' }, field: 'storage' }] }
+          : { tag: 'Sorry' };
+      default:
+        // Unknown storage method → sorry with tracker
+        currentTracker().add({ location: `Storage.${method}`, reason: `Storage method '${method}' not mapped`, category: 'runtime-api', hint: 'add mapping in lowerStorageOp' });
+        return { tag: 'Sorry' };
+    }
+  }
+
+  // ─── DO context operation lowering ────────────────────────────────────────────
+  // Maps DurableObjectState method calls to Lean equivalents.
+
+  private lowerDOCtxOp(method: string, args: LeanExpr[], ty: IRType): LeanExpr {
+    switch (method) {
+      case 'acceptWebSocket':
+        // DOCtx.acceptWebSocket(ws, tags?) → WsDoState.openConn
+        return { tag: 'App', fn: { tag: 'Var', name: 'WsDoState.openConn' }, args };
+      case 'getWebSockets':
+        // DOCtx.getWebSockets(tag?) → filter connections by tag
+        return args.length > 0
+          ? { tag: 'App', fn: { tag: 'Var', name: 'WsDoState.getByTag' }, args }
+          : { tag: 'App', fn: { tag: 'Var', name: 'WsDoState.allConnections' }, args: [] };
+      case 'getTags':
+        return { tag: 'App', fn: { tag: 'Var', name: 'WsDoState.getTags' }, args };
+      case 'blockConcurrencyWhile':
+        // blockConcurrencyWhile(cb) → cb executed during init (semantically: just run cb)
+        return args.length > 0
+          ? { tag: 'App', fn: args[0], args: [{ tag: 'Lit', value: '()' }] }
+          : { tag: 'Sorry' };
+      case 'waitUntil':
+        // waitUntil is fire-and-forget; in the pure model, just evaluate the promise
+        return args.length > 0 ? args[0] : { tag: 'Lit', value: '()' };
+      case 'setWebSocketAutoResponse':
+        return { tag: 'App', fn: { tag: 'Var', name: 'WsDoState.setAutoResponse' }, args };
+      case 'getWebSocketAutoResponse':
+        return { tag: 'Var', name: 'WsDoState.getAutoResponse' };
+      case 'setHibernatableWebSocketEventTimeout':
+        return { tag: 'Lit', value: '()' }; // no-op in pure model
+      case 'getHibernatableWebSocketEventTimeout':
+        return { tag: 'Lit', value: '0' };
+      default:
+        return { tag: 'Sorry' };
+    }
   }
 }
 

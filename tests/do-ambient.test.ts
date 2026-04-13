@@ -30,10 +30,14 @@ describe('CF_AMBIENT', () => {
 });
 
 describe('DO_LEAN_IMPORTS', () => {
-  it('includes Http',    () => expect(DO_LEAN_IMPORTS).toContain('TSLean.DurableObjects.Http'));
-  it('includes State',   () => expect(DO_LEAN_IMPORTS).toContain('TSLean.DurableObjects.State'));
-  it('includes Storage', () => expect(DO_LEAN_IMPORTS).toContain('TSLean.DurableObjects.Storage'));
-  it('includes Model',   () => expect(DO_LEAN_IMPORTS).toContain('TSLean.DurableObjects.Model'));
-  it('includes Monad',   () => expect(DO_LEAN_IMPORTS).toContain('TSLean.Runtime.Monad'));
-  it('has 5 entries',    () => expect(DO_LEAN_IMPORTS).toHaveLength(5));
+  it('includes Http',        () => expect(DO_LEAN_IMPORTS).toContain('TSLean.DurableObjects.Http'));
+  it('includes State',       () => expect(DO_LEAN_IMPORTS).toContain('TSLean.DurableObjects.State'));
+  it('includes Storage',     () => expect(DO_LEAN_IMPORTS).toContain('TSLean.DurableObjects.Storage'));
+  it('includes Model',       () => expect(DO_LEAN_IMPORTS).toContain('TSLean.DurableObjects.Model'));
+  it('includes Monad',       () => expect(DO_LEAN_IMPORTS).toContain('TSLean.Runtime.Monad'));
+  it('includes WebSocket',   () => expect(DO_LEAN_IMPORTS).toContain('TSLean.DurableObjects.WebSocket'));
+  it('includes Alarm',       () => expect(DO_LEAN_IMPORTS).toContain('TSLean.DurableObjects.Alarm'));
+  it('includes Transaction', () => expect(DO_LEAN_IMPORTS).toContain('TSLean.DurableObjects.Transaction'));
+  it('includes RPC',         () => expect(DO_LEAN_IMPORTS).toContain('TSLean.DurableObjects.RPC'));
+  it('has 9 entries',        () => expect(DO_LEAN_IMPORTS).toHaveLength(9));
 });

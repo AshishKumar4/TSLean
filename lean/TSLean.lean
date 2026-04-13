@@ -101,6 +101,13 @@ import TSLean.Veil.QueueDO
 import TSLean.Veil.RateLimiterDO
 import TSLean.Veil.SessionStoreDO
 
+-- Workers bindings (Cloudflare KV, R2, D1, Queues, Scheduler)
+import TSLean.Workers.KV
+import TSLean.Workers.R2
+import TSLean.Workers.D1
+import TSLean.Workers.Queue
+import TSLean.Workers.Scheduler
+
 -- External stubs (TS compiler API, Node.js path/fs)
 import TSLean.External.Typescript
 import TSLean.External.Path
