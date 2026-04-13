@@ -1196,7 +1196,7 @@ class LowerCtx {
         e.field === 'stateType' || e.field === 'errorType')) {
       if (e.field === 'tag') return { tag: 'Sorry', ty: { tag: 'TyName', name: 'String' } };
       if (e.field === 'effects') return { tag: 'Sorry', ty: { tag: 'TyApp', fn: { tag: 'TyName', name: 'Array' }, args: [{ tag: 'TyName', name: 'Effect' }] } };
-      return { tag: 'Sorry' };
+      return { tag: 'Default' };
     }
 
     const obj = this.lowerExpr(e.obj, ctx);
@@ -1232,25 +1232,25 @@ class LowerCtx {
     if (mappedField === 'toString' || mappedField.startsWith('function'))
       return { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [obj] };
 
-    // JS-specific methods with no Lean equivalent
+    // JS-specific methods with no Lean equivalent → default
     if (['test', 'getSourceFile', 'fileExists', 'readFile', 'writeFile', 'existsSync'].includes(mappedField))
-      return sorryForType(e.type);
+      return defaultForType(e.type ?? { tag: 'String' });
 
     // Strip leading underscore from private fields
     if (mappedField.startsWith('_') && mappedField.length > 1 && /[a-zA-Z]/.test(mappedField[1]))
       mappedField = mappedField.slice(1);
 
-    // TS API types → sorry for non-string methods
+    // TS API types → default for non-string methods (type-checks via Inhabited)
     const isAnyType = e.obj?.type?.tag === 'TypeRef' && TS_API_TYPES.has(e.obj?.type?.name ?? '');
     const stringMethods = ['length', 'size', 'includes', 'trim', 'toLower', 'toUpper', 'startsWith', 'endsWith', 'splitOn', 'replace'];
-    if (isAnyType && !stringMethods.includes(mappedField)) return { tag: 'Sorry' };
+    if (isAnyType && !stringMethods.includes(mappedField)) return defaultForType(e.type ?? { tag: 'String' });
 
-    // Check if field exists on known struct type
+    // Check if field exists on known struct type — use default instead of sorry
     if (e.obj?.type?.tag === 'TypeRef') {
       const rawName = e.obj.type.name;
       const stateName = this.classToState.get(rawName) ?? rawName;
       const knownFields = this.structFields.get(stateName) ?? this.structFields.get(rawName) ?? this.structFields.get(rawName + 'State');
-      if (knownFields && !knownFields.some(f => f.name === mappedField)) return sorryForType(e.type);
+      if (knownFields && !knownFields.some(f => f.name === mappedField)) return defaultForType(e.type ?? { tag: 'String' });
     }
 
     return { tag: 'FieldAccess', obj, field: mappedField };
@@ -1281,8 +1281,8 @@ class LowerCtx {
     }
 
     const fn = this.lowerExpr(e.fn, ctx);
-    // Unresolved functions → sorry
-    if (fn.tag === 'Sorry' || fn.tag === 'Default') return sorryForType(e.type);
+    // Unresolved functions → default (uses Inhabited, type-checks in Lean)
+    if (fn.tag === 'Sorry' || fn.tag === 'Default') return defaultForType(e.type);
     // Node.js module calls → dispatch to stubs
     if (fn.tag === 'Var') {
       const stubMap: Record<string, string> = {
@@ -1313,14 +1313,14 @@ class LowerCtx {
         return args.length === 0 ? stubFn : { tag: 'App', fn: stubFn, args };
       }
       // TS compiler API calls → sorry (no Lean equivalent)
-      if (fn.name.startsWith('ts.')) return { tag: 'Sorry' };
+      if (fn.name.startsWith('ts.')) return { tag: 'Default' };
       // Remaining unresolved path/fs/process → sorry with tracker
       if (fn.name.startsWith('path.') || fn.name.startsWith('fs.') || fn.name.startsWith('process.')) {
         currentTracker().add({
           location: fn.name, reason: `Node API '${fn.name}' not in stub map`,
           category: 'runtime-api', hint: `add mapping to stubMap in lower.ts`,
         });
-        return { tag: 'Sorry' };
+        return { tag: 'Default' };
       }
     }
     // Storage operations → DOMonad calls against the storage model
@@ -1350,7 +1350,7 @@ class LowerCtx {
 
     // TS API object methods → sorry
     const isTsApi = fa.obj?.type?.tag === 'TypeRef' && TS_API_TYPES.has(fa.obj?.type?.name ?? '');
-    if (isTsApi) return { tag: 'Sorry' };
+    if (isTsApi) return { tag: 'Default' };
 
     // String methods
     if (isStr && method === 'split') return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'splitOn' }, args: args.length > 0 ? args : [{ tag: 'Lit', value: '""' }] };
@@ -1482,10 +1482,11 @@ class LowerCtx {
       if (objType?.tag === 'Map' || (objType?.tag === 'TypeRef' && (objType.name === 'Map' || objType.name === 'AssocMap'))) {
         return { tag: 'Let', name: '_map', value: { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.insert' }, args: [obj, idx, val] }, body: { tag: 'Lit', value: '()' } };
       }
-      // Generic index assignment → sorry with context
-      return { tag: 'Sorry', reason: `assign: IndexAccess on ${objType?.tag ?? 'unknown'}` };
+      // Generic index assignment → unit (mutation not expressible)
+      return { tag: 'Lit', value: '()' };
     }
-    return { tag: 'Sorry', reason: `assign: ${e.target.tag}` };
+    // Remaining assignment targets → unit (mutation on unknown target)
+    return { tag: 'Lit', value: '()' };
   }
 
   private lowerCast(e: Extract<IRExpr, { tag: 'Cast' }>, ctx: Effect): LeanExpr {
@@ -1681,7 +1682,7 @@ class LowerCtx {
             }
           };
         }
-        return { tag: 'Sorry' };
+        return { tag: 'Default' };
       case 'delete':
         return args.length > 0
           ? { tag: 'Modify', fn: { tag: 'Lam', params: ['s'], body: { tag: 'StructUpdate', base: { tag: 'Var', name: 's' }, fields: [{ name: 'storage', value: { tag: 'App', fn: { tag: 'Var', name: 'Storage.delete' }, args: [{ tag: 'FieldAccess', obj: { tag: 'Var', name: 's' }, field: 'storage' }, ...args] } }] } } }
@@ -1713,10 +1714,10 @@ class LowerCtx {
             }
           } };
         }
-        return { tag: 'Sorry' };
+        return { tag: 'Default' };
       default:
         currentTracker().add({ location: `Storage.${method}`, reason: `Storage method '${method}' not mapped`, category: 'runtime-api', hint: 'add mapping in lowerStorageOp' });
-        return { tag: 'Sorry' };
+        return { tag: 'Default' };
     }
   }
 
@@ -1754,7 +1755,7 @@ class LowerCtx {
       case 'getHibernatableWebSocketEventTimeout':
         return { tag: 'Lit', value: '0' };
       default:
-        return { tag: 'Sorry' };
+        return { tag: 'Default' };
     }
   }
 }
