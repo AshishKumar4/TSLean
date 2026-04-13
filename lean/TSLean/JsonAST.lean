@@ -173,6 +173,49 @@ def typeSymbol (j : Json) : String := fieldStr j "symbol"
 /-- Get the alias name from a resolved type JSON (e.g. type alias name). -/
 def typeAliasName (j : Json) : String := fieldStr j "aliasName"
 
+-- ─── v2: Rich type metadata ────────────────────────────────────────────────────
+
+/-- Schema version (0 for v1, 2 for v2). -/
+def schemaVersion (j : Json) : Nat := fieldNat j "version"
+
+/-- Get the symbol flags of an identifier (for enum/namespace detection). -/
+def symbolFlags (j : Json) : Nat := fieldNat j "symbolFlags"
+
+/-- TS SymbolFlags constants for detection. -/
+def SF_Enum : Nat := 256
+def SF_EnumMember : Nat := 8
+def SF_ValueModule : Nat := 512
+def SF_TypeAlias : Nat := 131072
+
+/-- Get the resolved function signature from a function-like node. -/
+def nodeSignature (j : Json) : Option Json := getField j "signature"
+
+/-- Get the return type from a signature object. -/
+def signatureReturnType (sig : Json) : Option Json := getField sig "returnType"
+
+/-- Get the parameters array from a signature object. -/
+def signatureParameters (sig : Json) : Array Json := fieldArr sig "parameters"
+
+/-- Get the resolved call signature from a call/new expression. -/
+def nodeCallSignature (j : Json) : Option Json := getField j "callSignature"
+
+/-- Get the properties array from a resolved type (v2). -/
+def typeProperties (rt : Json) : Array Json := fieldArr rt "properties"
+
+/-- Check if a resolved type has a specific property by name. -/
+def typeHasProperty (rt : Json) (name : String) : Bool :=
+  (typeProperties rt).any fun p => fieldStr p "name" == name
+
+/-- Get the type flags of a named property from a resolved type. -/
+def typePropertyFlags (rt : Json) (name : String) : Nat :=
+  match (typeProperties rt).find? (fun p => fieldStr p "name" == name) with
+  | some p => fieldNat p "typeFlags"
+  | none => 0
+
+/-- Get the return type from a call signature on a resolved type (v2). -/
+def callSignatureReturnType (j : Json) : Option Json :=
+  nodeCallSignature j |>.bind signatureReturnType
+
 -- ─── File reading ───────────────────────────────────────────────────────────────
 
 /-- Parse a JSON AST file content into a structured Json value. -/
