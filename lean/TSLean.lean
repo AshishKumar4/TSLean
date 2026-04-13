@@ -119,6 +119,7 @@ import TSLean.Stubs.NodePath
 import TSLean.Stubs.NodeHttp
 import TSLean.Stubs.Console
 import TSLean.Stubs.Process
+import TSLean.Stubs.WebAPIs
 
 -- Self-hosting prelude (forward declarations for cross-file references)
 import TSLean.Generated.SelfHost.Prelude

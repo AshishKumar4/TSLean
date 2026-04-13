@@ -1028,6 +1028,32 @@ class LowerCtx {
       case 'CtorApp': {
         const args = e.args.map(a => this.lowerExprP(a, ctx));
         const name = e.ctor;
+        // Map known constructors to their Lean equivalents
+        const knownCtors: Record<string, string> = {
+          'TextEncoder': 'TSLean.Stubs.WebAPIs.TextEncoder.mk\'',
+          'TextDecoder': 'TSLean.Stubs.WebAPIs.TextDecoder.mk\'',
+          'Headers': 'TSLean.Stubs.WebAPIs.Headers.mk\'',
+          'AbortController': 'TSLean.Stubs.WebAPIs.AbortController.mk\'',
+          'EventTarget': 'TSLean.Stubs.WebAPIs.EventTarget.mk\'',
+          'WebSocket': 'TSLean.Stubs.WebAPIs.WebSocket.mk\'',
+          'Uint8Array': 'default',
+          'AsyncLocalStorage': 'default',
+          'ReadableStream': 'default',
+          'WritableStream': 'default',
+          'Map': 'AssocMap.empty',
+          'Set': '#[]',
+          'Error': 'default',
+          'TypeError': 'default',
+          'RangeError': 'default',
+        };
+        const mapped = knownCtors[name];
+        if (mapped) {
+          if (mapped === 'default' || mapped === '#[]') return { tag: mapped === '#[]' ? 'ArrayLit' : 'Default', elems: [] } as LeanExpr;
+          return args.length === 0
+            ? { tag: 'Var', name: mapped }
+            : { tag: 'App', fn: { tag: 'Var', name: mapped }, args };
+        }
+        // Unknown uppercase constructor with args → default
         if (args.length > 0 && /^[A-Z][a-zA-Z]*$/.test(name) && !name.includes('.')) {
           return { tag: 'Default' };
         }
