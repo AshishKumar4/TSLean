@@ -824,34 +824,47 @@ class LowerCtx {
       case 'IO': case 'Async':
         return alreadyIO ? retTy : { tag: 'TyApp', fn: { tag: 'TyName', name: 'IO' }, args: [retTy] };
       case 'State': {
+        // StateT S IO T — IO is the monad (Type → Type), T is the return type.
+        // They must be separate arguments, NOT wrapped as (IO T).
         const stTy = this.lowerType(eff.stateType);
         return { tag: 'TyApp', fn: { tag: 'TyName', name: 'StateT' },
-                 args: [stTy, { tag: 'TyApp', fn: { tag: 'TyName', name: 'IO' }, args: [innerRet] }] };
+                 args: [stTy, { tag: 'TyName', name: 'IO' }, innerRet] };
       }
       case 'Except': {
+        // ExceptT E IO T — same pattern: IO and T are separate arguments.
         const errTy = this.lowerType(eff.errorType);
         return { tag: 'TyApp', fn: { tag: 'TyName', name: 'ExceptT' },
-                 args: [errTy, { tag: 'TyApp', fn: { tag: 'TyName', name: 'IO' }, args: [innerRet] }] };
+                 args: [errTy, { tag: 'TyName', name: 'IO' }, innerRet] };
       }
       case 'Combined': {
-        // Build the monad transformer stack as LeanTy directly.
-        // Stack is right-folded: [StateT S, ExceptT E, IO] → StateT S (ExceptT E (IO α))
-        const layers: LeanTy[] = [];
+        // Build monad transformer stack: StateT S (ExceptT E IO) T
+        // Each transformer takes args + inner monad. Return type is the outermost argument.
         const se = eff.effects.find((e): e is Extract<Effect, { tag: 'State' }> => e.tag === 'State');
         const ee = eff.effects.find((e): e is Extract<Effect, { tag: 'Except' }> => e.tag === 'Except');
-        if (se) layers.push({ tag: 'TyApp', fn: { tag: 'TyName', name: 'StateT' }, args: [this.lowerType(se.stateType)] });
-        else if (eff.effects.some(e => e.tag === 'State')) layers.push({ tag: 'TyApp', fn: { tag: 'TyName', name: 'StateT' }, args: [{ tag: 'TyName', name: 'σ' }] });
-        if (ee) layers.push({ tag: 'TyApp', fn: { tag: 'TyName', name: 'ExceptT' }, args: [this.lowerType(ee.errorType)] });
-        else if (eff.effects.some(e => e.tag === 'Except')) layers.push({ tag: 'TyApp', fn: { tag: 'TyName', name: 'ExceptT' }, args: [{ tag: 'TyName', name: 'TSError' }] });
-        layers.push({ tag: 'TyName', name: 'IO' });
 
-        if (layers.length === 1 && alreadyIO) return retTy;
-        // Right-fold: each transformer wraps the next as an argument
-        const stack = layers.reduceRight<LeanTy>((inner, outer) =>
-          outer.tag === 'TyName' ? { tag: 'TyApp', fn: outer, args: [inner] }
-            : { tag: 'TyApp', fn: outer.fn, args: [...outer.args, inner] }
-        , innerRet);
-        return stack;
+        // Build the inner monad (from inside out): IO, then ExceptT E IO, then StateT S (ExceptT E IO)
+        let monad: LeanTy = { tag: 'TyName', name: 'IO' };
+
+        if (ee) {
+          monad = { tag: 'TyApp', fn: { tag: 'TyName', name: 'ExceptT' },
+                    args: [this.lowerType(ee.errorType), monad] };
+        } else if (eff.effects.some(e => e.tag === 'Except')) {
+          monad = { tag: 'TyApp', fn: { tag: 'TyName', name: 'ExceptT' },
+                    args: [{ tag: 'TyName', name: 'TSError' }, monad] };
+        }
+
+        if (se) {
+          monad = { tag: 'TyApp', fn: { tag: 'TyName', name: 'StateT' },
+                    args: [this.lowerType(se.stateType), monad] };
+        } else if (eff.effects.some(e => e.tag === 'State')) {
+          monad = { tag: 'TyApp', fn: { tag: 'TyName', name: 'StateT' },
+                    args: [{ tag: 'TyName', name: 'σ' }, monad] };
+        }
+
+        if (monad.tag === 'TyName' && monad.name === 'IO' && alreadyIO) return retTy;
+        // Apply the return type as the final argument
+        return { tag: 'TyApp', fn: monad.tag === 'TyName' ? monad : monad.fn,
+                 args: [...(monad.tag === 'TyApp' ? monad.args : []), innerRet] };
       }
     }
   }
