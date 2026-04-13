@@ -35,6 +35,12 @@ export function hasWorkersPattern(source: string): boolean {
 export const CF_AMBIENT = `
 // ── Durable Objects ──────────────────────────────────────────────────────────
 
+declare class DurableObject<E = any> {
+  ctx: DurableObjectState;
+  env: E;
+  constructor(ctx: DurableObjectState, env: E);
+}
+
 interface DurableObjectState {
   storage: DurableObjectStorage;
   id: DurableObjectId;

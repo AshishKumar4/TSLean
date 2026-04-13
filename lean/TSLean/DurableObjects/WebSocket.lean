@@ -46,8 +46,10 @@ structure Channel (S : Session) where
 structure WsDoState where
   connections : List (String × WsState)
   messages    : List (String × WsMessage)
+  tags        : List (String × List String) := []  -- connId → tag list
+  autoResponse : Option (String × String) := none  -- request → response pair
 
-def WsDoState.empty : WsDoState := { connections := [], messages := [] }
+def WsDoState.empty : WsDoState := { connections := [], messages := [], tags := [], autoResponse := none }
 
 def broadcast (state : WsDoState) (msg : WsMessage) : WsDoState :=
   let newMsgs := state.connections |>.filter (fun (_, s) => s == WsState.open_) |>.map (fun (id, _) => (id, msg))
@@ -59,6 +61,32 @@ def closeConn (state : WsDoState) (id : String) : WsDoState :=
 
 def openConn (state : WsDoState) (id : String) : WsDoState :=
   { state with connections := (id, WsState.open_) :: state.connections }
+
+-- Hibernation API: open with tags
+def openConnWithTags (state : WsDoState) (id : String) (connTags : List String) : WsDoState :=
+  { (openConn state id) with tags := (id, connTags) :: state.tags }
+
+-- Get connections filtered by tag
+def getByTag (state : WsDoState) (tag : String) : List String :=
+  state.tags |>.filter (fun (_, ts) => ts.any (· == tag)) |>.map Prod.fst
+
+-- Get all open connection IDs
+def allConnections (state : WsDoState) : List String :=
+  state.connections |>.filter (fun (_, s) => s == WsState.open_) |>.map Prod.fst
+
+-- Get tags for a specific connection
+def getTags (state : WsDoState) (connId : String) : List String :=
+  match state.tags.find? (fun (id, _) => id == connId) with
+  | some (_, ts) => ts
+  | none => []
+
+-- Set auto-response pair for WebSocket
+def setAutoResponse (state : WsDoState) (req resp : String) : WsDoState :=
+  { state with autoResponse := some (req, resp) }
+
+-- Get auto-response pair
+def getAutoResponse (state : WsDoState) : Option (String × String) :=
+  state.autoResponse
 
 theorem Session.dual_involutive (s : Session) : s.dual.dual = s := by
   induction s with

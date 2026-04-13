@@ -77,17 +77,17 @@ describe('Chat Room WS', () => {
 
   it('maps acceptWebSocket', () => {
     const lean = transpile('chat-room-ws.ts');
-    expect(lean).toContain('WsDoState.openConn');
+    expect(lean).toContain('openConnWithTags');
   });
 
   it('maps getTags', () => {
     const lean = transpile('chat-room-ws.ts');
-    expect(lean).toContain('WsDoState.getTags');
+    expect(lean).toContain('getTags');
   });
 
   it('maps getWebSockets', () => {
     const lean = transpile('chat-room-ws.ts');
-    expect(lean).toContain('WsDoState');
+    expect(lean).toContain('getByTag');
   });
 
   it('generates webSocketMessage handler', () => {

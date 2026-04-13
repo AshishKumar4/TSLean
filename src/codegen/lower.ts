@@ -1504,11 +1504,14 @@ class LowerCtx {
   // Storage is modeled as AssocMap StorageKey StorageValue in the DOMonad.
 
   private lowerStorageOp(method: string, args: LeanExpr[], ty: IRType, ctx: Effect): LeanExpr {
+    // Storage operations are lowered to Lean DurableObjects.Model calls.
+    // For reads: Storage.get/keys on a storage handle.
+    // For writes: modify fun s => { s with storage := Storage.put/delete s.storage ... }
     switch (method) {
       case 'get':
-        // Storage.get key → do let s ← get; pure (Storage.get s.storage key)
+        // Storage.get key → sorry-free structural call
         return args.length > 0
-          ? { tag: 'App', fn: { tag: 'Var', name: 'Storage.get' }, args: [{ tag: 'FieldAccess', obj: { tag: 'Var', name: 'self' }, field: 'storage' }, ...args] }
+          ? { tag: 'App', fn: { tag: 'Var', name: 'Storage.get' }, args }
           : { tag: 'Sorry' };
       case 'put':
         // Storage.put key value → modify fun s => { s with storage := Storage.put s.storage key value }
@@ -1530,22 +1533,32 @@ class LowerCtx {
       case 'deleteAll':
         return { tag: 'Modify', fn: { tag: 'Lam', params: ['s'], body: { tag: 'StructUpdate', base: { tag: 'Var', name: 's' }, fields: [{ name: 'storage', value: { tag: 'Var', name: 'Storage.clear' } }] } } };
       case 'list':
-        return { tag: 'App', fn: { tag: 'Var', name: 'Storage.keys' }, args: [{ tag: 'FieldAccess', obj: { tag: 'Var', name: 'self' }, field: 'storage' }] };
+        return { tag: 'App', fn: { tag: 'Var', name: 'Storage.keys' }, args };
       case 'getAlarm':
-        return { tag: 'App', fn: { tag: 'Var', name: 'AlarmState.next' }, args: [{ tag: 'FieldAccess', obj: { tag: 'Var', name: 'self' }, field: 'alarms' }] };
+        // getAlarm → AlarmState.next
+        return { tag: 'App', fn: { tag: 'Var', name: 'AlarmState.next' }, args };
       case 'setAlarm':
+        // setAlarm(t) → AlarmState.schedule
         return args.length > 0
-          ? { tag: 'Modify', fn: { tag: 'Lam', params: ['s'], body: { tag: 'StructUpdate', base: { tag: 'Var', name: 's' }, fields: [{ name: 'alarms', value: { tag: 'App', fn: { tag: 'Var', name: 'AlarmState.schedule' }, args: [{ tag: 'FieldAccess', obj: { tag: 'Var', name: 's' }, field: 'alarms' }, ...args, { tag: 'Lit', value: '0' }] } }] } } }
+          ? { tag: 'App', fn: { tag: 'Var', name: 'AlarmState.schedule' }, args }
           : { tag: 'Sorry' };
       case 'deleteAlarm':
-        return { tag: 'Modify', fn: { tag: 'Lam', params: ['s'], body: { tag: 'StructUpdate', base: { tag: 'Var', name: 's' }, fields: [{ name: 'alarms', value: { tag: 'Var', name: 'AlarmState.empty' } }] } } };
+        return { tag: 'Var', name: 'AlarmState.empty' };
       case 'transaction':
-        // Storage.transaction(fn) → Transaction model
-        return args.length > 0
-          ? { tag: 'App', fn: { tag: 'Var', name: 'Transaction.commit' }, args: [{ tag: 'App', fn: args[0], args: [{ tag: 'Var', name: 'Transaction.empty' }] }, { tag: 'FieldAccess', obj: { tag: 'Var', name: 'self' }, field: 'storage' }] }
-          : { tag: 'Sorry' };
+        // Storage.transaction(fn) → modify with Transaction model
+        if (args.length > 0) {
+          return { tag: 'Modify', fn: {
+            tag: 'Lam', params: ['s'], body: {
+              tag: 'StructUpdate', base: { tag: 'Var', name: 's' },
+              fields: [{ name: 'storage', value: {
+                tag: 'App', fn: { tag: 'Var', name: 'Transaction.commit' },
+                args: [{ tag: 'App', fn: args[0], args: [{ tag: 'Var', name: 'Transaction.empty' }] }, { tag: 'FieldAccess', obj: { tag: 'Var', name: 's' }, field: 'storage' }]
+              } }]
+            }
+          } };
+        }
+        return { tag: 'Sorry' };
       default:
-        // Unknown storage method → sorry with tracker
         currentTracker().add({ location: `Storage.${method}`, reason: `Storage method '${method}' not mapped`, category: 'runtime-api', hint: 'add mapping in lowerStorageOp' });
         return { tag: 'Sorry' };
     }
@@ -1557,15 +1570,17 @@ class LowerCtx {
   private lowerDOCtxOp(method: string, args: LeanExpr[], ty: IRType): LeanExpr {
     switch (method) {
       case 'acceptWebSocket':
-        // DOCtx.acceptWebSocket(ws, tags?) → WsDoState.openConn
-        return { tag: 'App', fn: { tag: 'Var', name: 'WsDoState.openConn' }, args };
+        // DOCtx.acceptWebSocket(ws, tags?) → openConnWithTags / openConn
+        return args.length > 1
+          ? { tag: 'App', fn: { tag: 'Var', name: 'openConnWithTags' }, args }
+          : { tag: 'App', fn: { tag: 'Var', name: 'openConn' }, args };
       case 'getWebSockets':
-        // DOCtx.getWebSockets(tag?) → filter connections by tag
+        // DOCtx.getWebSockets(tag?) → getByTag / allConnections
         return args.length > 0
-          ? { tag: 'App', fn: { tag: 'Var', name: 'WsDoState.getByTag' }, args }
-          : { tag: 'App', fn: { tag: 'Var', name: 'WsDoState.allConnections' }, args: [] };
+          ? { tag: 'App', fn: { tag: 'Var', name: 'getByTag' }, args }
+          : { tag: 'App', fn: { tag: 'Var', name: 'allConnections' }, args: [] };
       case 'getTags':
-        return { tag: 'App', fn: { tag: 'Var', name: 'WsDoState.getTags' }, args };
+        return { tag: 'App', fn: { tag: 'Var', name: 'getTags' }, args };
       case 'blockConcurrencyWhile':
         // blockConcurrencyWhile(cb) → cb executed during init (semantically: just run cb)
         return args.length > 0
@@ -1575,9 +1590,9 @@ class LowerCtx {
         // waitUntil is fire-and-forget; in the pure model, just evaluate the promise
         return args.length > 0 ? args[0] : { tag: 'Lit', value: '()' };
       case 'setWebSocketAutoResponse':
-        return { tag: 'App', fn: { tag: 'Var', name: 'WsDoState.setAutoResponse' }, args };
+        return { tag: 'App', fn: { tag: 'Var', name: 'setAutoResponse' }, args };
       case 'getWebSocketAutoResponse':
-        return { tag: 'Var', name: 'WsDoState.getAutoResponse' };
+        return { tag: 'Var', name: 'getAutoResponse' };
       case 'setHibernatableWebSocketEventTimeout':
         return { tag: 'Lit', value: '()' }; // no-op in pure model
       case 'getHibernatableWebSocketEventTimeout':
