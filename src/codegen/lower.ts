@@ -114,6 +114,23 @@ const TS_API_TYPES = new Set([
 
 const DEFAULT_DERIVING = ['Repr', 'BEq', 'Inhabited'];
 
+/** Check if a Lean type contains arrow types (functions). Lean cannot derive Repr/BEq for these. */
+function containsArrowType(ty: LeanTy): boolean {
+  switch (ty.tag) {
+    case 'TyArrow': return true;
+    case 'TyApp': return ty.args.some(containsArrowType);
+    case 'TyTuple': return ty.elems.some(containsArrowType);
+    case 'TyParen': return containsArrowType(ty.inner);
+    default: return false;
+  }
+}
+
+/** Compute safe deriving clauses — exclude Repr/BEq if any field has arrow type. */
+function safeDeriving(fields: LeanField[], isBranded: boolean): string[] {
+  if (fields.some(f => containsArrowType(f.ty))) return ['Inhabited'];
+  return isBranded ? [...DEFAULT_DERIVING, 'DecidableEq'] : DEFAULT_DERIVING;
+}
+
 // ─── Lowering context ───────────────────────────────────────────────────────────
 
 class LowerCtx {
@@ -469,8 +486,7 @@ class LowerCtx {
       return { name: rawName, ty: this.lowerType(f.type) };
     });
     const isBranded = enrichedFields.length === 1 && enrichedFields[0].name === 'val';
-    const deriving = inMutual ? [] :
-      (isBranded ? [...DEFAULT_DERIVING, 'DecidableEq'] : DEFAULT_DERIVING);
+    const deriving = inMutual ? [] : safeDeriving(fields, isBranded);
     return {
       tag: 'Structure',
       name: d.name,
@@ -500,7 +516,8 @@ class LowerCtx {
       name: d.name,
       tyParams: d.typeParams.map(p => ({ name: p.name, explicit: true })),
       ctors,
-      deriving: inMutual ? [] : DEFAULT_DERIVING,
+      deriving: inMutual ? [] :
+        (ctors.some(c => c.fields.some(f => containsArrowType(f.ty))) ? ['Inhabited'] : DEFAULT_DERIVING),
       comment: d.comment,
     };
   }
