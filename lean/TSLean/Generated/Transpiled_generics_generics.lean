@@ -3,10 +3,11 @@
 
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
+set_option linter.unusedVariables false
 
 open TSLean
 
-namespace TSLean.Generated.Generics
+namespace TSLean.Transpiled.Generics
 
 -- // Generics: type parameters, higher-kinded patterns
 def identity {T : Type} (x : T) : T :=
@@ -40,4 +41,4 @@ def flatMapOpt {T : Type} {U : Type} (opt : Option T) (f : T → Option U) : Opt
     | none => none
     | some _v => f _v
 
-end TSLean.Generated.Generics
+end TSLean.Transpiled.Generics

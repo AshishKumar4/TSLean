@@ -3,10 +3,11 @@
 
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
+set_option linter.unusedVariables false
 
 open TSLean
 
-namespace TSLean.Generated.Hello
+namespace TSLean.Transpiled.Hello
 
 -- // Basic: functions, variables, primitives
 def greet (name : String) : String :=
@@ -28,4 +29,4 @@ def PI : Float := 3.14159
 
 def greeting : String := greet "World"
 
-end TSLean.Generated.Hello
+end TSLean.Transpiled.Hello

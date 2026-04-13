@@ -127,13 +127,114 @@ def tryCatchDefault [Monad m] [MonadExcept TSError m] (action : m α) (default :
 -- String helpers matching JS APIs (for transpiler codegen)
 def String.includes (s sub : String) : Bool := (s.splitOn sub).length > 1
 
-/-- `Any` type: maps from TypeScript `any`/`unknown`. Uses `String` as a
-    serializable approximation (actual values serialized as JSON strings). -/
-abbrev Any := String
+/-- Get a character by index, returning a default if out of bounds. -/
+def String.getD' (s : String) (i : Nat) (default : Char := '\x00') : Char :=
+  if i < s.length then String.Pos.Raw.get s ⟨i⟩ else default
+
+/-- Get a character by index, panicking if out of bounds. -/
+def String.get!' (s : String) (i : Nat) : Char :=
+  String.getD' s i '\x00'
+
+/-- Set a character at index (returns new string). -/
+def String.set!' (s : String) (i : Nat) (c : Char) : String :=
+  if i >= s.length then s
+  else
+    let before := String.Pos.Raw.extract s ⟨0⟩ ⟨i⟩
+    let after := String.Pos.Raw.extract s ⟨i + 1⟩ ⟨s.length⟩
+    before ++ String.singleton c ++ after
+
+/-! ## TSValue — dynamic type for any/unknown ─────────────────────────────── -/
+
+/-- Opaque representation of a dynamically-typed TypeScript value.
+    Used when the transpiler cannot resolve a static type (TS `any`/`unknown`).
+    Backed by `String` — values are serialised as JSON strings at the boundary. -/
+abbrev TSAny := String
+
+instance : Inhabited TSAny := ⟨""⟩
+instance : BEq TSAny := inferInstance
+instance : Repr TSAny := inferInstance
+instance : ToString TSAny := inferInstance
+
+/-- Legacy alias — the codegen now emits `TSAny` for `any`/`unknown`. -/
+abbrev Any := TSAny
+
+instance : Inhabited TSValue := ⟨TSValue.tsNull⟩
+instance : BEq TSValue where
+  beq a b := match a, b with
+    | .tsNull, .tsNull | .tsUndef, .tsUndef => true
+    | .tsBool a, .tsBool b => a == b
+    | .tsNum a, .tsNum b => a == b
+    | .tsStr a, .tsStr b => a == b
+    | _, _ => false
+instance : ToString TSValue where
+  toString v := match v with
+    | .tsNull => "null"
+    | .tsUndef => "undefined"
+    | .tsBool b => toString b
+    | .tsNum n => toString n
+    | .tsStr s => s!"\"{s}\""
+    | .tsArray _ => "[...]"
+    | .tsObject _ => "{...}"
+
+/-! ## TSAny field accessors
+
+When the codegen maps a TS type to `TSAny` (= String), field accesses like
+`expr.tag`, `expr.name`, `expr.body` become `String.tag`, `String.name`, etc.
+These identity projections return the string itself, making field access
+compile even when the type is erased to TSAny. -/
+
+namespace String
+  @[inline] def tag   (s : String) : String := s
+  @[inline] def body  (s : String) : String := s
+  @[inline] def value (s : String) : String := s
+  @[inline] def name_ (s : String) : String := s  -- name conflicts with String.name
+  @[inline] def field (s : String) : String := s
+  @[inline] def obj   (s : String) : String := s
+  @[inline] def fn    (s : String) : String := s
+  @[inline] def expr  (s : String) : String := s
+  @[inline] def left  (s : String) : String := s
+  @[inline] def right (s : String) : String := s
+  @[inline] def op    (s : String) : String := s
+  @[inline] def cond  (s : String) : String := s
+  @[inline] def then_ (s : String) : String := s
+  @[inline] def else_ (s : String) : String := s
+  @[inline] def index (s : String) : String := s
+  @[inline] def monad (s : String) : String := s
+  @[inline] def target (s : String) : String := s
+  @[inline] def handler (s : String) : String := s
+  @[inline] def scrutinee (s : String) : String := s
+  @[inline] def stmts (s : String) : String := s
+  @[inline] def elems (s : String) : String := s
+  @[inline] def fields (s : String) : String := s
+  @[inline] def base  (s : String) : String := s
+  @[inline] def updates (s : String) : String := s
+  @[inline] def args  (s : String) : String := s
+  @[inline] def params (s : String) : Array String := #[]
+  @[inline] def cases (s : String) : Array String := #[]
+  @[inline] def decls (s : String) : Array String := #[]
+  @[inline] def ctors (s : String) : Array String := #[]
+  @[inline] def comment (s : String) : Option (Option String) := none
+  @[inline] def docComment (s : String) : Option (Option String) := none
+  @[inline] def isPartial (s : String) : Option Bool := none
+  @[inline] def extends_ (s : String) : Option (Option String) := none
+  @[inline] def sourceFile (s : String) : Option (Option String) := none
+  @[inline] def mutable (s : String) : Bool := false
+  @[inline] def retType (s : String) : String := s
+  @[inline] def code   (s : String) : String := s
+  @[inline] def proof  (s : String) : String := s
+  @[inline] def statement (s : String) : String := s
+  @[inline] def typeParams (s : String) : Array String := #[]
+  @[inline] def methods (s : String) : Array String := #[]
+  @[inline] def effect (s : String) : String := s
+  @[inline] def module (s : String) : String := s
+end String
+
+/-- Additional TSAny instances for codegen compatibility. -/
+instance : Hashable TSAny := inferInstance
+instance : DecidableEq TSAny := inferInstance
+instance : Ord TSAny := inferInstance
 
 /-- Runtime type check (stub — always returns "object"). -/
 def typeOf {α : Type} (_ : α) : String := "object"
-
-instance : Inhabited Any := ⟨""⟩
 
 end TSLean

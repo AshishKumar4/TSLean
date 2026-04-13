@@ -4,10 +4,11 @@
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
+set_option linter.unusedVariables false
 
 open TSLean
 
-namespace TSLean.Generated.Exceptions
+namespace TSLean.Transpiled.Exceptions
 
 -- Auto-generated empty state struct for ValidationErrorState
 structure ValidationErrorState where
@@ -48,4 +49,4 @@ def validateEmail (email : String) : ExceptT String IO String :=
       else
         pure (email.toLower.trim)
 
-end TSLean.Generated.Exceptions
+end TSLean.Transpiled.Exceptions

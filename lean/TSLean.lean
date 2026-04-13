@@ -62,10 +62,30 @@ import TSLean.Generated.FullProject.Backend.RateLimiterDo
 import TSLean.Generated.FullProject.Backend.AnalyticsDo
 import TSLean.Generated.FullProject.Backend.Router
 
--- Transpiler output (compiles with lake build — separate namespace from hand-written)
--- Note: not imported here to avoid name clashes with hand-written Generated/ files.
--- Import individually: `import TSLean.Generated.Basic.Hello` etc.
--- TODO: merge hand-written and transpiler-generated into single namespace
+-- Transpiler output (auto-generated from test fixtures)
+import TSLean.Generated.Transpiled_basic_hello
+import TSLean.Generated.Transpiled_basic_interfaces
+import TSLean.Generated.Transpiled_basic_classes
+import TSLean.Generated.Transpiled_advanced_class_features
+import TSLean.Generated.Transpiled_advanced_export_patterns
+import TSLean.Generated.Transpiled_advanced_for_loops
+import TSLean.Generated.Transpiled_advanced_index_signatures
+import TSLean.Generated.Transpiled_advanced_optional_chaining
+import TSLean.Generated.Transpiled_advanced_template_literals
+import TSLean.Generated.Transpiled_advanced_type_narrowing
+import TSLean.Generated.Transpiled_effects_async
+import TSLean.Generated.Transpiled_effects_exceptions
+import TSLean.Generated.Transpiled_generics_branded_types
+import TSLean.Generated.Transpiled_generics_discriminated_unions
+import TSLean.Generated.Transpiled_generics_generics
+import TSLean.Generated.Transpiled_durable_objects_counter
+import TSLean.Generated.Transpiled_durable_objects_rate_limiter
+import TSLean.Generated.Transpiled_durable_objects_chat_room
+import TSLean.Generated.Transpiled_durable_objects_session_store
+import TSLean.Generated.Transpiled_durable_objects_queue_processor
+import TSLean.Generated.Transpiled_durable_objects_auth_do
+import TSLean.Generated.Transpiled_durable_objects_analytics_do
+import TSLean.Generated.Transpiled_durable_objects_multi_do
 
 -- Veil Transition Systems
 import TSLean.Veil.Core
@@ -84,6 +104,8 @@ import TSLean.External.Typescript
 import TSLean.External.Path
 import TSLean.External.Fs
 
+-- Self-hosting prelude (forward declarations for cross-file references)
+import TSLean.Generated.SelfHost.Prelude
 -- Self-hosting: all 12 transpiled source files compile (Bootstrap imports them all)
 import TSLean.Generated.SelfHost.Bootstrap
 

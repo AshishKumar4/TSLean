@@ -9,10 +9,11 @@ import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
+set_option linter.unusedVariables false
 
 open TSLean TSLean.WebAPI TSLean.DO
 
-namespace TSLean.Generated.QueueProcessor
+namespace TSLean.Transpiled.QueueProcessor
 
 -- Auto-generated empty state struct for QueueProcessorDOState
 structure QueueProcessorDOState where
@@ -22,7 +23,7 @@ structure QueueProcessorDOState where
 structure QueueItem where
   mk ::
   id : String
-  payload : Any
+  payload : String
   enqueuedAt : Float
   attempts : Float
   maxAttempts : Float
@@ -55,7 +56,7 @@ def QueueProcessorDO.fetch (self : QueueProcessorDOState) (request : Request) : 
               else
                 pure (mkResponse "Not Found" ({ status := 404 }))
 
-def QueueProcessorDO.enqueue (self : QueueProcessorDOState) (payload : Any) (maxAttempts : Float) : IO String :=
+def QueueProcessorDO.enqueue (self : QueueProcessorDOState) (payload : String) (maxAttempts : Float) : IO String :=
   do
     let id : String := "uuid-stub"
     let item : QueueItem := { id := id, payload := payload, enqueuedAt := 0, attempts := 0, maxAttempts := maxAttempts, nextRetryAt := 0 }
@@ -68,4 +69,4 @@ def QueueProcessorDO.processNext (self : QueueProcessorDOState) : StateT QueuePr
 end
 end QueueProcessorDO
 
-end TSLean.Generated.QueueProcessor
+end TSLean.Transpiled.QueueProcessor

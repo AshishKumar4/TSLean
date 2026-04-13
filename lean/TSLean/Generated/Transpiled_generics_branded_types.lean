@@ -3,10 +3,11 @@
 
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
+set_option linter.unusedVariables false
 
 open TSLean
 
-namespace TSLean.Generated.BrandedTypes
+namespace TSLean.Transpiled.BrandedTypes
 
 structure UserId where
   mk ::
@@ -55,4 +56,4 @@ structure UserProfile where
 def createUserProfile (id : UserId) (email : EmailAddress) (name : String) : UserProfile :=
   { id := id, email := email, displayName := name }
 
-end TSLean.Generated.BrandedTypes
+end TSLean.Transpiled.BrandedTypes

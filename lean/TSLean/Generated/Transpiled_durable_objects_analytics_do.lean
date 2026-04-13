@@ -9,10 +9,11 @@ import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
+set_option linter.unusedVariables false
 
 open TSLean TSLean.WebAPI TSLean.DO
 
-namespace TSLean.Generated.AnalyticsDo
+namespace TSLean.Transpiled.AnalyticsDo
 
 -- Auto-generated empty state struct for AnalyticsDOState
 structure AnalyticsDOState where
@@ -69,4 +70,4 @@ def AnalyticsDO.trackEvent (self : AnalyticsDOState) (event : String) : IO Unit 
 end
 end AnalyticsDO
 
-end TSLean.Generated.AnalyticsDo
+end TSLean.Transpiled.AnalyticsDo

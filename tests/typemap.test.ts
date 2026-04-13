@@ -167,7 +167,7 @@ describe('irTypeToLean – emission', () => {
   it('Option (complex)', () => expect(irTypeToLean({ tag: 'Option', inner: { tag: 'Array', elem: { tag: 'Nat' } } })).toBe('Option (Array Nat)'));
   it('Array Nat',        () => expect(irTypeToLean({ tag: 'Array', elem: { tag: 'Nat' } })).toBe('Array Nat'));
   it('Map String Nat → AssocMap', () => expect(irTypeToLean({ tag: 'Map', key: { tag: 'String' }, value: { tag: 'Nat' } })).toBe('AssocMap String Nat'));
-  it('Set String → AssocSet',    () => expect(irTypeToLean({ tag: 'Set', elem: { tag: 'String' } })).toBe('AssocSet String'));
+  it('Set String → Array',    () => expect(irTypeToLean({ tag: 'Set', elem: { tag: 'String' } })).toBe('Array String'));
   it('Promise String → IO String', () => expect(irTypeToLean({ tag: 'Promise', inner: { tag: 'String' } })).toBe('IO String'));
 
   it('Tuple (String × Nat)', () =>

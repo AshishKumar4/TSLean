@@ -111,6 +111,31 @@ def toList (m : AssocMap α β) : List (α × β) := m.entries
 def fromList (pairs : List (α × β)) : AssocMap α β :=
   pairs.foldl (fun acc (k, v) => acc.insert k v) empty
 
+-- ─── JS-compatible aliases ──────────────────────────────────────────────────
+-- The transpiler emits these names to match the JavaScript Map/Set API.
+
+/-- Alias for `insert` — matches the JavaScript `Map.set(k, v)` API. -/
+def set (m : AssocMap α β) (k : α) (v : β) : AssocMap α β := m.insert k v
+/-- Remove all entries. -/
+def clear (_ : AssocMap α β) : AssocMap α β := empty
+/-- Apply a function to every key-value pair. -/
+def forEach (m : AssocMap α β) (f : α → β → Unit) : Unit :=
+  m.entries.foldl (fun _ (k, v) => f k v) ()
+/-- Update a value at a key, applying f to the existing value if present. -/
+def update (m : AssocMap α β) (k : α) (f : β → β) : AssocMap α β :=
+  match m.get? k with
+  | some v => m.insert k (f v)
+  | none   => m
+/-- Check if any entry satisfies the predicate. -/
+def anyM (m : AssocMap α β) (p : α → β → Bool) : Bool :=
+  m.entries.any fun (k, v) => p k v
+/-- Check if all entries satisfy the predicate. -/
+def allM (m : AssocMap α β) (p : α → β → Bool) : Bool :=
+  m.entries.all fun (k, v) => p k v
+/-- Filter entries by predicate on key and value. -/
+def filterKV (m : AssocMap α β) (p : α → β → Bool) : AssocMap α β :=
+  fromList (m.entries.filter fun (k, v) => p k v)
+
 -- Theorems
 
 theorem get?_empty (k : α) : (empty : AssocMap α β).get? k = none := by simp [empty, get?]
@@ -373,6 +398,7 @@ instance [BEq α] : Inhabited (AssocMap α β) where
 abbrev find? := @get? α β _
 
 theorem find?_eq_get? (m : AssocMap α β) (k : α) : m.find? k = m.get? k := rfl
+theorem set_eq_insert (m : AssocMap α β) (k : α) (v : β) : m.set k v = m.insert k v := rfl
 
 -- getD returns default when key absent
 theorem getD_empty (k : α) (d : β) : (empty : AssocMap α β).getD k d = d := by
@@ -433,4 +459,55 @@ theorem size_singleton_eq (k : α) (v : β) : (singleton k v).size = 1 :=
   singleton_size k v
 
 end AssocMap
+
+/-! ## AssocSet: list-based set (maps JS Set<T>) -/
+
+abbrev AssocSet (α : Type) [BEq α] := List α
+
+namespace AssocSet
+
+variable {α : Type} [BEq α]
+
+def empty : AssocSet α := []
+
+def insert (s : AssocSet α) (x : α) : AssocSet α :=
+  if List.contains s x then s else x :: s
+
+def contains (s : AssocSet α) (x : α) : Bool := List.contains s x
+
+def erase (s : AssocSet α) (x : α) : AssocSet α := List.filter (· != x) s
+
+def toArray (s : AssocSet α) : Array α := List.toArray s
+
+def size (s : AssocSet α) : Nat := s.length
+
+def toList (s : AssocSet α) : List α := s
+
+def union (a b : AssocSet α) : AssocSet α :=
+  b.foldl (fun acc x => if List.contains acc x then acc else x :: acc) a
+
+def inter (a b : AssocSet α) : AssocSet α :=
+  List.filter (fun x => contains b x) a
+
+def diff (a b : AssocSet α) : AssocSet α :=
+  List.filter (fun x => !contains b x) a
+
+def forEach (s : AssocSet α) (f : α → Unit) : Unit :=
+  List.foldl (fun _ x => f x) () s
+
+-- Theorems
+axiom contains_insert_same (s : AssocSet α) (x : α) :
+    (insert s x).contains x = true
+
+theorem contains_empty (x : α) : contains (empty : AssocSet α) x = false := rfl
+
+theorem size_empty_eq : (empty : AssocSet α).size = 0 := rfl
+
+end AssocSet
+
+/-! ## Array.dedup -/
+
+def Array.dedup [BEq α] (arr : Array α) : Array α :=
+  arr.foldl (fun acc x => if acc.contains x then acc else acc.push x) #[]
+
 end TSLean.Stdlib.HashMap

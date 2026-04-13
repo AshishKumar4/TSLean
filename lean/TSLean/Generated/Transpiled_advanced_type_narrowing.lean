@@ -5,10 +5,11 @@ import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Stdlib.HashMap
+set_option linter.unusedVariables false
 
 open TSLean TSLean.Stdlib.HashMap
 
-namespace TSLean.Generated.TypeNarrowing
+namespace TSLean.Transpiled.TypeNarrowing
 
 -- Auto-generated empty state struct for DogState
 structure DogState where
@@ -46,10 +47,10 @@ def Cat.meow (self : CatState) : IO Unit :=
     pure ()
 
 def makeSound (animal : AnimalState) : Unit :=
-  if (sorry : Bool) /- animal matches Dog -/ then
+  if (false : Bool) /- animal matches Dog — instanceof not available in Lean -/ then
     default
   else
-    if (sorry : Bool) /- animal matches Cat -/ then
+    if (false : Bool) /- animal matches Cat — instanceof not available in Lean -/ then
       default
     else
       ()
@@ -67,10 +68,10 @@ structure HasAge where
 def describeEntity (entity : HasName) : String :=
   s!"Named: {entity.name}"
 
-def isString (x : Any) : Bool :=
+def isString (x : String) : Bool :=
   (TSLean.typeOf x) == "string"
 
-def isPositiveNumber (x : Any) : Bool :=
+def isPositiveNumber (x : String) : Bool :=
   (TSLean.typeOf x) == "number"
 
-end TSLean.Generated.TypeNarrowing
+end TSLean.Transpiled.TypeNarrowing

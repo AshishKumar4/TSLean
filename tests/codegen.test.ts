@@ -331,12 +331,12 @@ describe('generateLean – Map/Set type emission', () => {
     expect(code).toContain('AssocMap String Nat');
   });
 
-  it('Set field → AssocSet', () => {
+  it('Set field → Array', () => {
     const code = generateLean(mod([{
       tag: 'StructDef', name: 'Bag', typeParams: [],
       fields: [{ name: 'items', type: TySet(TyString) }],
     }]));
-    expect(code).toContain('AssocSet String');
+    expect(code).toContain('Array String');
   });
 });
 

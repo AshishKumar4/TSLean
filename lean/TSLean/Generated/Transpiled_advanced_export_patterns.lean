@@ -3,10 +3,11 @@
 
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
+set_option linter.unusedVariables false
 
 open TSLean
 
-namespace TSLean.Generated.ExportPatterns
+namespace TSLean.Transpiled.ExportPatterns
 
 -- // Various export patterns
 structure Config where
@@ -32,4 +33,4 @@ def makeSuccess {T : Type} (data : T) : ApiResult T :=
 def makeError {T : Type} [Inhabited T] (message : String) : ApiResult T :=
   { data := default, status := 500, message := message }
 
-end TSLean.Generated.ExportPatterns
+end TSLean.Transpiled.ExportPatterns

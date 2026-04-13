@@ -4,10 +4,11 @@
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
+set_option linter.unusedVariables false
 
 open TSLean
 
-namespace TSLean.Generated.ClassFeatures
+namespace TSLean.Transpiled.ClassFeatures
 
 -- Auto-generated empty state struct for CatState
 structure CatState where
@@ -97,4 +98,4 @@ def Circle.fromDiameter (d : Float) : CircleState :=
 def Circle.unitCircle : CircleState :=
   default
 
-end TSLean.Generated.ClassFeatures
+end TSLean.Transpiled.ClassFeatures

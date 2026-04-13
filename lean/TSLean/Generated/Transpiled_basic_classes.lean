@@ -4,10 +4,11 @@
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
+set_option linter.unusedVariables false
 
 open TSLean
 
-namespace TSLean.Generated.Classes
+namespace TSLean.Transpiled.Classes
 
 -- State for Counter
 structure CounterState where
@@ -42,7 +43,7 @@ structure StackState (T : Type) where
   deriving Repr, BEq, Inhabited
 
 def Stack.push {T : Type} (self : StackState T) (item : T) : Unit :=
-  let _ := self.items.push item; ()
+  let _ := Array.push self.items item; ()
 
 def Stack.pop {T : Type} (self : StackState T) : Option T :=
   self.items.back?
@@ -87,4 +88,4 @@ def BankAccount.withdraw (self : BankAccountState) (amount : Float) : StateT Ban
 def BankAccount.getBalance (self : BankAccountState) : Float :=
   self.balance
 
-end TSLean.Generated.Classes
+end TSLean.Transpiled.Classes

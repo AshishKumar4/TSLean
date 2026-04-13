@@ -4,10 +4,11 @@
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
+set_option linter.unusedVariables false
 
 open TSLean
 
-namespace TSLean.Generated.TemplateLiterals
+namespace TSLean.Transpiled.TemplateLiterals
 
 -- // Template literals → s!"..." interpolation
 def greeting (name : String) (age : Float) : String :=
@@ -41,4 +42,4 @@ structure User where
 def userTag (u : User) : String :=
   ((("<user id=\"" ++ u.id) ++ "\">") ++ u.name) ++ "</user>"
 
-end TSLean.Generated.TemplateLiterals
+end TSLean.Transpiled.TemplateLiterals

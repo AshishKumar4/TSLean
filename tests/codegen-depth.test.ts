@@ -78,8 +78,8 @@ describe('Codegen depth: type formatting', () => {
 
   it('Int type → Int', () => expect(irTypeToLean(TyInt)).toBe('Int'));
 
-  it('Set String → AssocSet String', () => {
-    expect(irTypeToLean(TySet(TyString))).toBe('AssocSet String');
+  it('Set String → Array String', () => {
+    expect(irTypeToLean(TySet(TyString))).toBe('Array String');
   });
 
   it('Result String Nat → Except Nat String', () => {

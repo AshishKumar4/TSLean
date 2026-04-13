@@ -9,10 +9,11 @@ import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
+set_option linter.unusedVariables false
 
 open TSLean TSLean.WebAPI TSLean.DO
 
-namespace TSLean.Generated.SessionStore
+namespace TSLean.Transpiled.SessionStore
 
 structure Session where
   mk ::
@@ -62,8 +63,9 @@ def SessionStoreDO.createSession (self : SessionStoreDOState) (userId : String) 
     let id : String := "uuid-stub"
     let now : Float := 0
     let session : Session := { userId := userId, data := data, createdAt := now, expiresAt := now + self.TTL_MS }
-    pure default
-    return id
+    do
+      pure default
+      return id
 
 def SessionStoreDO.getSession (self : SessionStoreDOState) (id : String) : IO (Option Session) :=
   do
@@ -84,4 +86,4 @@ def SessionStoreDO.destroySession (self : SessionStoreDOState) (id : String) : I
 end
 end SessionStoreDO
 
-end TSLean.Generated.SessionStore
+end TSLean.Transpiled.SessionStore

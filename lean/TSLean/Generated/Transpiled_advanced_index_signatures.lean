@@ -4,10 +4,11 @@
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Stdlib.HashMap
+set_option linter.unusedVariables false
 
 open TSLean TSLean.Stdlib.HashMap
 
-namespace TSLean.Generated.IndexSignatures
+namespace TSLean.Transpiled.IndexSignatures
 
 -- // Index signatures and mapped types
 abbrev StringMap := AssocMap String String
@@ -37,4 +38,4 @@ abbrev Optional {T : Type} := String
 -- -- mapped type: { readonly [K in keyof T]: T[K] }
 abbrev Readonly_ {T : Type} := String
 
-end TSLean.Generated.IndexSignatures
+end TSLean.Transpiled.IndexSignatures

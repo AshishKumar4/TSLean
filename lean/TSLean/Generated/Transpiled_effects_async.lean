@@ -5,10 +5,11 @@ import TSLean.Runtime.Basic
 import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
+set_option linter.unusedVariables false
 
 open TSLean TSLean.WebAPI
 
-namespace TSLean.Generated.Async
+namespace TSLean.Transpiled.Async
 
 -- // Async/await → IO monad
 def fetchUser (id : String) : IO String :=
@@ -29,4 +30,4 @@ def withRetry {T : Type} [Inhabited T] (op : Unit → IO T) (maxRetries : Float)
   do
     pure default
 
-end TSLean.Generated.Async
+end TSLean.Transpiled.Async

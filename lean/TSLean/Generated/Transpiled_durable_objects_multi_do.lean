@@ -10,23 +10,24 @@ import TSLean.Runtime.Coercions
 import TSLean.Runtime.Monad
 import TSLean.Runtime.WebAPI
 import TSLean.Stdlib.HashMap
+set_option linter.unusedVariables false
 
 open TSLean TSLean.WebAPI TSLean.Stdlib.HashMap TSLean.DO
 
-namespace TSLean.Generated.MultiDo
+namespace TSLean.Transpiled.MultiDo
 
 structure RPCEnvelope where
   mk ::
   id : String
   method : String
-  params : Any
+  params : String
   timestamp : Float
   deriving Repr, BEq, Inhabited
 
 structure RPCResponse where
   mk ::
   id : String
-  result : Option Any
+  result : Option String
   error : Option (Option String)
   deriving Repr, BEq, Inhabited
 
@@ -62,7 +63,7 @@ def CoordinatorDO.handleRPC (self : CoordinatorDOState) (envelope : RPCEnvelope)
   do
     let id : String := envelope.id
     let method : String := envelope.method
-    let params : Any := envelope.params
+    let params : String := envelope.params
     match method with
       | "ping" => pure { id := id, result := default, error := default }
       | "broadcast" => pure { id := id, result := default, error := default }
@@ -71,4 +72,4 @@ def CoordinatorDO.handleRPC (self : CoordinatorDOState) (envelope : RPCEnvelope)
 end
 end CoordinatorDO
 
-end TSLean.Generated.MultiDo
+end TSLean.Transpiled.MultiDo
