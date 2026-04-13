@@ -157,7 +157,7 @@ function parseArgs(argv: string[]): Command {
   if (!output) {
     output = isDir
       ? input.replace(/\/$/, '') + '_lean'
-      : input.replace(/\.ts$/, '.lean');
+      : input.replace(/\.tsx?$/, '.lean');
   }
 
   return { cmd: 'compile', opts: { input, output, verify, veil, watch, ns, selfHost, baseName, isDir, genLakefile, tsconfigPath, strict, timing } };
