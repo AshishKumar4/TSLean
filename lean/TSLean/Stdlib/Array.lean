@@ -1,5 +1,8 @@
 -- TSLean.Stdlib.Array
+import TSLean.Stdlib.HashMap
+
 namespace TSLean.Stdlib.Array
+open TSLean.Stdlib.HashMap
 
 variable {α β γ : Type}
 
@@ -26,6 +29,19 @@ def rotateLeft (a : Array α) (n : Nat) : Array α :=
   if a.size = 0 then a else let n' := n % a.size; a.extract n' a.size ++ a.extract 0 n'
 def splice (a : Array α) (i n : Nat) (ins : Array α) : Array α :=
   a.extract 0 i ++ ins ++ a.extract (i + n) a.size
+def sort [Ord α] (a : Array α) : Array α := a.qsort (fun x y => Ord.compare x y == .lt)
+def fill (a : Array α) (v : α) : Array α := a.map (fun _ => v)
+def copyWithin (a : Array α) (target start stop : Nat) : Array α :=
+  let src := a.extract start stop
+  a.extract 0 target ++ src ++ a.extract (target + src.size) a.size
+def from_ (l : List α) : Array α := l.toArray
+def of_ (xs : Array α) : Array α := xs
+def findLast (a : Array α) (p : α → Bool) : Option α := a.toList.reverse.find? p
+
+-- WeakMap/WeakSet: JS runtime concepts with no Lean equivalent.
+-- Modeled as regular Map/Set (no GC semantics).
+abbrev WeakMap := @AssocMap
+abbrev WeakSet := @AssocSet
 
 theorem push_size (a : Array α) (x : α) : (a.push x).size = a.size + 1 := Array.size_push x
 

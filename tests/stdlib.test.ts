@@ -9,9 +9,9 @@ describe('lookupMethod – String', () => {
   it('toUpperCase',  () => expect(lookupMethod('String', 'toUpperCase')?.leanFn).toBe('String.toUpper'));
   it('toLowerCase',  () => expect(lookupMethod('String', 'toLowerCase')?.leanFn).toBe('String.toLower'));
   it('trim',         () => expect(lookupMethod('String', 'trim')?.leanFn).toBe('String.trim'));
-  it('includes (flip)', () => { const t = lookupMethod('String', 'includes'); expect(t?.argOrder).toBe('flip'); });
+  it('includes',      () => expect(lookupMethod('String', 'includes')?.leanFn).toBe('TSLean.Stdlib.String.includes'));
   it('split',        () => expect(lookupMethod('String', 'split')?.leanFn).toBe('String.splitOn'));
-  it('indexOf',      () => expect(lookupMethod('String', 'indexOf')?.leanFn).toBe('String.firstIndexOf'));
+  it('indexOf',      () => expect(lookupMethod('String', 'indexOf')?.leanFn).toBe('TSLean.Stdlib.String.firstIndexOf'));
   it('unknown → undefined', () => expect(lookupMethod('String', 'nonExistent')).toBeUndefined());
 });
 
@@ -26,7 +26,7 @@ describe('lookupMethod – Array', () => {
   it('includes',    () => expect(lookupMethod('Array', 'includes')?.leanFn).toBe('Array.contains'));
   it('length',      () => expect(lookupMethod('Array', 'length')?.leanFn).toBe('Array.size'));
   it('reverse',     () => expect(lookupMethod('Array', 'reverse')?.leanFn).toBe('Array.reverse'));
-  it('flat',        () => expect(lookupMethod('Array', 'flat')?.leanFn).toBe('Array.join'));
+  it('flat',        () => expect(lookupMethod('Array', 'flat')?.leanFn).toBe('TSLean.Stdlib.Array.flatten'));
 });
 
 describe('lookupMethod – Map', () => {
@@ -51,7 +51,7 @@ describe('lookupGlobal', () => {
   it('Math.max',           () => expect(lookupGlobal('Math.max')?.leanExpr).toBe('max'));
   it('Math.random (io)',   () => expect(lookupGlobal('Math.random')?.io).toBe(true));
   it('Date.now (io)',      () => expect(lookupGlobal('Date.now')).toBeDefined());
-  it('parseInt',           () => expect(lookupGlobal('parseInt')?.leanExpr).toBe('sorry'));
+  it('parseInt',           () => expect(lookupGlobal('parseInt')?.leanExpr).toContain('toNat'));
   it('JSON.stringify',     () => expect(lookupGlobal('JSON.stringify')?.leanExpr).toBe('serialize'));
   it('JSON.parse',         () => expect(lookupGlobal('JSON.parse')?.leanExpr).toBe('deserialize'));
   it('Object.keys',        () => expect(lookupGlobal('Object.keys')?.leanExpr).toBe('AssocMap.keys'));
