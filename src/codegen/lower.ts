@@ -1424,14 +1424,32 @@ class LowerCtx {
   }
 
   private lowerStructLit(e: Extract<IRExpr, { tag: 'StructLit' }>, ctx: Effect): LeanExpr {
+    // Anonymous object literals (type collapsed to String/Any/TSAny) → AssocMap construction
     if (e.type?.tag === 'String' || (e.type?.tag === 'TypeRef' && (e.type.name === 'Any' || e.type.name === 'TSAny'))) {
-      return sorryForType(e.type);
+      const realFields = e.fields.filter(f => !f.name.startsWith('_spread') && !f.name.startsWith('_computed'));
+      if (realFields.length > 0) {
+        // Build AssocMap from fields: #[("key1", val1), ("key2", val2)]
+        const pairs: LeanExpr[] = realFields.map(f => ({
+          tag: 'TupleLit' as const,
+          elems: [{ tag: 'Lit' as const, value: `"${f.name}"` }, this.lowerExpr(f.value, ctx)],
+        }));
+        return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.ofList' },
+                 args: [{ tag: 'ArrayLit', elems: pairs }] };
+      }
+      return { tag: 'Default' };
     }
-    // Large anonymous object literals with nested struct values (like TS Record
-    // types used as method/config tables) can't be Lean struct literals.
-    // Only emit default for objects with 5+ fields that contain nested structs.
+    // Large anonymous object literals with nested structs of unknown type → AssocMap
     const hasNestedStructs = e.fields.some(f => f.value?.tag === 'StructLit');
     if (hasNestedStructs && e.fields.length > 5 && !this.structFields.has(e.typeName ?? '')) {
+      const realFields = e.fields.filter(f => !f.name.startsWith('_spread') && !f.name.startsWith('_computed'));
+      if (realFields.length > 0) {
+        const pairs: LeanExpr[] = realFields.map(f => ({
+          tag: 'TupleLit' as const,
+          elems: [{ tag: 'Lit' as const, value: `"${f.name}"` }, this.lowerExpr(f.value, ctx)],
+        }));
+        return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.ofList' },
+                 args: [{ tag: 'ArrayLit', elems: pairs }] };
+      }
       return { tag: 'Default' };
     }
     // Detect struct-update pattern: _base field + other fields
