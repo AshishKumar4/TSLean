@@ -77,7 +77,7 @@ export function fileToLeanPath(filePath: string, opts: ModuleResolverOpts, outDi
  * Handles:
  * - Relative: `'./utils'` → resolve against importer, then fileToLeanModule
  * - Absolute with path aliases: `'@/components/Button'` → resolve alias, then fileToLeanModule
- * - External packages: `'zod'` → `TSLean.External.Zod`
+ * - External packages: `'zod'` → `TSLean.Runtime.Validation` (known), `'foo'` → `TSLean.External.Foo`
  */
 export function resolveImportModule(
   specifier: string,
