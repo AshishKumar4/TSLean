@@ -1377,6 +1377,33 @@ class LowerCtx {
     }
     if (e.target.tag === 'Var')
       return { tag: 'Let', name: e.target.name, value: val, body: { tag: 'Lit', value: '()' } };
+    // FieldAccess on a non-self variable → struct update via let rebinding
+    if (e.target.tag === 'FieldAccess' && e.target.obj.tag === 'Var') {
+      const objName = e.target.obj.name;
+      let field = e.target.field;
+      if (field.startsWith('_') && field.length > 1 && /[a-zA-Z]/.test(field[1]))
+        field = field.slice(1);
+      return {
+        tag: 'Let', name: objName,
+        value: { tag: 'StructUpdate', base: { tag: 'Var', name: objName },
+                 fields: [{ name: field, value: val }] },
+        body: { tag: 'Lit', value: '()' },
+      };
+    }
+    // IndexAccess → Array.set or AssocMap.insert
+    if (e.target.tag === 'IndexAccess') {
+      const obj = this.lowerExpr(e.target.obj, ctx);
+      const idx = this.lowerExpr(e.target.index, ctx);
+      const objType = e.target.obj.type;
+      if (objType?.tag === 'Array') {
+        return { tag: 'Let', name: '_arr', value: { tag: 'App', fn: { tag: 'Var', name: 'Array.set' }, args: [obj, idx, val] }, body: { tag: 'Lit', value: '()' } };
+      }
+      if (objType?.tag === 'Map' || (objType?.tag === 'TypeRef' && (objType.name === 'Map' || objType.name === 'AssocMap'))) {
+        return { tag: 'Let', name: '_map', value: { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.insert' }, args: [obj, idx, val] }, body: { tag: 'Lit', value: '()' } };
+      }
+      // Generic index assignment → sorry with context
+      return { tag: 'Sorry', reason: `assign: IndexAccess on ${objType?.tag ?? 'unknown'}` };
+    }
     return { tag: 'Sorry', reason: `assign: ${e.target.tag}` };
   }
 

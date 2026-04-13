@@ -1503,17 +1503,24 @@ function isCompoundAssign(kind: ts.SyntaxKind): boolean {
   return kind === ts.SyntaxKind.PlusEqualsToken    || kind === ts.SyntaxKind.MinusEqualsToken  ||
          kind === ts.SyntaxKind.AsteriskEqualsToken || kind === ts.SyntaxKind.SlashEqualsToken  ||
          kind === ts.SyntaxKind.PercentEqualsToken  || kind === ts.SyntaxKind.AmpersandEqualsToken ||
-         kind === ts.SyntaxKind.BarEqualsToken      || kind === ts.SyntaxKind.CaretEqualsToken;
+         kind === ts.SyntaxKind.BarEqualsToken      || kind === ts.SyntaxKind.CaretEqualsToken ||
+         kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken ||
+         kind === ts.SyntaxKind.QuestionQuestionEqualsToken ||
+         kind === ts.SyntaxKind.BarBarEqualsToken   || kind === ts.SyntaxKind.AmpersandAmpersandEqualsToken;
 }
 
 function compoundOp(kind: ts.SyntaxKind): BinOp {
   switch (kind) {
-    case ts.SyntaxKind.PlusEqualsToken:     return 'Add';
-    case ts.SyntaxKind.MinusEqualsToken:    return 'Sub';
-    case ts.SyntaxKind.AsteriskEqualsToken: return 'Mul';
-    case ts.SyntaxKind.SlashEqualsToken:    return 'Div';
-    case ts.SyntaxKind.PercentEqualsToken:  return 'Mod';
-    default:                                return 'Add';
+    case ts.SyntaxKind.PlusEqualsToken:               return 'Add';
+    case ts.SyntaxKind.MinusEqualsToken:              return 'Sub';
+    case ts.SyntaxKind.AsteriskEqualsToken:           return 'Mul';
+    case ts.SyntaxKind.SlashEqualsToken:              return 'Div';
+    case ts.SyntaxKind.PercentEqualsToken:            return 'Mod';
+    case ts.SyntaxKind.AsteriskAsteriskEqualsToken:   return 'Mul'; // ** approximated as Mul
+    case ts.SyntaxKind.QuestionQuestionEqualsToken:   return 'NullCoalesce';
+    case ts.SyntaxKind.BarBarEqualsToken:             return 'Or';
+    case ts.SyntaxKind.AmpersandAmpersandEqualsToken: return 'And';
+    default:                                          return 'Add';
   }
 }
 
@@ -1540,6 +1547,8 @@ function tsBinOp(kind: ts.SyntaxKind): BinOp | null {
     case ts.SyntaxKind.CaretToken:                   return 'BitXor';
     case ts.SyntaxKind.LessThanLessThanToken:        return 'Shl';
     case ts.SyntaxKind.GreaterThanGreaterThanToken:  return 'Shr';
+    case ts.SyntaxKind.AsteriskAsteriskToken:        return 'Mul'; // ** approximated
+    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken: return 'Shr'; // >>> approximated
     default:                                         return null;
   }
 }
