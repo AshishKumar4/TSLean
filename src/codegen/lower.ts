@@ -522,12 +522,15 @@ class LowerCtx {
       }
     }
 
+    // Reorder function declarations: move functions before their first use
+    const reordered = this.topSortFuncDecls(decls);
+
     // Emit declarations (track emitted names to avoid duplicates)
     const result: LeanDecl[] = [];
     const emittedMutuals = new Set<string>();
     const emittedNames = new Set<string>();
 
-    for (const d of decls) {
+    for (const d of reordered) {
       const name = 'name' in d ? (d as any).name : '';
       if (inMutual.has(name) && !emittedMutuals.has(name)) {
         const group = mutualGroups.find(g => g.has(name))!;
@@ -559,6 +562,112 @@ class LowerCtx {
       if (name) emittedNames.add(name);
       result.push(lowered);
       result.push({ tag: 'Blank' });
+    }
+    return result;
+  }
+
+  /** Topological sort of declarations: move function definitions before their first use.
+   *  Preserves struct/type ordering but reorders FuncDefs so callees appear before callers. */
+  private topSortFuncDecls(decls: IRDecl[]): IRDecl[] {
+    // Separate structs/types (keep in order) from functions (reorder)
+    const funcDecls = new Map<string, { decl: IRDecl; idx: number }>();
+    const funcRefs = new Map<string, Set<string>>();
+    const allFuncNames = new Set<string>();
+
+    // Map from both full name and short name (after last dot) to the function
+    const shortToFull = new Map<string, string>();
+    for (let i = 0; i < decls.length; i++) {
+      const d = decls[i];
+      if (d.tag === 'FuncDef' && d.name) {
+        funcDecls.set(d.name, { decl: d, idx: i });
+        allFuncNames.add(d.name);
+        // Also track the short name (method name without class prefix)
+        const dotIdx = d.name.lastIndexOf('.');
+        if (dotIdx >= 0) {
+          const shortName = d.name.slice(dotIdx + 1);
+          shortToFull.set(shortName, d.name);
+          allFuncNames.add(shortName);
+        }
+      }
+    }
+    // Collect references: for each function, which other local functions does it call?
+    const collectRefs = (e: IRExpr, refs: Set<string>): void => {
+      if (!e) return;
+      if (e.tag === 'Var' && allFuncNames.has(e.name)) refs.add(e.name);
+      if (e.tag === 'App') { collectRefs(e.fn, refs); for (const a of e.args) collectRefs(a, refs); }
+      if (e.tag === 'FieldAccess') {
+        collectRefs(e.obj, refs);
+        // Method calls: field names may reference local functions
+        if (allFuncNames.has(e.field)) refs.add(e.field);
+        const fullName = shortToFull.get(e.field);
+        if (fullName) refs.add(fullName);
+      }
+      if (e.tag === 'Lambda') collectRefs(e.body, refs);
+      if (e.tag === 'Let') { collectRefs(e.value, refs); collectRefs(e.body, refs); }
+      if (e.tag === 'Bind') { collectRefs(e.monad, refs); collectRefs(e.body, refs); }
+      if (e.tag === 'IfThenElse') { collectRefs(e.cond, refs); collectRefs(e.then, refs); collectRefs(e.else_, refs); }
+      if (e.tag === 'Sequence') for (const s of e.stmts) collectRefs(s, refs);
+      if (e.tag === 'BinOp') { collectRefs(e.left, refs); collectRefs(e.right, refs); }
+      if (e.tag === 'UnOp') collectRefs(e.operand, refs);
+      if (e.tag === 'Match') { collectRefs(e.scrutinee, refs); for (const c of e.cases) collectRefs(c.body, refs); }
+      if (e.tag === 'Return') collectRefs(e.value, refs);
+      if (e.tag === 'DoBlock') for (const s of e.stmts) { if ('value' in s) collectRefs(s.value as IRExpr, refs); }
+    };
+    for (const [name, { decl }] of funcDecls) {
+      const refs = new Set<string>();
+      if (decl.tag === 'FuncDef') collectRefs(decl.body, refs);
+      refs.delete(name); // remove self-references
+      // Normalize short names to full names
+      const normalized = new Set<string>();
+      for (const ref of refs) {
+        if (funcDecls.has(ref)) normalized.add(ref);
+        else if (shortToFull.has(ref)) normalized.add(shortToFull.get(ref)!);
+      }
+      funcRefs.set(name, normalized);
+    }
+
+    // Topological sort: callees must appear before callers.
+    // Build reverse edges: if A calls B, add edge B → A (B must come before A).
+    const inDegree = new Map<string, number>();
+    for (const name of funcDecls.keys()) inDegree.set(name, 0);
+    const reverseAdj = new Map<string, Set<string>>();
+    for (const name of funcDecls.keys()) reverseAdj.set(name, new Set());
+    for (const [caller, refs] of funcRefs) {
+      for (const callee of refs) {
+        if (funcDecls.has(callee) && funcDecls.has(caller)) {
+          reverseAdj.get(callee)!.add(caller);
+          inDegree.set(caller, (inDegree.get(caller) ?? 0) + 1);
+        }
+      }
+    }
+    const queue: string[] = [];
+    for (const [name, deg] of inDegree) { if (deg === 0) queue.push(name); }
+    const sorted: string[] = [];
+    while (queue.length > 0) {
+      const name = queue.shift()!;
+      sorted.push(name);
+      for (const dep of reverseAdj.get(name) ?? []) {
+        inDegree.set(dep, (inDegree.get(dep) ?? 0) - 1);
+        if (inDegree.get(dep) === 0) queue.push(dep);
+      }
+    }
+    // Add remaining (cyclic) functions in original order
+    for (const name of funcDecls.keys()) { if (!sorted.includes(name)) sorted.push(name); }
+
+    // Rebuild decl list: non-func decls in original order, func decls in sorted order
+    const funcOrder = new Map<string, number>();
+    sorted.forEach((name, i) => funcOrder.set(name, i));
+
+    const result = [...decls];
+    // Find positions of func decls and sort them within those positions
+    const funcPositions = result
+      .map((d, i) => (d.tag === 'FuncDef' && d.name && funcDecls.has(d.name)) ? i : -1)
+      .filter(i => i >= 0);
+    const sortedFuncs = funcPositions
+      .map(i => result[i])
+      .sort((a, b) => (funcOrder.get(a.name ?? '') ?? 999) - (funcOrder.get(b.name ?? '') ?? 999));
+    for (let i = 0; i < funcPositions.length; i++) {
+      result[funcPositions[i]] = sortedFuncs[i];
     }
     return result;
   }
