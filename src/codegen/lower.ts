@@ -1424,12 +1424,17 @@ class LowerCtx {
       }
 
       case 'Lambda': {
-        // Annotate unused params (prefixed with _) with their type so Lean can infer them
+        // Annotate unused params (prefixed with _) with their specific type so Lean can infer them.
+        // Annotate unused params with their type, but skip TSAny/Any catch-all types
+        // since Lean can often infer a more specific type from context.
         const ps = e.params.map(p => {
           const name = p.name;
           if (name.startsWith('_') && name !== '_' && p.type) {
-            const tyStr = this.printIRTypeForAnnotation(p.type);
-            if (tyStr) return `(${name} : ${tyStr})`;
+            const isCatchAll = p.type.tag === 'TypeRef' && ['TSAny', 'Any'].includes((p.type as any).name);
+            if (!isCatchAll) {
+              const tyStr = this.printIRTypeForAnnotation(p.type);
+              if (tyStr) return `(${name} : ${tyStr})`;
+            }
           }
           return name;
         });

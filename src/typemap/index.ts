@@ -195,7 +195,7 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
     'ReadableStream', 'WritableStream', 'TransformStream', 'ReadableStreamDefaultReader',
     'Blob', 'File', 'FormData', 'AbortController', 'AbortSignal',
     'WeakSet', 'WeakMap', 'WeakRef', 'FinalizationRegistry',
-    'Disposable', 'AsyncDisposable', 'EventTarget', 'Event',
+    'AsyncDisposable', 'EventTarget', 'Event',
     'TextEncoder', 'TextDecoder', 'SubtleCrypto', 'CryptoKey', 'CryptoKeyPair',
     'Generator', 'AsyncGenerator', 'IterableIterator', 'AsyncIterableIterator',
     'Date', 'RegExp', 'JSON', 'Math', 'console', 'Proxy', 'Reflect',
@@ -233,7 +233,7 @@ function mapTypeRef(t: ts.TypeReference, checker: ts.TypeChecker, depth: number)
         'Float32Array', 'Float64Array', 'ArrayBuffer', 'ArrayBufferLike', 'SharedArrayBuffer', 'DataView',
         'ReadableStream', 'WritableStream', 'TransformStream', 'ReadableStreamDefaultReader',
         'Blob', 'File', 'FormData', 'AbortController', 'AbortSignal',
-        'Disposable', 'AsyncDisposable', 'EventTarget', 'Event',
+        'AsyncDisposable', 'EventTarget', 'Event',
         'TextEncoder', 'TextDecoder', 'SubtleCrypto', 'CryptoKey', 'CryptoKeyPair',
         'RegExp', 'RegExpMatchArray', 'FinalizationRegistry', 'WeakRef',
         'Date', 'JSON', 'Math', 'console', 'Proxy', 'Reflect',
@@ -306,8 +306,8 @@ function typeStr(t: IRType): string {
         'Generator', 'AsyncGenerator', 'PromiseLike', 'RegExp', 'RegExpMatchArray',
         'WeakSet', 'WeakMap', 'WeakRef', 'FinalizationRegistry',
         'SymbolConstructor', 'PropertyDescriptor', 'PropertyKey',
-        'Blob', 'File', 'FormData', 'AbortController', 'AbortSignal',
-        'Disposable', 'AsyncDisposable', 'EventTarget', 'Event',
+         'Blob', 'File', 'FormData', 'AbortController', 'AbortSignal',
+         'AsyncDisposable', 'EventTarget', 'Event',
         'TextEncoder', 'TextDecoder', 'ReadableStreamDefaultReader',
         'SubtleCrypto', 'CryptoKey', 'CryptoKeyPair']);
       if (tsOnlyTypes.has(t.name)) return 'TSAny';
