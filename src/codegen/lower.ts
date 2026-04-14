@@ -994,13 +994,9 @@ class LowerCtx {
    *  so they become valid do-block actions. Handles Let/Bind chains and Seq. */
   private wrapPureCallsInMonadicBranch(e: LeanExpr): LeanExpr {
     if (e.tag === 'Let') {
-      // If the Let body is a bare App (non-terminal pure call), wrap it
       const fixedBody = this.wrapPureCallsInMonadicBranch(e.body);
       if (fixedBody !== e.body) return { ...e, body: fixedBody };
-      // If the BODY (continuation) starts with App followed by more, wrap the App
       if (e.body.tag === 'App') {
-        // This App is in a Let chain — it's rendered as a bare statement after let _ :=
-        // Wrap it: let _ := app \n pure ()
         return { ...e, body: { tag: 'Let', name: '_', value: e.body, body: { tag: 'Pure', value: { tag: 'Lit', value: '()' } } } };
       }
       return e;
@@ -2134,6 +2130,8 @@ class LowerCtx {
         (collType?.tag === 'TypeRef' && ['TSAny', 'Any'].includes(collType.name));
       const degraded: LeanExpr = isPure(ctx) ? { tag: 'Lit', value: '()' } : { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
       if (isUnresolvable) return degraded;
+      // In pure context, forM can't work (requires monad) — degrade to ()
+      if (isPure(ctx)) return degraded;
       // Lower the callback and check if its body is just `default` — degrade the whole forM
       const callbackArg = e.args[0];
       if (callbackArg?.tag === 'Lambda') {
