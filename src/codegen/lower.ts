@@ -153,6 +153,8 @@ class LowerCtx {
   mutableRefNames = new Set<string>();
   /** Names imported from external (non-local) modules — emit default when referenced. */
   externalImportNames = new Set<string>();
+  /** Current function's lowered return type — used to reconcile none vs default. */
+  currentReturnType: LeanTy | undefined;
 
   // ─── Pre-passes ─────────────────────────────────────────────────────────────
 
@@ -661,7 +663,11 @@ class LowerCtx {
   private lowerFunc(d: Extract<IRDecl, { tag: 'FuncDef' }>): LeanDecl {
     const fixedEffect = fixStateEffect(d.effect, d.params);
     const isRecursive = d.isPartial ?? bodyContainsVarRef(d.body, d.name);
+    // Track return type for none→default reconciliation
+    const prevRetType = this.currentReturnType;
+    this.currentReturnType = this.lowerRetSig(fixedEffect, this.lowerType(d.retType));
     const body = this.lowerFuncBody(d.body, fixedEffect, d.retType, d.name);
+    this.currentReturnType = prevRetType;
 
     // Check if body uses default (needs Inhabited constraint)
     const needsInhabited = this.exprUsesDefault(body) && d.typeParams.length > 0;
@@ -783,6 +789,23 @@ class LowerCtx {
     if (t.tag === 'TyName') return t.name === prefix;
     if (t.tag === 'TyApp') return this.tyStartsWith(t.fn, prefix);
     return false;
+  }
+
+  /** Check if the current function's return type ends with Option. */
+  private retTypeIsOption(): boolean {
+    const t = this.currentReturnType;
+    if (!t) return false;
+    // Unwrap monad wrappers: StateT σ IO (Option T) → check innermost
+    const innermost = this.innermostRetType(t);
+    return this.tyStartsWith(innermost, 'Option');
+  }
+
+  private innermostRetType(t: LeanTy): LeanTy {
+    // For TyApp like `StateT σ IO T`, the last arg is the return type
+    if (t.tag === 'TyApp' && t.args && t.args.length > 0) {
+      return this.innermostRetType(t.args[t.args.length - 1]);
+    }
+    return t;
   }
 
   private lowerVarDecl(d: Extract<IRDecl, { tag: 'VarDecl' }>): LeanDecl {
@@ -1173,7 +1196,11 @@ class LowerCtx {
       case 'DoBlock': return this.lowerDoBlock(e.stmts, ctx);
 
       case 'Return': {
-        const val = this.lowerExpr(e.value, ctx);
+        let val = this.lowerExpr(e.value, ctx);
+        // Reconcile: none in a function that doesn't return Option → default
+        if (val.tag === 'None' && this.currentReturnType && !this.retTypeIsOption()) {
+          val = { tag: 'Default' };
+        }
         return !isPure(ctx) ? { tag: 'Pure', value: val } : val;
       }
 
@@ -1580,6 +1607,11 @@ class LowerCtx {
     if (!isPure(ctx)) {
       if (then_.tag === 'Lit' && then_.value === '()') then_ = { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
       if (else_.tag === 'Lit' && else_.value === '()') else_ = { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
+    }
+    // Reconcile: none in non-Option context → default
+    if (!this.retTypeIsOption()) {
+      if (then_.tag === 'None') then_ = { tag: 'Default' };
+      if (else_.tag === 'None') else_ = { tag: 'Default' };
     }
 
     return { tag: 'If', cond, then_, else_ };
