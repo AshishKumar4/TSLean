@@ -308,7 +308,7 @@ function printExpr(e: LeanExpr, depth: number): string {
     case 'App': {
       const fn = printExprInline(e.fn);
       if (e.args.length === 0) return `${ind}${fn}`;
-      const args = e.args.map(a => printExprInline(a));
+      const args = e.args.map(a => parenIfCompound(a));
       return `${ind}${fn} ${args.join(' ')}`;
     }
 
@@ -469,7 +469,7 @@ function printExprInline(e: LeanExpr): string {
     case 'App': {
       const fn = printExprInline(e.fn);
       if (e.args.length === 0) return fn;
-      return `${fn} ${e.args.map(a => printExprInline(a)).join(' ')}`;
+      return `${fn} ${e.args.map(a => parenIfCompound(a)).join(' ')}`;
     }
     case 'Lam': {
       const ps = e.params.length > 0 ? e.params.join(' ') : '_';
