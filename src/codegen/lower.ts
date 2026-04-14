@@ -1331,14 +1331,28 @@ class LowerCtx {
       case 'StateSet': return { tag: 'App', fn: { tag: 'Var', name: 'set' }, args: [this.lowerExprP(e.value, ctx)] };
 
       case 'Throw': {
-        const err = this.lowerExpr(e.error, ctx);
+        let err = this.lowerExpr(e.error, ctx);
+        // In ExceptT String contexts, throw a String not TSError
+        // TSError.typeError "msg" → just "msg"
+        if (err.tag === 'App' && err.fn.tag === 'Var' &&
+            typeof err.fn.name === 'string' && err.fn.name.startsWith('TSError.') &&
+            err.args.length > 0) {
+          err = err.args[0];
+        }
         return { tag: 'Throw', value: err };
       }
 
       case 'TryCatch': {
         if (isPure(ctx)) return { tag: 'Default' };
-        const body = this.lowerExprP(e.body, ctx);
-        const handler = this.lowerExpr(e.handler, ctx);
+        let body = this.lowerExpr(e.body, ctx);
+        // Wrap tryCatch body in do-block if it contains binds
+        if (this.exprHasBinds(body) && body.tag !== 'Do') {
+          body = { tag: 'Do', body };
+        }
+        let handler = this.lowerExpr(e.handler, ctx);
+        if (this.exprHasBinds(handler) && handler.tag !== 'Do') {
+          handler = { tag: 'Do', body: handler };
+        }
         const tc: LeanExpr = { tag: 'TryCatch', body, errName: e.errName, handler };
         // finally: bind result, run cleanup, return result
         if (e.finally_) {
@@ -1767,6 +1781,21 @@ class LowerCtx {
     let l = this.lowerExprP(e.left, ctx);
     let r = this.lowerExprP(e.right, ctx);
     const op = translateBinOp(e.op, e.left?.type ?? { tag: 'Unit' });
+    // Coerce numeric literal to Float when comparing with Float/Option Float
+    if ((op === '==' || op === '!=' || op === '<' || op === '<=' || op === '>' || op === '>=') &&
+        (r.tag === 'Lit' && /^\d+$/.test(r.value))) {
+      const lt = e.left?.type;
+      if (lt?.tag === 'Float' || (lt?.tag === 'Option' && lt.inner?.tag === 'Float')) {
+        r = { tag: 'TypeAnnot', expr: r, ty: { tag: 'TyName', name: 'Float' } };
+      }
+    }
+    // Coerce numeric literal to toString when comparing with String/TSAny
+    if ((op === '==' || op === '!=') && (r.tag === 'Lit' && /^\d+$/.test(r.value))) {
+      const lt = e.left?.type;
+      if (lt?.tag === 'String' || (lt?.tag === 'TypeRef' && (lt.name === 'TSAny' || lt.name === 'Any'))) {
+        r = { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [r] };
+      }
+    }
     // Coerce non-Bool operands for logical operators (JS truthy semantics)
     if (op === '&&' || op === '||') {
       const coerceToBool = (expr: LeanExpr, ty: IRType | undefined): LeanExpr => {

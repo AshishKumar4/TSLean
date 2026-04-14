@@ -200,6 +200,7 @@ const GLOBALS: Record<string, GlobalTx> = {
   'btoa':           { leanExpr: 'id', maxArgs: 1 },
   'atob':           { leanExpr: 'id', maxArgs: 1 },
   'BigInt':         { leanExpr: 'Int.ofNat', maxArgs: 1 },
+  'String.fromCharCode': { leanExpr: 'Char.ofNat', maxArgs: 1 },
   'encodeURIComponent': { leanExpr: 'TSLean.encodeURI' },
   'decodeURIComponent': { leanExpr: 'TSLean.decodeURI' },
   'fetch':              { leanExpr: 'WebAPI.fetch',           io: true },

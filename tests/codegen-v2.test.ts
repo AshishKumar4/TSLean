@@ -45,7 +45,7 @@ describe('V2 codegen: basic outputs', () => {
     expect(output).toContain('(a : Float)');
 
     expect(output).toContain('partial def factorial');
-    expect(output).toContain('if n <= 0 then');
+    expect(output).toMatch(/if n <= (\(0 : Float\)|0) then/);
 
     expect(output).toContain('def PI : Float :=');
     expect(output).toContain('3.14159');

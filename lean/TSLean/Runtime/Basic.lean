@@ -248,4 +248,25 @@ namespace Stdlib.Object
 def defineProperty {α : Type} (obj : α) (_prop : String) (_desc : TSAny) : α := obj
 end Stdlib.Object
 
+/-- JS truthiness for String: non-empty strings are truthy. -/
+instance : Membership String String where
+  mem a _ := a ≠ ""
+
 end TSLean
+
+-- String extensions for JS-style null checks (when Option types collapse to String)
+namespace String
+/-- Truthy check on String — non-default is "some". -/
+def isSome (s : String) : Bool := s != ""
+/-- Falsy check on String — default is "none". -/
+def isNone (s : String) : Bool := s == ""
+/-- Get with default for String — returns self if non-empty, else default. -/
+def getD (s : String) (d : String) : String := if s == "" then d else s
+/-- Array clear stub. -/
+def clear (_ : Array α) : Array α := #[]
+end String
+
+namespace Array
+/-- Array.clear stub — returns empty array. -/
+def clear (_ : Array α) : Array α := #[]
+end Array

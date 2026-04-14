@@ -290,8 +290,8 @@ function typeStr(t: IRType): string {
     }
     case 'Result':    return `Except ${irTypeToLean(t.err, true)} ${irTypeToLean(t.ok, true)}`;
     case 'TypeRef': {
-      // Indexed access types like D["length"] → TSAny (no Lean equivalent)
-      if (t.name.includes('[') || t.name.includes('"') || t.name.includes('`')) return 'TSAny';
+      // Indexed access types like D["length"], generic syntax like Foo<T>, template literals → TSAny
+      if (t.name.includes('[') || t.name.includes('"') || t.name.includes('`') || t.name.includes('<')) return 'TSAny';
       // Map TS-specific types to Any (no Lean equivalent)
        const tsOnlyTypes = new Set(['CompilerHost', 'SourceFile', 'Program', 'TypeChecker',
         'Node', 'Statement', 'Declaration', 'Expression', 'FunctionDeclaration',
