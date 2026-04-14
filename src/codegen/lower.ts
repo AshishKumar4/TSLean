@@ -1647,16 +1647,16 @@ class LowerCtx {
             si--; // re-check after splice
           }
         }
-        // Phase 3: In monadic context, if the terminal expression is a pure value
-        // (not a monadic action), wrap in `let _ := expr \n pure ()`.
-        if (!isPure(ctx) && lowered.length > 0) {
+        // Phase 3: If the terminal expression is a pure value (returns non-Unit),
+        // wrap in `let _ := expr` to discard the value.
+        if (lowered.length > 0) {
           const last = lowered[lowered.length - 1];
-          if (this.isPureAppStatement(last) || last.tag === 'FieldAccess' ||
-              last.tag === 'Default' || last.tag === 'Var' ||
+          const isPureValue = this.isPureAppStatement(last) || last.tag === 'FieldAccess' ||
               (last.tag === 'App' && last.fn.tag === 'Var' && !['IO.eprintln', 'IO.println', 'IO.print',
-                'Array.forM', 'List.forM', 'throw', 'pure'].some(n => last.fn.name?.startsWith(n)))) {
-            lowered[lowered.length - 1] = { tag: 'Let', name: '_', value: last,
-              body: { tag: 'Pure', value: { tag: 'Lit', value: '()' } } };
+                'Array.forM', 'List.forM', 'throw', 'pure'].some(n => last.fn.name?.startsWith(n)));
+          if (isPureValue) {
+            const unit = isPure(ctx) ? { tag: 'Lit' as const, value: '()' } : { tag: 'Pure' as const, value: { tag: 'Lit' as const, value: '()' } };
+            lowered[lowered.length - 1] = { tag: 'Let', name: '_', value: last, body: unit };
           }
         }
         return lowered.length === 1 ? lowered[0] : { tag: 'Seq', stmts: lowered };
@@ -2194,7 +2194,12 @@ class LowerCtx {
       const listObj: LeanExpr = { tag: 'FieldAccess', obj: { tag: 'Paren' as const, inner: obj }, field: 'toList' };
       return { tag: 'App', fn: { tag: 'Var', name: 'String.intercalate' }, args: [args[0], listObj] };
     }
-    if (isArr && method === 'push' && args.length > 0) return { tag: 'App', fn: { tag: 'Var', name: 'Array.push' }, args: [obj, args[0]] };
+    if (isArr && method === 'push' && args.length > 0) {
+      const call: LeanExpr = { tag: 'App', fn: { tag: 'Var', name: 'Array.push' }, args: [obj, args[0]] };
+      // In monadic context, Array.push is a void statement — wrap to discard the Array result
+      if (!isPure(ctx)) return { tag: 'Bind', name: '_', value: { tag: 'Pure', value: call }, body: { tag: 'Pure', value: { tag: 'Lit', value: '()' } } };
+      return call;
+    }
     if (isArr && method === 'filter' && args.length > 0) return { tag: 'App', fn: { tag: 'Var', name: 'Array.filter' }, args: [args[0], obj] };
     if (isArr && method === 'map' && args.length > 0) return { tag: 'App', fn: { tag: 'Var', name: 'Array.map' }, args: [args[0], obj] };
 
