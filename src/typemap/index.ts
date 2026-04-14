@@ -368,8 +368,30 @@ export function extractStructFields(
     const ty   = sym ? checker.getTypeOfSymbol(sym) : checker.getAnyType();
     const opt  = !!m.questionToken;
     const mut  = !m.modifiers?.some(mod => mod.kind === ts.SyntaxKind.ReadonlyKeyword);
-    // Method signatures → force to TSAny (function types cause universe issues in structs)
-    const mapped = isMethod ? TyRef('TSAny') : mapType(ty, checker);
+    // Method signatures: use actual function type if it's concrete (no universe issues),
+    // fall back to TSAny for complex/generic methods
+    let mapped: IRType;
+    if (isMethod) {
+      const sig = checker.getSignaturesOfType(ty, ts.SignatureKind.Call)[0];
+      if (sig) {
+        const params = sig.parameters.map(p => mapType(checker.getTypeOfSymbol(p), checker));
+        const ret = mapType(checker.getReturnTypeOfSignature(sig), checker);
+        // Only use concrete function type if params are simple (no TypeVars)
+        const hasTypeVar = (t: IRType): boolean =>
+          t.tag === 'TypeVar' || (t.tag === 'Array' && hasTypeVar(t.elem)) ||
+          (t.tag === 'Option' && hasTypeVar(t.inner)) ||
+          (t.tag === 'Function' && (t.params.some(hasTypeVar) || hasTypeVar(t.ret)));
+        if ([...params, ret].some(hasTypeVar)) {
+          mapped = TyRef('TSAny');
+        } else {
+          mapped = params.length === 0 ? TyFn([], ret) : TyFn(params, ret);
+        }
+      } else {
+        mapped = TyRef('TSAny');
+      }
+    } else {
+      mapped = mapType(ty, checker);
+    }
     // Avoid Option double-wrapping: if TypeChecker already resolved T | undefined
     // as Option T, don't wrap again for questionToken
     const needsWrap = opt && mapped.tag !== 'Option';

@@ -810,6 +810,8 @@ class LowerCtx {
   private lowerFunc(d: Extract<IRDecl, { tag: 'FuncDef' }>): LeanDecl {
     const fixedEffect = fixStateEffect(d.effect, d.params);
     const isRecursive = d.isPartial ?? bodyContainsVarRef(d.body, d.name);
+    // Also mark as partial if body contains while-loop patterns (let rec _while/_dowhile)
+    const hasWhileLoop = this.bodyContainsWhileLoop(d.body);
     // Track return type for none→default reconciliation
     const prevRetType = this.currentReturnType;
     const prevRetIRType = this.currentReturnIRType;
@@ -829,15 +831,47 @@ class LowerCtx {
     // Check if body uses default (needs Inhabited constraint)
     const needsInhabited = this.exprUsesDefault(body) && d.typeParams.length > 0;
 
-    const tyParams: LeanTyParam[] = d.typeParams.map(t => {
-      const constraints: string[] = [];
-      if (needsInhabited) constraints.push('Inhabited');
-      if (t.constraint) constraints.push(...constraintToTypeClasses(t.constraint));
-      return { name: t.name, explicit: false, constraints: constraints.length ? constraints : undefined };
-    });
+    // When a type param has a constraint that's a known struct (like T extends Disposable),
+    // erase the type param and substitute the bound type. This avoids coercion issues.
+    const erasedTypeParams = new Map<string, string>();
+    for (const t of d.typeParams) {
+      if (t.constraint?.tag === 'TypeRef') {
+        const boundName = t.constraint.name;
+        if (this.structFields.has(boundName) || this.structFields.has(boundName + 'State') ||
+            this.definedNames.has(boundName)) {
+          erasedTypeParams.set(t.name, boundName);
+        }
+      }
+    }
+    const tyParams: LeanTyParam[] = d.typeParams
+      .filter(t => !erasedTypeParams.has(t.name))
+      .map(t => {
+        const constraints: string[] = [];
+        if (needsInhabited) constraints.push('Inhabited');
+        if (t.constraint) constraints.push(...constraintToTypeClasses(t.constraint));
+        return { name: t.name, explicit: false, constraints: constraints.length ? constraints : undefined };
+      });
 
-    const params: LeanParam[] = d.params.map(p => this.lowerParam(p, fixedEffect));
+    let params: LeanParam[] = d.params.map(p => this.lowerParam(p, fixedEffect));
     let retTy = this.lowerRetSig(fixedEffect, this.lowerType(d.retType));
+    // Substitute erased type params in params and return type
+    if (erasedTypeParams.size > 0) {
+      const substTy = (ty: LeanTy): LeanTy => {
+        if (ty.tag === 'TyName' && erasedTypeParams.has(ty.name))
+          return { tag: 'TyName', name: erasedTypeParams.get(ty.name)! };
+        if (ty.tag === 'TyApp')
+          return { ...ty, fn: substTy(ty.fn), args: ty.args.map(substTy) };
+        if (ty.tag === 'TyArrow')
+          return { ...ty, params: ty.params.map(substTy), ret: substTy(ty.ret) };
+        if (ty.tag === 'TyTuple')
+          return { ...ty, elems: ty.elems.map(substTy) };
+        if (ty.tag === 'TyParen')
+          return { ...ty, inner: substTy(ty.inner) };
+        return ty;
+      };
+      params = params.map(p => p.ty ? { ...p, ty: substTy(p.ty) } : p);
+      retTy = substTy(retTy);
+    }
 
     // Post-check: if body ended up with IO calls but effect was Pure, fix the return type
     if (isPure(fixedEffect) && body.tag === 'Do') {
@@ -864,7 +898,7 @@ class LowerCtx {
 
     return {
       tag: 'Def',
-      partial: isRecursive,
+      partial: isRecursive || hasWhileLoop,
       name: d.name,
       tyParams,
       params,
@@ -934,6 +968,17 @@ class LowerCtx {
     return null;
   }
 
+  /** Check if an IR expression body contains while-loop patterns (let rec _while/_dowhile). */
+  private bodyContainsWhileLoop(e: IRExpr): boolean {
+    if (!e) return false;
+    if (e.tag === 'Let' && (e.name.startsWith('_while') || e.name.startsWith('_dowhile'))) return true;
+    if (e.tag === 'Let') return this.bodyContainsWhileLoop(e.value) || this.bodyContainsWhileLoop(e.body);
+    if (e.tag === 'Sequence') return e.stmts.some(s => this.bodyContainsWhileLoop(s));
+    if (e.tag === 'IfThenElse') return this.bodyContainsWhileLoop(e.then) || this.bodyContainsWhileLoop(e.else_);
+    if (e.tag === 'Lambda') return this.bodyContainsWhileLoop(e.body);
+    return false;
+  }
+
   /** Quick IR type → string for lambda param annotations. */
   private printIRTypeForAnnotation(t: IRType): string | null {
     switch (t.tag) {
@@ -957,6 +1002,8 @@ class LowerCtx {
   /** Recursively replace `(default : TSAny)` / `default` inside terminal lambdas
    *  when the corresponding position in the return type is `Unit`. */
   private fixDefaultLambdasForUnit(e: LeanExpr, retType: IRType): LeanExpr {
+    // Unwrap Promise/IO wrappers to get the inner return type
+    if (retType.tag === 'Promise') return this.fixDefaultLambdasForUnit(e, retType.inner);
     // Walk through the return type arrow chain in lockstep with nested lambdas
     if (e.tag === 'Lam' && retType.tag === 'Function') {
       const innerRet = retType.ret;
@@ -968,14 +1015,43 @@ class LowerCtx {
       if (e.tag === 'Default') return { tag: 'Lit', value: '()' };
       if (e.tag === 'TypeAnnot' && e.expr.tag === 'Default') return { tag: 'Lit', value: '()' };
     }
-    // Walk through let chains to reach the terminal expression
+    // Option return type: replace bare default with none
+    if (retType.tag === 'Option') {
+      if (e.tag === 'Default' && !e.ty) return { tag: 'None' };
+    }
+    // Walk into If branches to fix defaults
+    if (e.tag === 'If') {
+      return { ...e,
+        then_: this.fixDefaultLambdasForUnit(e.then_, retType),
+        else_: this.fixDefaultLambdasForUnit(e.else_, retType) };
+    }
+    // Walk into Pure/Return/App/Paren to fix inner values
+    if (e.tag === 'Pure') {
+      return { ...e, value: this.fixDefaultLambdasForUnit(e.value, retType) };
+    }
+    if (e.tag === 'Return') {
+      return { ...e, value: this.fixDefaultLambdasForUnit(e.value, retType) };
+    }
+    if (e.tag === 'App' && e.fn.tag === 'Var' && e.fn.name === 'pure' && e.args.length === 1) {
+      return { ...e, args: [this.fixDefaultLambdasForUnit(e.args[0], retType)] };
+    }
+    if (e.tag === 'Paren') {
+      return { ...e, inner: this.fixDefaultLambdasForUnit(e.inner, retType) };
+    }
+    // Walk through compound expressions to reach the terminal expression
     if (e.tag === 'Let') {
+      return { ...e, body: this.fixDefaultLambdasForUnit(e.body, retType) };
+    }
+    if (e.tag === 'Bind') {
       return { ...e, body: this.fixDefaultLambdasForUnit(e.body, retType) };
     }
     if (e.tag === 'Seq' && e.stmts.length > 0) {
       const stmts = [...e.stmts];
       stmts[stmts.length - 1] = this.fixDefaultLambdasForUnit(stmts[stmts.length - 1], retType);
       return { ...e, stmts };
+    }
+    if (e.tag === 'Do') {
+      return { ...e, body: this.fixDefaultLambdasForUnit(e.body, retType) };
     }
     return e;
   }
@@ -1392,8 +1468,8 @@ class LowerCtx {
       case 'LitBool': return { tag: 'Lit', value: e.value ? 'true' : 'false' };
       case 'LitUnit': return !isPure(ctx) ? { tag: 'Pure', value: { tag: 'Lit', value: '()' } } : { tag: 'Lit', value: '()' };
       case 'LitNull':
-        // null/undefined → none for Option types, default for others
-        if (e.type?.tag === 'Option') return { tag: 'None' };
+        // null/undefined → none for Option types or when return type is Option
+        if (e.type?.tag === 'Option' || this.retTypeIsOption()) return { tag: 'None' };
         return { tag: 'Default' };
       case 'Hole': return defaultForType(e.type);
 
@@ -1588,10 +1664,19 @@ class LowerCtx {
 
       case 'Return': {
         let val = this.lowerExpr(e.value, ctx);
-        // Reconcile: none/Var('none') in a function that doesn't return Option → default
+        // Reconcile: none ↔ default based on return type
         const isNone = val.tag === 'None' || (val.tag === 'Var' && val.name === 'none');
         if (isNone && this.currentReturnType && !this.retTypeIsOption()) {
           val = { tag: 'Default' };
+        }
+        // Reverse: bare default in Option context → none (avoids stuck Inhabited)
+        if (val.tag === 'Default' && !val.ty && this.retTypeIsOption()) {
+          val = { tag: 'None' };
+        }
+        // Also fix if-expressions inside the return value
+        if (val.tag === 'If' && this.retTypeIsOption()) {
+          if (val.then_.tag === 'Default' && !val.then_.ty) val = { ...val, then_: { tag: 'None' } };
+          if (val.else_.tag === 'Default' && !val.else_.ty) val = { ...val, else_: { tag: 'None' } };
         }
         // Don't double-wrap: if val is already Pure, return it as-is
         if (!isPure(ctx) && val.tag !== 'Pure') {
@@ -1858,10 +1943,15 @@ class LowerCtx {
     const isMapType = e.obj?.type?.tag === 'Map' ||
       (e.obj?.type?.tag === 'TypeRef' && (e.obj.type.name === 'AssocMap' || e.obj.type.name === 'Map'));
     if (isMapType && !['size', 'toList', 'keys', 'values'].includes(mappedField)) {
-      // If the underlying value is actually TSAny/String (e.g., parameter typed as TSAny
-      // but cast to object for field access), AssocMap.getD won't work — use default
+      // If the underlying value is actually TSAny/String, AssocMap.getD won't work
       if (obj.tag === 'Default' || this.varIsTSAny(e.obj)) {
         return defaultForType(e.type ?? { tag: 'String' });
+      }
+      // If the result type is Option, use get? (returns Option) instead of getD
+      if (e.type?.tag === 'Option') {
+        return { tag: 'App',
+          fn: { tag: 'Var', name: 'AssocMap.get?' },
+          args: [obj, { tag: 'Lit', value: JSON.stringify(e.field) }] };
       }
       return { tag: 'App',
         fn: { tag: 'Var', name: 'AssocMap.getD' },
@@ -2147,7 +2237,11 @@ class LowerCtx {
       const isBoolBinOp = cond.tag === 'BinOp';
       const isBoolUnOp = cond.tag === 'UnOp';
       const isBoolLit = cond.tag === 'Lit' && (cond.value === 'true' || cond.value === 'false');
-      if (!isBoolExpr && !isBoolField && !isBoolBinOp && !isBoolUnOp && !isBoolLit) {
+      // .size/.length as condition → size > 0 (numeric truthiness)
+      const isSizeAccess = cond.tag === 'FieldAccess' && ['size', 'length'].includes(cond.field);
+      if (isSizeAccess) {
+        cond = { tag: 'BinOp', op: '>', left: cond, right: { tag: 'Lit', value: '0' } };
+      } else if (!isBoolExpr && !isBoolField && !isBoolBinOp && !isBoolUnOp && !isBoolLit) {
         cond = { tag: 'App', fn: { tag: 'Var', name: 'TSLean.toBool' }, args: [cond] };
       }
     }
@@ -2159,8 +2253,12 @@ class LowerCtx {
       if (then_.tag === 'Lit' && then_.value === '()') then_ = { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
       if (else_.tag === 'Lit' && else_.value === '()') else_ = { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
     }
-    // Reconcile: none in non-Option context → default
-    if (!this.retTypeIsOption()) {
+    // Reconcile: none↔default based on return type context
+    if (this.retTypeIsOption()) {
+      // In Option context: bare default → none (avoids stuck typeclass on default)
+      if (then_.tag === 'Default' && !then_.ty) then_ = { tag: 'None' };
+      if (else_.tag === 'Default' && !else_.ty) else_ = { tag: 'None' };
+    } else {
       const isNoneThen = then_.tag === 'None' || (then_.tag === 'Var' && then_.name === 'none');
       const isNoneElse = else_.tag === 'None' || (else_.tag === 'Var' && else_.name === 'none');
       if (isNoneThen) then_ = { tag: 'Default' };
@@ -2252,23 +2350,25 @@ class LowerCtx {
       l = { tag: 'Paren' as const, inner: { tag: 'App' as const, fn: { tag: 'Var' as const, name: 'Option.getD' },
             args: [l, { tag: 'Default' as const }] } };
     }
-    // Coerce numeric literal to Float when comparing with Float/Option Float
+    // Coerce numeric literal when comparing with typed values
     if ((op === '==' || op === '!=' || op === '<' || op === '<=' || op === '>' || op === '>=') &&
         (r.tag === 'Lit' && /^\d+$/.test(r.value))) {
       const lt = e.left?.type;
-      if (lt?.tag === 'Float' || (lt?.tag === 'Option' && lt.inner?.tag === 'Float')) {
-        r = { tag: 'TypeAnnot', expr: r, ty: { tag: 'TyName', name: 'Float' } };
+      // Skip coercion for .size/.length — Lean infers Nat for Array, Float for String
+      const lIsSizeAccess = e.left?.tag === 'FieldAccess' &&
+        ['size', 'length'].includes(e.left.field);
+      if (!lIsSizeAccess) {
+        if (lt?.tag === 'Float' || (lt?.tag === 'Option' && lt.inner?.tag === 'Float')) {
+          r = { tag: 'TypeAnnot', expr: r, ty: { tag: 'TyName', name: 'Float' } };
+        }
       }
     }
-    // Coerce numeric literal to toString when comparing with String/TSAny
-    // (but NOT when the left is a .size/.length access — those return Float)
+    // Coerce numeric literal to toString when comparing with String/TSAny (== / != only)
     if ((op === '==' || op === '!=') && (r.tag === 'Lit' && /^\d+$/.test(r.value))) {
       const lt = e.left?.type;
-      const lIsNumeric = e.left?.tag === 'FieldAccess' &&
+      const lIsSizeAccess = e.left?.tag === 'FieldAccess' &&
         ['size', 'length'].includes(e.left.field);
-      if (lIsNumeric) {
-        r = { tag: 'TypeAnnot', expr: r, ty: { tag: 'TyName', name: 'Float' } };
-      } else if (lt?.tag === 'String' || (lt?.tag === 'TypeRef' && (lt.name === 'TSAny' || lt.name === 'Any'))) {
+      if (!lIsSizeAccess && (lt?.tag === 'String' || (lt?.tag === 'TypeRef' && (lt.name === 'TSAny' || lt.name === 'Any')))) {
         r = { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [r] };
       }
     }

@@ -1332,14 +1332,16 @@ class ParserCtx {
     // Using .bind handles both optional and non-optional field types correctly.
     if (node.questionDotToken) {
       // Use dot notation: obj.bind (fun _oc => _oc.field) — works for Option types
-      const fieldAccess: IRExpr = { tag: 'FieldAccess', obj: varExpr('_oc', obj.type), field, type: ty, effect: Pure };
+      // The callback param _oc has the INNER type of the Option (unwrapped by bind)
+      const innerType = obj.type.tag === 'Option' ? obj.type.inner : obj.type;
+      const fieldAccess: IRExpr = { tag: 'FieldAccess', obj: varExpr('_oc', innerType), field, type: ty, effect: Pure };
       const lambdaBody = ty.tag === 'Option'
         ? fieldAccess  // field is already Option → bind returns Option
         : { tag: 'App' as const, fn: varExpr('some'), args: [fieldAccess], type: TyOption(ty), effect: Pure };
-      const accessor: IRExpr = { tag: 'Lambda', params: [{ name: '_oc', type: obj.type }],
-        body: lambdaBody, type: TyFn([obj.type], TyOption(ty)), effect: Pure };
+      const accessor: IRExpr = { tag: 'Lambda', params: [{ name: '_oc', type: innerType }],
+        body: lambdaBody, type: TyFn([innerType], TyOption(ty)), effect: Pure };
       // Emit as: obj.bind (fun _oc => ...)  — dot notation avoids argument order issues
-      return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'bind', type: TyFn([TyFn([obj.type], TyOption(ty))], TyOption(ty)), effect: Pure },
+      return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'bind', type: TyFn([TyFn([innerType], TyOption(ty))], TyOption(ty)), effect: Pure },
         args: [accessor], type: TyOption(ty), effect: obj.effect };
     }
 
