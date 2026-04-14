@@ -303,19 +303,17 @@ class LowerCtx {
   private scanTypeImports(t: IRType, needs: Set<string>): void {
     switch (t.tag) {
       case 'Map': case 'Set': needs.add('TSLean.Stdlib.HashMap'); break;
-      case 'TypeRef':
-        if (['Request', 'Response', 'URL', 'Headers', 'WebSocket'].includes(t.name))
-          needs.add('TSLean.Runtime.WebAPI');
-        if (['DurableObjectState', 'DurableObjectId', 'DurableObjectNamespace', 'DurableObjectStub'].includes(t.name))
-          needs.add('TSLean.DurableObjects.State');
-        if (t.name === 'KVNamespace') needs.add('TSLean.Workers.KV');
-        if (t.name === 'R2Bucket' || t.name === 'R2Object') needs.add('TSLean.Workers.R2');
-        if (t.name === 'D1Database' || t.name === 'D1PreparedStatement') needs.add('TSLean.Workers.D1');
-        if (t.name === 'QueueSender' || t.name === 'MessageBatch' || t.name === 'Queue') needs.add('TSLean.Workers.Queue');
-        if (t.name === 'AlarmInvocationInfo' || t.name === 'ScheduledEvent') needs.add('TSLean.Workers.Scheduler');
-        if (t.name === 'ExecutionContext') needs.add('TSLean.Runtime.WebAPI');
+      case 'TypeRef': {
+        // Types with stubs in TSLean.Stubs.WebAPIs
+        const webApiStubTypes = new Set([
+          'DurableObjectNamespace', 'DurableObjectStub', 'DurableObjectId',
+          'DurableObjectStorage', 'DurableObjectState',
+          'Disposable',
+        ]);
+        if (webApiStubTypes.has(t.name)) needs.add('TSLean.Stubs.WebAPIs');
         for (const a of t.args) this.scanTypeImports(a, needs);
         break;
+      }
       case 'Array': this.scanTypeImports(t.elem, needs); break;
       case 'Option': this.scanTypeImports(t.inner, needs); break;
       case 'Function':

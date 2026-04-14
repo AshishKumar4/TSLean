@@ -107,4 +107,98 @@ structure Disposable where
   dispose : IO Unit := pure ()
   deriving Inhabited
 
+-- ─── Cloudflare Durable Objects API ─────────────────────────────────────────
+
+/-- Opaque stub for DurableObjectNamespace (Cloudflare Workers API). -/
+opaque DurableObjectNamespace (T : Type) : Type
+instance {T} : Inhabited (DurableObjectNamespace T) := ⟨sorry⟩
+instance {T} : BEq (DurableObjectNamespace T) := ⟨fun _ _ => false⟩
+instance {T} : Repr (DurableObjectNamespace T) := ⟨fun _ _ => .text "DurableObjectNamespace"⟩
+
+/-- Opaque stub for DurableObjectStub (Cloudflare Workers API). -/
+opaque DurableObjectStub (T : Type) : Type
+instance {T} : Inhabited (DurableObjectStub T) := ⟨sorry⟩
+instance {T} : BEq (DurableObjectStub T) := ⟨fun _ _ => false⟩
+instance {T} : Repr (DurableObjectStub T) := ⟨fun _ _ => .text "DurableObjectStub"⟩
+
+/-- Opaque stub for DurableObjectId (Cloudflare Workers API). -/
+opaque DurableObjectId : Type
+instance : Inhabited DurableObjectId := ⟨sorry⟩
+
+/-- Opaque stub for DurableObjectStorage (Cloudflare Workers API). -/
+opaque DurableObjectStorage : Type
+instance : Inhabited DurableObjectStorage := ⟨sorry⟩
+
+/-- Opaque stub for DurableObjectState (Cloudflare Workers API). -/
+structure DurableObjectState where
+  id : String := ""
+  deriving Repr, BEq, Inhabited
+
+-- ─── URL / URLSearchParams ──────────────────────────────────────────────────
+
+structure URL where
+  href : String := ""
+  protocol : String := ""
+  hostname : String := ""
+  port : String := ""
+  pathname : String := ""
+  search : String := ""
+  hash : String := ""
+  origin : String := ""
+  deriving Repr, BEq, Inhabited
+
+structure URLSearchParams where
+  entries : List (String × String) := []
+  deriving Repr, BEq, Inhabited
+
+-- ─── Blob / FormData ────────────────────────────────────────────────────────
+
+opaque Blob : Type
+instance : Inhabited Blob := ⟨sorry⟩
+
+opaque FormData : Type
+instance : Inhabited FormData := ⟨sorry⟩
+
+-- ─── Request / Response ─────────────────────────────────────────────────────
+
+structure Request where
+  url : String := ""
+  method : String := "GET"
+  headers : Headers := default
+  body : Option String := none
+  deriving Inhabited
+
+structure Response where
+  status : Float := 200
+  statusText : String := "OK"
+  headers : Headers := default
+  body : Option String := none
+  ok : Bool := true
+  deriving Inhabited
+
+-- ─── MessageEvent / CloseEvent ──────────────────────────────────────────────
+
+structure MessageEvent where
+  data : String := ""
+  deriving Repr, BEq, Inhabited
+
+structure CloseEvent where
+  code : Float := 1000
+  reason : String := ""
+  wasClean : Bool := true
+  deriving Repr, BEq, Inhabited
+
+-- ─── Crypto ─────────────────────────────────────────────────────────────────
+
+opaque SubtleCrypto : Type
+instance : Inhabited SubtleCrypto := ⟨sorry⟩
+
+-- ─── R2Bucket / SqlStorage (Cloudflare) ─────────────────────────────────────
+
+opaque R2Bucket : Type
+instance : Inhabited R2Bucket := ⟨sorry⟩
+
+opaque SqlStorage : Type
+instance : Inhabited SqlStorage := ⟨sorry⟩
+
 end TSLean.Stubs.WebAPIs

@@ -188,15 +188,22 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
     return TyRef('TSAny');
   }
   if (name === 'Error' || name.endsWith('Error')) return TyString;  // JS Error → String for Lean
-  // Web API / built-in types with no Lean equivalent
+  // Cloudflare DO types with Lean stubs — preserve as-is (these appear in struct fields)
+  const stubbedTypes = new Set([
+    'DurableObjectNamespace', 'DurableObjectStub', 'DurableObjectId',
+    'DurableObjectStorage', 'DurableObjectState',
+    'Disposable',
+  ]);
+  if (stubbedTypes.has(name)) return TyRef(name);
+  // Web API / built-in types with no Lean equivalent → collapse to TSAny
   const webApiTypes = new Set([
     'Uint8Array', 'Int8Array', 'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array',
     'Float32Array', 'Float64Array', 'ArrayBuffer', 'ArrayBufferLike', 'SharedArrayBuffer', 'DataView',
     'ReadableStream', 'WritableStream', 'TransformStream', 'ReadableStreamDefaultReader',
     'Blob', 'File', 'FormData', 'AbortController', 'AbortSignal',
-    'WeakSet', 'WeakMap', 'WeakRef', 'FinalizationRegistry',
     'AsyncDisposable', 'EventTarget', 'Event',
     'TextEncoder', 'TextDecoder', 'SubtleCrypto', 'CryptoKey', 'CryptoKeyPair',
+    'WeakSet', 'WeakMap', 'WeakRef', 'FinalizationRegistry',
     'Generator', 'AsyncGenerator', 'IterableIterator', 'AsyncIterableIterator',
     'Date', 'RegExp', 'JSON', 'Math', 'console', 'Proxy', 'Reflect',
   ]);
@@ -228,6 +235,15 @@ function mapTypeRef(t: ts.TypeReference, checker: ts.TypeChecker, depth: number)
     case 'Exclude':       case 'Extract':       return TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
     default: {
       // Web API / built-in types that have no Lean equivalent
+      // Cloudflare DO types with Lean stubs — preserve as proper types
+      const stubbedRefTypes = new Set([
+        'DurableObjectNamespace', 'DurableObjectStub', 'DurableObjectId',
+        'DurableObjectStorage', 'DurableObjectState',
+        'Disposable',
+      ]);
+      if (stubbedRefTypes.has(name)) {
+        return args.length === 0 ? TyRef(name) : TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
+      }
       const webApiRefTypes = new Set([
         'Uint8Array', 'Int8Array', 'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array',
         'Float32Array', 'Float64Array', 'ArrayBuffer', 'ArrayBufferLike', 'SharedArrayBuffer', 'DataView',
@@ -306,8 +322,8 @@ function typeStr(t: IRType): string {
         'Generator', 'AsyncGenerator', 'PromiseLike', 'RegExp', 'RegExpMatchArray',
         'WeakSet', 'WeakMap', 'WeakRef', 'FinalizationRegistry',
         'SymbolConstructor', 'PropertyDescriptor', 'PropertyKey',
-         'Blob', 'File', 'FormData', 'AbortController', 'AbortSignal',
-         'AsyncDisposable', 'EventTarget', 'Event',
+        'Blob', 'File', 'FormData', 'AbortController', 'AbortSignal',
+        'AsyncDisposable', 'EventTarget', 'Event',
         'TextEncoder', 'TextDecoder', 'ReadableStreamDefaultReader',
         'SubtleCrypto', 'CryptoKey', 'CryptoKeyPair']);
       if (tsOnlyTypes.has(t.name)) return 'TSAny';
