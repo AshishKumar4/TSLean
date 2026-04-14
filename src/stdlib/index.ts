@@ -183,7 +183,7 @@ const GLOBALS: Record<string, GlobalTx> = {
   'Object.create':  { leanExpr: 'id', maxArgs: 1 },
   'Object.getPrototypeOf': { leanExpr: 'id', maxArgs: 1 },
   'Object.defineProperty': { leanExpr: 'TSLean.Stdlib.Object.defineProperty', maxArgs: 3 },
-  'Array.from':     { leanExpr: 'Array.ofList' },
+  'Array.from':     { leanExpr: 'List.toArray' },
   'Array.isArray':  { leanExpr: 'TSLean.Stdlib.Array.isArray', maxArgs: 1 },
   'Promise.resolve':{ leanExpr: 'pure' },
   'Promise.reject': { leanExpr: 'TSLean.Stdlib.Async.promiseReject', io: true },
