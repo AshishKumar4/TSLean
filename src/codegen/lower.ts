@@ -1634,6 +1634,15 @@ class LowerCtx {
       }
 
       case 'Let': {
+        // Track local variables bound from Option-typed struct fields.
+        // When `let d := self.optionalField`, the Lean type of d is Option X
+        // even though TS may narrow it. Track these so field accesses get unwrapped.
+        const isOptBinding = e.value?.tag === 'FieldAccess' &&
+          e.value.obj?.tag === 'Var' && e.value.obj.name === 'self' &&
+          this.isStructFieldOption(e.value.field);
+        if (isOptBinding && e.value?.type?.tag !== 'Option') {
+          this.optionParams.add(e.name);
+        }
         let val = this.lowerExpr(e.value, ctx);
         const body = this.lowerExpr(e.body, ctx);
         const isRec = e.value.tag === 'Lambda' && bodyContainsVarRef(e.value.body, e.name);
@@ -2627,14 +2636,13 @@ class LowerCtx {
     if ((e.type?.tag === 'Map' || (retIsAssocMap && !hasKnownStruct)) && !hasKnownStruct) {
       const realFields = e.fields.filter(f => !f.name.startsWith('_spread') && !f.name.startsWith('_computed'));
       if (realFields.length > 0) {
-        const pairs: LeanExpr[] = realFields.map(f => {
+         const pairs: LeanExpr[] = realFields.map(f => {
           let val = this.lowerExpr(f.value, ctx);
-          // Coerce only clearly non-String typed values (Bool, Float, Array, custom structs)
-          // Don't coerce Var/FieldAccess/App that might already be String/TSAny
-          const valType = f.value?.type;
-          const needsCoerce = valType && (valType.tag === 'Bool' || valType.tag === 'Float' ||
-            valType.tag === 'Nat' || valType.tag === 'Int' || valType.tag === 'Array');
-          if (needsCoerce) {
+          // Coerce non-String values for homogeneous AssocMap String TSAny
+          const vt = f.value?.type;
+          const isStr = !vt || vt.tag === 'String' ||
+            (vt.tag === 'TypeRef' && ['TSAny', 'Any', 'String'].includes(vt.name));
+          if (!isStr && val.tag !== 'Lit' && val.tag !== 'SInterp' && val.tag !== 'Default') {
             val = { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [val] };
           }
           return { tag: 'TupleLit' as const,
@@ -2655,10 +2663,19 @@ class LowerCtx {
     if (isStringTarget && !hasKnownStruct) {
       const realFields = e.fields.filter(f => !f.name.startsWith('_spread') && !f.name.startsWith('_computed'));
       if (realFields.length > 0) {
-        const pairs: LeanExpr[] = realFields.map(f => ({
-          tag: 'TupleLit' as const,
-          elems: [{ tag: 'Lit' as const, value: JSON.stringify(f.name) }, this.lowerExpr(f.value, ctx)],
-        }));
+        const pairs: LeanExpr[] = realFields.map(f => {
+          let val = this.lowerExpr(f.value, ctx);
+          // All values must be TSAny (= String) for homogeneous AssocMap.
+          // Coerce non-String typed values via toString.
+          const vt = f.value?.type;
+          const isAlreadyString = !vt || vt.tag === 'String' ||
+            (vt.tag === 'TypeRef' && ['TSAny', 'Any', 'String'].includes(vt.name));
+          if (!isAlreadyString && val.tag !== 'Lit' && val.tag !== 'SInterp' && val.tag !== 'Default') {
+            val = { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [val] };
+          }
+          return { tag: 'TupleLit' as const,
+            elems: [{ tag: 'Lit' as const, value: JSON.stringify(f.name) }, val] };
+        });
         return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.fromList' },
                  args: [{ tag: 'ListLit', elems: pairs }] };
       }
