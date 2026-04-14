@@ -1769,7 +1769,18 @@ class LowerCtx {
       return this.lowerDOCtxOp(ctxMethod, args, e.type);
     }
 
-    const args = e.args.map(a => this.lowerExprP(a, ctx));
+    // Auto-unwrap Option args for known functions that don't accept Option
+    const fnExpectsUnwrapped = fn.tag === 'Var' && (
+      fn.name.includes('FloatExt.') || fn.name.includes('Float.') || fn.name === 'toString' ||
+      fn.name === 'TSLean.toBool' || fn.name === 'TSLean.toFloat' || fn.name === 'serialize');
+    const args = e.args.map((a) => {
+      let lowered = this.lowerExprP(a, ctx);
+      if (fnExpectsUnwrapped && a.type?.tag === 'Option' && lowered.tag !== 'None') {
+        lowered = { tag: 'Paren' as const, inner: { tag: 'App' as const, fn: { tag: 'Var' as const, name: 'Option.getD' },
+                    args: [lowered, { tag: 'Default' as const }] } };
+      }
+      return lowered;
+    });
     return args.length === 0 ? fn : { tag: 'App', fn, args };
   }
 
@@ -1828,8 +1839,13 @@ class LowerCtx {
       'values': 'AssocMap.values', 'entries': 'AssocMap.toList',
     };
     if (collMethods[method]) {
-      return { tag: 'App', fn: { tag: 'Var', name: collMethods[method] },
+      const call: LeanExpr = { tag: 'App', fn: { tag: 'Var', name: collMethods[method] },
                args: args.length > 0 ? [obj, ...args] : [obj] };
+      // AssocMap.values/keys/entries return List, wrap in .toArray for Array compat
+      if (['values', 'keys', 'entries'].includes(method) && !isSet) {
+        return { tag: 'FieldAccess', obj: { tag: 'Paren', inner: call }, field: 'toArray' };
+      }
+      return call;
     }
 
     return null; // not a recognized method call
