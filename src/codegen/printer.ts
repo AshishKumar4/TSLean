@@ -432,8 +432,7 @@ function printExpr(e: LeanExpr, depth: number): string {
     }
 
     case 'Seq': {
-      if (e.stmts.length === 0) return `${ind}()`;
-      if (e.stmts.length === 1) return printExpr(e.stmts[0], depth);
+      if (e.stmts.length === 0) return `${ind}pure ()`;
       return e.stmts.map(s => printExpr(s, depth)).join('\n');
     }
 
