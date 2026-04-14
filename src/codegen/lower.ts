@@ -944,8 +944,13 @@ class LowerCtx {
       case 'Bool': return 'Bool';
       case 'Unit': return 'Unit';
       case 'Array': return null; // too complex inline
-      case 'TypeRef': return t.name;
-      default: return 'TSAny';
+      case 'TypeRef': {
+        const name = t.name;
+        // Don't annotate with catch-all types — let Lean infer
+        if (['TSAny', 'Any', 'String', '__type', '__object'].includes(name)) return null;
+        return name;
+      }
+      default: return null; // unknown types: don't annotate, let Lean infer
     }
   }
 
@@ -1423,16 +1428,19 @@ class LowerCtx {
 
       case 'Lambda': {
         // Annotate unused params (prefixed with _) with their specific type so Lean can infer them.
-        // Annotate unused params with their type, but skip TSAny/Any catch-all types
-        // since Lean can often infer a more specific type from context.
+        // Annotate unused params with specific (non-catch-all) types.
+        // String/TSAny annotations are ONLY added when there's exactly one param
+        // and no other context for Lean to infer from (e.g., event handlers).
         const ps = e.params.map(p => {
           const name = p.name;
           if (name.startsWith('_') && name !== '_' && p.type) {
-            const isCatchAll = p.type.tag === 'TypeRef' && ['TSAny', 'Any'].includes((p.type as any).name);
-            if (!isCatchAll) {
-              const tyStr = this.printIRTypeForAnnotation(p.type);
-              if (tyStr) return `(${name} : ${tyStr})`;
-            }
+            const tyStr = this.printIRTypeForAnnotation(p.type);
+            if (!tyStr) return name;
+            // Specific types (Float, Nat, Bool, custom structs) → always annotate
+            if (tyStr !== 'String' && tyStr !== 'TSAny') return `(${name} : ${tyStr})`;
+            // String annotation: only add if this is a multi-param lambda where
+            // other params provide no type context for Lean
+            if (e.params.length >= 2) return `(${name} : ${tyStr})`;
           }
           return name;
         });
@@ -2033,7 +2041,9 @@ class LowerCtx {
       if (fn.tag === 'Var') {
         const fnType = e.fn?.type;
         const isThunk = fnType?.tag === 'Function' && fnType.params.length === 0;
-        if (isThunk) {
+        // Also treat `let rec _while := fun _ => ...; _while` as a thunk call
+        const isRecursiveCall = fn.name.startsWith('_while') || fn.name.startsWith('_dowhile');
+        if (isThunk || isRecursiveCall) {
           return { tag: 'App', fn, args: [{ tag: 'Lit', value: '()' }] };
         }
       }
@@ -2223,6 +2233,11 @@ class LowerCtx {
       const wrappedR = { tag: 'App' as const, fn: { tag: 'Var' as const, name: 'some' }, args: [r] };
       return { tag: 'BinOp', op: e.op === 'Eq' ? '==' : '!=', left: l, right: wrappedR };
     }
+    // Comparisons on IO/Promise types → degrade (can't compare monadic values)
+    if ((e.op === 'Eq' || e.op === 'Ne') && (e.left?.type?.tag === 'Promise' || e.right?.type?.tag === 'Promise')) {
+      return { tag: 'Lit', value: e.op === 'Ne' ? 'true' : 'false' };
+    }
+
     // String interpolation for Concat chains
     if (e.op === 'Concat' || (e.op === 'Add' && e.left?.type?.tag === 'String')) {
       const interp = this.trySInterp(e, ctx);
