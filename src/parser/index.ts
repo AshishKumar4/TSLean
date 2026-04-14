@@ -837,8 +837,8 @@ class ParserCtx {
       const body = desugarBody(rawBody);
       const loop: IRExpr = {
         tag: 'App',
-        fn: varExpr('Array.forM', TyFn([TyArray(TyUnit), TyFn([TyUnit], TyUnit)], TyUnit)),
-        args: [iter, { tag: 'Lambda', params: [{ name: binding, type: TyUnit }], body, type: TyFn([TyUnit], TyUnit), effect: body.effect }],
+        fn: varExpr('Array.forM', TyFn([TyFn([TyUnit], TyUnit), TyArray(TyUnit)], TyUnit)),
+        args: [{ tag: 'Lambda', params: [{ name: binding, type: TyUnit }], body, type: TyFn([TyUnit], TyUnit), effect: body.effect }, iter],
         type: TyUnit, effect: combineEffects([iter.effect, body.effect]),
       };
       const c = cont();
@@ -863,8 +863,8 @@ class ParserCtx {
        const keysExpr: IRExpr = { tag: 'App', fn: varExpr('AssocMap.keys'), args: [obj], type: TyArray(TyString), effect: Pure };
        const loop: IRExpr = {
          tag: 'App',
-         fn: varExpr('Array.forM', TyFn([TyArray(TyString), TyFn([TyString], TyUnit)], TyUnit)),
-         args: [keysExpr, { tag: 'Lambda', params: [{ name: binding, type: TyString }], body, type: TyFn([TyString], TyUnit), effect: body.effect }],
+         fn: varExpr('Array.forM', TyFn([TyFn([TyString], TyUnit), TyArray(TyString)], TyUnit)),
+          args: [{ tag: 'Lambda', params: [{ name: binding, type: TyString }], body, type: TyFn([TyString], TyUnit), effect: body.effect }, keysExpr],
          type: TyUnit, effect: combineEffects([obj.effect, body.effect]),
        };
        const c = cont();

@@ -281,7 +281,7 @@ function typeStr(t: IRType): string {
       return `${paramStr} → ${typeStr(t.ret)}`;
     }
     case 'Map':       return `AssocMap ${irTypeToLean(t.key, true)} ${irTypeToLean(t.value, true)}`;
-    case 'Set':       return `Array ${irTypeToLean(t.elem, true)}`;
+    case 'Set':       return `List ${irTypeToLean(t.elem, true)}`;
     case 'Promise': {
       // Flatten nested IO: Promise<Promise<T>> → IO T (not IO (IO T))
       const inner = t.inner;
@@ -345,13 +345,15 @@ export function extractStructFields(
 ): StructField[] {
   const out: StructField[] = [];
   for (const m of node.members) {
-    if (!ts.isPropertySignature(m) && !ts.isPropertyDeclaration(m)) continue;
+    const isMethod = ts.isMethodSignature(m);
+    if (!ts.isPropertySignature(m) && !ts.isPropertyDeclaration(m) && !isMethod) continue;
     const name = m.name?.getText() ?? '';
     const sym  = checker.getSymbolAtLocation(m.name!);
     const ty   = sym ? checker.getTypeOfSymbol(sym) : checker.getAnyType();
     const opt  = !!m.questionToken;
     const mut  = !m.modifiers?.some(mod => mod.kind === ts.SyntaxKind.ReadonlyKeyword);
-    const mapped = mapType(ty, checker);
+    // Method signatures → force to TSAny (function types cause universe issues in structs)
+    const mapped = isMethod ? TyRef('TSAny') : mapType(ty, checker);
     // Avoid Option double-wrapping: if TypeChecker already resolved T | undefined
     // as Option T, don't wrap again for questionToken
     const needsWrap = opt && mapped.tag !== 'Option';

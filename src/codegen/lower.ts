@@ -1050,6 +1050,9 @@ class LowerCtx {
         if (t.name === '__type' || t.name === '__object')
           return { tag: 'TyApp', fn: { tag: 'TyName', name: 'AssocMap' },
                    args: [{ tag: 'TyName', name: 'String' }, { tag: 'TyName', name: 'TSAny' }] };
+        // Indexed access types (T[K]), generics with angle brackets, template literals → TSAny
+        if (t.name.includes('[') || t.name.includes('<') || t.name.includes('"') || t.name.includes('`'))
+          return { tag: 'TyName', name: 'TSAny' };
         const name = t.name === 'Any' ? 'TSAny' : t.name;
         // Inexpressible TS utility types in generic context → sorry
         if (INEXPRESSIBLE_UTILITY_TYPES.has(name) && t.args.some(a => a.tag === 'TypeVar')) {
@@ -1296,8 +1299,9 @@ class LowerCtx {
 
       case 'Return': {
         let val = this.lowerExpr(e.value, ctx);
-        // Reconcile: none in a function that doesn't return Option → default
-        if (val.tag === 'None' && this.currentReturnType && !this.retTypeIsOption()) {
+        // Reconcile: none/Var('none') in a function that doesn't return Option → default
+        const isNone = val.tag === 'None' || (val.tag === 'Var' && val.name === 'none');
+        if (isNone && this.currentReturnType && !this.retTypeIsOption()) {
           val = { tag: 'Default' };
         }
         // Don't double-wrap: if val is already Pure, return it as-is
@@ -1775,8 +1779,10 @@ class LowerCtx {
     }
     // Reconcile: none in non-Option context → default
     if (!this.retTypeIsOption()) {
-      if (then_.tag === 'None') then_ = { tag: 'Default' };
-      if (else_.tag === 'None') else_ = { tag: 'Default' };
+      const isNoneThen = then_.tag === 'None' || (then_.tag === 'Var' && then_.name === 'none');
+      const isNoneElse = else_.tag === 'None' || (else_.tag === 'Var' && else_.name === 'none');
+      if (isNoneThen) then_ = { tag: 'Default' };
+      if (isNoneElse) else_ = { tag: 'Default' };
     }
 
     return { tag: 'If', cond, then_, else_ };
