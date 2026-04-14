@@ -220,6 +220,7 @@ describe('generateLean – expressions', () => {
 
   it('LitUnit → ()',     () => expect(expr(litUnit())).toContain('()'));
   it('LitNull → none',  () => expect(expr({ tag: 'LitNull', type: TyOption(TyUnit), effect: Pure })).toContain('none'));
+  it('LitNull with Option String → none',  () => expect(expr({ tag: 'LitNull', type: TyOption(TyString), effect: Pure })).toContain('none'));
   it('LitBool true',    () => expect(expr(litBool(true))).toContain('true'));
   it('LitNat',          () => expect(expr(litNat(7))).toContain('7'));
   it('LitFloat',        () => expect(expr({ tag: 'LitFloat', value: 3.14, type: TyFloat, effect: Pure })).toContain('3.14'));

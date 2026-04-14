@@ -69,6 +69,8 @@ export function mapType(t: ts.Type, checker: ts.TypeChecker, depth = 0): IRType 
   if (f & ts.TypeFlags.NumberLiteral)  return TyFloat;
   if (f & ts.TypeFlags.BooleanLiteral) return TyBool;
   if (f & ts.TypeFlags.TypeParameter)  return TyVar(t.symbol?.name ?? FALLBACK_TYPE_VAR);
+  if (f & ts.TypeFlags.TemplateLiteral) return TyString;
+  if (f & ts.TypeFlags.StringMapping)   return TyString;
 
   if (t.isUnion())        return mapUnion(t, checker, depth);
   if (t.isIntersection()) return mapIntersection(t, checker, depth);

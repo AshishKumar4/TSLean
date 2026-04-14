@@ -1068,9 +1068,9 @@ class LowerCtx {
         : { tag: 'Lit', value: String(e.value) };
       case 'LitString': return { tag: 'Lit', value: JSON.stringify(e.value) };
       case 'LitBool': return { tag: 'Lit', value: e.value ? 'true' : 'false' };
-      case 'LitUnit': return { tag: 'Lit', value: '()' };
+      case 'LitUnit': return !isPure(ctx) ? { tag: 'Pure', value: { tag: 'Lit', value: '()' } } : { tag: 'Lit', value: '()' };
       case 'LitNull':
-        // null/undefined → none for Option types, default for others (TSAny, String, etc.)
+        // null/undefined → none for Option types, default for others
         if (e.type?.tag === 'Option') return { tag: 'None' };
         return { tag: 'Default' };
       case 'Hole': return defaultForType(e.type);
@@ -1129,7 +1129,14 @@ class LowerCtx {
       case 'Bind': {
         const monad = this.lowerExpr(e.monad, ctx);
         const body = this.lowerExpr(e.body, ctx);
-        // Bind IR nodes always represent monadic operations (← in Lean)
+        // Lambda values aren't monadic — use let := instead of let ←
+        if (monad.tag === 'Lam') {
+          return { tag: 'Let', name: e.name, value: monad, body };
+        }
+        // Default/sorry values: also use let :=
+        if (monad.tag === 'Default' || monad.tag === 'Sorry') {
+          return { tag: 'Let', name: e.name, value: monad, body };
+        }
         return { tag: 'Bind', name: e.name, value: monad, body };
       }
 
@@ -1401,7 +1408,7 @@ class LowerCtx {
     if (isMapType && !['size', 'toList', 'keys', 'values'].includes(mappedField)) {
       return { tag: 'App',
         fn: { tag: 'Var', name: 'AssocMap.getD' },
-        args: [obj, { tag: 'Lit', value: `"${e.field}"` }, { tag: 'Default' }] };
+        args: [obj, { tag: 'Lit', value: JSON.stringify(e.field) }, { tag: 'Default' }] };
     }
 
     // Check if field exists on known struct type — use default instead of sorry
@@ -1725,7 +1732,7 @@ class LowerCtx {
       if (realFields.length > 0) {
         const pairs: LeanExpr[] = realFields.map(f => ({
           tag: 'TupleLit' as const,
-          elems: [{ tag: 'Lit' as const, value: `"${f.name}"` }, this.lowerExpr(f.value, ctx)],
+          elems: [{ tag: 'Lit' as const, value: JSON.stringify(f.name) }, this.lowerExpr(f.value, ctx)],
         }));
         return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.fromList' },
                  args: [{ tag: 'ListLit', elems: pairs }] };
@@ -1747,7 +1754,7 @@ class LowerCtx {
         // Build AssocMap from fields: #[("key1", val1), ("key2", val2)]
         const pairs: LeanExpr[] = realFields.map(f => ({
           tag: 'TupleLit' as const,
-          elems: [{ tag: 'Lit' as const, value: `"${f.name}"` }, this.lowerExpr(f.value, ctx)],
+          elems: [{ tag: 'Lit' as const, value: JSON.stringify(f.name) }, this.lowerExpr(f.value, ctx)],
         }));
         return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.fromList' },
                  args: [{ tag: 'ListLit', elems: pairs }] };
@@ -1761,7 +1768,7 @@ class LowerCtx {
       if (realFields.length > 0) {
         const pairs: LeanExpr[] = realFields.map(f => ({
           tag: 'TupleLit' as const,
-          elems: [{ tag: 'Lit' as const, value: `"${f.name}"` }, this.lowerExpr(f.value, ctx)],
+          elems: [{ tag: 'Lit' as const, value: JSON.stringify(f.name) }, this.lowerExpr(f.value, ctx)],
         }));
         return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.fromList' },
                  args: [{ tag: 'ListLit', elems: pairs }] };
@@ -2192,6 +2199,11 @@ function isSafeInterp(e: IRExpr): boolean {
  * Tier 3 (structural): { name: string } → HasField "name" String (deferred)
  */
 function constraintToTypeClasses(constraint: IRType): string[] {
+  // Known Lean typeclasses that map from TS constraints
+  const VALID_TYPECLASSES = new Set([
+    'ToString', 'OfNat', 'OfScientific', 'DecidableEq', 'BEq', 'Ord',
+    'Inhabited', 'Repr', 'Hashable', 'Append', 'HAdd', 'HMul',
+  ]);
   switch (constraint.tag) {
     case 'String':  return ['ToString'];
     case 'Nat':     return ['OfNat'];
@@ -2199,10 +2211,12 @@ function constraintToTypeClasses(constraint: IRType): string[] {
     case 'Float':   return ['OfScientific'];
     case 'Bool':    return ['DecidableEq'];
     case 'TypeRef':
-      // Named interface/class constraint: <T extends Comparable> → [Comparable T]
-      return [constraint.name];
+      // Only emit constraints that are known Lean typeclasses.
+      // TS constraints like `T extends object` or `T extends SomeInterface`
+      // don't map to Lean typeclasses — skip them.
+      if (VALID_TYPECLASSES.has(constraint.name)) return [constraint.name];
+      return [];
     case 'TypeVar':
-      // <T extends U> where U is another type param — not directly expressible
       return [];
     default:
       return [];

@@ -180,14 +180,26 @@ describe('Constraint lowering to Lean type classes', () => {
     expect(code).toContain('[ToString T]');
   });
 
-  it('named interface constraint from IR', () => {
+  it('named interface constraint from IR — unknown interfaces skipped', () => {
     const code = generateLean(mod([{
       tag: 'FuncDef', name: 'sort',
       typeParams: [{ name: 'T', constraint: TyRef('Comparable') }],
       params: [{ name: 'arr', type: TyArray(TyVar('T')) }],
       retType: TyArray(TyVar('T')), effect: Pure, body: varExpr('arr'),
     }]));
-    expect(code).toContain('[Comparable T]');
+    // Unknown TS interfaces are not valid Lean typeclasses — constraint is dropped
+    expect(code).toContain('{T : Type}');
+    expect(code).not.toContain('[Comparable T]');
+  });
+
+  it('known typeclass constraint from IR', () => {
+    const code = generateLean(mod([{
+      tag: 'FuncDef', name: 'eq',
+      typeParams: [{ name: 'T', constraint: TyRef('BEq') }],
+      params: [{ name: 'a', type: TyVar('T') }],
+      retType: TyBool, effect: Pure, body: litBool(true),
+    }]));
+    expect(code).toContain('[BEq T]');
   });
 });
 

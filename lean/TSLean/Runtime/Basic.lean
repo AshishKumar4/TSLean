@@ -243,4 +243,9 @@ def toBool {α : Type} [BEq α] [Inhabited α] (x : α) : Bool := x != default
 /-- JS Number() coercion. Stub — defaults to 0. -/
 def toFloat {α : Type} (_ : α) : Float := 0.0
 
+namespace Stdlib.Object
+/-- JS Object.defineProperty — stub: returns the object unchanged. -/
+def defineProperty {α : Type} (obj : α) (_prop : String) (_desc : TSAny) : α := obj
+end Stdlib.Object
+
 end TSLean
