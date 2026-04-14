@@ -787,12 +787,10 @@ class LowerCtx {
       return { tag: 'Do', body: this.lowerExpr(body, ioCtx) };
     }
     const lowered = this.lowerExpr(body, effect);
-    // Pure function returning Unit but body is a value expression → wrap in let _ :=
-    if (retType.tag === 'Unit' && this.isPureAppStatement(lowered)) {
-      return { tag: 'Let', name: '_', value: lowered, body: { tag: 'Lit', value: '()' } };
-    }
-    if (retType.tag === 'Unit' && (lowered.tag === 'FieldAccess' || lowered.tag === 'Default')) {
-      return { tag: 'Let', name: '_', value: lowered, body: { tag: 'Lit', value: '()' } };
+    // Pure function returning Unit but body ends with a value expression → wrap terminal in let _ :=
+    if (retType.tag === 'Unit') {
+      const fixed = this.wrapTerminalForUnit(lowered);
+      if (fixed) return fixed;
     }
     // Check if the "pure" body actually contains IO calls (effect detection missed it)
     if (this.exprContainsIO(lowered)) {
@@ -805,6 +803,27 @@ class LowerCtx {
     // Fix default-bodied lambdas when return type ends in Unit
     // e.g. return type `Unit → Unit` and body ends with `fun _ => (default : TSAny)` → `fun _ => ()`
     return this.fixDefaultLambdasForUnit(lowered, retType);
+  }
+
+  /** Walk a lowered expression and wrap the terminal value expression in `let _ := ... \n ()`
+   *  for functions that return Unit. Returns null if no wrapping needed. */
+  private wrapTerminalForUnit(e: LeanExpr): LeanExpr | null {
+    const isValueExpr = (x: LeanExpr) =>
+      x.tag === 'App' || x.tag === 'FieldAccess' || x.tag === 'Default' || x.tag === 'Var' ||
+      x.tag === 'Lit' || x.tag === 'TypeAnnot' || x.tag === 'ArrayLit' || x.tag === 'None';
+    if (isValueExpr(e) && !(e.tag === 'Lit' && e.value === '()')) {
+      return { tag: 'Let', name: '_', value: e, body: { tag: 'Lit', value: '()' } };
+    }
+    if (e.tag === 'Let') {
+      const fixedBody = this.wrapTerminalForUnit(e.body);
+      if (fixedBody) return { ...e, body: fixedBody };
+    }
+    if (e.tag === 'Seq' && e.stmts.length > 0) {
+      const stmts = [...e.stmts];
+      const fixedLast = this.wrapTerminalForUnit(stmts[stmts.length - 1]);
+      if (fixedLast) { stmts[stmts.length - 1] = fixedLast; return { ...e, stmts }; }
+    }
+    return null;
   }
 
   /** Quick IR type → string for lambda param annotations. */
@@ -1305,7 +1324,11 @@ class LowerCtx {
           return name;
         });
         const lambdaCtx = e.effect ?? ctx;
-        const body = this.lowerExpr(e.body, lambdaCtx);
+        let body = this.lowerExpr(e.body, lambdaCtx);
+        // In monadic context, bare Default body → pure () (unresolvable callback)
+        if (!isPure(lambdaCtx) && (body.tag === 'Default' || (body.tag === 'TypeAnnot' && body.expr.tag === 'Default'))) {
+          body = { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
+        }
         const needsDo = !isPure(lambdaCtx) && this.exprHasBinds(body);
         if (needsDo) {
           // Avoid do-do: if body is already a Do or starts with one, don't double-wrap
@@ -1402,7 +1425,10 @@ class LowerCtx {
           'Throw', 'TryCatch', 'Modify', 'Seq', 'LineComment', 'For']);
         for (let si = 0; si < lowered.length - 1; si++) {
           const s = lowered[si];
-          if (!stmtTags.has(s.tag)) {
+          // Non-terminal If/Match in pure context → wrap in let _ := to prevent
+          // the following expression from being parsed as function application
+          const needsWrapInPure = isPure(ctx) && (s.tag === 'If' || s.tag === 'Match');
+          if (!stmtTags.has(s.tag) || needsWrapInPure) {
             // In monadic context, use Bind (let _ ←) for monadic calls like Array.forM
             const isMonadicCall = !isPure(ctx) && s.tag === 'App' && s.fn.tag === 'Var' &&
               ['Array.forM', 'List.forM', 'IO.eprintln', 'IO.println', 'IO.print',
@@ -1410,7 +1436,9 @@ class LowerCtx {
             if (isMonadicCall) {
               lowered[si] = { tag: 'Bind', name: '_', value: s, body: lowered[si + 1] };
             } else {
-              lowered[si] = { tag: 'Let', name: '_', value: s, body: lowered[si + 1] };
+              // Annotate bare `default` with TSAny to prevent stuck typeclass
+              const ty = s.tag === 'Default' && !s.ty ? { tag: 'TyName' as const, name: 'TSAny' } : undefined;
+              lowered[si] = { tag: 'Let', name: '_', ty, value: s, body: lowered[si + 1] };
             }
             lowered.splice(si + 1, 1);
             si--; // re-check after splice
@@ -1925,6 +1953,15 @@ class LowerCtx {
 
     // Collection methods — Set ops use Array (lowerType maps Set→Array)
     const isSet = fa.obj?.type?.tag === 'Set' || (fa.obj?.type?.tag === 'TypeRef' && ['Set', 'AssocSet'].includes(fa.obj?.type?.name ?? ''));
+    // .clear() on collections → return empty
+    if (method === 'clear') {
+      if (isSet) return { tag: 'ArrayLit', elems: [] };
+      return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.empty' }, args: [] };
+    }
+    // .forEach on arrays → Array.forM
+    if (method === 'forEach' && (isArr || !isSet) && args.length > 0) {
+      return { tag: 'App', fn: { tag: 'Var', name: 'Array.forM' }, args: [args[0], obj] };
+    }
     const collMethods: Record<string, string> = isSet ? {
       'add': 'Array.push', 'has': 'Array.contains', 'delete': 'Array.filter',
     } : {
@@ -2001,12 +2038,14 @@ class LowerCtx {
       const l = this.lowerExprP(e.left, ctx);
       let r = this.lowerExprP(e.right, ctx);
       // Sorry/Default LHS → use RHS directly (graceful degradation)
-      if (l.tag === 'Default' || l.tag === 'Sorry' || l.tag === 'None') return r;
+      const lInner = l.tag === 'Paren' ? l.inner : l;
+      if (lInner.tag === 'Default' || lInner.tag === 'Sorry' || lInner.tag === 'None') return r;
       // Coerce numeric RHS to toString when LHS is String/TSAny
       const lType = e.left?.type;
+      const rInner = r.tag === 'Paren' ? r.inner : r;
       if ((lType?.tag === 'String' || (lType?.tag === 'TypeRef' && ['TSAny', 'Any'].includes(lType.name))) &&
-          r.tag === 'Lit' && /^\d+$/.test(r.value)) {
-        r = { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [r] };
+          rInner.tag === 'Lit' && /^\d+$/.test(rInner.value)) {
+        r = { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [rInner] };
       }
       return { tag: 'App', fn: { tag: 'Var', name: 'Option.getD' }, args: [l, r] };
     }
