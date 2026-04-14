@@ -517,11 +517,8 @@ function printExprInline(e: LeanExpr): string {
     case 'TryCatch': {
       const bodyStr = printExprInline(e.body);
       const handlerStr = printExprInline(e.handler);
-      // If body/handler contains if/match/let (multi-statement), use do-block form
-      if (bodyStr.includes('; if ') || bodyStr.includes('; match ') || bodyStr.length > 200) {
-        return `tryCatch (${bodyStr}) (fun ${sanitize(e.errName)} => ${handlerStr})`;
-      }
-      return `tryCatch ${bodyStr} (fun ${sanitize(e.errName)} => ${handlerStr})`;
+      // Always parenthesize tryCatch body to prevent parsing ambiguity
+      return `tryCatch (${bodyStr}) (fun ${sanitize(e.errName)} => ${handlerStr})`;
     }
     case 'Modify':
       return `modify ${parenIfCompound(e.fn)}`;

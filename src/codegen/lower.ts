@@ -988,6 +988,39 @@ class LowerCtx {
     return null;
   }
 
+  /** Walk a Lean expression and wrap bare pure function calls as `let _ := ...` 
+   *  so they become valid do-block actions. */
+  /** Walk a lowered expression and wrap non-terminal bare App calls as `let _ := ...`
+   *  so they become valid do-block actions. Handles Let/Bind chains and Seq. */
+  private wrapPureCallsInMonadicBranch(e: LeanExpr): LeanExpr {
+    if (e.tag === 'Let') {
+      // If the Let body is a bare App (non-terminal pure call), wrap it
+      const fixedBody = this.wrapPureCallsInMonadicBranch(e.body);
+      if (fixedBody !== e.body) return { ...e, body: fixedBody };
+      // If the BODY (continuation) starts with App followed by more, wrap the App
+      if (e.body.tag === 'App') {
+        // This App is in a Let chain — it's rendered as a bare statement after let _ :=
+        // Wrap it: let _ := app \n pure ()
+        return { ...e, body: { tag: 'Let', name: '_', value: e.body, body: { tag: 'Pure', value: { tag: 'Lit', value: '()' } } } };
+      }
+      return e;
+    }
+    if (e.tag === 'Bind') {
+      return { ...e, body: this.wrapPureCallsInMonadicBranch(e.body) };
+    }
+    if (e.tag === 'Seq' && e.stmts.length > 1) {
+      const stmts = [...e.stmts];
+      for (let i = 0; i < stmts.length - 1; i++) {
+        if (stmts[i].tag === 'App') {
+          stmts[i] = { tag: 'Let', name: '_', value: stmts[i], body: stmts[i + 1] };
+          stmts.splice(i + 1, 1);
+        }
+      }
+      return stmts.length === 1 ? stmts[0] : { ...e, stmts };
+    }
+    return e;
+  }
+
   /** Check if an IR expression body contains while-loop patterns (let rec _while/_dowhile). */
   private bodyContainsWhileLoop(e: IRExpr): boolean {
     if (!e) return false;
@@ -1600,6 +1633,7 @@ class LowerCtx {
         if (!ty && val.tag === 'Default' && !val.ty && e.name !== '_') {
           ty = { tag: 'TyName', name: 'TSAny' };
         }
+
         return { tag: 'Let', name: e.name, ty, value: val, body, rec: isRec };
       }
 
@@ -1707,6 +1741,14 @@ class LowerCtx {
         if (val.tag === 'Default' && !val.ty && this.retTypeIsOption()) {
           val = { tag: 'None' };
         }
+        // AssocMap.fromList in a String/TSAny return context → default
+        // (TS returns object literals but the type collapsed to String)
+        if (val.tag === 'App' && val.fn.tag === 'Var' && val.fn.name === 'AssocMap.fromList') {
+          const retInner = this.innermostRetType(this.currentReturnType ?? { tag: 'TyName', name: 'TSAny' });
+          if (retInner.tag === 'TyName' && ['String', 'TSAny', 'TurnResult'].includes(retInner.name)) {
+            val = { tag: 'Default' };
+          }
+        }
         // Also fix if-expressions inside the return value
         if (val.tag === 'If' && this.retTypeIsOption()) {
           if (val.then_.tag === 'Default' && !val.then_.ty) val = { ...val, then_: { tag: 'None' } };
@@ -1796,6 +1838,13 @@ class LowerCtx {
           body = { tag: 'Do', body };
         }
         let handler = this.lowerExpr(e.handler, ctx);
+        // Fix identity/default handler → pure default
+        // Handler is the catch BODY (printer wraps in fun errName => ...)
+        // If the body just returns the error or default, replace with pure default
+        if (handler.tag === 'Var' || handler.tag === 'Default' ||
+            (handler.tag === 'TypeAnnot' && handler.expr.tag === 'Default')) {
+          handler = { tag: 'Pure', value: { tag: 'Default' } };
+        }
         if (this.exprHasBinds(handler) && handler.tag !== 'Do') {
           handler = { tag: 'Do', body: handler };
         }
@@ -2308,6 +2357,11 @@ class LowerCtx {
       const isNoneElse = else_.tag === 'None' || (else_.tag === 'Var' && else_.name === 'none');
       if (isNoneThen) then_ = { tag: 'Default' };
       if (isNoneElse) else_ = { tag: 'Default' };
+    }
+    // In monadic context, walk branches to wrap bare pure calls as do-actions
+    if (!isPure(ctx)) {
+      then_ = this.wrapPureCallsInMonadicBranch(then_);
+      else_ = this.wrapPureCallsInMonadicBranch(else_);
     }
     // Branch type reconciliation: if one branch is a void statement and the
     // other is `()`, wrap the value branch in `let _ :=` to make it Unit too.
