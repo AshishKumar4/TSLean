@@ -371,6 +371,14 @@ function printExpr(e: LeanExpr, depth: number): string {
       return `${ind}throw ${parenIfCompound(e.value)}`;
 
     case 'TryCatch': {
+      // For complex bodies (Seq, Do with Seq), use block rendering
+      const needsBlock = e.body.tag === 'Do' || e.body.tag === 'Seq' ||
+        (e.body.tag === 'Do' && e.body.body.tag === 'Seq');
+      if (needsBlock) {
+        const bodyLines = printExpr(e.body, depth + 1);
+        const handlerLines = printExpr(e.handler, depth + 1);
+        return `${ind}tryCatch\n${bodyLines}\n${ind}  (fun ${sanitize(e.errName)} =>\n${handlerLines})`;
+      }
       const body = parenIfCompound(e.body);
       const handler = printExprInline(e.handler);
       return `${ind}tryCatch ${body} (fun ${sanitize(e.errName)} => ${handler})`;
@@ -506,8 +514,15 @@ function printExprInline(e: LeanExpr): string {
       return `return ${parenIfCompound(e.value)}`;
     case 'Throw':
       return `throw ${printExprInline(e.value)}`;
-    case 'TryCatch':
-      return `tryCatch ${printExprInline(e.body)} (fun ${sanitize(e.errName)} => ${printExprInline(e.handler)})`;
+    case 'TryCatch': {
+      const bodyStr = printExprInline(e.body);
+      const handlerStr = printExprInline(e.handler);
+      // If body/handler contains if/match/let (multi-statement), use do-block form
+      if (bodyStr.includes('; if ') || bodyStr.includes('; match ') || bodyStr.length > 200) {
+        return `tryCatch (${bodyStr}) (fun ${sanitize(e.errName)} => ${handlerStr})`;
+      }
+      return `tryCatch ${bodyStr} (fun ${sanitize(e.errName)} => ${handlerStr})`;
+    }
     case 'Modify':
       return `modify ${parenIfCompound(e.fn)}`;
     case 'BinOp':

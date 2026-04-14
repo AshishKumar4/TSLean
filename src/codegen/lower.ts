@@ -578,7 +578,7 @@ class LowerCtx {
     const shortToFull = new Map<string, string>();
     for (let i = 0; i < decls.length; i++) {
       const d = decls[i];
-      if (d.tag === 'FuncDef' && d.name) {
+      if ((d.tag === 'FuncDef' || d.tag === 'VarDecl') && d.name) {
         funcDecls.set(d.name, { decl: d, idx: i });
         allFuncNames.add(d.name);
         // Also track the short name (method name without class prefix)
@@ -616,6 +616,7 @@ class LowerCtx {
     for (const [name, { decl }] of funcDecls) {
       const refs = new Set<string>();
       if (decl.tag === 'FuncDef') collectRefs(decl.body, refs);
+      if (decl.tag === 'VarDecl' && decl.value) collectRefs(decl.value, refs);
       refs.delete(name); // remove self-references
       // Normalize short names to full names
       const normalized = new Set<string>();
@@ -654,22 +655,21 @@ class LowerCtx {
     // Add remaining (cyclic) functions in original order
     for (const name of funcDecls.keys()) { if (!sorted.includes(name)) sorted.push(name); }
 
-    // Rebuild decl list: non-func decls in original order, func decls in sorted order
+    // Rebuild: emit all non-func decls first (structs, types, aliases), then func decls in sorted order
     const funcOrder = new Map<string, number>();
     sorted.forEach((name, i) => funcOrder.set(name, i));
 
-    const result = [...decls];
-    // Find positions of func decls and sort them within those positions
-    const funcPositions = result
-      .map((d, i) => (d.tag === 'FuncDef' && d.name && funcDecls.has(d.name)) ? i : -1)
-      .filter(i => i >= 0);
-    const sortedFuncs = funcPositions
-      .map(i => result[i])
-      .sort((a, b) => (funcOrder.get(a.name ?? '') ?? 999) - (funcOrder.get(b.name ?? '') ?? 999));
-    for (let i = 0; i < funcPositions.length; i++) {
-      result[funcPositions[i]] = sortedFuncs[i];
+    const nonFuncDecls: IRDecl[] = [];
+    const funcDeclList: IRDecl[] = [];
+    for (const d of decls) {
+      if ((d.tag === 'FuncDef' || d.tag === 'VarDecl') && d.name && funcDecls.has(d.name)) {
+        funcDeclList.push(d);
+      } else {
+        nonFuncDecls.push(d);
+      }
     }
-    return result;
+    funcDeclList.sort((a, b) => (funcOrder.get(a.name ?? '') ?? 999) - (funcOrder.get(b.name ?? '') ?? 999));
+    return [...nonFuncDecls, ...funcDeclList];
   }
 
   // ─── Declaration lowering ───────────────────────────────────────────────────
@@ -1477,6 +1477,10 @@ class LowerCtx {
             if (retIR?.tag === 'Float') ty = { tag: 'TyName', name: 'Float' };
           }
         }
+        // Annotate bare `default` values with TSAny to prevent stuck typeclass inference
+        if (!ty && val.tag === 'Default' && !val.ty && e.name !== '_') {
+          ty = { tag: 'TyName', name: 'TSAny' };
+        }
         return { tag: 'Let', name: e.name, ty, value: val, body, rec: isRec };
       }
 
@@ -2239,9 +2243,14 @@ class LowerCtx {
       }
     }
     // Coerce numeric literal to toString when comparing with String/TSAny
+    // (but NOT when the left is a .size/.length access — those return Float)
     if ((op === '==' || op === '!=') && (r.tag === 'Lit' && /^\d+$/.test(r.value))) {
       const lt = e.left?.type;
-      if (lt?.tag === 'String' || (lt?.tag === 'TypeRef' && (lt.name === 'TSAny' || lt.name === 'Any'))) {
+      const lIsNumeric = e.left?.tag === 'FieldAccess' &&
+        ['size', 'length'].includes(e.left.field);
+      if (lIsNumeric) {
+        r = { tag: 'TypeAnnot', expr: r, ty: { tag: 'TyName', name: 'Float' } };
+      } else if (lt?.tag === 'String' || (lt?.tag === 'TypeRef' && (lt.name === 'TSAny' || lt.name === 'Any'))) {
         r = { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [r] };
       }
     }
