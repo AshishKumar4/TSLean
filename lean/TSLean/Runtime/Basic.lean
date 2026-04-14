@@ -237,4 +237,10 @@ instance : Ord TSAny := inferInstance
 /-- Runtime type check (stub — always returns "object"). -/
 def typeOf {α : Type} (_ : α) : String := "object"
 
+/-- JS Boolean() coercion (truthy check). Stub — defaults to true for non-default values. -/
+def toBool {α : Type} [BEq α] [Inhabited α] (x : α) : Bool := x != default
+
+/-- JS Number() coercion. Stub — defaults to 0. -/
+def toFloat {α : Type} (_ : α) : Float := 0.0
+
 end TSLean

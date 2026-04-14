@@ -218,6 +218,7 @@ class LowerCtx {
     const opens = ['TSLean'];
     if (imports.some(i => i.includes('WebAPI'))) opens.push('TSLean.WebAPI');
     if (imports.some(i => i.includes('HashMap'))) opens.push('TSLean.Stdlib.HashMap');
+    if (imports.some(i => i.includes('Stubs.WebAPIs'))) opens.push('TSLean.Stubs.WebAPIs');
     if (imports.some(i => i.includes('DurableObjects'))) opens.push('TSLean.DO');
     return opens;
   }
@@ -294,6 +295,10 @@ class LowerCtx {
         needs.add('TSLean.DurableObjects.Transaction');
       if (e.name.startsWith('AssocMap.') || e.name.startsWith('AssocSet.'))
         needs.add('TSLean.Stdlib.HashMap');
+      if (e.name.includes('FloatExt.') || e.name.includes('Numeric.'))
+        needs.add('TSLean.Stdlib.Numeric');
+      if (e.name.includes('Async.') || e.name.includes('promise'))
+        needs.add('TSLean.Stdlib.Async');
       if (e.name === 'mkResponse' || e.name.startsWith('WebAPI.') || e.name === 'TSLean.fetch' || e.name === 'URL.parse' || e.name === 'WebSocketPair.new')
         needs.add('TSLean.Runtime.WebAPI');
       if (e.name.startsWith('KV.')) needs.add('TSLean.Workers.KV');
@@ -336,6 +341,12 @@ class LowerCtx {
     if (e.tag === 'Throw') this.scanExprImports(e.error, needs);
     if (e.tag === 'TryCatch') { this.scanExprImports(e.body, needs); this.scanExprImports(e.handler, needs); }
     if (e.tag === 'Assign') { this.scanExprImports(e.target, needs); this.scanExprImports(e.value, needs); }
+    // Constructor calls → detect stubs needed
+    if (e.tag === 'CtorApp') {
+      const stubCtors = new Set(['TextEncoder', 'TextDecoder', 'Headers', 'AbortController', 'EventTarget', 'WebSocket']);
+      if (stubCtors.has(e.ctor)) needs.add('TSLean.Stubs.WebAPIs');
+      for (const a of e.args) this.scanExprImports(a, needs);
+    }
   }
 
   // ─── Missing state structs ──────────────────────────────────────────────────
@@ -1372,7 +1383,7 @@ class LowerCtx {
 
     // JS type conversion functions: String(x) → toString x
     if (e.fn.tag === 'Var' && e.args.length === 1) {
-      const convMap: Record<string, string> = { 'String': 'toString' };
+      const convMap: Record<string, string> = { 'String': 'toString', 'Boolean': 'TSLean.toBool', 'Number': 'TSLean.toFloat' };
       const conv = convMap[e.fn.name];
       if (conv) {
         return { tag: 'App', fn: { tag: 'Var', name: conv }, args: [this.lowerExprP(e.args[0], ctx)] };
