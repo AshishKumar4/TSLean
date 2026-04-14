@@ -1911,7 +1911,19 @@ class LowerCtx {
       }
       return lowered;
     });
-    return args.length === 0 ? fn : { tag: 'App', fn, args };
+    if (args.length === 0) {
+      // Zero-arg call on a variable (thunk): `fn()` → `fn ()` when fn : Unit → T
+      // Don't apply to field access (methods like str.toUpper become `str.toUpper` in Lean)
+      if (fn.tag === 'Var') {
+        const fnType = e.fn?.type;
+        const isThunk = fnType?.tag === 'Function' && fnType.params.length === 0;
+        if (isThunk) {
+          return { tag: 'App', fn, args: [{ tag: 'Lit', value: '()' }] };
+        }
+      }
+      return fn;
+    }
+    return { tag: 'App', fn, args };
   }
 
   private lowerMethodCall(e: Extract<IRExpr, { tag: 'App' }>, ctx: Effect): LeanExpr | null {
@@ -2048,7 +2060,16 @@ class LowerCtx {
       let r = this.lowerExprP(e.right, ctx);
       // Sorry/Default LHS → use RHS directly (graceful degradation)
       const lInner = l.tag === 'Paren' ? l.inner : l;
-      if (lInner.tag === 'Default' || lInner.tag === 'Sorry' || lInner.tag === 'None') return r;
+      if (lInner.tag === 'Default' || lInner.tag === 'Sorry' || lInner.tag === 'None') {
+        // If the overall expression type is String/TSAny but r is numeric, coerce
+        const exprType = e.type ?? e.left?.type;
+        const rUnwrap = r.tag === 'Paren' ? r.inner : r;
+        if ((exprType?.tag === 'String' || (exprType?.tag === 'TypeRef' && ['TSAny', 'Any'].includes(exprType.name))) &&
+            rUnwrap.tag === 'Lit' && /^\d+$/.test(rUnwrap.value)) {
+          return { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [rUnwrap] };
+        }
+        return r;
+      }
       // Coerce numeric RHS to toString when LHS is String/TSAny
       const lType = e.left?.type;
       const rInner = r.tag === 'Paren' ? r.inner : r;
