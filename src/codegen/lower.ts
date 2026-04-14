@@ -118,7 +118,10 @@ const DEFAULT_DERIVING = ['Repr', 'BEq', 'Inhabited'];
 function containsArrowType(ty: LeanTy): boolean {
   switch (ty.tag) {
     case 'TyArrow': return true;
-    case 'TyApp': return ty.args.some(containsArrowType);
+    case 'TyApp':
+      // IO/StateT/ExceptT types can't derive Repr/BEq
+      if (ty.fn.tag === 'TyName' && ['IO', 'StateT', 'ExceptT', 'EIO', 'BaseIO'].includes(ty.fn.name)) return true;
+      return ty.args.some(containsArrowType) || containsArrowType(ty.fn);
     case 'TyTuple': return ty.elems.some(containsArrowType);
     case 'TyParen': return containsArrowType(ty.inner);
     default: return false;
@@ -229,6 +232,12 @@ class LowerCtx {
     if (d.tag === 'StructDef') {
       for (const f of d.fields) this.scanTypeImports(f.type, needs);
     }
+    if (d.tag === 'InductiveDef') {
+      for (const c of d.ctors) for (const f of c.fields) this.scanTypeImports(f.type, needs);
+    }
+    if (d.tag === 'TypeAlias') {
+      this.scanTypeImports(d.body, needs);
+    }
     if (d.tag === 'Namespace') {
       for (const inner of d.decls) this.scanImportNeeds(inner, needs);
     }
@@ -266,6 +275,8 @@ class LowerCtx {
 
   private scanExprImports(e: IRExpr, needs: Set<string>): void {
     if (!e) return;
+    // Any expression with Map type will lower to AssocMap operations
+    if (e.type?.tag === 'Map') needs.add('TSLean.Stdlib.HashMap');
     if (e.tag === 'Var') {
       if (e.name.startsWith('Storage.')) {
         needs.add('TSLean.DurableObjects.Storage');
@@ -304,12 +315,21 @@ class LowerCtx {
       for (const c of e.cases) this.scanExprImports(c.body, needs);
     }
     if (e.tag === 'Lambda') this.scanExprImports(e.body, needs);
-    if (e.tag === 'FieldAccess') this.scanExprImports(e.obj, needs);
+    if (e.tag === 'FieldAccess') {
+      this.scanExprImports(e.obj, needs);
+      // Field access on Map-typed objects will lower to AssocMap.getD
+      if (e.obj?.type?.tag === 'Map') needs.add('TSLean.Stdlib.HashMap');
+    }
     if (e.tag === 'StructUpdate') {
       this.scanExprImports(e.base, needs);
       for (const f of e.fields) this.scanExprImports(f.value, needs);
     }
-    if (e.tag === 'StructLit') for (const f of e.fields) this.scanExprImports(f.value, needs);
+    if (e.tag === 'StructLit') {
+      for (const f of e.fields) this.scanExprImports(f.value, needs);
+      // Anonymous object literals lower to AssocMap.fromList
+      if (e.type?.tag === 'String' || (e.type?.tag === 'TypeRef' && ['__object', '__type', 'TSAny'].includes(e.type.name)))
+        needs.add('TSLean.Stdlib.HashMap');
+    }
     if (e.tag === 'ArrayLit') for (const x of e.elems) this.scanExprImports(x, needs);
     if (e.tag === 'Await') this.scanExprImports(e.expr, needs);
     if (e.tag === 'Return') this.scanExprImports(e.value, needs);
@@ -324,7 +344,7 @@ class LowerCtx {
     const defined = new Set<string>();
     const referenced = new Set<string>();
     for (const d of decls) {
-      if (d.tag === 'StructDef') defined.add(d.name);
+      if (d.tag === 'StructDef' || d.tag === 'TypeAlias' || d.tag === 'InductiveDef') defined.add(d.name);
       if (d.tag === 'FuncDef') {
         for (const p of d.params) if (p.type.tag === 'TypeRef') referenced.add(p.type.name);
         if (d.retType.tag === 'TypeRef') referenced.add(d.retType.name);
@@ -539,8 +559,10 @@ class LowerCtx {
   private lowerTypeAlias(d: Extract<IRDecl, { tag: 'TypeAlias' }>): LeanDecl {
     const bodyStr = irTypeToLean(d.body);
     // Self-referencing type alias → structure with tag+fields (for IR types)
+    // Also catch parametric self-references like `MaybePromise T` where name is `MaybePromise`
+    const isSelfRef = bodyStr === d.name || bodyStr.startsWith(d.name + ' ');
     const knownTaggedTypes = new Set(['IRExpr', 'IRDecl']);
-    if (bodyStr === d.name || bodyStr === 'String' || bodyStr === 'TSAny') {
+    if (isSelfRef || bodyStr === 'String' || bodyStr === 'TSAny') {
       if (knownTaggedTypes.has(d.name)) {
         const fields: LeanField[] = [
           { name: 'tag', ty: { tag: 'TyName', name: 'String' } },
@@ -732,6 +754,13 @@ class LowerCtx {
     if (d.mutable) {
       return { tag: 'Raw', code: `-- mutable binding '${d.name}' modelled as IO.Ref\ndef ${d.name}_ref : IO (IO.Ref ${this.printTyInline(ty)}) := IO.mkRef ${this.printExprInline(val)}` };
     }
+    // Statement-level IO actions (e.g., console.log): wrap type as IO Unit
+    const isUnitDef = ty.tag === 'TyName' && ty.name === 'Unit';
+    const bodyIsIO = val.tag === 'App' && val.fn.tag === 'Var' &&
+      ['IO.println', 'IO.eprintln', 'IO.print'].includes(val.fn.name);
+    if (isUnitDef && bodyIsIO) {
+      ty = { tag: 'TyApp', fn: { tag: 'TyName', name: 'IO' }, args: [{ tag: 'TyName', name: 'Unit' }] };
+    }
     return {
       tag: 'Def',
       partial: false,
@@ -859,8 +888,10 @@ class LowerCtx {
         return { tag: 'TyArrow', params: params.length > 0 ? params : [{ tag: 'TyName', name: 'Unit' }], ret };
       }
       case 'TypeRef': {
-        // Anonymous/internal TS types → String
-        if (t.name === '__type' || t.name === '__object') return { tag: 'TyName', name: 'String' };
+        // Anonymous/internal TS types → AssocMap String TSAny (field-accessible)
+        if (t.name === '__type' || t.name === '__object')
+          return { tag: 'TyApp', fn: { tag: 'TyName', name: 'AssocMap' },
+                   args: [{ tag: 'TyName', name: 'String' }, { tag: 'TyName', name: 'TSAny' }] };
         const name = t.name === 'Any' ? 'TSAny' : t.name;
         // Inexpressible TS utility types in generic context → sorry
         if (INEXPRESSIBLE_UTILITY_TYPES.has(name) && t.args.some(a => a.tag === 'TypeVar')) {
@@ -987,7 +1018,10 @@ class LowerCtx {
       case 'LitString': return { tag: 'Lit', value: JSON.stringify(e.value) };
       case 'LitBool': return { tag: 'Lit', value: e.value ? 'true' : 'false' };
       case 'LitUnit': return { tag: 'Lit', value: '()' };
-      case 'LitNull': return { tag: 'None' };
+      case 'LitNull':
+        // null/undefined → none for Option types, default for others (TSAny, String, etc.)
+        if (e.type?.tag === 'Option') return { tag: 'None' };
+        return { tag: 'Default' };
       case 'Hole': return defaultForType(e.type);
 
       case 'Var': {
@@ -1145,6 +1179,14 @@ class LowerCtx {
       case 'Assign': return this.lowerAssign(e, ctx);
       case 'BinOp': return this.lowerBinOp(e, ctx);
       case 'UnOp': {
+        // `!x` on Option types → x.isNone (JS truthy check)
+        if (e.op === 'Not' && e.operand?.type?.tag === 'Option') {
+          return { tag: 'FieldAccess', obj: this.lowerExpr(e.operand, ctx), field: 'isNone' };
+        }
+        // `!x` on String → x.isEmpty (JS truthy: empty string is falsy)
+        if (e.op === 'Not' && e.operand?.type?.tag === 'String') {
+          return { tag: 'FieldAccess', obj: this.lowerExpr(e.operand, ctx), field: 'isEmpty' };
+        }
         const op = e.op === 'Not' ? '!' : e.op === 'Neg' ? '-' : '~~~';
         return { tag: 'UnOp', op, operand: this.lowerExprP(e.operand, ctx) };
       }
@@ -1284,6 +1326,15 @@ class LowerCtx {
     const isAnyType = e.obj?.type?.tag === 'TypeRef' && TS_API_TYPES.has(e.obj?.type?.name ?? '');
     if (isAnyType && !stringMethods.includes(mappedField)) return defaultForType(e.type ?? { tag: 'String' });
 
+    // Map-typed objects (anonymous TS objects) → field access via AssocMap.find?
+    const isMapType = e.obj?.type?.tag === 'Map' ||
+      (e.obj?.type?.tag === 'TypeRef' && (e.obj.type.name === 'AssocMap' || e.obj.type.name === 'Map'));
+    if (isMapType && !['size', 'toList', 'keys', 'values'].includes(mappedField)) {
+      return { tag: 'App',
+        fn: { tag: 'Var', name: 'AssocMap.getD' },
+        args: [obj, { tag: 'Lit', value: `"${e.field}"` }, { tag: 'Default' }] };
+    }
+
     // Check if field exists on known struct type — use default instead of sorry
     if (e.obj?.type?.tag === 'TypeRef') {
       const rawName = e.obj.type.name;
@@ -1317,6 +1368,15 @@ class LowerCtx {
     if (e.fn.tag === 'FieldAccess') {
       const result = this.lowerMethodCall(e, ctx);
       if (result) return result;
+    }
+
+    // JS type conversion functions: String(x) → toString x, Number(x) → x.toFloat, Boolean(x) → decide x
+    if (e.fn.tag === 'Var' && e.args.length === 1) {
+      const convMap: Record<string, string> = { 'String': 'toString' };
+      const conv = convMap[e.fn.name];
+      if (conv) {
+        return { tag: 'App', fn: { tag: 'Var', name: conv }, args: [this.lowerExprP(e.args[0], ctx)] };
+      }
     }
 
     const fn = this.lowerExpr(e.fn, ctx);
@@ -1409,7 +1469,7 @@ class LowerCtx {
     const collMethods: Record<string, string> = isSet ? {
       'add': 'AssocSet.insert', 'has': 'AssocSet.contains', 'delete': 'AssocSet.erase',
     } : {
-      'set': 'AssocMap.insert', 'get': 'AssocMap.find?', 'has': 'AssocMap.contains',
+      'set': 'AssocMap.insert', 'get': 'AssocMap.get?', 'has': 'AssocMap.contains',
       'delete': 'AssocMap.erase', 'add': 'Array.push', 'keys': 'AssocMap.keys',
       'values': 'AssocMap.values', 'entries': 'AssocMap.toList',
     };
@@ -1553,6 +1613,20 @@ class LowerCtx {
   }
 
   private lowerStructLit(e: Extract<IRExpr, { tag: 'StructLit' }>, ctx: Effect): LeanExpr {
+    // Map-typed struct literals → use AssocMap.fromList unless the typeName is a known struct
+    const hasKnownStruct = e.typeName && (this.structFields.has(e.typeName) || this.structFields.has(e.typeName + 'State'));
+    if (e.type?.tag === 'Map' && !hasKnownStruct) {
+      const realFields = e.fields.filter(f => !f.name.startsWith('_spread') && !f.name.startsWith('_computed'));
+      if (realFields.length > 0) {
+        const pairs: LeanExpr[] = realFields.map(f => ({
+          tag: 'TupleLit' as const,
+          elems: [{ tag: 'Lit' as const, value: `"${f.name}"` }, this.lowerExpr(f.value, ctx)],
+        }));
+        return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.fromList' },
+                 args: [{ tag: 'ListLit', elems: pairs }] };
+      }
+      return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.empty' }, args: [] };
+    }
     // Anonymous object literals: type collapsed to String/Any/TSAny/__object/__type.
     // Heuristic: objects with all-caps keys or many (>6) string-value fields are dictionaries.
     // Objects with few fields matching parameter-like names are struct returns.
@@ -1570,8 +1644,8 @@ class LowerCtx {
           tag: 'TupleLit' as const,
           elems: [{ tag: 'Lit' as const, value: `"${f.name}"` }, this.lowerExpr(f.value, ctx)],
         }));
-        return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.ofList' },
-                 args: [{ tag: 'ArrayLit', elems: pairs }] };
+        return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.fromList' },
+                 args: [{ tag: 'ListLit', elems: pairs }] };
       }
       return { tag: 'Default' };
     }
@@ -1584,8 +1658,8 @@ class LowerCtx {
           tag: 'TupleLit' as const,
           elems: [{ tag: 'Lit' as const, value: `"${f.name}"` }, this.lowerExpr(f.value, ctx)],
         }));
-        return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.ofList' },
-                 args: [{ tag: 'ArrayLit', elems: pairs }] };
+        return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.fromList' },
+                 args: [{ tag: 'ListLit', elems: pairs }] };
       }
       return { tag: 'Default' };
     }

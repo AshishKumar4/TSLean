@@ -60,6 +60,7 @@ export type LeanExpr =
   | { tag: 'Default'; ty?: LeanTy }                                    // default or (default : T)
   | { tag: 'Sorry'; ty?: LeanTy; reason?: string }                    // sorry or (sorry : T) /- reason -/
   | { tag: 'ArrayLit'; elems: LeanExpr[] }                             // #[a, b, c]
+  | { tag: 'ListLit'; elems: LeanExpr[] }                              // [a, b, c]
   | { tag: 'TupleLit'; elems: LeanExpr[] }                             // (a, b, c)
   // Function application
   | { tag: 'App'; fn: LeanExpr; args: LeanExpr[] }                    // f a b c

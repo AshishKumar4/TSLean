@@ -250,7 +250,7 @@ describe('Parser types: computed property names', () => {
 // ─── Property shorthand ──────────────────────────────────────────────────────
 
 describe('Parser types: property shorthand', () => {
-  it('{ name } → { name := name }', () => {
+  it('{ name } → AssocMap or struct literal', () => {
     const code = inline(`
       function makePoint(x: number, y: number): { x: number; y: number } {
         return { x, y };
@@ -258,7 +258,8 @@ describe('Parser types: property shorthand', () => {
     `);
     expect(code).toContain('def makePoint');
     const fn = code.slice(code.indexOf('def makePoint'));
-    expect(fn.slice(0, 200)).toMatch(/x\s*:=\s*x|y\s*:=\s*y/);
+    // Anonymous return type: emits AssocMap.fromList with field names as keys
+    expect(fn.slice(0, 300)).toMatch(/x\s*:=\s*x|y\s*:=\s*y|"x",\s*x|"y",\s*y/);
   });
 
   it('shorthand with renamed binding', () => {
@@ -267,7 +268,8 @@ describe('Parser types: property shorthand', () => {
     `);
     expect(code).toContain('def wrap');
     const fn = code.slice(code.indexOf('def wrap'));
-    expect(fn.slice(0, 200)).toMatch(/value\s*:=\s*value/);
+    // Anonymous return type: emits AssocMap.fromList or struct literal
+    expect(fn.slice(0, 300)).toMatch(/value\s*:=\s*value|"value",\s*value/);
   });
 });
 

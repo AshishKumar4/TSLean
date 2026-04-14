@@ -607,6 +607,34 @@ class ParserCtx {
       if (ts.isTypeOperatorNode(typeNode) && typeNode.operator === ts.SyntaxKind.KeyOfKeyword) {
         return { tag: 'TypeAlias', name, typeParams: tps, body: TyString, comment: '-- keyof type' };
       }
+      // Object literal type: { key: string; value: string } → StructDef
+      if (ts.isTypeLiteralNode(typeNode)) {
+        const members = typeNode.members;
+        const propSigs = members.filter(m => ts.isPropertySignature(m));
+        if (propSigs.length > 0) {
+          const fields = propSigs.map(m => {
+            const fieldName = m.name?.getText(this.sf) ?? '';
+            const sym = this.checker.getSymbolAtLocation(m.name!);
+            const fieldTy = sym ? this.checker.getTypeOfSymbol(sym) : this.checker.getAnyType();
+            const opt = !!m.questionToken;
+            const mapped = mapType(fieldTy, this.checker);
+            return { name: fieldName, type: opt ? TyOption(mapped) : mapped };
+          });
+          // Check for index signatures alongside properties → keep as struct
+          return {
+            tag: 'StructDef', name, typeParams: tps,
+            fields,
+            deriving: ['Repr', 'BEq', 'Inhabited'],
+            comment: leadingComment(node, this.sf),
+          };
+        }
+        // Pure index signature → AssocMap
+        const indexSig = members.find(m => ts.isIndexSignatureDeclaration(m)) as ts.IndexSignatureDeclaration | undefined;
+        if (indexSig) {
+          const valType = indexSig.type ? mapType(this.checker.getTypeAtLocation(indexSig.type), this.checker) : TyRef('TSAny');
+          return { tag: 'TypeAlias', name, typeParams: tps, body: TyMap(TyString, valType), comment: leadingComment(node, this.sf) };
+        }
+      }
     }
 
     return { tag: 'TypeAlias', name, typeParams: tps, body: mapType(ty, this.checker), comment: leadingComment(node, this.sf) };
@@ -1448,7 +1476,17 @@ class ParserCtx {
   }
 
   private parseObjLit(node: ts.ObjectLiteralExpression, ty: IRType): IRExpr {
-    const typeName = ty.tag === 'TypeRef' ? ty.name : ty.tag === 'Structure' ? ty.name : 'AnonStruct';
+    // Prefer contextual type name (e.g., function return type) over resolved anonymous type
+    let typeName = ty.tag === 'TypeRef' ? ty.name : ty.tag === 'Structure' ? ty.name : 'AnonStruct';
+    if (typeName === 'AnonStruct') {
+      const ctxType = this.checker.getContextualType(node);
+      if (ctxType) {
+        const alias = ctxType.aliasSymbol?.name;
+        const symName = ctxType.symbol?.name;
+        if (alias && alias !== '__type' && alias !== '__object') typeName = alias;
+        else if (symName && symName !== '__type' && symName !== '__object') typeName = symName;
+      }
+    }
 
     // Separate spread elements from named fields
     const spreadExprs: IRExpr[] = [];

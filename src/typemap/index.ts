@@ -35,8 +35,8 @@ const MAX_TYPE_DEPTH = 20;
 /** Fallback name for type parameters when the symbol has no name. */
 const FALLBACK_TYPE_VAR = 'α';
 
-/** Sentinel name for anonymous object types (TypeScript uses `__type` internally). */
-const TS_ANON_TYPE = '__type';
+/** Sentinel names for anonymous object types (TypeScript uses these internally). */
+const TS_ANON_NAMES = new Set(['__type', '__object']);
 
 // ─── Main entry ─────────────────────────────────────────────────────────────────
 
@@ -169,12 +169,28 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
     return TyFn(params, mapType(checker.getReturnTypeOfSignature(sig), checker, depth + 1), Pure);
   }
 
-  // Anonymous object types (e.g. { name: string }) can't be directly expressed in Lean.
-  // Map them to String (serialised) as a compilable approximation.
-  // Map well-known JS types to Lean equivalents
+  // Anonymous object types (e.g. { name: string }) → AssocMap String TSAny.
+  // This allows field access via AssocMap.find? and is sound for heterogeneous objects.
   const name = sym.name;
-  if (name === TS_ANON_TYPE) return TyRef('String');
+  if (TS_ANON_NAMES.has(name)) {
+    // Check if the type has named properties → use AssocMap for field access support
+    const props = t.getProperties();
+    if (props.length > 0) return TyMap(TyString, TyRef('TSAny'));
+    return TyRef('TSAny');
+  }
   if (name === 'Error' || name.endsWith('Error')) return TyString;  // JS Error → String for Lean
+  // Web API / built-in types with no Lean equivalent
+  const webApiTypes = new Set([
+    'Uint8Array', 'Int8Array', 'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array',
+    'Float32Array', 'Float64Array', 'ArrayBuffer', 'ArrayBufferLike', 'SharedArrayBuffer', 'DataView',
+    'ReadableStream', 'WritableStream', 'TransformStream', 'ReadableStreamDefaultReader',
+    'Blob', 'File', 'FormData', 'AbortController', 'AbortSignal',
+    'WeakSet', 'WeakMap', 'WeakRef', 'FinalizationRegistry',
+    'Disposable', 'AsyncDisposable', 'EventTarget', 'Event',
+    'TextEncoder', 'TextDecoder', 'SubtleCrypto', 'CryptoKey', 'CryptoKeyPair',
+    'Generator', 'AsyncGenerator', 'IterableIterator', 'AsyncIterableIterator',
+  ]);
+  if (webApiTypes.has(name)) return TyRef('TSAny');
   return TyRef(name);
 }
 
@@ -257,9 +273,18 @@ function typeStr(t: IRType): string {
         'ClassDeclaration', 'InterfaceDeclaration', 'TypeAliasDeclaration',
         'VariableStatement', 'ModuleDeclaration', 'EnumDeclaration',
         'PropertyAccessExpression', 'CallExpression', 'BinaryExpression',
-        'ReadableStream', 'ArrayBuffer', 'ArrayBufferView', 'IterableIterator',
-        'Generator', 'AsyncGenerator', 'PromiseLike', 'RegExp',
-        'SymbolConstructor', 'PropertyDescriptor', 'PropertyKey']);
+        'ReadableStream', 'WritableStream', 'TransformStream',
+        'ArrayBuffer', 'ArrayBufferLike', 'ArrayBufferView', 'SharedArrayBuffer',
+        'Uint8Array', 'Int8Array', 'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array',
+        'Float32Array', 'Float64Array', 'DataView', 'TypedArray',
+        'IterableIterator', 'AsyncIterableIterator', 'AsyncIterable',
+        'Generator', 'AsyncGenerator', 'PromiseLike', 'RegExp', 'RegExpMatchArray',
+        'WeakSet', 'WeakMap', 'WeakRef', 'FinalizationRegistry',
+        'SymbolConstructor', 'PropertyDescriptor', 'PropertyKey',
+        'Blob', 'File', 'FormData', 'AbortController', 'AbortSignal',
+        'Disposable', 'AsyncDisposable', 'EventTarget', 'Event',
+        'TextEncoder', 'TextDecoder', 'ReadableStreamDefaultReader',
+        'SubtleCrypto', 'CryptoKey', 'CryptoKeyPair']);
       if (tsOnlyTypes.has(t.name)) return 'TSAny';
       return t.args.length === 0 ? t.name : `${t.name} ${t.args.map(a => irTypeToLean(a, true)).join(' ')}`;
     }

@@ -292,6 +292,10 @@ function printExpr(e: LeanExpr, depth: number): string {
       if (e.elems.length === 0) return `${ind}#[]`;
       return `${ind}#[${e.elems.map(x => printExprInline(x)).join(', ')}]`;
 
+    case 'ListLit':
+      if (e.elems.length === 0) return `${ind}[]`;
+      return `${ind}[${e.elems.map(x => printExprInline(x)).join(', ')}]`;
+
     case 'TupleLit':
       return `${ind}(${e.elems.map(x => printExprInline(x)).join(', ')})`;
 
@@ -453,6 +457,9 @@ function printExprInline(e: LeanExpr): string {
     case 'ArrayLit':
       if (e.elems.length === 0) return '#[]';
       return `#[${e.elems.map(x => printExprInline(x)).join(', ')}]`;
+    case 'ListLit':
+      if (e.elems.length === 0) return '[]';
+      return `[${e.elems.map(x => printExprInline(x)).join(', ')}]`;
     case 'TupleLit':
       return `(${e.elems.map(x => printExprInline(x)).join(', ')})`;
     case 'Paren':
@@ -505,8 +512,14 @@ function printExprInline(e: LeanExpr): string {
       return `${printExprInline(e.left)} ${e.op} ${printExprInline(e.right)}`;
     case 'UnOp':
       return `${e.op}${printExprInline(e.operand)}`;
-    case 'FieldAccess':
-      return `${printExprInline(e.obj)}.${sanitize(e.field)}`;
+    case 'FieldAccess': {
+      const obj = printExprInline(e.obj);
+      const field = sanitize(e.field);
+      // Simple objects use dot notation directly; complex ones need parens
+      if (e.obj.tag === 'Var' || e.obj.tag === 'FieldAccess' || e.obj.tag === 'Paren')
+        return `${obj}.${field}`;
+      return `(${obj}).${field}`;
+    }
     case 'StructLit': {
       if (e.fields.length === 0) return '{}';
       const fs = e.fields.map(f => `${sanitize(f.name)} := ${printExprInline(f.value)}`).join(', ');
@@ -527,9 +540,8 @@ function printExprInline(e: LeanExpr): string {
     case 'Seq': {
       if (e.stmts.length === 0) return '()';
       if (e.stmts.length === 1) return printExprInline(e.stmts[0]);
-      // Multi-statement inline — shouldn't happen in well-formed AST,
-      // but handle gracefully with semicolons
-      return e.stmts.map(s => printExprInline(s)).join('; ');
+      // Multi-statement inline — wrap in do block for valid Lean syntax
+      return 'do ' + e.stmts.map(s => printExprInline(s)).join('; ');
     }
     case 'LineComment':
       return printExprInline(e.expr);
