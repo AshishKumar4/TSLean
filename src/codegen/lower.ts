@@ -181,6 +181,8 @@ function fieldRefHasArrow(ty: LeanTy, structFields: Map<string, {name: string, t
 class LowerCtx {
   /** Registry of struct fields by struct name — used for inheritance. */
   structFields = new Map<string, Array<{ name: string; type: IRType }>>();
+  /** Track type aliases with reduced param counts for usage-site adjustment. */
+  typeAliases = new Map<string, { usedParamCount: number }>();
   /** Map from class name → state struct name. */
   classToState = new Map<string, string>();
   /** Names defined in this module. */
@@ -755,6 +757,18 @@ class LowerCtx {
     };
   }
 
+  /** Quick stringify of a LeanTy for checking type param usage. */
+  private printTyQuick(t: LeanTy): string {
+    switch (t.tag) {
+      case 'TyName': return t.name;
+      case 'TyApp': return `${this.printTyQuick(t.fn)} ${t.args.map(a => this.printTyQuick(a)).join(' ')}`;
+      case 'TyArrow': return `${t.params.map(p => this.printTyQuick(p)).join(' → ')} → ${this.printTyQuick(t.ret)}`;
+      case 'TyTuple': return t.elems.map(e => this.printTyQuick(e)).join(' × ');
+      case 'TyParen': return this.printTyQuick(t.inner);
+      default: return '';
+    }
+  }
+
   private lowerTypeAlias(d: Extract<IRDecl, { tag: 'TypeAlias' }>): LeanDecl {
     const bodyStr = irTypeToLean(d.body);
     // Self-referencing type alias → structure with tag+fields (for IR types)
@@ -790,19 +804,25 @@ class LowerCtx {
           comment: d.comment,
         };
       }
+      // Body is String/TSAny — type params are unused (e.g., TurnResult<T> = String)
+      this.typeAliases.set(d.name, { usedParamCount: 0 });
       return {
         tag: 'Abbrev',
         name: d.name,
-        tyParams: d.typeParams.map(p => ({ name: p.name, explicit: false })),
+        tyParams: [],
         body: { tag: 'TyName', name: 'String' },
         comment: d.comment,
       };
     }
+    const loweredBody = this.lowerType(d.body);
+    const bodyStrFull = this.printTyQuick(loweredBody);
+    const usedParamsFull = d.typeParams.filter(p => new RegExp(`\\b${p.name}\\b`).test(bodyStrFull));
+    this.typeAliases.set(d.name, { usedParamCount: usedParamsFull.length });
     return {
       tag: 'Abbrev',
       name: d.name,
-      tyParams: d.typeParams.map(p => ({ name: p.name, explicit: false })),
-      body: this.lowerType(d.body),
+      tyParams: usedParamsFull.map(p => ({ name: p.name, explicit: false })),
+      body: loweredBody,
       comment: d.comment,
     };
   }
@@ -1010,10 +1030,15 @@ class LowerCtx {
       const fixedBody = this.fixDefaultLambdasForUnit(e.body, innerRet);
       return { ...e, body: fixedBody };
     }
-    // If we've peeled off all lambdas and reached Unit, replace bare default with ()
+    // If we've peeled off all lambdas and reached Unit, fix non-Unit expressions
     if (retType.tag === 'Unit') {
       if (e.tag === 'Default') return { tag: 'Lit', value: '()' };
       if (e.tag === 'TypeAnnot' && e.expr.tag === 'Default') return { tag: 'Lit', value: '()' };
+      // Pure value expressions (App, FieldAccess) → wrap in let _ := ... \n ()
+      if (e.tag === 'App' || e.tag === 'FieldAccess' || e.tag === 'Var' ||
+          (e.tag === 'Lit' && e.value !== '()')) {
+        return { tag: 'Let', name: '_', value: e, body: { tag: 'Lit', value: '()' } };
+      }
     }
     // Option return type: replace bare default with none
     if (retType.tag === 'Option') {
@@ -1347,6 +1372,13 @@ class LowerCtx {
           return { tag: 'TyName', name: 'String' };
         }
         if (t.args.length === 0) return { tag: 'TyName', name };
+        // Check if this type alias has fewer params than args (unused params stripped)
+        const aliasDecl = this.typeAliases?.get(name);
+        if (aliasDecl && aliasDecl.usedParamCount !== undefined && aliasDecl.usedParamCount < t.args.length) {
+          // Only pass the used args
+          if (aliasDecl.usedParamCount === 0) return { tag: 'TyName', name };
+          return { tag: 'TyApp', fn: { tag: 'TyName', name }, args: t.args.slice(0, aliasDecl.usedParamCount).map(a => this.lowerType(a)) };
+        }
         return { tag: 'TyApp', fn: { tag: 'TyName', name }, args: t.args.map(a => this.lowerType(a)) };
       }
       case 'TypeVar': return { tag: 'TyName', name: t.name };
@@ -2499,10 +2531,16 @@ class LowerCtx {
     if (e.type?.tag === 'Map' && !hasKnownStruct) {
       const realFields = e.fields.filter(f => !f.name.startsWith('_spread') && !f.name.startsWith('_computed'));
       if (realFields.length > 0) {
-        const pairs: LeanExpr[] = realFields.map(f => ({
-          tag: 'TupleLit' as const,
-          elems: [{ tag: 'Lit' as const, value: JSON.stringify(f.name) }, this.lowerExpr(f.value, ctx)],
-        }));
+        const pairs: LeanExpr[] = realFields.map(f => {
+          let val = this.lowerExpr(f.value, ctx);
+          // Coerce non-String values to toString for AssocMap String TSAny compatibility
+          const valType = f.value?.type;
+          if (valType && valType.tag !== 'String' && valType.tag !== 'TypeRef') {
+            val = { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [val] };
+          }
+          return { tag: 'TupleLit' as const,
+            elems: [{ tag: 'Lit' as const, value: JSON.stringify(f.name) }, val] };
+        });
         return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.fromList' },
                  args: [{ tag: 'ListLit', elems: pairs }] };
       }
