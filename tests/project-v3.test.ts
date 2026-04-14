@@ -49,10 +49,10 @@ describe('Project v3: content quality', () => {
     expect(router).toContain('structure RouterEnv');
   });
 
-  it('Router.lean has extends in structure', () => {
+  it('Router.lean has RouterEnv structure', () => {
     const router = files[Object.keys(files).find(k => k.includes('Router.lean'))!];
-    // RouterEnv extends Env
-    expect(router).toMatch(/extends/);
+    // RouterEnv defined as structure (extends suppressed for unknown parent Env)
+    expect(router).toMatch(/structure RouterEnv/);
   });
 
   it('AuthDo.lean has real function bodies (not just sorry)', () => {

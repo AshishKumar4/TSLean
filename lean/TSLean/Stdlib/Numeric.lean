@@ -127,7 +127,12 @@ def safeDiv (a b : Float) : Float :=
 def pct (value total : Float) : Float :=
   safeDiv (value * 100.0) total
 
+def isInteger (x : Float) : Bool := Float.floor x == x
+
 end FloatExt
+
+-- parseInt: parse a string to a natural number (returns 0 on failure)
+def parseInt (s : String) : Float := Float.ofNat (s.toNat?.getD 0)
 
 -- Concrete tests via native_decide
 theorem FloatExt.pi_positive : FloatExt.pi > 0.0 := by native_decide

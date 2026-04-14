@@ -323,10 +323,18 @@ class ParserCtx {
     const extendsClause = node.heritageClauses?.find(h => h.token === ts.SyntaxKind.ExtendsKeyword);
     const parentName = extendsClause?.types[0]?.expression.getText(this.sf);
 
+    // Check if class has a method named 'init' to avoid collision with constructor
+    const hasInitMethod = node.members.some(m =>
+      ts.isMethodDeclaration(m) && m.name?.getText(this.sf) === 'init');
+
     const methods: IRDecl[] = [];
     for (const m of node.members) {
       if (ts.isConstructorDeclaration(m)) {
         const d = this.parseCtor(m, name, stateType, isDO);
+        // Rename constructor to 'create' if class has an 'init' method
+        if (d && hasInitMethod && d.tag === 'FuncDef' && d.name.endsWith('.init')) {
+          d.name = d.name.replace(/\.init$/, '.create');
+        }
         if (d) methods.push(d);
       } else if (ts.isMethodDeclaration(m)) {
         const d = this.parseMethod(m, name, stateType, isDO);
@@ -1411,8 +1419,8 @@ class ParserCtx {
   private parseNew(node: ts.NewExpression, ty: IRType): IRExpr {
     const name = node.expression.getText(this.sf);
     const args = (node.arguments ?? []).map(a => this.parseExpr(a));
-    if (name === 'Map')      return varExpr('AssocMap.empty', ty);
-    if (name === 'Set')      return varExpr('AssocSet.empty', ty);
+    if (name === 'Map' || name === 'WeakMap') return varExpr('AssocMap.empty', ty);
+    if (name === 'Set' || name === 'WeakSet') return varExpr('AssocSet.empty', ty);
     if (name === 'Array')    return { tag: 'ArrayLit', elems: [], type: ty, effect: Pure };
     if (name === 'Error' || name.endsWith('Error'))
       // TSError constructors: typeError, rangeError, networkError, customError
@@ -1553,9 +1561,12 @@ class ParserCtx {
 
     if (spreadExprs.length > 0 && namedFields.length === 0) {
       // Pure spread: { ...obj } → obj (identity/clone)
-      return spreadExprs.length === 1 ? spreadExprs[0] : {
-        tag: 'App', fn: varExpr('id'), args: spreadExprs, type: ty, effect: allEffect,
-      };
+      if (spreadExprs.length === 1) return spreadExprs[0];
+      // Multiple spreads with no named fields: fold with mergeWith (last spread wins)
+      return spreadExprs.reduce((acc, e) => ({
+        tag: 'App' as const, fn: varExpr('AssocMap.mergeWith (fun _ b => b)'),
+        args: [acc, e], type: ty, effect: allEffect,
+      }));
     }
 
     // No spread: plain struct literal

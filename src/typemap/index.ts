@@ -347,9 +347,13 @@ export function extractStructFields(
     const ty   = sym ? checker.getTypeOfSymbol(sym) : checker.getAnyType();
     const opt  = !!m.questionToken;
     const mut  = !m.modifiers?.some(mod => mod.kind === ts.SyntaxKind.ReadonlyKeyword);
+    const mapped = mapType(ty, checker);
+    // Avoid Option double-wrapping: if TypeChecker already resolved T | undefined
+    // as Option T, don't wrap again for questionToken
+    const needsWrap = opt && mapped.tag !== 'Option';
     out.push({
       name,
-      type: opt ? TyOption(mapType(ty, checker)) : mapType(ty, checker),
+      type: needsWrap ? TyOption(mapped) : (opt ? mapped : mapped),
       optional: opt,
       mutable: mut,
     });
@@ -404,9 +408,11 @@ function tryField(types: ts.ObjectType[], field: string, checker: ts.TypeChecker
       if (sym.name === field) continue;
       const st = checker.getTypeOfSymbol(sym);
       const opt = !!(sym.flags & ts.SymbolFlags.Optional);
+      const mapped = mapType(st, checker);
+      const needsWrap = opt && mapped.tag !== 'Option';
       fields.push({
         name: sym.name,
-        type: opt ? TyOption(mapType(st, checker)) : mapType(st, checker),
+        type: needsWrap ? TyOption(mapped) : mapped,
         optional: opt,
         mutable: true,
       });

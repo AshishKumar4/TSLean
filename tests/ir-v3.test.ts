@@ -227,14 +227,23 @@ describe('IR v3: core algebra unchanged', () => {
 // ─── StructDef extends_ field ─────────────────────────────────────────────────
 
 describe('IR v3: StructDef extends_', () => {
-  it('StructDef with extends_ emits extends in Lean', () => {
-    const m = mod([{
-      tag: 'StructDef', name: 'Child', typeParams: [],
-      fields: [{ name: 'extra', type: TyString }],
-      extends_: 'Parent',
-    }]);
+  it('StructDef with extends_ flattens parent fields when parent is known', () => {
+    const m = mod([
+      {
+        tag: 'StructDef', name: 'Parent', typeParams: [],
+        fields: [{ name: 'base', type: TyString }],
+      },
+      {
+        tag: 'StructDef', name: 'Child', typeParams: [],
+        fields: [{ name: 'extra', type: TyString }],
+        extends_: 'Parent',
+      },
+    ]);
     const code = generateLean(m);
-    expect(code).toContain('structure Child extends Parent');
+    // Parent fields are merged into child — both fields present
+    expect(code).toContain('structure Child');
+    expect(code).toContain('base');
+    expect(code).toContain('extra');
   });
 
   it('StructDef without extends_ has no extends', () => {

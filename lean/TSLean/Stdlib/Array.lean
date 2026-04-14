@@ -224,4 +224,7 @@ theorem filter_empty (p : α → Bool) : (#[] : Array α).filter p = #[] := by s
 -- map empty is empty
 theorem map_empty (f : α → β) : (#[] : Array α).map f = #[] := by simp
 
+-- JS Array.isArray() — in our model, arrays are always arrays
+def isArray (_x : α) : Bool := true
+
 end TSLean.Stdlib.Array

@@ -47,4 +47,10 @@ def setInterval (_ : Nat) (_ : IO Unit) : IO Unit := pure ()
 /-- queueMicrotask: execute immediately in IO (no microtask queue in Lean). -/
 def queueMicrotask (action : IO Unit) : IO Unit := action
 
+/-- clearTimeout: no-op in Lean (timers don't exist). -/
+def clearTimeout (_id : α) : Unit := ()
+
+/-- clearInterval: no-op in Lean (timers don't exist). -/
+def clearInterval (_id : α) : Unit := ()
+
 end TSLean.Stdlib.Async

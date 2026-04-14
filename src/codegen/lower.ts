@@ -48,6 +48,12 @@ export function lowerModule(mod: IRModule): LeanFile {
   const ctx = new LowerCtx();
   ctx.collectStructInfo(mod.decls);
   ctx.collectDefinedNames(mod.decls);
+  // Track names imported from external modules (not resolvable in Lean)
+  for (const imp of mod.imports) {
+    if (imp.module.startsWith('TSLean.External.') && imp.names) {
+      for (const n of imp.names) ctx.externalImportNames.add(n);
+    }
+  }
 
   const decls: LeanDecl[] = [];
 
@@ -67,7 +73,7 @@ export function lowerModule(mod: IRModule): LeanFile {
   const ns = mod.name;
   const useNs = ns && ns !== 'T' && ns !== 'Test';
   if (useNs) {
-    // Missing state structs
+    // Missing state structs (registers them in structFields as empty, then enriches)
     const missingStructs = ctx.emitMissingStateStructs(mod.decls);
     // Main declarations with mutual detection
     const bodyDecls = [...missingStructs, ...ctx.lowerDeclsWithMutual(mod.decls)];
@@ -143,6 +149,10 @@ class LowerCtx {
   classToState = new Map<string, string>();
   /** Names defined in this module. */
   definedNames = new Set<string>();
+  /** Module-level mutable variables lowered to IO.Ref — references need ← ref.get. */
+  mutableRefNames = new Set<string>();
+  /** Names imported from external (non-local) modules — emit default when referenced. */
+  externalImportNames = new Set<string>();
 
   // ─── Pre-passes ─────────────────────────────────────────────────────────────
 
@@ -297,6 +307,8 @@ class LowerCtx {
         needs.add('TSLean.Stdlib.HashMap');
       if (e.name.includes('FloatExt.') || e.name.includes('Numeric.'))
         needs.add('TSLean.Stdlib.Numeric');
+      if (e.name.includes('TSLean.Stdlib.Array.'))
+        needs.add('TSLean.Stdlib.Array');
       if (e.name.includes('Async.') || e.name.includes('promise'))
         needs.add('TSLean.Stdlib.Async');
       if (e.name === 'mkResponse' || e.name.startsWith('WebAPI.') || e.name === 'TSLean.fetch' || e.name === 'URL.parse' || e.name === 'WebSocketPair.new')
@@ -339,8 +351,13 @@ class LowerCtx {
     if (e.tag === 'Await') this.scanExprImports(e.expr, needs);
     if (e.tag === 'Return') this.scanExprImports(e.value, needs);
     if (e.tag === 'Throw') this.scanExprImports(e.error, needs);
-    if (e.tag === 'TryCatch') { this.scanExprImports(e.body, needs); this.scanExprImports(e.handler, needs); }
+    if (e.tag === 'TryCatch') { this.scanExprImports(e.body, needs); if (e.handler) this.scanExprImports(e.handler, needs); if (e.finally_) this.scanExprImports(e.finally_, needs); }
     if (e.tag === 'Assign') { this.scanExprImports(e.target, needs); this.scanExprImports(e.value, needs); }
+    if (e.tag === 'UnOp') this.scanExprImports(e.operand, needs);
+    if (e.tag === 'BinOp') { this.scanExprImports(e.left, needs); this.scanExprImports(e.right, needs); }
+    if (e.tag === 'Cast') this.scanExprImports(e.expr, needs);
+    if (e.tag === 'IndexAccess') { this.scanExprImports(e.obj, needs); this.scanExprImports(e.index, needs); }
+    if (e.tag === 'TypeApp') this.scanExprImports(e.fn, needs);
     // Constructor calls → detect stubs needed
     if (e.tag === 'CtorApp') {
       const stubCtors = new Set(['TextEncoder', 'TextDecoder', 'Headers', 'AbortController', 'EventTarget', 'WebSocket']);
@@ -370,22 +387,36 @@ class LowerCtx {
       }
     }
     const result: LeanDecl[] = [];
+    // First pass: register empty structs so enrichment can find them
+    const newStructNames: string[] = [];
     for (const name of referenced) {
       if (!defined.has(name) && name.endsWith('State')) {
-        result.push({
-          tag: 'Comment',
-          text: `Auto-generated empty state struct for ${name}`,
-        });
-        result.push({
-          tag: 'Structure',
-          name,
-          tyParams: [],
-          fields: [],
-          deriving: DEFAULT_DERIVING,
-        });
-        result.push({ tag: 'Blank' });
         this.structFields.set(name, []);
+        newStructNames.push(name);
       }
+    }
+    // Enrich newly registered structs from method bodies (e.g., `this.name = ...`)
+    if (newStructNames.length > 0) this.collectStructInfo(decls);
+    // Second pass: emit structures with enriched fields
+    for (const name of newStructNames) {
+      const enrichedFields = this.structFields.get(name) ?? [];
+      const fields: LeanField[] = enrichedFields.map(f => ({
+        name: (f.name.startsWith('_') && f.name.length > 1 && /[a-zA-Z]/.test(f.name[1]))
+          ? f.name.slice(1) : f.name,
+        ty: this.lowerType(f.type),
+      }));
+      result.push({
+        tag: 'Comment',
+        text: `Auto-generated${enrichedFields.length > 0 ? '' : ' empty'} state struct for ${name}`,
+      });
+      result.push({
+        tag: 'Structure',
+        name,
+        tyParams: [],
+        fields,
+        deriving: safeDeriving(fields, false),
+      });
+      result.push({ tag: 'Blank' });
     }
     return result;
   }
@@ -449,9 +480,10 @@ class LowerCtx {
       }
     }
 
-    // Emit declarations
+    // Emit declarations (track emitted names to avoid duplicates)
     const result: LeanDecl[] = [];
     const emittedMutuals = new Set<string>();
+    const emittedNames = new Set<string>();
 
     for (const d of decls) {
       const name = 'name' in d ? (d as any).name : '';
@@ -479,7 +511,11 @@ class LowerCtx {
         continue;
       }
       if (emittedMutuals.has(name)) continue;
-      result.push(this.lowerDecl(d));
+      // Skip duplicate top-level declarations (e.g., const + enum with same name)
+      if (name && (d.tag === 'VarDecl' || d.tag === 'TypeAlias') && emittedNames.has(name)) continue;
+      const lowered = this.lowerDecl(d);
+      if (name) emittedNames.add(name);
+      result.push(lowered);
       result.push({ tag: 'Blank' });
     }
     return result;
@@ -530,8 +566,11 @@ class LowerCtx {
     });
     const isBranded = allFields.length === 1 && allFields[0].name === 'val';
     const deriving = inMutual ? [] : safeDeriving(fields, isBranded);
-    // When parent fields are merged into the child, don't emit `extends` — fields are already flat
-    const emitExtends = d.extends_ && allFields.length === enrichedFields.length;
+    // Only emit `extends` when the parent is a known local struct with all its fields merged.
+    // If parent isn't found in structFields, its type won't exist in Lean — suppress extends.
+    const parentKnown = d.extends_ && (this.structFields.has(d.extends_) ||
+      this.structFields.has(d.extends_ + 'State'));
+    const emitExtends = parentKnown && allFields.length === enrichedFields.length;
     return {
       tag: 'Structure',
       name: d.name,
@@ -763,6 +802,7 @@ class LowerCtx {
       }
     }
     if (d.mutable) {
+      this.mutableRefNames.add(d.name);
       return { tag: 'Raw', code: `-- mutable binding '${d.name}' modelled as IO.Ref\ndef ${d.name}_ref : IO (IO.Ref ${this.printTyInline(ty)}) := IO.mkRef ${this.printExprInline(val)}` };
     }
     // Statement-level IO actions (e.g., console.log): wrap type as IO Unit
@@ -1040,6 +1080,15 @@ class LowerCtx {
         if (e.name === 'AssocSet.empty') return { tag: 'ArrayLit', elems: [] };
         if (e.name === 'AssocSet.insert') return { tag: 'Var', name: 'Array.push' };
         if (e.name === 'AssocSet.contains') return { tag: 'Var', name: 'Array.contains' };
+        // Module-level mutable variables: emit a default (ref reads need IO context)
+        if (this.mutableRefNames.has(e.name)) return { tag: 'Default' };
+        // External imports: emit default (these types/values don't exist in Lean)
+        if (this.externalImportNames.has(e.name) && !this.definedNames.has(e.name))
+          return { tag: 'Default' };
+        // JS global constructors used as values (e.g., arr.filter(Boolean))
+        if (e.name === 'Boolean') return { tag: 'Var', name: 'TSLean.toBool' };
+        if (e.name === 'String') return { tag: 'Var', name: 'toString' };
+        if (e.name === 'Number') return { tag: 'Var', name: 'TSLean.toFloat' };
         return { tag: 'Var', name: e.name };
       }
 
@@ -1097,12 +1146,21 @@ class LowerCtx {
       }
 
       case 'Sequence': {
-        if (e.stmts.length === 0) return { tag: 'Lit', value: '()' };
+        if (e.stmts.length === 0) return !isPure(ctx) ? { tag: 'Pure', value: { tag: 'Lit', value: '()' } } : { tag: 'Lit', value: '()' };
         if (e.stmts.length === 1) return this.lowerExpr(e.stmts[0], ctx);
         // Chain sequential ifs
         const chained = this.chainSequentialIfs(e.stmts);
         if (chained.length === 1) return this.lowerExpr(chained[0], ctx);
-        return { tag: 'Seq', stmts: chained.map(s => this.lowerExpr(s, ctx)) };
+        const lowered = chained.map(s => this.lowerExpr(s, ctx));
+        // In monadic context, wrap bare () in middle of sequence with pure ()
+        if (!isPure(ctx)) {
+          for (let si = 0; si < lowered.length; si++) {
+            if (lowered[si].tag === 'Lit' && lowered[si].value === '()') {
+              lowered[si] = { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
+            }
+          }
+        }
+        return { tag: 'Seq', stmts: lowered };
       }
 
       case 'DoBlock': return this.lowerDoBlock(e.stmts, ctx);
@@ -1513,6 +1571,7 @@ class LowerCtx {
 
     // In monadic context, ensure branches return the monad type
     if (!isPure(ctx)) {
+      if (then_.tag === 'Lit' && then_.value === '()') then_ = { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
       if (else_.tag === 'Lit' && else_.value === '()') else_ = { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
     }
 
@@ -1527,12 +1586,22 @@ class LowerCtx {
       if (l.tag === 'Default' || l.tag === 'Sorry' || l.tag === 'None') return r;
       return { tag: 'App', fn: { tag: 'Var', name: 'Option.getD' }, args: [l, r] };
     }
-    // Equality with none → .isNone/.isSome
+    // Equality with none → .isNone/.isSome (only for Option-typed operands)
     if (e.op === 'Eq' && (e.right.tag === 'LitNull' || (e.right.tag === 'Var' && e.right.name === 'none'))) {
-      return { tag: 'FieldAccess', obj: this.lowerExprP(e.left, ctx), field: 'isNone' };
+      const leftType = e.left?.type;
+      if (leftType?.tag === 'Option') {
+        return { tag: 'FieldAccess', obj: this.lowerExprP(e.left, ctx), field: 'isNone' };
+      }
+      // Non-Option types: use == default as fallback
+      return { tag: 'BinOp', op: '==', left: this.lowerExprP(e.left, ctx), right: { tag: 'Default' } };
     }
     if (e.op === 'Ne' && (e.right.tag === 'LitNull' || (e.right.tag === 'Var' && e.right.name === 'none'))) {
-      return { tag: 'FieldAccess', obj: this.lowerExprP(e.left, ctx), field: 'isSome' };
+      const leftType = e.left?.type;
+      if (leftType?.tag === 'Option') {
+        return { tag: 'FieldAccess', obj: this.lowerExprP(e.left, ctx), field: 'isSome' };
+      }
+      // Non-Option types: use != default as fallback
+      return { tag: 'BinOp', op: '!=', left: this.lowerExprP(e.left, ctx), right: { tag: 'Default' } };
     }
     // String interpolation for Concat chains
     if (e.op === 'Concat' || (e.op === 'Add' && e.left?.type?.tag === 'String')) {
@@ -1540,9 +1609,20 @@ class LowerCtx {
       if (interp) return interp;
     }
 
-    const l = this.lowerExprP(e.left, ctx);
-    const r = this.lowerExprP(e.right, ctx);
+    let l = this.lowerExprP(e.left, ctx);
+    let r = this.lowerExprP(e.right, ctx);
     const op = translateBinOp(e.op, e.left?.type ?? { tag: 'Unit' });
+    // Coerce non-Bool operands for logical operators (JS truthy semantics)
+    if (op === '&&' || op === '||') {
+      const coerceToBool = (expr: LeanExpr, ty: IRType | undefined): LeanExpr => {
+        if (!ty || ty.tag === 'Bool') return expr;
+        if (ty.tag === 'Option') return { tag: 'FieldAccess', obj: expr, field: op === '&&' ? 'isSome' : 'isSome' };
+        // String, TSAny, Number, etc. → TSLean.toBool
+        return { tag: 'App', fn: { tag: 'Var', name: 'TSLean.toBool' }, args: [expr] };
+      };
+      l = coerceToBool(l, e.left?.type);
+      r = coerceToBool(r, e.right?.type);
+    }
     return { tag: 'BinOp', op, left: l, right: r };
   }
 
@@ -1583,6 +1663,10 @@ class LowerCtx {
       };
     }
     if (e.target.tag === 'Var') {
+      // Module-level mutable ref: assignment is a no-op (ref reads return default)
+      if (this.mutableRefNames.has(e.target.name)) {
+        return { tag: 'Lit', value: '()' };
+      }
       // Variable reassignment → let rebinding (Lean is immutable, this shadows the old value)
       return { tag: 'Let', name: e.target.name, value: val, body: { tag: 'Lit', value: '()' } };
     }
@@ -1739,21 +1823,36 @@ class LowerCtx {
     let i = 0;
     while (i < stmts.length) {
       const s = stmts[i];
-      if (s.tag === 'IfThenElse' && isEmptyElse(s.else_) && i + 1 < stmts.length) {
+      // Only chain consecutive if-then-else with empty else into an if/else-if/else chain.
+      // Do NOT absorb non-if statements into the else — that changes fall-through semantics.
+      if (s.tag === 'IfThenElse' && isEmptyElse(s.else_) && i + 1 < stmts.length
+          && stmts[i + 1].tag === 'IfThenElse') {
         const chain: Array<{ cond: IRExpr; then: IRExpr }> = [{ cond: s.cond, then: s.then }];
         i++;
-        while (i < stmts.length && stmts[i].tag === 'IfThenElse' && isEmptyElse((stmts[i] as any).else_)) {
+        while (i < stmts.length && stmts[i].tag === 'IfThenElse' && isEmptyElse((stmts[i] as any).else_)
+               && i + 1 < stmts.length && stmts[i + 1].tag === 'IfThenElse') {
           const next = stmts[i] as Extract<IRExpr, { tag: 'IfThenElse' }>;
           chain.push({ cond: next.cond, then: next.then });
           i++;
         }
-        const finalElse: IRExpr = i < stmts.length ? stmts[i] : { tag: 'LitUnit', type: s.type, effect: s.effect };
-        if (i < stmts.length) i++;
-        let chained: IRExpr = finalElse;
-        for (let j = chain.length - 1; j >= 0; j--) {
-          chained = { tag: 'IfThenElse', cond: chain[j].cond, then: chain[j].then, else_: chained, type: s.type, effect: s.effect };
+        // Last if in the chain: include its then and use its else (or LitUnit)
+        if (i < stmts.length && stmts[i].tag === 'IfThenElse') {
+          const last = stmts[i] as Extract<IRExpr, { tag: 'IfThenElse' }>;
+          chain.push({ cond: last.cond, then: last.then });
+          let chained: IRExpr = last.else_;
+          for (let j = chain.length - 1; j >= 0; j--) {
+            chained = { tag: 'IfThenElse', cond: chain[j].cond, then: chain[j].then, else_: chained, type: s.type, effect: s.effect };
+          }
+          result.push(chained);
+          i++;
+        } else {
+          // No more ifs to chain — emit the accumulated chain with empty else
+          let chained: IRExpr = { tag: 'LitUnit', type: s.type, effect: s.effect };
+          for (let j = chain.length - 1; j >= 0; j--) {
+            chained = { tag: 'IfThenElse', cond: chain[j].cond, then: chain[j].then, else_: chained, type: s.type, effect: s.effect };
+          }
+          result.push(chained);
         }
-        result.push(chained);
       } else {
         result.push(s);
         i++;
@@ -1792,9 +1891,12 @@ class LowerCtx {
   }
 
   private exprHasBinds(e: LeanExpr): boolean {
-    if (e.tag === 'Bind') return true;
+    if (e.tag === 'Bind' || e.tag === 'Pure' || e.tag === 'Modify' || e.tag === 'Return' || e.tag === 'Throw') return true;
     if (e.tag === 'Seq') return e.stmts.some(s => this.exprHasBinds(s));
-    if (e.tag === 'Let') return this.exprHasBinds(e.body);
+    if (e.tag === 'Let') return this.exprHasBinds(e.value) || this.exprHasBinds(e.body);
+    if (e.tag === 'If') return this.exprHasBinds(e.then_) || this.exprHasBinds(e.else_);
+    if (e.tag === 'TryCatch') return true;
+    if (e.tag === 'Do') return true;
     return false;
   }
 

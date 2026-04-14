@@ -361,10 +361,10 @@ function printExpr(e: LeanExpr, depth: number): string {
     }
 
     case 'Pure':
-      return `${ind}pure ${printExprInline(e.value)}`;
+      return `${ind}pure ${parenIfCompound(e.value)}`;
 
     case 'Return':
-      return `${ind}return ${printExprInline(e.value)}`;
+      return `${ind}return ${parenIfCompound(e.value)}`;
 
     case 'Throw':
       return `${ind}throw ${parenIfCompound(e.value)}`;
@@ -499,9 +499,9 @@ function printExprInline(e: LeanExpr): string {
     case 'Do':
       return `do ${printExprInline(e.body)}`;
     case 'Pure':
-      return `pure ${printExprInline(e.value)}`;
+      return `pure ${parenIfCompound(e.value)}`;
     case 'Return':
-      return `return ${printExprInline(e.value)}`;
+      return `return ${parenIfCompound(e.value)}`;
     case 'Throw':
       return `throw ${printExprInline(e.value)}`;
     case 'TryCatch':
@@ -589,7 +589,7 @@ function parenIfCompound(e: LeanExpr): string {
   const s = printExprInline(e);
   switch (e.tag) {
     case 'Lam': case 'If': case 'Match': case 'Let': case 'Bind':
-    case 'BinOp': case 'Do': case 'Seq':
+    case 'BinOp': case 'Do': case 'Seq': case 'App':
       return `(${s})`;
     default:
       return s;
