@@ -1021,6 +1021,15 @@ class LowerCtx {
     return e;
   }
 
+  /** Check if a struct field is typed as Option in any known struct. */
+  private isStructFieldOption(fieldName: string): boolean {
+    for (const [, fields] of this.structFields) {
+      const f = fields.find(f => f.name === fieldName);
+      if (f && f.type?.tag === 'Option') return true;
+    }
+    return false;
+  }
+
   /** Check if an IR expression body contains while-loop patterns (let rec _while/_dowhile). */
   private bodyContainsWhileLoop(e: IRExpr): boolean {
     if (!e) return false;
@@ -1975,7 +1984,12 @@ class LowerCtx {
     }
 
     // Field access on Option type: unwrap with getD before accessing inner fields
-    if (e.obj?.type?.tag === 'Option' && !['isSome', 'isNone', 'getD', 'bind', 'map', 'get'].includes(e.field)) {
+    // Check both the IR expression type and the struct field type (for self.optionalField.subfield)
+    const isOptionalAccess = e.obj?.type?.tag === 'Option';
+    const isOptionalStructField = e.obj?.tag === 'FieldAccess' && e.obj.obj?.tag === 'Var' &&
+      e.obj.obj.name === 'self' && this.isStructFieldOption(e.obj.field);
+    if ((isOptionalAccess || isOptionalStructField) &&
+        !['isSome', 'isNone', 'getD', 'bind', 'map', 'get'].includes(e.field)) {
       const inner = this.lowerExpr(e.obj, ctx);
       const unwrapped = { tag: 'App' as const, fn: { tag: 'Var' as const, name: 'Option.getD' },
                           args: [inner, { tag: 'Default' as const }] };
@@ -2590,7 +2604,11 @@ class LowerCtx {
   private lowerStructLit(e: Extract<IRExpr, { tag: 'StructLit' }>, ctx: Effect): LeanExpr {
     // Map-typed struct literals → use AssocMap.fromList unless the typeName is a known struct
     const hasKnownStruct = e.typeName && (this.structFields.has(e.typeName) || this.structFields.has(e.typeName + 'State'));
-    if (e.type?.tag === 'Map' && !hasKnownStruct) {
+    // Also check if the function return type is AssocMap (struct literal targets AssocMap)
+    const retIsAssocMap = this.currentReturnType &&
+      (this.tyStartsWith(this.currentReturnType, 'AssocMap') ||
+       this.tyStartsWith(this.innermostRetType(this.currentReturnType), 'AssocMap'));
+    if ((e.type?.tag === 'Map' || (retIsAssocMap && !hasKnownStruct)) && !hasKnownStruct) {
       const realFields = e.fields.filter(f => !f.name.startsWith('_spread') && !f.name.startsWith('_computed'));
       if (realFields.length > 0) {
         const pairs: LeanExpr[] = realFields.map(f => {
