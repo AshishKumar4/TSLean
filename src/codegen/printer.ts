@@ -385,7 +385,14 @@ function printExpr(e: LeanExpr, depth: number): string {
 
     case 'FieldAccess': {
       const obj = printExprInline(e.obj);
-      return `${ind}${obj}.${sanitize(e.field)}`;
+      const field = sanitize(e.field);
+      // For simple objects (Var, another FieldAccess), use dot notation: obj.field
+      // For complex objects (App, Paren), use explicit call to avoid Lean parser issues
+      if (e.obj.tag === 'Var' || e.obj.tag === 'FieldAccess') {
+        return `${ind}${obj}.${field}`;
+      }
+      // Complex expression: field access on result → explicit form
+      return `${ind}(${obj}).${field}`;
     }
 
     case 'StructLit': {
@@ -398,6 +405,10 @@ function printExpr(e: LeanExpr, depth: number): string {
       const base = printExprInline(e.base);
       if (e.fields.length === 0) return `${ind}${base}`;
       const fs = e.fields.map(f => `${sanitize(f.name)} := ${printExprInline(f.value)}`).join(', ');
+      // If base is sorry/default/sorryAx, emit struct literal without `with`
+      if (base === 'sorry' || base === 'default' || base.includes('sorry')) {
+        return `${ind}{ ${fs} }`;
+      }
       return `${ind}{ ${base} with ${fs} }`;
     }
 

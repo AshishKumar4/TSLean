@@ -602,7 +602,15 @@ class LowerCtx {
     });
 
     const params: LeanParam[] = d.params.map(p => this.lowerParam(p, fixedEffect));
-    const retTy = this.lowerRetSig(fixedEffect, this.lowerType(d.retType));
+    let retTy = this.lowerRetSig(fixedEffect, this.lowerType(d.retType));
+
+    // Post-check: if body ended up with IO calls but effect was Pure, fix the return type
+    if (isPure(fixedEffect) && body.tag === 'Do') {
+      const baseRetTy = this.lowerType(d.retType);
+      if (!this.tyStartsWith(retTy, 'IO')) {
+        retTy = { tag: 'TyApp', fn: { tag: 'TyName', name: 'IO' }, args: [baseRetTy] };
+      }
+    }
 
     return {
       tag: 'Def',
@@ -636,11 +644,32 @@ class LowerCtx {
       return { tag: 'Do', body: this.lowerExpr(body, ioCtx) };
     }
     const lowered = this.lowerExpr(body, effect);
+    // Check if the "pure" body actually contains IO calls (effect detection missed it)
+    if (this.exprContainsIO(lowered)) {
+      return { tag: 'Do', body: lowered };
+    }
     // Only wrap pure bodies in `do` if the return type is monadic (Bool, String etc. can't use do)
     if (this.pureBodyNeedsDo(lowered) && isMonadicRet) {
       return { tag: 'Do', body: lowered };
     }
     return lowered;
+  }
+
+  /** Check if a lowered expression contains IO calls (IO.println, IO.eprintln, etc.) */
+  private exprContainsIO(e: LeanExpr): boolean {
+    const IO_FNS = ['IO.println', 'IO.eprintln', 'IO.print', 'IO.eprint', 'IO.sleep',
+      'IO.getEnv', 'IO.getArgs', 'IO.monoNanosNow', 'IO.Process.exit'];
+    const check = (expr: LeanExpr): boolean => {
+      if (expr.tag === 'Var' && typeof expr.name === 'string' && IO_FNS.some(f => expr.name.startsWith(f))) return true;
+      if (expr.tag === 'App') return check(expr.fn) || expr.args.some(check);
+      if (expr.tag === 'Let') return check(expr.value) || check(expr.body);
+      if (expr.tag === 'Seq') return expr.stmts.some(check);
+      if (expr.tag === 'If') return check(expr.then_) || check(expr.else_);
+      if (expr.tag === 'Bind') return true;
+      if (expr.tag === 'Pure') return true;
+      return false;
+    };
+    return check(e);
   }
 
   private pureBodyNeedsDo(e: LeanExpr): boolean {
@@ -830,6 +859,8 @@ class LowerCtx {
         return { tag: 'TyArrow', params: params.length > 0 ? params : [{ tag: 'TyName', name: 'Unit' }], ret };
       }
       case 'TypeRef': {
+        // Anonymous/internal TS types → String
+        if (t.name === '__type' || t.name === '__object') return { tag: 'TyName', name: 'String' };
         const name = t.name === 'Any' ? 'TSAny' : t.name;
         // Inexpressible TS utility types in generic context → sorry
         if (INEXPRESSIBLE_UTILITY_TYPES.has(name) && t.args.some(a => a.tag === 'TypeVar')) {
@@ -1242,9 +1273,15 @@ class LowerCtx {
     if (mappedField.startsWith('_') && mappedField.length > 1 && /[a-zA-Z]/.test(mappedField[1]))
       mappedField = mappedField.slice(1);
 
+    // String-typed objects with non-string field access → default
+    // (anonymous TS object types collapsed to String can't have .field access)
+    const stringMethods = ['length', 'size', 'includes', 'trim', 'toLower', 'toUpper', 'startsWith', 'endsWith', 'splitOn', 'replace', 'append', 'intercalate', 'get', 'get?', 'back?', 'push', 'map', 'filter', 'find?', 'any', 'all', 'reverse', 'join', 'flatMap', 'foldl', 'extract', 'indexOf?', 'contains', 'toList'];
+    if (isString && !stringMethods.includes(mappedField)) {
+      return defaultForType(e.type ?? { tag: 'String' });
+    }
+
     // TS API types → default for non-string methods (type-checks via Inhabited)
     const isAnyType = e.obj?.type?.tag === 'TypeRef' && TS_API_TYPES.has(e.obj?.type?.name ?? '');
-    const stringMethods = ['length', 'size', 'includes', 'trim', 'toLower', 'toUpper', 'startsWith', 'endsWith', 'splitOn', 'replace'];
     if (isAnyType && !stringMethods.includes(mappedField)) return defaultForType(e.type ?? { tag: 'String' });
 
     // Check if field exists on known struct type — use default instead of sorry
@@ -1516,8 +1553,16 @@ class LowerCtx {
   }
 
   private lowerStructLit(e: Extract<IRExpr, { tag: 'StructLit' }>, ctx: Effect): LeanExpr {
-    // Anonymous object literals (type collapsed to String/Any/TSAny) → AssocMap construction
-    if (e.type?.tag === 'String' || (e.type?.tag === 'TypeRef' && (e.type.name === 'Any' || e.type.name === 'TSAny'))) {
+    // Anonymous object literals: type collapsed to String/Any/TSAny/__object/__type.
+    // Heuristic: objects with all-caps keys or many (>6) string-value fields are dictionaries.
+    // Objects with few fields matching parameter-like names are struct returns.
+    const allCapsKeys = e.fields.every(f => f.name === f.name.toUpperCase() && f.name.length > 1);
+    const isDictionaryPattern = allCapsKeys || e.fields.length > 8;
+    const isAnonymousType = isDictionaryPattern && (
+      e.type?.tag === 'String' ||
+      (e.type?.tag === 'TypeRef' && ['Any', 'TSAny', 'String', '__object', '__type'].includes(e.type.name))
+    );
+    if (isAnonymousType) {
       const realFields = e.fields.filter(f => !f.name.startsWith('_spread') && !f.name.startsWith('_computed'));
       if (realFields.length > 0) {
         // Build AssocMap from fields: #[("key1", val1), ("key2", val2)]

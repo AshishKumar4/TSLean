@@ -185,7 +185,7 @@ class ParserCtx {
     if (ts.isExportAssignment(stmt))     return this.parseExportAssignment(stmt);
     if (ts.isExpressionStatement(stmt)) {
       const e = this.parseExpr(stmt.expression);
-      return { tag: 'VarDecl', name: '_main', type: TyUnit, value: e, mutable: false };
+      return { tag: 'VarDecl', name: `_stmt_${stmt.pos}`, type: TyUnit, value: e, mutable: false };
     }
     return null;
   }
