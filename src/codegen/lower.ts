@@ -782,6 +782,13 @@ class LowerCtx {
       return { tag: 'Do', body: this.lowerExpr(body, ioCtx) };
     }
     const lowered = this.lowerExpr(body, effect);
+    // Pure function returning Unit but body is a value expression → wrap in let _ :=
+    if (retType.tag === 'Unit' && this.isPureAppStatement(lowered)) {
+      return { tag: 'Let', name: '_', value: lowered, body: { tag: 'Lit', value: '()' } };
+    }
+    if (retType.tag === 'Unit' && (lowered.tag === 'FieldAccess' || lowered.tag === 'Default')) {
+      return { tag: 'Let', name: '_', value: lowered, body: { tag: 'Lit', value: '()' } };
+    }
     // Check if the "pure" body actually contains IO calls (effect detection missed it)
     if (this.exprContainsIO(lowered)) {
       return { tag: 'Do', body: lowered };
@@ -1862,6 +1869,19 @@ class LowerCtx {
       if (isNoneThen) then_ = { tag: 'Default' };
       if (isNoneElse) else_ = { tag: 'Default' };
     }
+    // Branch type reconciliation: if one branch is a void statement and the
+    // other is `()`, wrap the value branch in `let _ :=` to make it Unit too.
+    const isUnit = (e: LeanExpr) => (e.tag === 'Lit' && e.value === '()') || (e.tag === 'Pure' && e.value.tag === 'Lit' && e.value.value === '()');
+    const isValue = (e: LeanExpr) => this.isPureAppStatement(e) || e.tag === 'Default' || e.tag === 'FieldAccess' ||
+      (e.tag === 'App' && e.fn.tag !== 'Var') || (e.tag === 'App' && e.fn.tag === 'Var' &&
+        ['AssocMap.insert', 'AssocMap.erase', 'Array.push', 'Array.contains', 'AssocMap.mergeWith',
+          'Array.filter', 'Array.map', 'Array.set'].some(n => e.fn.name.startsWith(n)));
+    if (isUnit(else_) && isValue(then_)) {
+      then_ = { tag: 'Let', name: '_', value: then_, body: isPure(ctx) ? { tag: 'Lit', value: '()' } : { tag: 'Pure', value: { tag: 'Lit', value: '()' } } };
+    }
+    if (isUnit(then_) && isValue(else_)) {
+      else_ = { tag: 'Let', name: '_', value: else_, body: isPure(ctx) ? { tag: 'Lit', value: '()' } : { tag: 'Pure', value: { tag: 'Lit', value: '()' } } };
+    }
 
     return { tag: 'If', cond, then_, else_ };
   }
@@ -1869,9 +1889,15 @@ class LowerCtx {
   private lowerBinOp(e: Extract<IRExpr, { tag: 'BinOp' }>, ctx: Effect): LeanExpr {
     if (e.op === 'NullCoalesce') {
       const l = this.lowerExprP(e.left, ctx);
-      const r = this.lowerExprP(e.right, ctx);
+      let r = this.lowerExprP(e.right, ctx);
       // Sorry/Default LHS → use RHS directly (graceful degradation)
       if (l.tag === 'Default' || l.tag === 'Sorry' || l.tag === 'None') return r;
+      // Coerce numeric RHS to toString when LHS is String/TSAny
+      const lType = e.left?.type;
+      if ((lType?.tag === 'String' || (lType?.tag === 'TypeRef' && ['TSAny', 'Any'].includes(lType.name))) &&
+          r.tag === 'Lit' && /^\d+$/.test(r.value)) {
+        r = { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [r] };
+      }
       return { tag: 'App', fn: { tag: 'Var', name: 'Option.getD' }, args: [l, r] };
     }
     // Equality with none → .isNone/.isSome (only for Option-typed operands)
@@ -2052,12 +2078,25 @@ class LowerCtx {
     // Anonymous object literals: type collapsed to String/Any/TSAny/__object/__type.
     // Heuristic: objects with all-caps keys or many (>6) string-value fields are dictionaries.
     // Objects with few fields matching parameter-like names are struct returns.
+    // If the target type is TSAny/String and the struct literal doesn't match a known Lean struct,
+    // emit as default (struct literals can't produce String in Lean)
+    const isStringTarget = e.type?.tag === 'String' ||
+      (e.type?.tag === 'TypeRef' && ['Any', 'TSAny', 'String', '__object', '__type'].includes(e.type.name));
+    if (isStringTarget && !hasKnownStruct) {
+      const realFields = e.fields.filter(f => !f.name.startsWith('_spread') && !f.name.startsWith('_computed'));
+      if (realFields.length > 0) {
+        const pairs: LeanExpr[] = realFields.map(f => ({
+          tag: 'TupleLit' as const,
+          elems: [{ tag: 'Lit' as const, value: JSON.stringify(f.name) }, this.lowerExpr(f.value, ctx)],
+        }));
+        return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.fromList' },
+                 args: [{ tag: 'ListLit', elems: pairs }] };
+      }
+      return { tag: 'Default' };
+    }
     const allCapsKeys = e.fields.every(f => f.name === f.name.toUpperCase() && f.name.length > 1);
     const isDictionaryPattern = allCapsKeys || e.fields.length > 8;
-    const isAnonymousType = isDictionaryPattern && (
-      e.type?.tag === 'String' ||
-      (e.type?.tag === 'TypeRef' && ['Any', 'TSAny', 'String', '__object', '__type'].includes(e.type.name))
-    );
+    const isAnonymousType = isDictionaryPattern && isStringTarget;
     if (isAnonymousType) {
       const realFields = e.fields.filter(f => !f.name.startsWith('_spread') && !f.name.startsWith('_computed'));
       if (realFields.length > 0) {
