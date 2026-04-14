@@ -1370,12 +1370,22 @@ class LowerCtx {
       if (result) return result;
     }
 
-    // JS type conversion functions: String(x) → toString x, Number(x) → x.toFloat, Boolean(x) → decide x
+    // JS type conversion functions: String(x) → toString x
     if (e.fn.tag === 'Var' && e.args.length === 1) {
       const convMap: Record<string, string> = { 'String': 'toString' };
       const conv = convMap[e.fn.name];
       if (conv) {
         return { tag: 'App', fn: { tag: 'Var', name: conv }, args: [this.lowerExprP(e.args[0], ctx)] };
+      }
+    }
+
+    // AssocMap operations on non-Map types → graceful default
+    if (e.fn.tag === 'Var' && e.fn.name.startsWith('AssocMap.') && e.args.length >= 1) {
+      const firstArgType = e.args[0]?.type;
+      const isMapArg = firstArgType?.tag === 'Map' ||
+        (firstArgType?.tag === 'TypeRef' && (firstArgType.name === 'AssocMap' || firstArgType.name === 'Map'));
+      if (!isMapArg) {
+        return defaultForType(e.type);
       }
     }
 

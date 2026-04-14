@@ -176,6 +176,13 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
     // Check if the type has named properties → use AssocMap for field access support
     const props = t.getProperties();
     if (props.length > 0) return TyMap(TyString, TyRef('TSAny'));
+    // Check for index signatures (e.g. {[k: string]: T}) → Map
+    const indexInfo = checker.getIndexInfosOfType(t);
+    if (indexInfo.length > 0) {
+      const valType = indexInfo[0].type ? mapType(indexInfo[0].type, checker, depth + 1) : TyRef('TSAny');
+      return TyMap(TyString, valType);
+    }
+    // Check call signatures → function type (already handled above, this is fallback)
     return TyRef('TSAny');
   }
   if (name === 'Error' || name.endsWith('Error')) return TyString;  // JS Error → String for Lean
