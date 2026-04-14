@@ -757,6 +757,25 @@ class LowerCtx {
   }
 
   /** Check if a lowered expression contains IO calls (IO.println, IO.eprintln, etc.) */
+  /** Check if an App expression is a pure (non-monadic) function call that shouldn't be a bare statement. */
+  private isPureAppStatement(e: LeanExpr): boolean {
+    if (e.tag !== 'App' || !e.fn) return false;
+    const fn = e.fn;
+    if (fn.tag === 'Var') {
+      const PURE_FNS = ['Array.push', 'Array.set', 'Array.filter', 'Array.map',
+        'AssocMap.insert', 'AssocMap.erase', 'AssocMap.mergeWith',
+        'AssocSet.insert', 'AssocSet.erase', 'String.intercalate',
+        'toString', 'TSLean.toBool', 'TSLean.toFloat'];
+      return PURE_FNS.some(f => fn.name === f || fn.name.startsWith(f + ' '));
+    }
+    // FieldAccess like x.push(...) → check if it's an array method
+    if (fn.tag === 'FieldAccess') {
+      const pureFields = ['push', 'pop', 'filter', 'map', 'insert', 'erase', 'clear'];
+      return pureFields.includes(fn.field);
+    }
+    return false;
+  }
+
   /** Check if a lowered expression contains Modify nodes (state mutations). */
   private exprContainsModify(e: LeanExpr): boolean {
     const check = (expr: LeanExpr): boolean => {
@@ -1414,6 +1433,14 @@ class LowerCtx {
       if (e.field === 'tag') return { tag: 'Sorry', ty: { tag: 'TyName', name: 'String' } };
       if (e.field === 'effects') return { tag: 'Sorry', ty: { tag: 'TyApp', fn: { tag: 'TyName', name: 'Array' }, args: [{ tag: 'TyName', name: 'Effect' }] } };
       return { tag: 'Default' };
+    }
+
+    // Field access on Option type: unwrap with getD before accessing inner fields
+    if (e.obj?.type?.tag === 'Option' && !['isSome', 'isNone', 'getD', 'bind', 'map', 'get'].includes(e.field)) {
+      const inner = this.lowerExpr(e.obj, ctx);
+      const unwrapped = { tag: 'App' as const, fn: { tag: 'Var' as const, name: 'Option.getD' },
+                          args: [inner, { tag: 'Default' as const }] };
+      return { tag: 'FieldAccess', obj: { tag: 'Paren' as const, inner: unwrapped }, field: e.field };
     }
 
     const obj = this.lowerExpr(e.obj, ctx);
