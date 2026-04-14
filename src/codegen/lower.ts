@@ -812,7 +812,8 @@ class LowerCtx {
       x.tag === 'App' || x.tag === 'FieldAccess' || x.tag === 'Default' || x.tag === 'Var' ||
       x.tag === 'Lit' || x.tag === 'TypeAnnot' || x.tag === 'ArrayLit' || x.tag === 'None';
     if (isValueExpr(e) && !(e.tag === 'Lit' && e.value === '()')) {
-      return { tag: 'Let', name: '_', value: e, body: { tag: 'Lit', value: '()' } };
+      const ty = (e.tag === 'Default' && !e.ty) ? { tag: 'TyName' as const, name: 'TSAny' } : undefined;
+      return { tag: 'Let', name: '_', ty, value: e, body: { tag: 'Lit', value: '()' } };
     }
     if (e.tag === 'Let') {
       const fixedBody = this.wrapTerminalForUnit(e.body);
@@ -1781,9 +1782,16 @@ class LowerCtx {
       const collType = collArg?.type;
       const isUnresolvable = collType?.tag === 'String' ||
         (collType?.tag === 'TypeRef' && ['TSAny', 'Any'].includes(collType.name));
-      if (isUnresolvable) {
-        // Collection is TSAny/String — can't iterate, degrade to pure ()
-        return { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
+      const degraded: LeanExpr = isPure(ctx) ? { tag: 'Lit', value: '()' } : { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
+      if (isUnresolvable) return degraded;
+      // Lower the callback and check if its body is just `default` — degrade the whole forM
+      const callbackArg = e.args[0];
+      if (callbackArg?.tag === 'Lambda') {
+        const cbBody = this.lowerExpr(callbackArg.body, callbackArg.effect ?? ctx);
+        if (cbBody.tag === 'Default' || (cbBody.tag === 'TypeAnnot' && cbBody.expr.tag === 'Default') ||
+            (cbBody.tag === 'Pure' && cbBody.value.tag === 'Lit' && cbBody.value.value === '()')) {
+          return degraded;
+        }
       }
     }
 
@@ -1954,9 +1962,10 @@ class LowerCtx {
     // Collection methods — Set ops use Array (lowerType maps Set→Array)
     const isSet = fa.obj?.type?.tag === 'Set' || (fa.obj?.type?.tag === 'TypeRef' && ['Set', 'AssocSet'].includes(fa.obj?.type?.name ?? ''));
     // .clear() on collections → return empty
+    // .clear() is a mutation — in pure Lean it's a no-op (returns empty collection)
+    // Since this is typically used as a void statement, just return ()
     if (method === 'clear') {
-      if (isSet) return { tag: 'ArrayLit', elems: [] };
-      return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.empty' }, args: [] };
+      return { tag: 'Lit', value: '()' };
     }
     // .forEach on arrays → Array.forM
     if (method === 'forEach' && (isArr || !isSet) && args.length > 0) {
