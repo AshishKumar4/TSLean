@@ -2670,7 +2670,18 @@ class LowerCtx {
           const vt = f.value?.type;
           const isAlreadyString = !vt || vt.tag === 'String' ||
             (vt.tag === 'TypeRef' && ['TSAny', 'Any', 'String'].includes(vt.name));
-          if (!isAlreadyString && val.tag !== 'Lit' && val.tag !== 'SInterp' && val.tag !== 'Default') {
+          // Coerce Bool/numeric Lit values
+          const isBoolLit = val.tag === 'Lit' && (val.value === 'true' || val.value === 'false');
+          const isNumLit = val.tag === 'Lit' && /^-?\d+(\.\d+)?$/.test(val.value);
+          // For custom struct types or Option(IO...), use default instead of toString
+          // (they likely don't have ToString instances)
+          const hasNoToString = vt && (
+            (vt.tag === 'TypeRef' && !['TSAny', 'Any', 'String', 'Float', 'Nat', 'Int', 'Bool'].includes(vt.name)) ||
+            (vt.tag === 'Option' && vt.inner?.tag !== 'String'));
+          if (hasNoToString && val.tag !== 'Default') {
+            val = { tag: 'Default' };
+          } else if ((!isAlreadyString && val.tag !== 'Lit' && val.tag !== 'SInterp' && val.tag !== 'Default') ||
+              isBoolLit || isNumLit) {
             val = { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [val] };
           }
           return { tag: 'TupleLit' as const,
