@@ -223,8 +223,21 @@ function mapTypeRef(t: ts.TypeReference, checker: ts.TypeChecker, depth: number)
     case 'Pick':          case 'Omit':          return TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
     case 'ReturnType':    case 'Parameters':    return TyRef(name, [map1()]);
     case 'Exclude':       case 'Extract':       return TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
-    default:
+    default: {
+      // Web API / built-in types that have no Lean equivalent
+      const webApiRefTypes = new Set([
+        'Uint8Array', 'Int8Array', 'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array',
+        'Float32Array', 'Float64Array', 'ArrayBuffer', 'ArrayBufferLike', 'SharedArrayBuffer', 'DataView',
+        'ReadableStream', 'WritableStream', 'TransformStream', 'ReadableStreamDefaultReader',
+        'Blob', 'File', 'FormData', 'AbortController', 'AbortSignal',
+        'Disposable', 'AsyncDisposable', 'EventTarget', 'Event',
+        'TextEncoder', 'TextDecoder', 'SubtleCrypto', 'CryptoKey', 'CryptoKeyPair',
+        'RegExp', 'RegExpMatchArray', 'FinalizationRegistry', 'WeakRef',
+        'Date', 'JSON', 'Math', 'console', 'Proxy', 'Reflect',
+      ]);
+      if (webApiRefTypes.has(name)) return TyRef('TSAny');
       return args.length === 0 ? TyRef(name) : TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
+    }
   }
 }
 

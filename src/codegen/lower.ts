@@ -216,7 +216,7 @@ class LowerCtx {
 
   resolveOpens(_mod: IRModule, imports: string[]): string[] {
     const opens = ['TSLean'];
-    if (imports.some(i => i.includes('WebAPI'))) opens.push('TSLean.WebAPI');
+    if (imports.some(i => i === 'TSLean.Runtime.WebAPI')) opens.push('TSLean.WebAPI');
     if (imports.some(i => i.includes('HashMap'))) opens.push('TSLean.Stdlib.HashMap');
     if (imports.some(i => i.includes('Stubs.WebAPIs'))) opens.push('TSLean.Stubs.WebAPIs');
     if (imports.some(i => i.includes('DurableObjects'))) opens.push('TSLean.DO');
