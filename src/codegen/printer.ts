@@ -497,6 +497,8 @@ function printExprInline(e: LeanExpr): string {
       return `match ${scrut} with ${arms.join(' ')}`;
     }
     case 'Do':
+      // Seq already prepends `do` when printed inline — avoid `do do`
+      if (e.body.tag === 'Seq') return printExprInline(e.body);
       return `do ${printExprInline(e.body)}`;
     case 'Pure':
       return `pure ${parenIfCompound(e.value)}`;

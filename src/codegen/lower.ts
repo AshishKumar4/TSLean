@@ -191,6 +191,8 @@ class LowerCtx {
   externalImportNames = new Set<string>();
   /** Current function's lowered return type — used to reconcile none vs default. */
   currentReturnType: LeanTy | undefined;
+  /** Current function's IR return type — used for numeric literal annotations. */
+  currentReturnIRType: IRType | undefined;
   /** Parameters whose Lean type is Option but TS narrows away — need auto-unwrap. */
   optionParams = new Set<string>();
 
@@ -703,7 +705,9 @@ class LowerCtx {
     const isRecursive = d.isPartial ?? bodyContainsVarRef(d.body, d.name);
     // Track return type for none→default reconciliation
     const prevRetType = this.currentReturnType;
+    const prevRetIRType = this.currentReturnIRType;
     this.currentReturnType = this.lowerRetSig(fixedEffect, this.lowerType(d.retType));
+    this.currentReturnIRType = d.retType;
     // Track Option parameters for auto-unwrap
     const prevOptionParams = new Set(this.optionParams);
     this.optionParams.clear();
@@ -712,6 +716,7 @@ class LowerCtx {
     }
     const body = this.lowerFuncBody(d.body, fixedEffect, d.retType, d.name);
     this.currentReturnType = prevRetType;
+    this.currentReturnIRType = prevRetIRType;
     this.optionParams = prevOptionParams;
 
     // Check if body uses default (needs Inhabited constraint)
@@ -797,7 +802,50 @@ class LowerCtx {
     if (this.pureBodyNeedsDo(lowered) && isMonadicRet) {
       return { tag: 'Do', body: lowered };
     }
-    return lowered;
+    // Fix default-bodied lambdas when return type ends in Unit
+    // e.g. return type `Unit → Unit` and body ends with `fun _ => (default : TSAny)` → `fun _ => ()`
+    return this.fixDefaultLambdasForUnit(lowered, retType);
+  }
+
+  /** Quick IR type → string for lambda param annotations. */
+  private printIRTypeForAnnotation(t: IRType): string | null {
+    switch (t.tag) {
+      case 'String': return 'String';
+      case 'Nat': return 'Nat';
+      case 'Int': return 'Int';
+      case 'Float': return 'Float';
+      case 'Bool': return 'Bool';
+      case 'Unit': return 'Unit';
+      case 'Array': return null; // too complex inline
+      case 'TypeRef': return t.name;
+      default: return 'TSAny';
+    }
+  }
+
+  /** Recursively replace `(default : TSAny)` / `default` inside terminal lambdas
+   *  when the corresponding position in the return type is `Unit`. */
+  private fixDefaultLambdasForUnit(e: LeanExpr, retType: IRType): LeanExpr {
+    // Walk through the return type arrow chain in lockstep with nested lambdas
+    if (e.tag === 'Lam' && retType.tag === 'Function') {
+      const innerRet = retType.ret;
+      const fixedBody = this.fixDefaultLambdasForUnit(e.body, innerRet);
+      return { ...e, body: fixedBody };
+    }
+    // If we've peeled off all lambdas and reached Unit, replace bare default with ()
+    if (retType.tag === 'Unit') {
+      if (e.tag === 'Default') return { tag: 'Lit', value: '()' };
+      if (e.tag === 'TypeAnnot' && e.expr.tag === 'Default') return { tag: 'Lit', value: '()' };
+    }
+    // Walk through let chains to reach the terminal expression
+    if (e.tag === 'Let') {
+      return { ...e, body: this.fixDefaultLambdasForUnit(e.body, retType) };
+    }
+    if (e.tag === 'Seq' && e.stmts.length > 0) {
+      const stmts = [...e.stmts];
+      stmts[stmts.length - 1] = this.fixDefaultLambdasForUnit(stmts[stmts.length - 1], retType);
+      return { ...e, stmts };
+    }
+    return e;
   }
 
   /** Check if a lowered expression contains IO calls (IO.println, IO.eprintln, etc.) */
@@ -1247,11 +1295,23 @@ class LowerCtx {
       }
 
       case 'Lambda': {
-        const ps = e.params.map(p => p.name);
+        // Annotate unused params (prefixed with _) with their type so Lean can infer them
+        const ps = e.params.map(p => {
+          const name = p.name;
+          if (name.startsWith('_') && name !== '_' && p.type) {
+            const tyStr = this.printIRTypeForAnnotation(p.type);
+            if (tyStr) return `(${name} : ${tyStr})`;
+          }
+          return name;
+        });
         const lambdaCtx = e.effect ?? ctx;
         const body = this.lowerExpr(e.body, lambdaCtx);
         const needsDo = !isPure(lambdaCtx) && this.exprHasBinds(body);
         if (needsDo) {
+          // Avoid do-do: if body is already a Do or starts with one, don't double-wrap
+          if (body.tag === 'Do') {
+            return { tag: 'Lam', params: ps.length > 0 ? ps : ['_'], body };
+          }
           return { tag: 'Lam', params: ps.length > 0 ? ps : ['_'], body: { tag: 'Do', body } };
         }
         return { tag: 'Lam', params: ps.length > 0 ? ps : ['_'], body };
@@ -1266,10 +1326,24 @@ class LowerCtx {
       }
 
       case 'Let': {
-        const val = this.lowerExpr(e.value, ctx);
+        let val = this.lowerExpr(e.value, ctx);
         const body = this.lowerExpr(e.body, ctx);
         const isRec = e.value.tag === 'Lambda' && bodyContainsVarRef(e.value.body, e.name);
-        const ty = e.annot ? this.lowerType(e.annot) : undefined;
+        let ty = e.annot ? this.lowerType(e.annot) : undefined;
+        // Annotate bare integer literals as Float when the Let/value type is Float/number.
+        // Also default to Float annotation when the literal is 0 and context is ambiguous,
+        // since TS `number` maps to Float and `0` is a common initializer.
+        if (!ty && val.tag === 'Lit' && /^-?\d+$/.test(val.value)) {
+          const vt = e.value?.type ?? e.type;
+          if (vt?.tag === 'Float') {
+            ty = { tag: 'TyName', name: 'Float' };
+          }
+          // If context type is unknown but the enclosing function returns Float, annotate
+          if (!ty && val.value === '0') {
+            const retIR = this.currentReturnIRType;
+            if (retIR?.tag === 'Float') ty = { tag: 'TyName', name: 'Float' };
+          }
+        }
         return { tag: 'Let', name: e.name, ty, value: val, body, rec: isRec };
       }
 
@@ -1329,7 +1403,15 @@ class LowerCtx {
         for (let si = 0; si < lowered.length - 1; si++) {
           const s = lowered[si];
           if (!stmtTags.has(s.tag)) {
-            lowered[si] = { tag: 'Let', name: '_', value: s, body: lowered[si + 1] };
+            // In monadic context, use Bind (let _ ←) for monadic calls like Array.forM
+            const isMonadicCall = !isPure(ctx) && s.tag === 'App' && s.fn.tag === 'Var' &&
+              ['Array.forM', 'List.forM', 'IO.eprintln', 'IO.println', 'IO.print',
+                'TSLean.Stdlib.Object.defineProperty'].some(n => s.fn.name === n);
+            if (isMonadicCall) {
+              lowered[si] = { tag: 'Bind', name: '_', value: s, body: lowered[si + 1] };
+            } else {
+              lowered[si] = { tag: 'Let', name: '_', value: s, body: lowered[si + 1] };
+            }
             lowered.splice(si + 1, 1);
             si--; // re-check after splice
           }
@@ -1663,6 +1745,18 @@ class LowerCtx {
       const args = e.args.map(a => this.lowerExprP(a, ctx));
       return { tag: 'App', fn: { tag: 'Var', name: e.fn.field },
                args: [{ tag: 'Var', name: 'self' }, ...args] };
+    }
+
+    // Array.forM / List.forM with unresolvable collection → pure ()
+    if (e.fn.tag === 'Var' && (e.fn.name === 'Array.forM' || e.fn.name === 'List.forM') && e.args.length >= 2) {
+      const collArg = e.args[e.args.length - 1];
+      const collType = collArg?.type;
+      const isUnresolvable = collType?.tag === 'String' ||
+        (collType?.tag === 'TypeRef' && ['TSAny', 'Any'].includes(collType.name));
+      if (isUnresolvable) {
+        // Collection is TSAny/String — can't iterate, degrade to pure ()
+        return { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
+      }
     }
 
     // Method calls on known types → Lean function-call style
