@@ -107,6 +107,14 @@ def filterMap (m : AssocMap α β) (f : α → β → Option β) : AssocMap α �
 def merge (m₁ m₂ : AssocMap α β) : AssocMap α β :=
   m₂.entries.foldl (fun acc (k, v) => acc.insert k v) m₁
 
+/-- Merge two maps with a conflict-resolution function. For JS spread semantics,
+    use `mergeWith (fun _ b => b)` so the right-hand side wins. -/
+def mergeWith (f : β → β → β) (m₁ m₂ : AssocMap α β) : AssocMap α β :=
+  m₂.entries.foldl (fun acc (k, v) =>
+    match acc.get? k with
+    | some existing => acc.insert k (f existing v)
+    | none => acc.insert k v) m₁
+
 def toList (m : AssocMap α β) : List (α × β) := m.entries
 def fromList (pairs : List (α × β)) : AssocMap α β :=
   pairs.foldl (fun acc (k, v) => acc.insert k v) empty

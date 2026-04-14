@@ -32,6 +32,7 @@ const LEAN_KEYWORDS = new Set([
   'not','true','false','Type','Prop',
   'for','while','repeat','at','try','catch','throw','macro','syntax','tactic','function',
   'set_option','derive','deriving','extends','override',
+  'prefix','infix','infixl','infixr','postfix','notation','scoped','local','noncomputable',
 ]);
 
 /** Wrap a name in «» if it's a Lean keyword. Replace special chars with _. */
@@ -390,9 +391,8 @@ function printExpr(e: LeanExpr, depth: number): string {
     case 'FieldAccess': {
       const obj = printExprInline(e.obj);
       const field = sanitize(e.field);
-      // For simple objects (Var, another FieldAccess), use dot notation: obj.field
-      // For complex objects (App, Paren), use explicit call to avoid Lean parser issues
-      if (e.obj.tag === 'Var' || e.obj.tag === 'FieldAccess') {
+      // Simple objects use dot notation; complex ones need parens
+      if (e.obj.tag === 'Var' || e.obj.tag === 'FieldAccess' || e.obj.tag === 'Paren') {
         return `${ind}${obj}.${field}`;
       }
       // Complex expression: field access on result → explicit form

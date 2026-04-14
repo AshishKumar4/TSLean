@@ -264,6 +264,18 @@ def isNone (s : String) : Bool := s == ""
 def getD (s : String) (d : String) : String := if s == "" then d else s
 /-- Array clear stub. -/
 def clear (_ : Array α) : Array α := #[]
+
+-- TSAny (= String) field accessors for JS properties that don't map to Lean String methods.
+-- These stubs make field access compile when TS types collapse to TSAny.
+@[inline] def size (s : String) : Float := s.length.toFloat
+@[inline] def val (s : String) : String := s
+@[inline] def search (s : String) : String := s
+@[inline] def load (s : String) : String := s
+@[inline] def parts (s : String) : Array String := (s.splitOn " ").toArray
+@[inline] def status (s : String) : String := s
+@[inline] def dispose (s : String) : String := s
+@[inline] def type_ (s : String) : String := s
+@[inline] def «prefix» (s : String) : String := s
 end String
 
 namespace Array

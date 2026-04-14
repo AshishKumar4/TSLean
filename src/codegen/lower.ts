@@ -145,10 +145,35 @@ function containsArrowType(ty: LeanTy): boolean {
   }
 }
 
-/** Compute safe deriving clauses — exclude Repr/BEq if any field has arrow type. */
-function safeDeriving(fields: LeanField[], isBranded: boolean): string[] {
+/** Compute safe deriving clauses — exclude Repr/BEq if any field has arrow type
+ *  or references a struct that can't derive Repr/BEq. */
+function safeDeriving(fields: LeanField[], isBranded: boolean, structFields?: Map<string, {name: string, type?: IRType}[]>): string[] {
   if (fields.some(f => containsArrowType(f.ty))) return ['Inhabited'];
+  // Check if any field type references a struct that itself has arrow-type fields
+  if (structFields) {
+    const hasNonDerivableRef = fields.some(f => fieldRefHasArrow(f.ty, structFields));
+    if (hasNonDerivableRef) return ['Inhabited'];
+  }
   return isBranded ? [...DEFAULT_DERIVING, 'DecidableEq'] : DEFAULT_DERIVING;
+}
+
+/** Check if a type references a struct whose fields contain arrow types. */
+function fieldRefHasArrow(ty: LeanTy, structFields: Map<string, {name: string, type?: IRType}[]>): boolean {
+  if (ty.tag === 'TyName') {
+    const fields = structFields.get(ty.name) ?? structFields.get(ty.name + 'State');
+    if (fields) {
+      // Check if any field in the referenced struct has an arrow/IO type in the IR
+      return fields.some(f => {
+        const t = f.type;
+        return t && (t.tag === 'Function' || t.tag === 'Arrow' ||
+          (t.tag === 'TypeRef' && ['IO', 'StateT', 'ExceptT'].includes(t.name)));
+      });
+    }
+  }
+  if (ty.tag === 'TyApp') return ty.args.some(a => fieldRefHasArrow(a, structFields)) || fieldRefHasArrow(ty.fn, structFields);
+  if (ty.tag === 'TyTuple') return ty.elems.some(a => fieldRefHasArrow(a, structFields));
+  if (ty.tag === 'TyParen') return fieldRefHasArrow(ty.inner, structFields);
+  return false;
 }
 
 // ─── Lowering context ───────────────────────────────────────────────────────────
@@ -429,7 +454,7 @@ class LowerCtx {
         name,
         tyParams: [],
         fields,
-        deriving: safeDeriving(fields, false),
+        deriving: safeDeriving(fields, false, this.structFields),
       });
       result.push({ tag: 'Blank' });
     }
@@ -580,7 +605,7 @@ class LowerCtx {
       return { name: rawName, ty: this.lowerType(f.type) };
     });
     const isBranded = allFields.length === 1 && allFields[0].name === 'val';
-    const deriving = inMutual ? [] : safeDeriving(fields, isBranded);
+    const deriving = inMutual ? [] : safeDeriving(fields, isBranded, this.structFields);
     // Only emit `extends` when the parent is a known local struct with all its fields merged.
     // If parent isn't found in structFields, its type won't exist in Lean — suppress extends.
     const parentKnown = d.extends_ && (this.structFields.has(d.extends_) ||
@@ -1274,25 +1299,47 @@ class LowerCtx {
         const chained = this.chainSequentialIfs(e.stmts);
         if (chained.length === 1) return this.lowerExpr(chained[0], ctx);
         const lowered = chained.map(s => this.lowerExpr(s, ctx));
-        // In monadic context, wrap non-monadic statements
+        // Fix non-terminal statements that produce values in void context.
+        // Phase 1: In monadic context, replace void-value expressions with `pure ()`.
+        // Applies to ALL positions (including terminal) — these expressions have no
+        // meaningful return value in a do-block.
         if (!isPure(ctx)) {
           for (let si = 0; si < lowered.length; si++) {
             const s = lowered[si];
-            // Bare () → pure ()
             if (s.tag === 'Lit' && s.value === '()') {
               lowered[si] = { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
-            }
-            // Bare string literal as statement → pure () (e.g., SQL template)
-            if (s.tag === 'Lit' && typeof s.value === 'string' && s.value.startsWith('"')) {
+            } else if (s.tag === 'Lit' && typeof s.value === 'string' && s.value.startsWith('"')) {
               lowered[si] = { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
-            }
-            // String interpolation as statement → pure ()
-            if (s.tag === 'SInterp') {
+            } else if (s.tag === 'SInterp') {
               lowered[si] = { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
             }
           }
         }
-        return { tag: 'Seq', stmts: lowered };
+        // Phase 2: Wrap non-terminal bare value expressions in `let _ :=` to prevent
+        // "Function expected at" and "unexpected token 'let'" errors.
+        const stmtTags = new Set(['Let', 'Bind', 'If', 'Match', 'Do', 'Pure', 'Return',
+          'Throw', 'TryCatch', 'Modify', 'Seq', 'LineComment', 'For']);
+        for (let si = 0; si < lowered.length - 1; si++) {
+          const s = lowered[si];
+          if (!stmtTags.has(s.tag)) {
+            lowered[si] = { tag: 'Let', name: '_', value: s, body: lowered[si + 1] };
+            lowered.splice(si + 1, 1);
+            si--; // re-check after splice
+          }
+        }
+        // Phase 3: In monadic context, if the terminal expression is a pure value
+        // (not a monadic action), wrap in `let _ := expr \n pure ()`.
+        if (!isPure(ctx) && lowered.length > 0) {
+          const last = lowered[lowered.length - 1];
+          if (this.isPureAppStatement(last) || last.tag === 'FieldAccess' ||
+              last.tag === 'Default' || last.tag === 'Var' ||
+              (last.tag === 'App' && last.fn.tag === 'Var' && !['IO.eprintln', 'IO.println', 'IO.print',
+                'Array.forM', 'List.forM', 'throw', 'pure'].some(n => last.fn.name?.startsWith(n)))) {
+            lowered[lowered.length - 1] = { tag: 'Let', name: '_', value: last,
+              body: { tag: 'Pure', value: { tag: 'Lit', value: '()' } } };
+          }
+        }
+        return lowered.length === 1 ? lowered[0] : { tag: 'Seq', stmts: lowered };
       }
 
       case 'DoBlock': return this.lowerDoBlock(e.stmts, ctx);
@@ -1545,7 +1592,9 @@ class LowerCtx {
       return { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [obj] };
 
     // JS-specific methods with no Lean equivalent → default
-    if (['test', 'getSourceFile', 'fileExists', 'readFile', 'writeFile', 'existsSync'].includes(mappedField))
+    if (['test', 'getSourceFile', 'fileExists', 'readFile', 'writeFile', 'existsSync',
+      'val', 'dispose', 'abort', 'signal', 'addEventListener', 'removeEventListener',
+      'then', 'catch', 'finally'].includes(mappedField))
       return defaultForType(e.type ?? { tag: 'String' });
 
     // Strip leading underscore from private fields
@@ -1629,6 +1678,22 @@ class LowerCtx {
       if (conv) {
         return { tag: 'App', fn: { tag: 'Var', name: conv }, args: [this.lowerExprP(e.args[0], ctx)] };
       }
+    }
+
+    // AssocMap.mergeWith with embedded lambda → emit proper application
+    if (e.fn.tag === 'Var' && e.fn.name === 'AssocMap.mergeWith (fun _ b => b)') {
+      const args = e.args.map(a => this.lowerExprP(a, ctx));
+      // Replace unresolved Vars with default (cross-file imports not available in Lean)
+      const unwrap = (a: LeanExpr): LeanExpr => a.tag === 'Paren' ? a.inner : a;
+      const safeArgs = args.map(a => {
+        const inner = unwrap(a);
+        return (inner.tag === 'Var' && !this.definedNames.has(inner.name) && !LEAN_BUILTIN_TYPES.has(inner.name))
+          ? { tag: 'Default' as const } : a;
+      });
+      // If all args resolved to default, the whole merge is meaningless → default
+      if (safeArgs.every(a => a.tag === 'Default')) return { tag: 'Default' };
+      return { tag: 'App', fn: { tag: 'Var', name: 'AssocMap.mergeWith' },
+               args: [{ tag: 'Lam', params: ['_', 'b'], body: { tag: 'Var', name: 'b' } }, ...safeArgs] };
     }
 
     // AssocMap operations on non-Map types → graceful default
@@ -1746,10 +1811,10 @@ class LowerCtx {
     if (isArr && method === 'filter' && args.length > 0) return { tag: 'App', fn: { tag: 'Var', name: 'Array.filter' }, args: [args[0], obj] };
     if (isArr && method === 'map' && args.length > 0) return { tag: 'App', fn: { tag: 'Var', name: 'Array.map' }, args: [args[0], obj] };
 
-    // Collection methods
+    // Collection methods — Set ops use Array (lowerType maps Set→Array)
     const isSet = fa.obj?.type?.tag === 'Set' || (fa.obj?.type?.tag === 'TypeRef' && ['Set', 'AssocSet'].includes(fa.obj?.type?.name ?? ''));
     const collMethods: Record<string, string> = isSet ? {
-      'add': 'AssocSet.insert', 'has': 'AssocSet.contains', 'delete': 'AssocSet.erase',
+      'add': 'Array.push', 'has': 'Array.contains', 'delete': 'Array.filter',
     } : {
       'set': 'AssocMap.insert', 'get': 'AssocMap.get?', 'has': 'AssocMap.contains',
       'delete': 'AssocMap.erase', 'add': 'Array.push', 'keys': 'AssocMap.keys',
@@ -1830,6 +1895,11 @@ class LowerCtx {
     let l = this.lowerExprP(e.left, ctx);
     let r = this.lowerExprP(e.right, ctx);
     const op = translateBinOp(e.op, e.left?.type ?? { tag: 'Unit' });
+    // Unwrap Option-typed left operand for ordering comparisons (< <= > >=)
+    if ((op === '<' || op === '<=' || op === '>' || op === '>=') && e.left?.type?.tag === 'Option') {
+      l = { tag: 'Paren' as const, inner: { tag: 'App' as const, fn: { tag: 'Var' as const, name: 'Option.getD' },
+            args: [l, { tag: 'Default' as const }] } };
+    }
     // Coerce numeric literal to Float when comparing with Float/Option Float
     if ((op === '==' || op === '!=' || op === '<' || op === '<=' || op === '>' || op === '>=') &&
         (r.tag === 'Lit' && /^\d+$/.test(r.value))) {
@@ -2016,7 +2086,25 @@ class LowerCtx {
     }
     const fields = e.fields
       .filter(f => f.name !== '_spread' && !f.name.startsWith('_computed'))
-      .map(f => ({ name: f.name, value: this.lowerExpr(f.value, ctx) }));
+      .map(f => {
+        let val = this.lowerExpr(f.value, ctx);
+        // Lambda assigned to a field of type TSAny/String → replace with default
+        // (callbacks can't be represented as Lean Strings)
+        const fieldType = f.value?.type;
+        if (val.tag === 'Lam' && (fieldType?.tag === 'String' ||
+            (fieldType?.tag === 'TypeRef' && ['TSAny', 'Any', 'String'].includes(fieldType.name)))) {
+          val = { tag: 'Default' };
+        }
+        // Also check the struct field type from the struct definition
+        const structDef = this.structFields.get(e.typeName ?? '') ?? this.structFields.get((e.typeName ?? '') + 'State');
+        if (val.tag === 'Lam' && structDef) {
+          const fieldDef = structDef.find(sf => sf.name === f.name);
+          if (fieldDef?.type?.tag === 'String' || (fieldDef?.type?.tag === 'TypeRef' && ['TSAny', 'Any'].includes(fieldDef.type.name))) {
+            val = { tag: 'Default' };
+          }
+        }
+        return { name: f.name, value: val };
+      });
     if (fields.length === 0) return { tag: 'Default' };
     return { tag: 'StructLit', fields };
   }
