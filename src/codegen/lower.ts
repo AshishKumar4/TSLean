@@ -700,6 +700,18 @@ class LowerCtx {
         retTy = { tag: 'TyApp', fn: { tag: 'TyName', name: 'IO' }, args: [baseRetTy] };
       }
     }
+    // Post-check: if return type is IO but body has Modify/State ops, upgrade to StateT
+    if (this.tyStartsWith(retTy, 'IO') && !this.tyStartsWith(retTy, 'StateT') &&
+        this.exprContainsModify(body)) {
+      const baseRetTy = this.stripIO(retTy);
+      // Find the self-param state type, or use Unit
+      const selfParam = d.params.find(p => p.name === 'self');
+      const stateTy = selfParam?.type?.tag === 'TypeRef'
+        ? { tag: 'TyName' as const, name: this.classToState.get(selfParam.type.name) ?? selfParam.type.name + 'State' }
+        : { tag: 'TyName' as const, name: 'Unit' };
+      retTy = { tag: 'TyApp', fn: { tag: 'TyName', name: 'StateT' },
+                args: [stateTy, { tag: 'TyName', name: 'IO' }, baseRetTy] };
+    }
 
     return {
       tag: 'Def',
@@ -745,6 +757,22 @@ class LowerCtx {
   }
 
   /** Check if a lowered expression contains IO calls (IO.println, IO.eprintln, etc.) */
+  /** Check if a lowered expression contains Modify nodes (state mutations). */
+  private exprContainsModify(e: LeanExpr): boolean {
+    const check = (expr: LeanExpr): boolean => {
+      if (expr.tag === 'Modify') return true;
+      if (expr.tag === 'App') return check(expr.fn) || expr.args.some(check);
+      if (expr.tag === 'Let') return check(expr.value) || check(expr.body);
+      if (expr.tag === 'Seq') return expr.stmts.some(check);
+      if (expr.tag === 'If') return check(expr.then_) || check(expr.else_);
+      if (expr.tag === 'Do') return check(expr.body);
+      if (expr.tag === 'Bind') return check(expr.value) || check(expr.body);
+      if (expr.tag === 'TryCatch') return check(expr.body) || (expr.handler ? check(expr.handler) : false);
+      return false;
+    };
+    return check(e);
+  }
+
   private exprContainsIO(e: LeanExpr): boolean {
     const IO_FNS = ['IO.println', 'IO.eprintln', 'IO.print', 'IO.eprint', 'IO.sleep',
       'IO.getEnv', 'IO.getArgs', 'IO.monoNanosNow', 'IO.Process.exit'];
