@@ -1707,7 +1707,15 @@ class LowerCtx {
             } else {
               // Annotate bare `default` with TSAny to prevent stuck typeclass
               const ty = s.tag === 'Default' && !s.ty ? { tag: 'TyName' as const, name: 'TSAny' } : undefined;
-              lowered[si] = { tag: 'Let', name: '_', ty, value: s, body: lowered[si + 1] };
+              let nextBody = lowered[si + 1];
+              // Cascade: if the next element is ALSO a bare non-statement expression AND
+              // there are more elements after it (i.e., it's non-terminal), wrap it too.
+              // Don't wrap if it's the LAST element — that's the return value.
+              if (si + 2 < lowered.length && !stmtTags.has(nextBody.tag) && nextBody.tag !== 'Default') {
+                nextBody = { tag: 'Let', name: '_', value: nextBody, body: lowered[si + 2] };
+                lowered.splice(si + 2, 1);
+              }
+              lowered[si] = { tag: 'Let', name: '_', ty, value: s, body: nextBody };
             }
             lowered.splice(si + 1, 1);
             si--; // re-check after splice
