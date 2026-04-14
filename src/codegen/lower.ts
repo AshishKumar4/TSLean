@@ -2075,7 +2075,10 @@ class LowerCtx {
     if (isStr && method === 'includes' && args.length > 0) return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'includes' }, args };
 
     // Array methods → function-call style
-    if (isArr && method === 'join' && args.length > 0) return { tag: 'App', fn: { tag: 'Var', name: 'String.intercalate' }, args: [args[0], obj] };
+    if (isArr && method === 'join' && args.length > 0) {
+      const listObj: LeanExpr = { tag: 'FieldAccess', obj: { tag: 'Paren' as const, inner: obj }, field: 'toList' };
+      return { tag: 'App', fn: { tag: 'Var', name: 'String.intercalate' }, args: [args[0], listObj] };
+    }
     if (isArr && method === 'push' && args.length > 0) return { tag: 'App', fn: { tag: 'Var', name: 'Array.push' }, args: [obj, args[0]] };
     if (isArr && method === 'filter' && args.length > 0) return { tag: 'App', fn: { tag: 'Var', name: 'Array.filter' }, args: [args[0], obj] };
     if (isArr && method === 'map' && args.length > 0) return { tag: 'App', fn: { tag: 'Var', name: 'Array.map' }, args: [args[0], obj] };
