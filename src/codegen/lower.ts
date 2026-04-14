@@ -1830,9 +1830,22 @@ class LowerCtx {
 
   private lowerIf(e: Extract<IRExpr, { tag: 'IfThenElse' }>, ctx: Effect): LeanExpr {
     let cond = this.lowerExpr(e.cond, ctx);
-    // Fix non-Bool conditions
+    // Fix non-Bool conditions: wrap in appropriate coercion
     if (e.cond.type?.tag === 'Option' && cond.tag !== 'App') {
       cond = { tag: 'FieldAccess', obj: cond, field: 'isSome' };
+    } else if (e.cond.type && e.cond.type.tag !== 'Bool' && e.cond.type.tag !== 'Option') {
+      // Non-Bool, non-Option: wrap in TSLean.toBool for JS truthiness semantics
+      // (covers String, TSAny, Float, TypeRef, etc.)
+      const isBoolExpr = cond.tag === 'App' && cond.fn.tag === 'Var' &&
+        ['TSLean.toBool', 'Array.contains', 'AssocMap.contains', 'String.startsWith',
+          'String.endsWith', 'String.includes'].some(n => cond.fn.name === n);
+      const isBoolField = cond.tag === 'FieldAccess' && ['isSome', 'isNone', 'isEmpty'].includes(cond.field);
+      const isBoolBinOp = cond.tag === 'BinOp';
+      const isBoolUnOp = cond.tag === 'UnOp';
+      const isBoolLit = cond.tag === 'Lit' && (cond.value === 'true' || cond.value === 'false');
+      if (!isBoolExpr && !isBoolField && !isBoolBinOp && !isBoolUnOp && !isBoolLit) {
+        cond = { tag: 'App', fn: { tag: 'Var', name: 'TSLean.toBool' }, args: [cond] };
+      }
     }
     let then_ = this.lowerExpr(e.then, ctx);
     let else_ = this.lowerExpr(e.else_, ctx);
