@@ -41,6 +41,17 @@ const INEXPRESSIBLE_UTILITY_TYPES = new Set([
   'Awaited',
 ]);
 
+// Lean built-in types that have valid field accessors — don't collapse these to default.
+const LEAN_BUILTIN_TYPES = new Set([
+  'String', 'Nat', 'Int', 'Float', 'Bool', 'Unit', 'Char',
+  'Array', 'List', 'Option', 'Except',
+  'AssocMap', 'AssocSet', 'HashMap', 'HashSet',
+  'TSAny', 'TSError', 'Any',
+  'IO', 'StateT', 'ExceptT', 'EIO', 'BaseIO',
+  'URL', 'TextEncoder', 'TextDecoder', 'AbortController', 'WebSocketPair',
+  'Observability', 'ChannelEventMap',
+]);
+
 // ─── Public API ─────────────────────────────────────────────────────────────────
 
 /** Lower an IR module to a LeanAST file. */
@@ -1444,6 +1455,9 @@ class LowerCtx {
       const stateName = this.classToState.get(rawName) ?? rawName;
       const knownFields = this.structFields.get(stateName) ?? this.structFields.get(rawName) ?? this.structFields.get(rawName + 'State');
       if (knownFields && !knownFields.some(f => f.name === mappedField)) return defaultForType(e.type ?? { tag: 'String' });
+      // Unknown external types (no struct definition, not locally defined) → graceful default
+      if (!knownFields && !LEAN_BUILTIN_TYPES.has(rawName) && !this.definedNames.has(rawName))
+        return defaultForType(e.type ?? { tag: 'String' });
     }
 
     return { tag: 'FieldAccess', obj, field: mappedField };
@@ -1471,6 +1485,13 @@ class LowerCtx {
     if (e.fn.tag === 'FieldAccess') {
       const result = this.lowerMethodCall(e, ctx);
       if (result) return result;
+      // Method on unknown external type → graceful default
+      const recvType = e.fn.obj?.type;
+      if (recvType?.tag === 'TypeRef' && !LEAN_BUILTIN_TYPES.has(recvType.name) &&
+          !this.structFields.has(recvType.name) && !this.structFields.has(recvType.name + 'State') &&
+          !this.classToState.has(recvType.name) && !this.definedNames.has(recvType.name)) {
+        return defaultForType(e.type);
+      }
     }
 
     // JS type conversion functions: String(x) → toString x

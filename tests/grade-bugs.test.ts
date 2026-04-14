@@ -78,17 +78,21 @@ describe('Bug A: s!"..." string interpolation fires for template literals', () =
 
   it('template with field access in interpolation', () => {
     const fa: IRExpr = { tag: 'FieldAccess', obj: varExpr('u', TyRef('User')), field: 'name', type: TyString, effect: Pure };
-    const m = mod([{
-      tag: 'FuncDef', name: 'describe', typeParams: [],
-      params: [{ name: 'u', type: TyRef('User') }],
-      retType: TyString, effect: Pure,
-      body: {
-        tag: 'BinOp', op: 'Concat',
-        left: { tag: 'BinOp', op: 'Concat', left: litStr('User: '), right: fa, type: TyString, effect: Pure },
-        right: litStr('.'),
-        type: TyString, effect: Pure,
+    const m = mod([
+      // Define User struct so field access works
+      { tag: 'StructDef', name: 'User', typeParams: [], fields: [{ name: 'name', type: TyString }] },
+      {
+        tag: 'FuncDef', name: 'describe', typeParams: [],
+        params: [{ name: 'u', type: TyRef('User') }],
+        retType: TyString, effect: Pure,
+        body: {
+          tag: 'BinOp', op: 'Concat',
+          left: { tag: 'BinOp', op: 'Concat', left: litStr('User: '), right: fa, type: TyString, effect: Pure },
+          right: litStr('.'),
+          type: TyString, effect: Pure,
+        },
       },
-    }]);
+    ]);
     const code = generateLean(m);
     const fn = code.slice(code.indexOf('def describe'));
     // Should produce s!"User: {u.name}." or fall back to ++

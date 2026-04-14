@@ -441,12 +441,13 @@ describe('generateLean – expression coverage', () => {
 
   // ─── Access ─────────────────────────────────────────────────────────────────
 
-  it('FieldAccess → obj.field', () => {
+  it('FieldAccess on unknown external type → default', () => {
     const code = expr({
       tag: 'FieldAccess', obj: varExpr('point', TyRef('Point')), field: 'x',
       type: TyFloat, effect: Pure,
     });
-    expect(code).toContain('point.x');
+    // External type Point not in structFields → field access collapses to default
+    expect(code).toMatch(/0.*Float|default/);
   });
 
   it('IndexAccess → obj.getD idx default', () => {
