@@ -30,7 +30,7 @@ const LEAN_KEYWORDS = new Set([
   'end','open','import','theorem','lemma','example','variable','universe','abbrev',
   'opaque','partial','mutual','private','protected','section','attribute','and','or',
   'not','true','false','Type','Prop',
-  'for','while','repeat','at','try','catch','throw','macro','syntax','tactic',
+  'for','while','repeat','at','try','catch','throw','macro','syntax','tactic','function',
   'set_option','derive','deriving','extends','override',
 ]);
 

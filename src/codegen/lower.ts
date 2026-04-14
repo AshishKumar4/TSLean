@@ -166,6 +166,8 @@ class LowerCtx {
   externalImportNames = new Set<string>();
   /** Current function's lowered return type — used to reconcile none vs default. */
   currentReturnType: LeanTy | undefined;
+  /** Parameters whose Lean type is Option but TS narrows away — need auto-unwrap. */
+  optionParams = new Set<string>();
 
   // ─── Pre-passes ─────────────────────────────────────────────────────────────
 
@@ -677,8 +679,15 @@ class LowerCtx {
     // Track return type for none→default reconciliation
     const prevRetType = this.currentReturnType;
     this.currentReturnType = this.lowerRetSig(fixedEffect, this.lowerType(d.retType));
+    // Track Option parameters for auto-unwrap
+    const prevOptionParams = new Set(this.optionParams);
+    this.optionParams.clear();
+    for (const p of d.params) {
+      if (p.type.tag === 'Option') this.optionParams.add(p.name);
+    }
     const body = this.lowerFuncBody(d.body, fixedEffect, d.retType, d.name);
     this.currentReturnType = prevRetType;
+    this.optionParams = prevOptionParams;
 
     // Check if body uses default (needs Inhabited constraint)
     const needsInhabited = this.exprUsesDefault(body) && d.typeParams.length > 0;
@@ -706,9 +715,12 @@ class LowerCtx {
       const baseRetTy = this.stripIO(retTy);
       // Find the self-param state type, or use Unit
       const selfParam = d.params.find(p => p.name === 'self');
-      const stateTy = selfParam?.type?.tag === 'TypeRef'
-        ? { tag: 'TyName' as const, name: this.classToState.get(selfParam.type.name) ?? selfParam.type.name + 'State' }
-        : { tag: 'TyName' as const, name: 'Unit' };
+      let stateName = 'Unit';
+      if (selfParam?.type?.tag === 'TypeRef') {
+        const raw = selfParam.type.name;
+        stateName = this.classToState.get(raw) ?? (raw.endsWith('State') ? raw : raw + 'State');
+      }
+      const stateTy = { tag: 'TyName' as const, name: stateName };
       retTy = { tag: 'TyApp', fn: { tag: 'TyName', name: 'StateT' },
                 args: [stateTy, { tag: 'TyName', name: 'IO' }, baseRetTy] };
     }
@@ -791,6 +803,9 @@ class LowerCtx {
   private exprContainsModify(e: LeanExpr): boolean {
     const check = (expr: LeanExpr): boolean => {
       if (expr.tag === 'Modify') return true;
+      // Calls to self-methods are likely StateT-returning
+      if (expr.tag === 'App' && expr.args.length > 0 &&
+          expr.args[0].tag === 'Var' && expr.args[0].name === 'self') return true;
       if (expr.tag === 'App') return check(expr.fn) || expr.args.some(check);
       if (expr.tag === 'Let') return check(expr.value) || check(expr.body);
       if (expr.tag === 'Seq') return expr.stmts.some(check);
@@ -1181,6 +1196,11 @@ class LowerCtx {
         if (e.name === 'Boolean') return { tag: 'Var', name: 'TSLean.toBool' };
         if (e.name === 'String') return { tag: 'Var', name: 'toString' };
         if (e.name === 'Number') return { tag: 'Var', name: 'TSLean.toFloat' };
+        // Auto-unwrap Option params when TS narrowed the type away from Option
+        if (this.optionParams.has(e.name) && e.type?.tag !== 'Option') {
+          return { tag: 'Paren', inner: { tag: 'App', fn: { tag: 'Var', name: 'Option.getD' },
+                   args: [{ tag: 'Var', name: e.name }, { tag: 'Default' }] } };
+        }
         return { tag: 'Var', name: e.name };
       }
 
@@ -1251,10 +1271,20 @@ class LowerCtx {
         const chained = this.chainSequentialIfs(e.stmts);
         if (chained.length === 1) return this.lowerExpr(chained[0], ctx);
         const lowered = chained.map(s => this.lowerExpr(s, ctx));
-        // In monadic context, wrap bare () in middle of sequence with pure ()
+        // In monadic context, wrap non-monadic statements
         if (!isPure(ctx)) {
           for (let si = 0; si < lowered.length; si++) {
-            if (lowered[si].tag === 'Lit' && lowered[si].value === '()') {
+            const s = lowered[si];
+            // Bare () → pure ()
+            if (s.tag === 'Lit' && s.value === '()') {
+              lowered[si] = { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
+            }
+            // Bare string literal as statement → pure () (e.g., SQL template)
+            if (s.tag === 'Lit' && typeof s.value === 'string' && s.value.startsWith('"')) {
+              lowered[si] = { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
+            }
+            // String interpolation as statement → pure ()
+            if (s.tag === 'SInterp') {
               lowered[si] = { tag: 'Pure', value: { tag: 'Lit', value: '()' } };
             }
           }
@@ -1270,7 +1300,11 @@ class LowerCtx {
         if (val.tag === 'None' && this.currentReturnType && !this.retTypeIsOption()) {
           val = { tag: 'Default' };
         }
-        return !isPure(ctx) ? { tag: 'Pure', value: val } : val;
+        // Don't double-wrap: if val is already Pure, return it as-is
+        if (!isPure(ctx) && val.tag !== 'Pure') {
+          return { tag: 'Pure', value: val };
+        }
+        return val;
       }
 
       case 'StructLit': return this.lowerStructLit(e, ctx);
@@ -1493,7 +1527,7 @@ class LowerCtx {
       'pop': 'back?', 'push': 'push', 'reduce': 'foldl', 'filter': 'filter',
       'map': 'map', 'find': 'find?', 'some': 'any', 'every': 'all',
       'reverse': 'reverse', 'flat': 'join', 'flatMap': 'flatMap', 'concat': 'append',
-      'indexOf': 'indexOf?', 'slice': 'extract',
+      'indexOf': 'indexOf?', 'slice': 'drop',
       'split': isString ? 'splitOn' : 'split',
       'join': isString ? 'intercalate' : 'foldl (· ++ ·) ""',
       'length': isString ? 'length' : 'size',
@@ -1676,18 +1710,27 @@ class LowerCtx {
     if (isTsApi) return { tag: 'Default' };
 
     // String methods
-    if (isStr && method === 'split') return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'splitOn' }, args: args.length > 0 ? args : [{ tag: 'Lit', value: '""' }] };
+    if (isStr && method === 'split') {
+      // String.splitOn returns List, wrap in .toArray for Array compatibility
+      const splitCall = { tag: 'App' as const, fn: { tag: 'FieldAccess' as const, obj, field: 'splitOn' },
+                          args: args.length > 0 ? args : [{ tag: 'Lit' as const, value: '""' }] };
+      return { tag: 'FieldAccess', obj: { tag: 'Paren' as const, inner: splitCall }, field: 'toArray' };
+    }
     if (isStr && method === 'replace' && args.length >= 2) {
       const pattern = args[0];
       const replacement = args[1];
       // Regex patterns or callback replacements → can't be expressed in Lean String.replace
-      const isRegex = pattern.tag === 'LitString' && pattern.value.startsWith('/');
-      const isCallback = replacement.tag === 'Lambda';
+      const isRegex = (pattern.tag === 'Lit' || pattern.tag === 'LitString') &&
+                      typeof pattern.value === 'string' && (pattern.value.startsWith('"/') || pattern.value.startsWith('/'));
+      const isCallback = replacement.tag === 'Lambda' || replacement.tag === 'Lam';
       if (isRegex || isCallback) {
-        // Graceful: return the original string (no-op replacement)
         return obj;
       }
       return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'replace' }, args: [args[0], args[1]] };
+    }
+    if (isStr && (method === 'slice' || method === 'substring') && args.length > 0) {
+      const dropped = { tag: 'App' as const, fn: { tag: 'FieldAccess' as const, obj, field: 'drop' }, args: [args[0]] };
+      return { tag: 'FieldAccess', obj: { tag: 'Paren' as const, inner: dropped }, field: 'toString' };
     }
     if (isStr && method === 'startsWith' && args.length > 0) return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'startsWith' }, args };
     if (isStr && method === 'endsWith' && args.length > 0) return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'endsWith' }, args };
@@ -1852,7 +1895,8 @@ class LowerCtx {
         return { tag: 'Lit', value: '()' };
       }
       // Variable reassignment → let rebinding (Lean is immutable, this shadows the old value)
-      return { tag: 'Let', name: e.target.name, value: val, body: { tag: 'Lit', value: '()' } };
+      const letBody = !isPure(ctx) ? { tag: 'Pure' as const, value: { tag: 'Lit' as const, value: '()' } } : { tag: 'Lit' as const, value: '()' };
+      return { tag: 'Let', name: e.target.name, value: val, body: letBody };
     }
     // FieldAccess on a non-self variable → struct update via let rebinding
     if (e.target.tag === 'FieldAccess' && e.target.obj.tag === 'Var') {
