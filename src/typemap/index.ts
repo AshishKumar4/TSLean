@@ -196,6 +196,7 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
     'Disposable', 'AsyncDisposable', 'EventTarget', 'Event',
     'TextEncoder', 'TextDecoder', 'SubtleCrypto', 'CryptoKey', 'CryptoKeyPair',
     'Generator', 'AsyncGenerator', 'IterableIterator', 'AsyncIterableIterator',
+    'Date', 'RegExp', 'JSON', 'Math', 'console', 'Proxy', 'Reflect',
   ]);
   if (webApiTypes.has(name)) return TyRef('TSAny');
   return TyRef(name);
