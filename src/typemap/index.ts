@@ -290,6 +290,8 @@ function typeStr(t: IRType): string {
     }
     case 'Result':    return `Except ${irTypeToLean(t.err, true)} ${irTypeToLean(t.ok, true)}`;
     case 'TypeRef': {
+      // Indexed access types like D["length"] → TSAny (no Lean equivalent)
+      if (t.name.includes('[') || t.name.includes('"') || t.name.includes('`')) return 'TSAny';
       // Map TS-specific types to Any (no Lean equivalent)
        const tsOnlyTypes = new Set(['CompilerHost', 'SourceFile', 'Program', 'TypeChecker',
         'Node', 'Statement', 'Declaration', 'Expression', 'FunctionDeclaration',
@@ -311,7 +313,7 @@ function typeStr(t: IRType): string {
       if (tsOnlyTypes.has(t.name)) return 'TSAny';
       return t.args.length === 0 ? t.name : `${t.name} ${t.args.map(a => irTypeToLean(a, true)).join(' ')}`;
     }
-    case 'TypeVar':   return t.name;
+    case 'TypeVar':   return t.name.includes('[') || t.name.includes('"') ? 'TSAny' : t.name;
     case 'Structure': return t.name;
     case 'Inductive': return t.name;
     case 'Dependent': return `(${t.param} : ${typeStr(t.paramType)}) → ${typeStr(t.body)}`;

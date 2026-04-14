@@ -757,6 +757,17 @@ class LowerCtx {
   }
 
   /** Check if a lowered expression contains IO calls (IO.println, IO.eprintln, etc.) */
+  /** Check if an expression's underlying type is TSAny/String (looking through casts). */
+  private varIsTSAny(e: IRExpr): boolean {
+    if (!e) return false;
+    if (e.tag === 'Cast') return this.varIsTSAny(e.expr);
+    const t = e.type;
+    if (!t) return false;
+    if (t.tag === 'String') return true;
+    if (t.tag === 'TypeRef' && (t.name === 'TSAny' || t.name === 'Any' || t.name === 'unknown' || t.name === 'object')) return true;
+    return false;
+  }
+
   /** Check if an App expression is a pure (non-monadic) function call that shouldn't be a bare statement. */
   private isPureAppStatement(e: LeanExpr): boolean {
     if (e.tag !== 'App' || !e.fn) return false;
@@ -1289,6 +1300,11 @@ class LowerCtx {
         const mapped = knownCtors[name];
         if (mapped) {
           if (mapped === 'default' || mapped === '#[]') return { tag: mapped === '#[]' ? 'ArrayLit' : 'Default', elems: [] } as LeanExpr;
+          // When surrounding type expects TSAny/String but ctor returns a WebAPI type, use default
+          const exprType = e.type;
+          if (exprType && (exprType.tag === 'String' || (exprType.tag === 'TypeRef' && (exprType.name === 'TSAny' || exprType.name === 'Any')))) {
+            return { tag: 'Default' };
+          }
           return args.length === 0
             ? { tag: 'Var', name: mapped }
             : { tag: 'App', fn: { tag: 'Var', name: mapped }, args };
@@ -1499,6 +1515,11 @@ class LowerCtx {
     const isMapType = e.obj?.type?.tag === 'Map' ||
       (e.obj?.type?.tag === 'TypeRef' && (e.obj.type.name === 'AssocMap' || e.obj.type.name === 'Map'));
     if (isMapType && !['size', 'toList', 'keys', 'values'].includes(mappedField)) {
+      // If the underlying value is actually TSAny/String (e.g., parameter typed as TSAny
+      // but cast to object for field access), AssocMap.getD won't work — use default
+      if (obj.tag === 'Default' || this.varIsTSAny(e.obj)) {
+        return defaultForType(e.type ?? { tag: 'String' });
+      }
       return { tag: 'App',
         fn: { tag: 'Var', name: 'AssocMap.getD' },
         args: [obj, { tag: 'Lit', value: JSON.stringify(e.field) }, { tag: 'Default' }] };
@@ -1642,7 +1663,18 @@ class LowerCtx {
 
     // String methods
     if (isStr && method === 'split') return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'splitOn' }, args: args.length > 0 ? args : [{ tag: 'Lit', value: '""' }] };
-    if (isStr && method === 'replace' && args.length >= 2) return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'replace' }, args: [args[0], args[1]] };
+    if (isStr && method === 'replace' && args.length >= 2) {
+      const pattern = args[0];
+      const replacement = args[1];
+      // Regex patterns or callback replacements → can't be expressed in Lean String.replace
+      const isRegex = pattern.tag === 'LitString' && pattern.value.startsWith('/');
+      const isCallback = replacement.tag === 'Lambda';
+      if (isRegex || isCallback) {
+        // Graceful: return the original string (no-op replacement)
+        return obj;
+      }
+      return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'replace' }, args: [args[0], args[1]] };
+    }
     if (isStr && method === 'startsWith' && args.length > 0) return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'startsWith' }, args };
     if (isStr && method === 'endsWith' && args.length > 0) return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'endsWith' }, args };
     if (isStr && method === 'includes' && args.length > 0) return { tag: 'App', fn: { tag: 'FieldAccess', obj, field: 'includes' }, args };
@@ -1717,6 +1749,14 @@ class LowerCtx {
       }
       // Non-Option types: use != default as fallback
       return { tag: 'BinOp', op: '!=', left: this.lowerExprP(e.left, ctx), right: { tag: 'Default' } };
+    }
+    // Option == literal: wrap literal in `some` (e.g., code == some 401)
+    if ((e.op === 'Eq' || e.op === 'Ne') && e.left?.type?.tag === 'Option' &&
+        (e.right.tag === 'LitNat' || e.right.tag === 'LitFloat' || e.right.tag === 'LitString' || e.right.tag === 'LitBool')) {
+      const l = this.lowerExprP(e.left, ctx);
+      const r = this.lowerExprP(e.right, ctx);
+      const wrappedR = { tag: 'App' as const, fn: { tag: 'Var' as const, name: 'some' }, args: [r] };
+      return { tag: 'BinOp', op: e.op === 'Eq' ? '==' : '!=', left: l, right: wrappedR };
     }
     // String interpolation for Concat chains
     if (e.op === 'Concat' || (e.op === 'Add' && e.left?.type?.tag === 'String')) {
