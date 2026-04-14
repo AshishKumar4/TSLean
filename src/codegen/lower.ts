@@ -1578,9 +1578,11 @@ class LowerCtx {
         if (monad.tag === 'Lam') {
           return { tag: 'Let', name: e.name, value: monad, body };
         }
-        // Default/sorry values: also use let :=
+        // Default/sorry values: also use let := (annotate bare default with TSAny)
         if (monad.tag === 'Default' || monad.tag === 'Sorry') {
-          return { tag: 'Let', name: e.name, value: monad, body };
+          const ty = (monad.tag === 'Default' && !monad.ty && e.name !== '_')
+            ? { tag: 'TyName' as const, name: 'TSAny' } : undefined;
+          return { tag: 'Let', name: e.name, ty, value: monad, body };
         }
         return { tag: 'Bind', name: e.name, value: monad, body };
       }
@@ -1789,6 +1791,12 @@ class LowerCtx {
         // `!x` on String → x.isEmpty (JS truthy: empty string is falsy)
         if (e.op === 'Not' && e.operand?.type?.tag === 'String') {
           return { tag: 'FieldAccess', obj: this.lowerExpr(e.operand, ctx), field: 'isEmpty' };
+        }
+        // `!x` on TSAny/non-Bool → !(TSLean.toBool x)
+        if (e.op === 'Not' && e.operand?.type && e.operand.type.tag !== 'Bool') {
+          const inner = this.lowerExprP(e.operand, ctx);
+          return { tag: 'UnOp', op: '!', operand: { tag: 'Paren' as const, inner:
+            { tag: 'App', fn: { tag: 'Var', name: 'TSLean.toBool' }, args: [inner] } } };
         }
         const op = e.op === 'Not' ? '!' : e.op === 'Neg' ? '-' : '~~~';
         return { tag: 'UnOp', op, operand: this.lowerExprP(e.operand, ctx) };
@@ -2585,6 +2593,11 @@ class LowerCtx {
     const base = this.lowerExpr(e.base, ctx);
     const realFields = e.fields.filter(f => !f.name.startsWith('_computed'));
     if (realFields.length === 0) return base;
+    // If the base type is TSAny/String (no struct info), degrade to base (can't update non-struct)
+    const baseType = e.base?.type;
+    if (baseType?.tag === 'String' || (baseType?.tag === 'TypeRef' && ['TSAny', 'Any', 'String'].includes(baseType.name))) {
+      return base;
+    }
     const fields = realFields.map(f => ({ name: f.name, value: this.lowerExpr(f.value, ctx) }));
     return { tag: 'StructUpdate', base, fields };
   }
