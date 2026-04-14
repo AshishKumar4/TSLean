@@ -518,4 +518,10 @@ end AssocSet
 def Array.dedup [BEq α] (arr : Array α) : Array α :=
   arr.foldl (fun acc x => if acc.contains x then acc else acc.push x) #[]
 
+-- ToString instances for generated code compatibility
+instance [ToString α] [ToString β] [BEq α] : ToString (AssocMap α β) where
+  toString m := "{" ++ String.intercalate ", " (m.toList.map (fun (k, v) => s!"{k}: {v}")) ++ "}"
+
+
+
 end TSLean.Stdlib.HashMap

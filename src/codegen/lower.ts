@@ -1030,6 +1030,20 @@ class LowerCtx {
     return false;
   }
 
+  /** Check if a type name appears as the inner type of any Option struct field.
+   *  e.g., `ContinuationDeferred` is used in `deferred : Option ContinuationDeferred` */
+  private isTypeUsedAsOptionField(typeName: string): boolean {
+    for (const [, fields] of this.structFields) {
+      for (const f of fields) {
+        if (f.type?.tag === 'Option') {
+          const inner = f.type.inner;
+          if (inner?.tag === 'TypeRef' && inner.name === typeName) return true;
+        }
+      }
+    }
+    return false;
+  }
+
   /** Check if an IR expression body contains while-loop patterns (let rec _while/_dowhile). */
   private bodyContainsWhileLoop(e: IRExpr): boolean {
     if (!e) return false;
@@ -1983,11 +1997,10 @@ class LowerCtx {
       return { tag: 'Default' };
     }
 
-    // Field access on Option type: unwrap with getD before accessing inner fields
-    // Check both the IR expression type and the struct field type (for self.optionalField.subfield)
+    // Field access on Option type: unwrap with getD before accessing inner fields.
     const isOptionalAccess = e.obj?.type?.tag === 'Option';
-    const isOptionalStructField = e.obj?.tag === 'FieldAccess' && e.obj.obj?.tag === 'Var' &&
-      e.obj.obj.name === 'self' && this.isStructFieldOption(e.obj.field);
+    const isOptionalStructField = e.obj?.tag === 'FieldAccess' &&
+      this.isStructFieldOption(e.obj.field);
     if ((isOptionalAccess || isOptionalStructField) &&
         !['isSome', 'isNone', 'getD', 'bind', 'map', 'get'].includes(e.field)) {
       const inner = this.lowerExpr(e.obj, ctx);
@@ -2029,10 +2042,13 @@ class LowerCtx {
     if (mappedField === 'toString' || mappedField.startsWith('function'))
       return { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [obj] };
 
-    // JS-specific methods with no Lean equivalent → default
+    // JS-specific methods/fields with no Lean equivalent → default
     if (['test', 'getSourceFile', 'fileExists', 'readFile', 'writeFile', 'existsSync',
       'val', 'dispose', 'abort', 'signal', 'addEventListener', 'removeEventListener',
-      'then', 'catch', 'finally'].includes(mappedField))
+      'then', 'catch', 'finally', 'send', 'close', 'terminate', 'postMessage',
+      'accept', 'respond', 'respondWith', 'waitUntil', 'passThroughOnException',
+      'write', 'read', 'pipe', 'pipeThrough', 'pipeTo', 'getReader', 'getWriter',
+      'cancel', 'tee', 'lock', 'releaseLock'].includes(mappedField))
       return defaultForType(e.type ?? { tag: 'String' });
 
     // Strip leading underscore from private fields
@@ -2613,9 +2629,12 @@ class LowerCtx {
       if (realFields.length > 0) {
         const pairs: LeanExpr[] = realFields.map(f => {
           let val = this.lowerExpr(f.value, ctx);
-          // Coerce non-String values to toString for AssocMap String TSAny compatibility
+          // Coerce only clearly non-String typed values (Bool, Float, Array, custom structs)
+          // Don't coerce Var/FieldAccess/App that might already be String/TSAny
           const valType = f.value?.type;
-          if (valType && valType.tag !== 'String' && valType.tag !== 'TypeRef') {
+          const needsCoerce = valType && (valType.tag === 'Bool' || valType.tag === 'Float' ||
+            valType.tag === 'Nat' || valType.tag === 'Int' || valType.tag === 'Array');
+          if (needsCoerce) {
             val = { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [val] };
           }
           return { tag: 'TupleLit' as const,
