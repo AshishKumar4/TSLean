@@ -234,6 +234,8 @@ instance : Hashable TSAny := inferInstance
 instance : DecidableEq TSAny := inferInstance
 instance : Ord TSAny := inferInstance
 
+
+
 /-- Runtime type check (stub — always returns "object"). -/
 def typeOf {α : Type} (_ : α) : String := "object"
 
