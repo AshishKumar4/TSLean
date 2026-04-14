@@ -2302,9 +2302,11 @@ class LowerCtx {
       if (knownFields && !knownFields.some(f => f.name === field)) {
         return { tag: 'Lit', value: '()' };
       }
+      // Annotate the lambda param with the state type to help Lean resolve struct update
+      const stParam = stateTypeName ? `(s : ${stateTypeName})` : 's';
       return {
         tag: 'Modify',
-        fn: { tag: 'Lam', params: ['s'], body: { tag: 'StructUpdate', base: { tag: 'Var', name: 's' }, fields: [{ name: field, value: val }] } },
+        fn: { tag: 'Lam', params: [stParam], body: { tag: 'StructUpdate', base: { tag: 'Var', name: 's' }, fields: [{ name: field, value: val }] } },
       };
     }
     if (e.target.tag === 'Var') {
