@@ -25,6 +25,7 @@ import TSLean.Veil.DSL
 import TSLean.Veil.DSLExamples
 import TSLean.Generated.SelfHost.Bootstrap
 import TSLean.JS.AxiomAudit
+import TSLean.JS.HeapTests
 import TSLean.JS.Tests
 
 open TSLean TSLean.Stdlib.HashMap TSLean.DO

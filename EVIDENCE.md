@@ -81,3 +81,51 @@ $ git diff --check
 ```
 
 The Phase 1 commands generate and check `evidence/phase1-primitives-manifest.json` from the immutable `evidence/phase1-primitives-input.json`; `verify` checks that same current manifest and does not check or rewrite Phase 0 evidence. The two scans and `git diff --check` produced no output. The production `TSLean.JS` target excludes executable tests and audit commands; the full build reaches both through `TSLean.Tests`. `AxiomAudit.lean` audits all 43 exported theorems and reports at most Lean's foundational `propext` and `Quot.sound`; the new slice declares no assumptions and does not use `Classical.choice`.
+
+## 2026-08-06 — Phase 1 ordinary heap
+
+The ordinary-heap slice is based on `f6b40c647d1a1e9490989884c3c33e02a6a1c619` on `rebuild/semantic-core`. Its public state API is `Heap.empty`, `Heap.size`, `Heap.get?`, `Heap.allocate`, `Heap.defineOwnProperty`, `Heap.createDataProperty`, `Heap.deleteProperty`, `Heap.preventExtensions`, and `Heap.setPrototypeOf`. Read-only object operations are `OrdinaryObject.getOwnProperty`, `OrdinaryObject.ownPropertyKeys`, and `Prototype.lookup`. Descriptor input is represented exactly by `DescriptorUpdate` and `FieldUpdate`, so an absent field remains distinct from a present `undefined`, `none` getter, or `none` setter. Failures are separated into `HeapFault`, `DefinePropertyFault`, `DescriptorSyntaxFault`, `DescriptorRejection`, and `PrototypeFault`; ordinary invariant rejection returns `false`, while malformed references and descriptor syntax return typed errors.
+
+The representation boundary is closed: `OrderedProps`, `ObjectRecord`, and `Heap` have private constructors; ordered-property insertion/deletion and heap replacement are private; callers cannot replace a property table or reset extensibility. `OrderedProps.WellFormed` is the executable conjunction of bidirectional map/slot position agreement, duplicate-free occupied string slots, duplicate-free occupied symbol slots, duplicate-free `ownKeys`, equality of key count and map size, exact string and symbol tombstone counts, and the post-compaction bound for both order arrays. `Heap.WellFormed` additionally requires every readable object to have well-formed properties, every object-valued descriptor reference to be allocated, every present accessor reference to resolve to a function-kind object, every represented object to be ordinary, every prototype reference to be allocated, and every allocated prototype chain to terminate within `heap.size + 1` steps. Array-index keys are sorted numerically; other strings and symbols retain insertion order, with delete/reinsert moving a key to the end of its partition.
+
+The proved heap results are allocation freshness, one-slot growth, stability of previous lookups, reference-identity object equality, empty-heap validity, unchanged heaps for rejected descriptor definitions and deletions, and nonextensible prototype rejection before candidate traversal. Preservation is not yet proved for private `OrderedProps.insert` or `OrderedProps.delete`, including threshold-crossing and deletion compaction. Duplicate-free partitioned `ownKeys` has not yet been derived as a theorem. Preservation of complete `Heap.WellFormed` is also still TODO for allocation and every successful public mutation: `defineOwnProperty`, `createDataProperty`, `deleteProperty`, `preventExtensions`, and `setPrototypeOf`. The executable adversarial, churn, ordering, descriptor, reference, and prototype tests are evidence, not substitutes for those proofs.
+
+One local `HeapTests.lean` run measured these bounded smoke workloads:
+
+```text
+heap-scale strings keys=10000 buildMs=403 ownKeys10Ms=252
+heap-scale symbols keys=10000 buildMs=320 ownKeys10Ms=136
+heap-scale indices keys=10000 buildMs=248 ownKeys10Ms=283
+heap-churn cycles=100000 stringSlots=62 symbolSlots=62 ms=2251
+```
+
+The smoke limits are 2,500 ms per 10,000-key construction, 1,500 ms for ten enumerations, and 7,000 ms for 100,000 string-and-symbol delete/reinsert cycles. They are machine-local regression limits, not portable complexity proofs. The implementation uses expected-O(1) hash lookup/update/insertion, amortized-O(1) deletion with bounded tombstone compaction, and O(n log n) key enumeration because array indices are sorted.
+
+Commands and results:
+
+```text
+$ bun run js:trust
+JS trust checks passed: 57 elaborated proof declarations
+JS trust gate passed: 57 proof declarations
+
+$ bun scripts/check-js-axioms.mjs --self-test
+synthetic environment audit passed
+
+$ bun run evidence:generate
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase1-heap-manifest.json
+8a2d52b2361905023d65d1679d82d6662184d09a5e5238280d3798d954adf530  evidence/phase1-heap-manifest.json
+
+$ bun run evidence:check
+
+$ bun run verify
+Test Files  41 passed (41)
+Tests  1602 passed | 8 todo (1610)
+Build completed successfully (136 jobs).
+
+$ git diff --check
+```
+
+The manifest check also rejected a deliberately changed source hash as stale at line 69 before the canonical manifest was regenerated. `evidence/phase1-heap-input.json` and `evidence/phase1-heap-manifest.json` are new files; the Phase 0 and primitive manifests were not rewritten. `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target the heap input. `evidence:primitives:generate` and `evidence:primitives:check` retain explicit primitive-history commands, while the baseline historical commands remain unchanged.
+
+The full 136-job build still emits warnings from the legacy global runtime and generated/stub modules, including existing `sorry` declarations. Those warnings are outside the isolated `TSLean.JS` trust boundary and are not hidden or converted into a repository-wide soundness claim. The JS gate scans the complete production JS runtime and barrel for forbidden declaration tokens and non-isolated imports, then audits all 57 elaborated proof declarations against only `propext`, `Classical.choice`, and `Quot.sound`.

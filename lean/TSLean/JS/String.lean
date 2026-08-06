@@ -6,6 +6,7 @@ namespace TSLean.JS
 /-- An ECMAScript string, represented exactly as UTF-16 code units. -/
 structure JSString where
   codeUnits : List UInt16
+  deriving DecidableEq, Hashable
 
 namespace JSString
 
@@ -57,6 +58,19 @@ def isEmpty (value : JSString) : Bool := value.codeUnits.isEmpty
 
 /-- Compares the exact UTF-16 code-unit sequences. -/
 def equal (left right : JSString) : Bool := decide (left.codeUnits = right.codeUnits)
+
+/-- Hash-table equality is exact UTF-16 representation equality. -/
+instance : BEq JSString := ⟨equal⟩
+
+/-- Exact UTF-16 equality is lawful. -/
+instance : LawfulBEq JSString where
+  eq_of_beq := by
+    intro left right equal
+    cases left
+    cases right
+    simp [BEq.beq, JSString.equal] at equal
+    simp_all
+  rfl := by intro value; cases value; simp [BEq.beq, JSString.equal]
 
 end JSString
 end TSLean.JS

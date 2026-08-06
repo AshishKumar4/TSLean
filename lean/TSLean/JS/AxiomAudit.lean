@@ -1,45 +1,4 @@
-import TSLean.JS.Theorems
+import TSLean.JS.AxiomAuditMeta
+import TSLean.JS.HeapTheorems
 
-#print axioms TSLean.JS.undefined_toBoolean
-#print axioms TSLean.JS.null_toBoolean
-#print axioms TSLean.JS.boolean_toBoolean
-#print axioms TSLean.JS.number_toBoolean
-#print axioms TSLean.JS.string_toBoolean
-#print axioms TSLean.JS.bigint_toBoolean
-#print axioms TSLean.JS.symbol_toBoolean
-#print axioms TSLean.JS.object_toBoolean
-#print axioms TSLean.JS.typeof_undefined
-#print axioms TSLean.JS.typeof_null
-#print axioms TSLean.JS.typeof_boolean
-#print axioms TSLean.JS.typeof_number
-#print axioms TSLean.JS.typeof_string
-#print axioms TSLean.JS.typeof_bigint
-#print axioms TSLean.JS.typeof_symbol
-#print axioms TSLean.JS.strictEqual_undefined
-#print axioms TSLean.JS.strictEqual_null_undefined
-#print axioms TSLean.JS.strictEqual_object
-#print axioms TSLean.JS.sameValue_object
-#print axioms TSLean.JS.sameValueZero_object
-#print axioms TSLean.JS.strictEqual_symbol
-#print axioms TSLean.JS.sameValue_symbol
-#print axioms TSLean.JS.sameValueZero_symbol
-#print axioms TSLean.JS.positiveZero_isZero
-#print axioms TSLean.JS.negativeZero_isZero
-#print axioms TSLean.JS.positiveInfinity_isInfinite
-#print axioms TSLean.JS.negativeInfinity_isInfinite
-#print axioms TSLean.JS.canonicalNaN_isNaN
-#print axioms TSLean.JS.strictEqual_signedZero
-#print axioms TSLean.JS.sameValue_signedZero
-#print axioms TSLean.JS.sameValueZero_signedZero
-#print axioms TSLean.JS.strictEqual_canonicalNaN
-#print axioms TSLean.JS.sameValue_canonicalNaN
-#print axioms TSLean.JS.sameValueZero_canonicalNaN
-#print axioms TSLean.JS.jsString_append_codeUnits
-#print axioms TSLean.JS.jsString_length_append
-#print axioms TSLean.JS.jsString_equal_iff
-#print axioms TSLean.JS.jsString_equal_refl
-#print axioms TSLean.JS.jsString_toLeanString_empty
-#print axioms TSLean.JS.jsString_bmp_decode
-#print axioms TSLean.JS.jsString_astralMin_decode
-#print axioms TSLean.JS.propertyKey_equal_refl
-#print axioms TSLean.JS.propertyKey_equal_iff
+#audit_proofs TSLean.JS

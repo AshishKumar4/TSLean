@@ -1,8 +1,14 @@
 import TSLean.JS.Conversion
+import TSLean.JS.Descriptor
 import TSLean.JS.Equality
+import TSLean.JS.Heap
+import TSLean.JS.HeapTheorems
 import TSLean.JS.Id
 import TSLean.JS.Number
+import TSLean.JS.OrderedProps
+import TSLean.JS.OrdinaryObject
 import TSLean.JS.PropertyKey
+import TSLean.JS.Prototype
 import TSLean.JS.String
 import TSLean.JS.Theorems
 import TSLean.JS.Value
