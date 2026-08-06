@@ -213,6 +213,36 @@ function validateFormalDebt(value) {
   }
 }
 
+function validateExecutableAssumptions(value) {
+  const ledger = object(value, 'executableAssumptions');
+  exactKeys(ledger, ['statement', 'assumptions'], 'executableAssumptions');
+  if (typeof ledger.statement !== 'string' || ledger.statement.length === 0) {
+    fail('executableAssumptions.statement must be non-empty');
+  }
+  if (!Array.isArray(ledger.assumptions) || ledger.assumptions.length === 0) {
+    fail('executableAssumptions.assumptions must be a non-empty array');
+  }
+  const ids = new Set();
+  for (const [index, assumption] of ledger.assumptions.entries()) {
+    exactKeys(assumption, ['id', 'primitives', 'statement'], `executableAssumptions.assumptions[${index}]`);
+    if (typeof assumption.id !== 'string' || assumption.id.length === 0) {
+      fail(`executableAssumptions.assumptions[${index}].id must be non-empty`);
+    }
+    if (ids.has(assumption.id)) fail(`duplicate executable assumption id ${assumption.id}`);
+    ids.add(assumption.id);
+    const primitives = object(assumption.primitives, `executableAssumptions.assumptions[${index}].primitives`);
+    if (
+      Object.keys(primitives).length === 0 ||
+      Object.values(primitives).some((primitive) => typeof primitive !== 'string' || primitive.length === 0)
+    ) {
+      fail(`executableAssumptions.assumptions[${index}].primitives must contain named non-empty strings`);
+    }
+    if (typeof assumption.statement !== 'string' || assumption.statement.length === 0) {
+      fail(`executableAssumptions.assumptions[${index}].statement must be non-empty`);
+    }
+  }
+}
+
 function selectedFiles(config, label) {
   const directory = repositoryPath(config.directory, `${label}.directory`);
   if (typeof config.suffix !== 'string' || config.suffix.length === 0) fail(`${label}.suffix must be non-empty`);
@@ -339,6 +369,7 @@ const expectedKeys = [
   'hashGroups',
 ];
 if (input.formalDebt !== undefined) expectedKeys.push('formalDebt');
+if (input.executableAssumptions !== undefined) expectedKeys.push('executableAssumptions');
 exactKeys(input, expectedKeys, 'input');
 if (input.schemaVersion !== 1) fail('unsupported evidence input schema');
 if (typeof input[revisionKey] !== 'string' || input[revisionKey].length === 0) fail(`${revisionKey} must be non-empty`);
@@ -346,6 +377,7 @@ if (typeof input.branch !== 'string' || input.branch.length === 0) fail('branch 
 if (!Array.isArray(input.knownTodos)) fail('knownTodos must be an array');
 validateCounts(input.counts);
 if (input.formalDebt !== undefined) validateFormalDebt(input.formalDebt);
+if (input.executableAssumptions !== undefined) validateExecutableAssumptions(input.executableAssumptions);
 
 const branch = textCommand('git', ['branch', '--show-current']);
 if (branch !== input.branch) fail(`expected branch ${input.branch}, found ${branch || '<detached HEAD>'}`);
@@ -370,6 +402,7 @@ const manifest = {
     lake: textCommand('lake', ['--version'], join(root, 'lean')),
   },
   counts: input.counts,
+  ...(input.executableAssumptions === undefined ? {} : { executableAssumptions: input.executableAssumptions }),
   ...(input.formalDebt === undefined ? {} : { formalDebt: input.formalDebt }),
   knownTodos,
   hashes,

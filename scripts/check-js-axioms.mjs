@@ -73,6 +73,7 @@ function readExpectedAuditCount(path) {
     'hashGroups',
   ];
   if (input.formalDebt !== undefined) expectedKeys.push('formalDebt');
+  if (input.executableAssumptions !== undefined) expectedKeys.push('executableAssumptions');
   exactKeys(input, expectedKeys, 'evidence input');
   if (input.schemaVersion !== 1) fail('unsupported evidence input schema');
   for (const key of ['outputPath', 'baseRevision', 'branch']) {
@@ -82,6 +83,9 @@ function readExpectedAuditCount(path) {
   object(input.validation, 'evidence input validation');
   object(input.hashGroups, 'evidence input hashGroups');
   if (input.formalDebt !== undefined) object(input.formalDebt, 'evidence input formalDebt');
+  if (input.executableAssumptions !== undefined) {
+    object(input.executableAssumptions, 'evidence input executableAssumptions');
+  }
   const counts = object(input.counts, 'counts');
   exactKeys(counts, ['tests', 'lean', 'corpus', 'auditedTheorems', 'lint', 'build'], 'counts');
   exactKeys(counts.tests, ['files', 'passed', 'failed', 'todo'], 'counts.tests');

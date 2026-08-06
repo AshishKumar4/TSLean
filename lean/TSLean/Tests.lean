@@ -32,6 +32,8 @@ import TSLean.JS.ExecutionTests
 import TSLean.JS.FunctionScaleTests
 import TSLean.JS.FunctionTests
 import TSLean.JS.HeapTests
+import TSLean.JS.PrimitiveScaleTests
+import TSLean.JS.PrimitiveTests
 import TSLean.JS.Tests
 
 open TSLean TSLean.Stdlib.HashMap TSLean.DO

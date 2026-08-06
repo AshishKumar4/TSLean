@@ -304,3 +304,67 @@ $ git diff --check
 A deliberately changed arrays manifest hash was rejected by `evidence:check` as stale before the canonical manifest was regenerated. `evidence/phase1-callable-input.json` now resolves every source-derived validation and hash group from immutable revision `5b4da5a67288cf920bcba80d1e897000b73e90f4`; its manifest remains byte-for-byte unchanged at SHA-256 `2223fd8bcf3e36a433976ae42d567b820923c9db7eb7857066452664e391f883`. Current `evidence:generate`, `evidence:check`, and `js:trust` commands target arrays evidence. Explicit baseline, primitive, heap, execution, and callable generate/check commands retain historical reproduction.
 
 The full 161-job build still emits warnings from legacy global runtime and generated/stub modules, including existing `sorry` declarations. Those warnings remain outside the isolated `TSLean.JS` trust boundary and are not suppressed or presented as repository-wide soundness. The direct Lean interpreter also reaches its recursion limit in the 10,000-key copy smoke workload; the checked timing command therefore builds and runs the native `js-array-scale-tests` executable. The JS gate scans the production runtime and barrel, excludes support/test modules, and audits all 130 discovered proof declarations against only `propext`, `Classical.choice`, and `Quot.sound`.
+
+## 2026-08-06 - Phase 1 primitive conversions and operators
+
+This slice is based on `3450468e82ccf70895ba892c636c707d851b4162` on `rebuild/semantic-core`. Its public additions are `CoercionFault`, `Numeric`, primitive `toNumber`, `toNumeric`, `toString`, `toPropertyKey`, and `toPrimitive`; same-domain numeric `add`, `subtract`, `multiply`, `divide`, `remainder`, and `lessThan?`; and primitive `add`, `subtract`, `multiply`, `divide`, `remainder`, `abstractRelationalComparison`, `<`, `>`, `<=`, and `>=`. `ToNumeric` preserves BigInt and applies `ToNumber` otherwise. Arithmetic rejects mixed Number/BigInt domains, BigInt division and remainder use truncation toward zero, zero BigInt divisors produce a RangeError-category fault, addition performs string concatenation after primitive conversion, and relational comparison preserves the specification's unordered result internally before the public operators map it to `false`.
+
+`StringNumericValue` parsing operates on exact UTF-16 code units. It trims every ECMAScript WhiteSpace and LineTerminator code unit, accepts signed decimal and exponent forms, signed `Infinity`, and unsigned `0x`, `0o`, and `0b` forms, and rejects malformed tails, numeric separators, signed radix prefixes, `NaN` text, and lone-surrogate input. String-to-BigInt accepts trimmed signed decimal and unsigned radix-prefixed integer grammar, maps an empty trimmed string to zero, and retains arbitrary-size integer precision. Decimal Number parsing keeps 1,100 significant digits plus a sticky digit, computes exact integer round-to-nearest-even boundaries, and checks the `Float.ofScientific` candidate against that result. Number formatting uses exact binary64 ratios and an integer shortest-roundtrip search; it does not call `Float.toString`. The checked boundary set includes signed zero, infinities, NaNs, subnormal/normal transitions, maximum finite values, the `1e-6`/`1e-7` and `1e20`/`1e21` formatting transitions, values around `2^53`, overflow, underflow, and exact halfway decimal cases.
+
+Number/BigInt equality and ordering do not convert BigInt through Float. `compareBigInt` decomposes finite binary64 values into an exact integer ratio, compares that ratio against the arbitrary-size integer, preserves signed finite ordering, handles infinities directly, and returns unordered for NaN. Mixed relational operators and loose equality use this exact path, including values outside the safe-integer range and fractional Number operands.
+
+The Node differential test builds the `js-primitive-oracle` lake target and compares its output with JavaScript executed by Node. It made 7,133 oracle comparisons: 322 numeric-string parses, 278 binary64 formatting cases, 504 coercion/property-key/loose-equality cases, 24 selected operator/error cases, 5 focused prior-BigInt-defect cases, and 6,000 deterministic seeded operator fuzz cases. The fuzz covers all nine arithmetic and relational operators over undefined, null, booleans, arbitrary binary64 bit patterns, up-to-192-bit signed BigInts, strings, and symbols. These are executable differential observations, not a general ECMAScript correspondence proof.
+
+The isolated scale run parsed 100,000-digit decimal, exponent, whitespace, malformed-UTF-16, and zero-BigInt inputs, then parsed and operated on 10,000-digit decimal and hexadecimal BigInts. The BigInt portion measured 31 ms; the complete interpreted run took 3.56 seconds real time (0.68 user, 0.59 system). The 30-second assertion is a machine-local smoke limit, not a portable performance guarantee or complexity theorem.
+
+The executable TCB ledger is structured separately from proof axioms in `evidence/phase1-primitive-ops-input.json` and its generated manifest. It records Lean's `Float.ofBits`/`Float.toBits`, `Float.add`/`sub`/`mul`/`div`, executable Float less-than, and `Float.ofScientific`. Boundary and differential tests exercise these runtime primitives. No theorem claims that they implement ECMAScript correctly. Formatting, remainder, and exact Number/BigInt comparison use integer algorithms rather than trusted Float formatting, remainder, or mixed-domain conversion.
+
+The manifest records 181 discovered proof declarations allowlisted against `propext`, `Classical.choice`, and `Quot.sound`; this count is not a completeness claim. The ten formal-debt obligations from the arrays slice are carried forward byte-for-byte: four ordered-property preservation/correspondence obligations, two heap preservation obligations, the general blocked-array-shrink obligation, and three hook-conditional copy/iterator/machine preservation obligations. Primitive executable tests and new concrete theorems do not discharge them.
+
+Commands and results:
+
+```text
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase1-primitive-ops-manifest.json
+797332bca03e552b0a19d75043f771ca33966a6c366542a2bbd46d94dc2f10e9  evidence/phase1-primitive-ops-manifest.json
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase1-primitive-ops-manifest.json
+797332bca03e552b0a19d75043f771ca33966a6c366542a2bbd46d94dc2f10e9  evidence/phase1-primitive-ops-manifest.json
+
+$ bun run evidence:check
+$ bun run evidence:baseline:check
+$ bun run evidence:primitives:check
+$ bun run evidence:heap:check
+$ bun run evidence:execution:check
+$ bun run evidence:callable:check
+$ bun run evidence:arrays:check
+
+$ bun run js:trust
+JS trust checks passed: 181 elaborated proof declarations
+JS trust gate passed: 181 proof declarations
+
+$ bun scripts/check-js-axioms.mjs --self-test
+synthetic environment audit passed
+
+$ cd lean && lake build js-primitive-oracle && /usr/bin/time -p lake env lean TSLean/JS/PrimitiveScaleTests.lean
+Build completed successfully (78 jobs).
+primitive-bigint-scale digits=10000 ms=31
+real 3.56
+user 0.68
+sys 0.59
+
+$ bun run verify
+Test Files  43 passed (43)
+Tests  1609 passed | 8 todo (1617)
+Build completed successfully (166 jobs).
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 279
+Unpacked size: 2.27MB
+
+$ git diff --check
+```
+
+A deliberately changed primitive-ops source hash was rejected by `evidence:check` as stale at manifest line 167 before regeneration. `evidence/phase1-arrays-input.json` now resolves all source-derived validations and hash groups from immutable revision `3450468e82ccf70895ba892c636c707d851b4162`; its manifest remains byte-for-byte unchanged at SHA-256 `533cdabb76d201e7e52252c5ee52ca465f74dd6e2bff61da6585e082da82a4f8`. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target primitive-ops evidence. Explicit baseline, primitives, heap, execution, callable, and arrays generate/check commands preserve historical reproduction.
+
+The primitive-ops manifest hashes are source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, full JS runtime `sha256:07a6194373dfe7b3aa30a70eff52e2dc5fe64d824ee21088a62299f0e5d3ed4b`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, and infrastructure `sha256:b2ba80be809c030f0b392ef81bd176f442abdfd12b0e9e35290aa071e59c9097`. Infrastructure includes the evidence and trust generators, Node differential test, Lean oracle source, and lake target definition. The full build retains existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary; they are neither suppressed nor presented as repository-wide soundness.

@@ -25,6 +25,9 @@ import TSLean.JS.ObjectAccess
 import TSLean.JS.PropertyKey
 import TSLean.JS.Prototype
 import TSLean.JS.Platform
+import TSLean.JS.PrimitiveConversion
+import TSLean.JS.PrimitiveOperators
+import TSLean.JS.PrimitiveTheorems
 import TSLean.JS.String
 import TSLean.JS.Theorems
 import TSLean.JS.Typeof

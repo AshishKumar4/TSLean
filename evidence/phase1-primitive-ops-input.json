@@ -1,26 +1,63 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase1-arrays-manifest.json",
-  "baseRevision": "5b4da5a67288cf920bcba80d1e897000b73e90f4",
+  "outputPath": "evidence/phase1-primitive-ops-manifest.json",
+  "baseRevision": "3450468e82ccf70895ba892c636c707d851b4162",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": {
-      "files": 42,
-      "passed": 1603,
+      "files": 43,
+      "passed": 1609,
       "failed": 0,
       "todo": 8
     },
     "lean": {
-      "jobs": 161,
+      "jobs": 166,
       "status": "passed"
     },
     "corpus": {
       "entries": 102,
       "red": 102
     },
-    "auditedTheorems": 130,
+    "auditedTheorems": 181,
     "lint": "passed",
     "build": "passed"
+  },
+  "executableAssumptions": {
+    "statement": "These are executable trusted-computing-base assumptions, not proof axioms. No theorem claims that these Lean runtime primitives implement ECMAScript correctly.",
+    "assumptions": [
+      {
+        "id": "lean-float-bits",
+        "primitives": {
+          "ofBits": "Float.ofBits",
+          "toBits": "Float.toBits"
+        },
+        "statement": "Lean's Float bit conversion primitives preserve the intended finite binary64 encodings used by JSNumber."
+      },
+      {
+        "id": "lean-float-arithmetic",
+        "primitives": {
+          "add": "Float.add",
+          "subtract": "Float.sub",
+          "multiply": "Float.mul",
+          "divide": "Float.div"
+        },
+        "statement": "Lean's Float arithmetic primitives execute the binary64 operations used by ECMAScript Number arithmetic."
+      },
+      {
+        "id": "lean-float-comparison",
+        "primitives": {
+          "lessThan": "LT.lt Float"
+        },
+        "statement": "Lean's executable Float ordering agrees with the finite binary64 ordering used by ECMAScript Number comparison."
+      },
+      {
+        "id": "lean-float-of-scientific",
+        "primitives": {
+          "ofScientific": "Float.ofScientific"
+        },
+        "statement": "Lean's Float.ofScientific supplies an executable decimal candidate; exact integer rounding checks and corrects that candidate at binary64 boundaries."
+      }
+    ]
   },
   "formalDebt": {
     "counts": {
@@ -121,35 +158,29 @@
     "testFiles": {
       "directory": "tests",
       "suffix": ".test.ts",
-      "countPath": "tests.files",
-      "revision": "3450468e82ccf70895ba892c636c707d851b4162"
+      "countPath": "tests.files"
     },
     "todos": {
       "directory": "tests",
       "suffix": ".test.ts",
-      "countPath": "tests.todo",
-      "revision": "3450468e82ccf70895ba892c636c707d851b4162"
+      "countPath": "tests.todo"
     },
     "corpus": {
       "path": "spec/corpus/counterexamples.json",
       "entriesPath": "corpus.entries",
-      "redPath": "corpus.red",
-      "revision": "3450468e82ccf70895ba892c636c707d851b4162"
+      "redPath": "corpus.red"
     },
     "lineCounts": []
   },
   "hashGroups": {
     "source": {
-      "paths": ["src"],
-      "revision": "3450468e82ccf70895ba892c636c707d851b4162"
+      "paths": ["src"]
     },
     "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "3450468e82ccf70895ba892c636c707d851b4162"
+      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
     },
     "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "3450468e82ccf70895ba892c636c707d851b4162"
+      "paths": ["spec/corpus"]
     },
     "infrastructure": {
       "paths": [
@@ -158,10 +189,12 @@
         "scripts/generate-evidence-manifest.mjs",
         "scripts/check-js-axioms.mjs",
         "tests/js-trust.test.ts",
+        "tests/js-primitives-differential.test.ts",
         "tests/lean-fixtures/axiom-audit-synthetic.lean",
-        "tests/package.test.ts"
-      ],
-      "revision": "3450468e82ccf70895ba892c636c707d851b4162"
+        "tests/package.test.ts",
+        "lean/TSLean/JS/PrimitiveOracleTests.lean",
+        "lean/lakefile.toml"
+      ]
     }
   }
 }
