@@ -6,6 +6,7 @@ namespace TSLean.JS
 /-- An ECMAScript Number represented by its exact IEEE-754 binary64 encoding. -/
 structure JSNumber where
   bits : UInt64
+  deriving DecidableEq
 
 namespace JSNumber
 

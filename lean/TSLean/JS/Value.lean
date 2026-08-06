@@ -13,10 +13,12 @@ inductive Primitive where
   | string (value : JSString)
   | bigint (value : Int)
   | symbol (id : SymbolId)
+  deriving DecidableEq
 
 /-- An ECMAScript value is either a primitive or an identity-bearing heap reference. -/
 inductive Value where
   | primitive (value : Primitive)
   | object (ref : RefId)
+  deriving DecidableEq
 
 end TSLean.JS

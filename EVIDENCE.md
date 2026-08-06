@@ -129,3 +129,55 @@ $ git diff --check
 The manifest check also rejected a deliberately changed source hash as stale at line 69 before the canonical manifest was regenerated. `evidence/phase1-heap-input.json` and `evidence/phase1-heap-manifest.json` are new files; the Phase 0 and primitive manifests were not rewritten. `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target the heap input. `evidence:primitives:generate` and `evidence:primitives:check` retain explicit primitive-history commands, while the baseline historical commands remain unchanged.
 
 The full 136-job build still emits warnings from the legacy global runtime and generated/stub modules, including existing `sorry` declarations. Those warnings are outside the isolated `TSLean.JS` trust boundary and are not hidden or converted into a repository-wide soundness claim. The JS gate scans the complete production JS runtime and barrel for forbidden declaration tokens and non-isolated imports, then audits all 57 elaborated proof declarations against only `propext`, `Classical.choice`, and `Quot.sound`.
+
+## 2026-08-06 — Phase 1 execution semantics
+
+The execution slice is based on `cfeda92b09ba4990c61ef70066df61df4004674a` on `rebuild/semantic-core`. Its completion API distinguishes normal, return, throw, labeled or unlabeled break, and labeled or unlabeled continue. `Completion.bind` and `JSM.bind` invoke continuations only for normal completion. `Control.tryCatch` catches only JavaScript throws; `Control.tryFinally` always runs finalization after a JavaScript completion and lets an abrupt finalizer replace the prior completion; switch, labeled-statement, and loop handlers consume only transfers owned by that construct. `Control.whileLoop` is total and consumes one unit of machine fuel before each condition check.
+
+The state model deliberately uses the direct total transformer `JSM P α := Machine P → RunResult P α`, rather than composing exception and state transformers whose ordering could obscure commit behavior. `RunResult.done`, `RunResult.exhausted`, and `RunResult.fault` all carry the final committed machine. Heap, lexical-cell and environment arenas, platform state, trace, and fuel therefore survive JavaScript abrupt completion and model faults according to each operation's explicit result. `Environment.withEnvironment` restores only the dynamic `currentEnv`; allocations, heap/platform changes, trace, and fuel remain committed.
+
+`Machine.initial` creates one global environment. Cells and environments have append-only stable identities; declaration creates a TDZ cell, initialization is one-shot, nearest lexical lookup implements shadowing, and TDZ, unresolved-name, and immutable-write failures are JavaScript errors. Invalid identities, duplicate declarations, and repeated initialization are separate model faults. `External.now`, `External.random`, and synchronous modeled `External.fetch` consume pure scripted platform state and append ordered trace events. Fetch rejection is a JavaScript throw, while script exhaustion and host faults are model faults and cannot be caught by JavaScript catch.
+
+Promises, jobs, microtasks, asynchronous fetch, callable objects, function invocation, constructors, `this`, generators, and async functions remain out of scope. The model does not claim complete ECMAScript statement, environment-record, host, or error-object semantics. The proved execution results cover the three monad laws; abrupt-bind preservation; selected catch/finally cases; fresh cell/environment allocation; nearest lexical resolution; successful mutable write; repeated-initialization rejection; trace order; indexed and exhausted scripted platform operations; and fuel decrement/exhaustion. Full machine/environment well-formedness preservation, complete control-handler matrices as theorems, closure semantics beyond stable captured environment identities, platform refinement against a real host, and a general correspondence theorem to ECMAScript are unproved boundaries.
+
+Executable coverage includes the complete 5 × 5 prior/finalizer completion matrix; catch/finally trace order and override cases; switch, labeled break, and loop transfer ownership; committed heap/cell/trace mutation across return and throw; lexical shadowing, captured stable environments, TDZ, immutable writes, and restoration of `currentEnv` across every terminal form; repeated initialization for mutable and immutable cells; successful and rejected scripted platform operations, untaken-effect exclusion, platform-fault commitment, and catch exclusion; and bounded-loop and recursive fuel exhaustion. `ExecutionScaleTests.lean` allocates 100,000 cells, allocates 100,000 child environments, emits 100,000 events, and materializes the ordered trace. One local run completed in 8.06 seconds real time (7.49 user, 0.18 system); this is a machine-local smoke measurement, not a portable performance guarantee or complexity proof.
+
+Commands and results:
+
+```text
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase1-execution-manifest.json
+a90c0e141153cba34bf6600c18b22c911afcfbb7cc0f990f813f1259dc94e650  evidence/phase1-execution-manifest.json
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase1-execution-manifest.json
+a90c0e141153cba34bf6600c18b22c911afcfbb7cc0f990f813f1259dc94e650  evidence/phase1-execution-manifest.json
+
+$ bun run evidence:check
+
+$ bun run evidence:baseline:check
+$ bun run evidence:primitives:check
+$ bun run evidence:heap:check
+
+$ bun run js:trust
+JS trust checks passed: 93 elaborated proof declarations
+JS trust gate passed: 93 proof declarations
+
+$ bun scripts/check-js-axioms.mjs --self-test
+synthetic environment audit passed
+
+$ cd lean && /usr/bin/time -p lake env lean TSLean/JS/ExecutionScaleTests.lean
+real 8.06
+user 7.49
+sys 0.18
+
+$ bun run verify
+Test Files  42 passed (42)
+Tests  1603 passed | 8 todo (1611)
+Build completed successfully (146 jobs).
+
+$ git diff --check
+```
+
+A deliberately changed execution source hash was rejected by `evidence:check` as stale at line 69 before the canonical manifest was regenerated. `evidence/phase1-heap-input.json` now resolves every source-derived validation and hash group from immutable `cfeda92`; its checked manifest remains byte-for-byte unchanged at SHA-256 `8a2d52b2361905023d65d1679d82d6662184d09a5e5238280d3798d954adf530`. The current `evidence:generate`, `evidence:check`, and `js:trust` commands target execution evidence. Explicit baseline, primitive, and heap commands retain historical reproduction.
+
+The full 146-job build still emits warnings from legacy global runtime and generated/stub modules, including existing `sorry` declarations. Those warnings remain outside the isolated `TSLean.JS` trust boundary and are not suppressed or presented as repository-wide soundness. The JS gate mechanically discovers and audits all 93 elaborated proof declarations in the production JS runtime while excluding support/test modules from the production barrel.

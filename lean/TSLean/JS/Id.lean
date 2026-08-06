@@ -5,7 +5,50 @@ namespace TSLean.JS
 /-- A nominal identity for an ECMAScript object allocated in a heap. -/
 structure RefId where
   value : Nat
-  deriving DecidableEq
+  deriving DecidableEq, Hashable
+
+instance : BEq RefId := ⟨fun left right => decide (left = right)⟩
+
+/-- Reference hash-table equality is identity equality. -/
+instance : LawfulBEq RefId where
+  eq_of_beq := by intro left right equal; simpa [BEq.beq] using equal
+  rfl := by intro id; simp [BEq.beq]
+
+/-- A stable lexical-environment arena identity. -/
+structure EnvId where
+  value : Nat
+  deriving DecidableEq, Hashable
+
+instance : BEq EnvId := ⟨fun left right => decide (left = right)⟩
+
+/-- Environment hash-table equality is identity equality. -/
+instance : LawfulBEq EnvId where
+  eq_of_beq := by intro left right equal; simpa [BEq.beq] using equal
+  rfl := by intro id; simp [BEq.beq]
+
+/-- A stable lexical-cell arena identity. -/
+structure CellId where
+  value : Nat
+  deriving DecidableEq, Hashable
+
+instance : BEq CellId := ⟨fun left right => decide (left = right)⟩
+
+/-- Cell hash-table equality is identity equality. -/
+instance : LawfulBEq CellId where
+  eq_of_beq := by intro left right equal; simpa [BEq.beq] using equal
+  rfl := by intro id; simp [BEq.beq]
+
+/-- A stable function-table identity reserved for closure records. -/
+structure FunctionId where
+  value : Nat
+  deriving DecidableEq, Hashable
+
+instance : BEq FunctionId := ⟨fun left right => decide (left = right)⟩
+
+/-- Function hash-table equality is identity equality. -/
+instance : LawfulBEq FunctionId where
+  eq_of_beq := by intro left right equal; simpa [BEq.beq] using equal
+  rfl := by intro id; simp [BEq.beq]
 
 /-- The fixed identities from ECMAScript's well-known symbol registry. -/
 inductive WellKnownSymbol where

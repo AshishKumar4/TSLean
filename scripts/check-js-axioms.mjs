@@ -144,26 +144,40 @@ function stripLeanComments(source) {
   return result;
 }
 
-function validateSource(file, source) {
+function moduleRole(name) {
+  const stem = name.endsWith('.lean') ? name.slice(0, -'.lean'.length) : name;
+  const leaf = stem.split('.').at(-1);
+  return /(?:Tests|Audit|Meta)$/.test(leaf) ? 'support' : 'semantic';
+}
+
+function sourceImports(source) {
+  return [...stripLeanComments(source).matchAll(/^\s*import\s+([^\s]+)/gm)].map((match) => match[1]);
+}
+
+function validateSemanticSource(file, source) {
   const forbidden = /\b(sorry|admit|axiom|opaque|partial|unsafe|noncomputable)\b/;
-  const violation = stripLeanComments(source)
-    .split('\n')
-    .find((line) => forbidden.test(line));
+  const stripped = stripLeanComments(source);
+  const violation = stripped.split('\n').find((line) => forbidden.test(line));
   if (violation) fail(`${file} contains forbidden declaration token: ${violation.trim()}`);
-  for (const line of source.split('\n').filter((value) => value.startsWith('import '))) {
-    const imported = line.slice('import '.length).trim();
+  for (const imported of sourceImports(source)) {
+    if (imported.startsWith('TSLean.JS.') && moduleRole(imported) !== 'semantic') {
+      fail(`${file} imports non-semantic JS module ${imported}`);
+    }
     if (!imported.startsWith('TSLean.JS.') && !imported.startsWith('Init') && !imported.startsWith('Std')) {
       fail(`${file} imports non-isolated module ${imported}`);
     }
   }
 }
 
+function validateProductionBarrel(source) {
+  validateSemanticSource('JS.lean', source);
+}
+
 function checkSources() {
   const jsDirectory = join(root, 'lean/TSLean/JS');
-  const excluded = new Set(['AxiomAudit.lean', 'AxiomAuditMeta.lean', 'HeapTests.lean', 'Tests.lean']);
-  const files = readdirSync(jsDirectory).filter((name) => name.endsWith('.lean') && !excluded.has(name));
-  for (const name of files) validateSource(name, readFileSync(join(jsDirectory, name), 'utf8'));
-  validateSource('JS.lean', readFileSync(join(root, 'lean/TSLean/JS.lean'), 'utf8'));
+  const files = readdirSync(jsDirectory).filter((name) => name.endsWith('.lean') && moduleRole(name) === 'semantic');
+  for (const name of files) validateSemanticSource(name, readFileSync(join(jsDirectory, name), 'utf8'));
+  validateProductionBarrel(readFileSync(join(root, 'lean/TSLean/JS.lean'), 'utf8'));
   const heap = readFileSync(join(jsDirectory, 'Heap.lean'), 'utf8');
   if (!/structure OrderedProps where\s+private mk ::/.test(heap)) fail('OrderedProps constructor is public');
   if (!/structure Heap where\s+private mk ::/.test(heap)) fail('Heap constructor is public');
@@ -210,6 +224,41 @@ function selfTest() {
   };
   expectDisallowed('TSLean.AuditSynthetic.sorryTheorem', 'sorryAx');
   expectDisallowed('TSLean.AuditSynthetic.customAxiom', 'TSLean.AuditSynthetic.customAxiom');
+  const expectSourceFailure = (label, check, expected) => {
+    try {
+      check();
+    } catch (error) {
+      if (error instanceof Error && error.message.includes(expected)) return;
+      throw error;
+    }
+    fail(`synthetic ${label} was accepted`);
+  };
+  expectSourceFailure(
+    'production test import',
+    () => validateProductionBarrel('import TSLean.JS.ExecutionTests\n'),
+    'imports non-semantic JS module TSLean.JS.ExecutionTests',
+  );
+  expectSourceFailure(
+    'indented production test import',
+    () => validateProductionBarrel('  import TSLean.JS.ExecutionTests\n'),
+    'imports non-semantic JS module TSLean.JS.ExecutionTests',
+  );
+  expectSourceFailure(
+    'production audit-meta import',
+    () => validateProductionBarrel('import TSLean.JS.AxiomAuditMeta\n'),
+    'imports non-semantic JS module TSLean.JS.AxiomAuditMeta',
+  );
+  expectSourceFailure(
+    'semantic test import',
+    () => validateSemanticSource('Value.lean', 'import TSLean.JS.FutureTests\n'),
+    'imports non-semantic JS module TSLean.JS.FutureTests',
+  );
+  validateProductionBarrel('  import TSLean.JS.Value\n');
+  validateProductionBarrel(`
+    -- import TSLean.JS.ExecutionTests
+    /- import TSLean.JS.AxiomAuditMeta -/
+    import TSLean.JS.Value
+  `);
   try {
     parseEnvironmentAudit('not a record');
   } catch (error) {
