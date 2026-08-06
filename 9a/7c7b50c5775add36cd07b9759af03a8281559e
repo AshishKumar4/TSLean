@@ -1,0 +1,79 @@
+EVIDENCE.md
+  s_0533aa750ba818::t_50797aae09d23a 132-183
+evidence/phase1-execution-manifest.json
+  s_88a0144bd7c3c1::t_22699e856e2be9 1-74
+evidence/phase1-heap-input.json
+  s_0533aa750ba818::t_20333acd02c462 63-64,69-70,75-76,82-83,86-87,90-91,101-102
+lean/TSLean/JS.lean
+  s_a24f8b33d2ec7b::t_92beffb9be310d 2-3,5,7-8,12-13,19
+lean/TSLean/JS/AxiomAudit.lean
+  s_a24f8b33d2ec7b::t_377b5a08ff8664 2
+lean/TSLean/JS/Completion.lean
+  s_23c6c4b71b81eb::t_fbda37a07a10b1 1-67
+lean/TSLean/JS/Control.lean
+  s_a24f8b33d2ec7b::t_235b0de9138152 1-102
+lean/TSLean/JS/Environment.lean
+  s_23c6c4b71b81eb::t_0b069622a6eb21 1-123
+lean/TSLean/JS/ExecutionScaleTests.lean
+  s_a24f8b33d2ec7b::t_df16cd5eacc4d5 1-36
+lean/TSLean/JS/ExecutionTests.lean
+  s_23c6c4b71b81eb::t_faa73c9f200da7 1-351
+lean/TSLean/JS/External.lean
+  s_a24f8b33d2ec7b::t_43f049f9fbe3e7 1-41
+lean/TSLean/JS/Id.lean
+  s_a24f8b33d2ec7b::t_665a2a1d99b525 8-51
+lean/TSLean/JS/Machine.lean
+  s_23c6c4b71b81eb::t_d1d33d135a60bc 1-134
+lean/TSLean/JS/Monad.lean
+  s_a24f8b33d2ec7b::t_d0b2b5ae2a4a8f 1-89
+lean/TSLean/JS/Number.lean
+  s_a24f8b33d2ec7b::t_5f16bf06d9e584 9
+lean/TSLean/JS/Platform.lean
+  s_23c6c4b71b81eb::t_c272773056b933 1-78
+lean/TSLean/JS/Value.lean
+  s_a24f8b33d2ec7b::t_156772c3d3fab7 16,22
+lean/TSLean/Tests.lean
+  s_a24f8b33d2ec7b::t_782e76deb07139 28-29
+scripts/check-js-axioms.mjs
+  s_23c6c4b71b81eb::t_c6dd2a73b7f986 147-157,159-160,162-165,172-175,178-180,227-261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9a7c7b50c5775add36cd07b9759af03a8281559e",
+  "prompts": {},
+  "sessions": {
+    "s_0533aa750ba818": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0279f9d63ffeigwAPrKaV1M1z0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_23c6c4b71b81eb": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0279f3e8bffenDSFt0RQXUap0a",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_88a0144bd7c3c1": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_02764f811ffe5297aSGliVjs0T",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_a24f8b33d2ec7b": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0557e411bffe1uab6RIcL1yfCq",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    }
+  }
+}
