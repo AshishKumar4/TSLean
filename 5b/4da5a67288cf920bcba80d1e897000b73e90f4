@@ -1,0 +1,71 @@
+evidence/phase1-callable-manifest.json
+  s_e2048d5c38b891::t_006d90e3b00563 1-74
+lean/TSLean/JS.lean
+  s_0533aa750ba818::t_612bf01a402211 3,5,10-11,21,27,29
+lean/TSLean/JS/AxiomAudit.lean
+  s_0533aa750ba818::t_80b4d0b96dcbc1 3
+lean/TSLean/JS/Call.lean
+  s_4d44abf13c0d3b::t_b4b845f35a13ab 1-64
+lean/TSLean/JS/Construct.lean
+  s_0533aa750ba818::t_6613401bdea6ae 1-48
+lean/TSLean/JS/Descriptor.lean
+  s_0533aa750ba818::t_3648f9ce1e07cb 12
+lean/TSLean/JS/Function.lean
+  s_0533aa750ba818::t_f5955b4aaaea6e 1-186
+lean/TSLean/JS/FunctionScaleTests.lean
+  s_0533aa750ba818::t_5f7f71f55fd20b 1-66
+lean/TSLean/JS/FunctionTests.lean
+  s_4d44abf13c0d3b::t_1c17e005945bae 1-594
+lean/TSLean/JS/FunctionTheorems.lean
+  s_4d44abf13c0d3b::t_87c7f45601b3e0 1-214
+lean/TSLean/JS/Heap.lean
+  s_4d44abf13c0d3b::t_6d3f113bacf67a 290-314,317,332,339,354,359-361,377-378,386,402-509,610-613,615-616,618-737
+lean/TSLean/JS/Instanceof.lean
+  s_23c6c4b71b81eb::t_3ba9af621006f2 1-52
+lean/TSLean/JS/ObjectAccess.lean
+  s_0533aa750ba818::t_46e20fcf9485bf 1-90
+lean/TSLean/JS/Typeof.lean
+  s_23c6c4b71b81eb::t_de6eacfb19160c 1-52
+lean/TSLean/Tests.lean
+  s_0533aa750ba818::t_313ea213264f45 30-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "5b4da5a67288cf920bcba80d1e897000b73e90f4",
+  "prompts": {},
+  "sessions": {
+    "s_0533aa750ba818": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0279f9d63ffeigwAPrKaV1M1z0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_23c6c4b71b81eb": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0279f3e8bffenDSFt0RQXUap0a",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_4d44abf13c0d3b": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_05dc528e0ffevO0MDl5xsFVln1",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_e2048d5c38b891": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0271e3e70ffe45m1Vnb9SJdkp7",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    }
+  }
+}
