@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "upstreamRevision": "3c16098c2317929700c57f7419a80c924d4948a0",
+  "branch": "rebuild/semantic-core",
+  "original": {
+    "typescriptErrors": 24,
+    "tests": {
+      "passed": 1439,
+      "failed": 46,
+      "skipped": 105
+    },
+    "lean": {
+      "completedJobs": 115,
+      "totalJobs": 118,
+      "status": "failed",
+      "cause": "IR_Types.lean and ir_types.lean collide on a case-insensitive filesystem"
+    },
+    "redCorpusEntries": 100
+  },
+  "phase0Repaired": {
+    "tests": {
+      "files": 40,
+      "passed": 1592,
+      "failed": 0,
+      "todo": 8
+    },
+    "leanJobs": 117
+  },
+  "current": {
+    "tests": {
+      "files": 40,
+      "passed": 1601,
+      "failed": 0,
+      "todo": 8
+    },
+    "lean": {
+      "jobs": 117,
+      "status": "passed"
+    },
+    "corpus": {
+      "entries": 102,
+      "red": 102
+    },
+    "lint": "passed",
+    "build": "passed"
+  },
+  "knownTodos": [
+    {
+      "id": "completion-nested-forof-erased",
+      "location": "tests/e2e-v3.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased",
+      "location": "tests/pipeline-full.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased-cli",
+      "location": "tests/e2e/cli.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased-e2e",
+      "location": "tests/e2e/advanced.test.ts"
+    },
+    {
+      "id": "completion-safe-divide-catch-none",
+      "location": "tests/all-fixtures.test.ts"
+    },
+    {
+      "id": "objects-anonymous-shorthand-default",
+      "location": "tests/parser-types.test.ts"
+    },
+    {
+      "id": "objects-renamed-shorthand-default",
+      "location": "tests/parser-types.test.ts"
+    },
+    {
+      "id": "selfhost-typemap-one-hole",
+      "location": "tests/parser-advanced.test.ts"
+    }
+  ]
+}

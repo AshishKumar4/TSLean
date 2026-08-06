@@ -1,18 +1,17 @@
 // E2E CLI tests: run the transpiler on fixture files and check output quality.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { runCli } from '../helpers/run-cli.js';
 
 const ROOT = process.cwd();
-const CLI  = path.join(ROOT, 'src/cli.ts');
 const FIX  = path.join(ROOT, 'tests/fixtures');
 
-function run(fixture: string, extra = ''): string {
+function run(fixture: string, extra: readonly string[] = []): string {
   const out = path.join(os.tmpdir(), `tslean_${Date.now()}_${Math.random().toString(36).slice(2)}.lean`);
-  execSync(`npx tsx ${CLI} ${path.join(FIX, fixture)} -o ${out} ${extra}`, { stdio: 'pipe' });
+  runCli([path.join(FIX, fixture), '-o', out, ...extra]);
   const content = fs.readFileSync(out, 'utf8');
   fs.unlinkSync(out);
   return content;
@@ -171,10 +170,7 @@ describe('CLI e2e: advanced/for-loops.ts', () => {
     const fn = code.slice(code.indexOf('rangeSum'));
     expect(fn.slice(0, 500)).not.toMatch(/_loop_\d+ let i/);
   });
-  it('processItems uses Array.forM', () => {
-    const fn = code.slice(code.indexOf('processItems'));
-    expect(fn.slice(0, 400)).toMatch(/Array.forM|default|sorry/);
-  });
+  it.todo('[completion-process-items-forof-erased-cli] processItems preserves its for-of loop');
   it('fibonacci uses _while_ helper', () => {
     const fn = code.slice(code.indexOf('fibonacci'));
     expect(fn.slice(0, 400)).toMatch(/_while_/);
@@ -259,12 +255,12 @@ describe('CLI e2e: all DO fixtures have required imports', () => {
 
 describe('CLI e2e: --verify flag', () => {
   it('hello.ts + --verify produces valid output', () => {
-    const code = run('basic/hello.ts', '--verify');
+    const code = run('basic/hello.ts', ['--verify']);
     expect(code).toContain('open TSLean');
   });
 
   it('exceptions.ts + --verify adds division theorem', () => {
-    const code = run('effects/exceptions.ts', '--verify');
+    const code = run('effects/exceptions.ts', ['--verify']);
     expect(code).toContain('open TSLean');
   });
 });

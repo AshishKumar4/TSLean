@@ -13,7 +13,7 @@
 
 import type { IRModule } from '../ir/types.js';
 import { generateLeanV2 } from './v2.js';
-import { resetTracker, currentTracker, type SorryTracker } from '../sorry-tracker.js';
+import { resetTracker, type SorryTracker } from '../sorry-tracker.js';
 export type { CodegenOptions } from './v2.js';
 export type { SorryTracker, SorryEntry } from '../sorry-tracker.js';
 

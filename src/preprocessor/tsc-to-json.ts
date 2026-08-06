@@ -93,6 +93,7 @@ interface JsonNode {
   typeArguments?: JsonNode[];
   argumentExpression?: JsonNode;
   questionDotToken?: JsonNode;
+  questionToken?: boolean;
   whenTrue?: JsonNode;
   whenFalse?: JsonNode;
 
@@ -119,6 +120,10 @@ interface JsonNode {
   token?: number;
   types?: JsonNode[];
 
+  // Type-specific children
+  elementType?: JsonNode;
+  typeName?: JsonNode;
+
   // Comment info
   leadingComments?: string[];
 
@@ -135,6 +140,23 @@ interface JsonAST {
   sourceText: string;
   statements: JsonNode[];
 }
+
+type SerializableProperty =
+  | 'name' | 'expression' | 'body' | 'statements' | 'parameters'
+  | 'typeParameters' | 'type' | 'initializer' | 'members' | 'heritageClauses'
+  | 'modifiers' | 'declarationList' | 'declarations' | 'thenStatement'
+  | 'elseStatement' | 'condition' | 'incrementor' | 'statement' | 'caseBlock'
+  | 'clauses' | 'tryBlock' | 'catchClause' | 'block' | 'variableDeclaration'
+  | 'finallyBlock' | 'left' | 'right' | 'operatorToken' | 'operand' | 'operator'
+  | 'arguments' | 'typeArguments' | 'argumentExpression' | 'questionDotToken'
+  | 'questionToken' | 'whenTrue' | 'whenFalse' | 'elements' | 'properties'
+  | 'head' | 'templateSpans' | 'literal' | 'template' | 'moduleSpecifier'
+  | 'importClause' | 'namedBindings' | 'isTypeOnly' | 'isExportEquals'
+  | 'dotDotDotToken' | 'propertyName' | 'token' | 'types' | 'elementType'
+  | 'typeName';
+
+type AstValue = ts.Node | AstValue[] | number | boolean | undefined;
+type SerializableNode = ts.Node & Partial<Record<SerializableProperty, AstValue>>;
 
 // ─── Serialization ──────────────────────────────────────────────────────────────
 
@@ -170,6 +192,34 @@ function syntaxKindName(kind: ts.SyntaxKind): string {
 const MAX_TYPE_DEPTH = 4;
 const MAX_PROPERTIES = 30;
 
+function isObjectType(type: ts.Type): type is ts.ObjectType {
+  return 'objectFlags' in type && typeof type.objectFlags === 'number';
+}
+
+function isTypeReference(type: ts.Type): type is ts.TypeReference {
+  return isObjectType(type) && !!(type.objectFlags & ts.ObjectFlags.Reference);
+}
+
+function hasStringValue(type: ts.Type): type is ts.Type & { value: string } {
+  return 'value' in type && typeof type.value === 'string';
+}
+
+function isType(value: object | null): value is ts.Type {
+  return typeof value === 'object' && value !== null && 'flags' in value && typeof value.flags === 'number';
+}
+
+function getTypeArguments(type: ts.Type): ts.Type[] | undefined {
+  if (!('typeArguments' in type) || !Array.isArray(type.typeArguments)) return undefined;
+  return type.typeArguments.every(isType) ? type.typeArguments : undefined;
+}
+
+function serializeTypes(checker: ts.TypeChecker, types: readonly ts.Type[], depth: number): JsonType[] {
+  return types.flatMap(type => {
+    const serialized = serializeType(checker, type, depth);
+    return serialized === undefined ? [] : [serialized];
+  });
+}
+
 function serializeType(checker: ts.TypeChecker, type: ts.Type, depth = 0): JsonType | undefined {
   if (!type || depth > MAX_TYPE_DEPTH) return undefined;
   const result: JsonType = { flags: type.flags };
@@ -177,35 +227,32 @@ function serializeType(checker: ts.TypeChecker, type: ts.Type, depth = 0): JsonT
   if (type.symbol?.name) result.symbol = type.symbol.name;
   if (type.aliasSymbol?.name) result.aliasName = type.aliasSymbol.name;
 
-  if ('objectFlags' in type) result.objectFlags = (type as ts.ObjectType).objectFlags;
-  if ('value' in type && typeof (type as any).value === 'string') result.value = (type as any).value;
+  if (isObjectType(type)) result.objectFlags = type.objectFlags;
+  if (hasStringValue(type)) result.value = type.value;
 
   if (type.isUnion()) {
-    result.types = type.types.map(t => serializeType(checker, t, depth + 1)).filter(Boolean) as JsonType[];
+    result.types = serializeTypes(checker, type.types, depth + 1);
   }
   if (type.isIntersection()) {
-    result.types = type.types.map(t => serializeType(checker, t, depth + 1)).filter(Boolean) as JsonType[];
+    result.types = serializeTypes(checker, type.types, depth + 1);
   }
 
   // Type arguments: prefer checker-resolved, fallback to AST-level
-  if (type.flags & ts.TypeFlags.Object) {
-    const objFlags = (type as ts.ObjectType).objectFlags ?? 0;
+  if (isObjectType(type)) {
+    const objFlags = type.objectFlags ?? 0;
     // Only for Reference types (Array<T>, Map<K,V>, etc.) — not all object types
-    if (objFlags & ts.ObjectFlags.Reference) {
+    if (objFlags & ts.ObjectFlags.Reference && isTypeReference(type)) {
       try {
-        const args = checker.getTypeArguments(type as ts.TypeReference);
+        const args = checker.getTypeArguments(type);
         if (args && args.length > 0) {
-          result.typeArguments = args
-            .map(t => serializeType(checker, t, depth + 1))
-            .filter(Boolean) as JsonType[];
+          result.typeArguments = serializeTypes(checker, args, depth + 1);
         }
       } catch { /* getTypeArguments may throw for non-reference types */ }
     }
   }
-  if (!result.typeArguments && 'typeArguments' in type && (type as ts.TypeReference).typeArguments) {
-    result.typeArguments = (type as ts.TypeReference).typeArguments!
-      .map(t => serializeType(checker, t, depth + 1))
-      .filter(Boolean) as JsonType[];
+  const typeArguments = getTypeArguments(type);
+  if (!result.typeArguments && typeArguments) {
+    result.typeArguments = serializeTypes(checker, typeArguments, depth + 1);
   }
 
   // v2: Object type properties (only at depth 0 to avoid blowup)
@@ -247,8 +294,56 @@ function serializeType(checker: ts.TypeChecker, type: ts.Type, depth = 0): JsonT
   return result;
 }
 
-function isNode(v: any): v is ts.Node {
-  return v && typeof v === 'object' && typeof v.kind === 'number';
+function isNode(value: AstValue): value is ts.Node {
+  return typeof value === 'object' && value !== null && 'kind' in value && typeof value.kind === 'number';
+}
+
+function hasSerializableProperty(node: ts.Node, property: SerializableProperty): node is SerializableNode {
+  return property in node;
+}
+
+function getNodeProperty(node: ts.Node, property: SerializableProperty): ts.Node | undefined {
+  if (!hasSerializableProperty(node, property)) return undefined;
+  const value = node[property];
+  return isNode(value) ? value : undefined;
+}
+
+function getNodeArrayProperty(node: ts.Node, property: SerializableProperty): ts.Node[] | undefined {
+  if (!hasSerializableProperty(node, property)) return undefined;
+  const value = node[property];
+  return Array.isArray(value) && value.every(isNode) ? value : undefined;
+}
+
+function getNumberProperty(node: ts.Node, property: SerializableProperty): number | undefined {
+  if (!hasSerializableProperty(node, property)) return undefined;
+  const value = node[property];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function hasTruthyProperty(node: ts.Node, property: SerializableProperty): boolean {
+  return hasSerializableProperty(node, property) && !!node[property];
+}
+
+function serializeChild(
+  node: ts.Node,
+  property: SerializableProperty,
+  checker: ts.TypeChecker,
+  sf: ts.SourceFile,
+  depth: number
+): JsonNode | undefined {
+  const child = getNodeProperty(node, property);
+  return child && serializeNode(child, checker, sf, depth + 1);
+}
+
+function serializeChildren(
+  node: ts.Node,
+  property: SerializableProperty,
+  checker: ts.TypeChecker,
+  sf: ts.SourceFile,
+  depth: number
+): JsonNode[] | undefined {
+  const children = getNodeArrayProperty(node, property);
+  return children && serializeArray(children, checker, sf, depth);
 }
 
 function serializeNode(
@@ -334,110 +429,97 @@ function serializeNode(
     } catch { /* resolved signature may fail for unresolved calls */ }
   }
 
-  // Role-specific children
-  const n = node as any;
-
   // Name
-  if (n.name && isNode(n.name)) result.name = serializeNode(n.name, checker, sf, depth + 1);
+  result.name = serializeChild(node, 'name', checker, sf, depth);
 
   // Expression
-  if (n.expression && isNode(n.expression)) result.expression = serializeNode(n.expression, checker, sf, depth + 1);
+  result.expression = serializeChild(node, 'expression', checker, sf, depth);
 
   // Body
-  if (n.body && isNode(n.body)) result.body = serializeNode(n.body, checker, sf, depth + 1);
+  result.body = serializeChild(node, 'body', checker, sf, depth);
 
   // Statements
-  if (n.statements) result.statements = serializeArray(n.statements, checker, sf, depth);
+  result.statements = serializeChildren(node, 'statements', checker, sf, depth);
 
   // Parameters
-  if (n.parameters) result.parameters = serializeArray(n.parameters, checker, sf, depth);
+  result.parameters = serializeChildren(node, 'parameters', checker, sf, depth);
 
   // Type parameters
-  if (n.typeParameters) result.typeParameters = serializeArray(n.typeParameters, checker, sf, depth);
+  result.typeParameters = serializeChildren(node, 'typeParameters', checker, sf, depth);
 
   // Type annotation
-  if (n.type && isNode(n.type)) result.type = serializeNode(n.type, checker, sf, depth + 1);
+  result.type = serializeChild(node, 'type', checker, sf, depth);
 
   // Initializer
-  if (n.initializer && isNode(n.initializer)) result.initializer = serializeNode(n.initializer, checker, sf, depth + 1);
+  result.initializer = serializeChild(node, 'initializer', checker, sf, depth);
 
   // Members
-  if (n.members) result.members = serializeArray(n.members, checker, sf, depth);
+  result.members = serializeChildren(node, 'members', checker, sf, depth);
 
   // Heritage clauses
-  if (n.heritageClauses) result.heritageClauses = serializeArray(n.heritageClauses, checker, sf, depth);
+  result.heritageClauses = serializeChildren(node, 'heritageClauses', checker, sf, depth);
 
   // Modifiers
-  if (n.modifiers) result.modifiers = serializeArray(n.modifiers, checker, sf, depth);
+  result.modifiers = serializeChildren(node, 'modifiers', checker, sf, depth);
 
   // Variable declarations
-  if (n.declarationList && isNode(n.declarationList))
-    result.declarationList = serializeNode(n.declarationList, checker, sf, depth + 1);
-  if (n.declarations) result.declarations = serializeArray(n.declarations, checker, sf, depth);
+  result.declarationList = serializeChild(node, 'declarationList', checker, sf, depth);
+  result.declarations = serializeChildren(node, 'declarations', checker, sf, depth);
 
   // Control flow
-  if (n.thenStatement && isNode(n.thenStatement)) result.thenStatement = serializeNode(n.thenStatement, checker, sf, depth + 1);
-  if (n.elseStatement && isNode(n.elseStatement)) result.elseStatement = serializeNode(n.elseStatement, checker, sf, depth + 1);
-  if (n.condition && isNode(n.condition)) result.condition = serializeNode(n.condition, checker, sf, depth + 1);
-  if (n.incrementor && isNode(n.incrementor)) result.incrementor = serializeNode(n.incrementor, checker, sf, depth + 1);
-  if (n.statement && isNode(n.statement)) result.statement = serializeNode(n.statement, checker, sf, depth + 1);
-  if (n.caseBlock && isNode(n.caseBlock)) result.caseBlock = serializeNode(n.caseBlock, checker, sf, depth + 1);
-  if (n.clauses) result.clauses = serializeArray(n.clauses, checker, sf, depth);
-  if (n.tryBlock && isNode(n.tryBlock)) result.tryBlock = serializeNode(n.tryBlock, checker, sf, depth + 1);
-  if (n.catchClause && isNode(n.catchClause)) result.catchClause = serializeNode(n.catchClause, checker, sf, depth + 1);
-  if (n.block && isNode(n.block)) result.block = serializeNode(n.block, checker, sf, depth + 1);
-  if (n.variableDeclaration && isNode(n.variableDeclaration))
-    result.variableDeclaration = serializeNode(n.variableDeclaration, checker, sf, depth + 1);
-  if (n.finallyBlock && isNode(n.finallyBlock)) result.finallyBlock = serializeNode(n.finallyBlock, checker, sf, depth + 1);
+  result.thenStatement = serializeChild(node, 'thenStatement', checker, sf, depth);
+  result.elseStatement = serializeChild(node, 'elseStatement', checker, sf, depth);
+  result.condition = serializeChild(node, 'condition', checker, sf, depth);
+  result.incrementor = serializeChild(node, 'incrementor', checker, sf, depth);
+  result.statement = serializeChild(node, 'statement', checker, sf, depth);
+  result.caseBlock = serializeChild(node, 'caseBlock', checker, sf, depth);
+  result.clauses = serializeChildren(node, 'clauses', checker, sf, depth);
+  result.tryBlock = serializeChild(node, 'tryBlock', checker, sf, depth);
+  result.catchClause = serializeChild(node, 'catchClause', checker, sf, depth);
+  result.block = serializeChild(node, 'block', checker, sf, depth);
+  result.variableDeclaration = serializeChild(node, 'variableDeclaration', checker, sf, depth);
+  result.finallyBlock = serializeChild(node, 'finallyBlock', checker, sf, depth);
 
   // Expressions
-  if (n.left && isNode(n.left)) result.left = serializeNode(n.left, checker, sf, depth + 1);
-  if (n.right && isNode(n.right)) result.right = serializeNode(n.right, checker, sf, depth + 1);
-  if (n.operatorToken && isNode(n.operatorToken)) result.operatorToken = serializeNode(n.operatorToken, checker, sf, depth + 1);
-  if (n.operand && isNode(n.operand)) result.operand = serializeNode(n.operand, checker, sf, depth + 1);
-  if (typeof n.operator === 'number') result.operator = n.operator;
-  if (n.arguments) result.arguments = serializeArray(n.arguments, checker, sf, depth);
-  if (n.typeArguments) result.typeArguments = serializeArray(n.typeArguments, checker, sf, depth);
-  if (n.argumentExpression && isNode(n.argumentExpression))
-    result.argumentExpression = serializeNode(n.argumentExpression, checker, sf, depth + 1);
-  if (n.questionDotToken) result.questionDotToken = { kind: 'QuestionDotToken' };
-  if (n.questionToken) (result as any).questionToken = true;
-  if (n.whenTrue && isNode(n.whenTrue)) result.whenTrue = serializeNode(n.whenTrue, checker, sf, depth + 1);
-  if (n.whenFalse && isNode(n.whenFalse)) result.whenFalse = serializeNode(n.whenFalse, checker, sf, depth + 1);
+  result.left = serializeChild(node, 'left', checker, sf, depth);
+  result.right = serializeChild(node, 'right', checker, sf, depth);
+  result.operatorToken = serializeChild(node, 'operatorToken', checker, sf, depth);
+  result.operand = serializeChild(node, 'operand', checker, sf, depth);
+  result.operator = getNumberProperty(node, 'operator');
+  result.arguments = serializeChildren(node, 'arguments', checker, sf, depth);
+  result.typeArguments = serializeChildren(node, 'typeArguments', checker, sf, depth);
+  result.argumentExpression = serializeChild(node, 'argumentExpression', checker, sf, depth);
+  result.questionDotToken = hasTruthyProperty(node, 'questionDotToken') ? { kind: 'QuestionDotToken' } : undefined;
+  result.questionToken = hasTruthyProperty(node, 'questionToken') ? true : undefined;
+  result.whenTrue = serializeChild(node, 'whenTrue', checker, sf, depth);
+  result.whenFalse = serializeChild(node, 'whenFalse', checker, sf, depth);
 
   // Literals / templates
-  if (n.elements) result.elements = serializeArray(n.elements, checker, sf, depth);
-  if (n.properties) result.properties = serializeArray(n.properties, checker, sf, depth);
-  if (n.head && isNode(n.head)) result.head = serializeNode(n.head, checker, sf, depth + 1);
-  if (n.templateSpans) result.templateSpans = serializeArray(n.templateSpans, checker, sf, depth);
-  if (n.literal && isNode(n.literal)) result.literal = serializeNode(n.literal, checker, sf, depth + 1);
-  if (n.template && isNode(n.template)) result.template = serializeNode(n.template, checker, sf, depth + 1);
+  result.elements = serializeChildren(node, 'elements', checker, sf, depth);
+  result.properties = serializeChildren(node, 'properties', checker, sf, depth);
+  result.head = serializeChild(node, 'head', checker, sf, depth);
+  result.templateSpans = serializeChildren(node, 'templateSpans', checker, sf, depth);
+  result.literal = serializeChild(node, 'literal', checker, sf, depth);
+  result.template = serializeChild(node, 'template', checker, sf, depth);
 
   // Imports / exports
-  if (n.moduleSpecifier && isNode(n.moduleSpecifier))
-    result.moduleSpecifier = serializeNode(n.moduleSpecifier, checker, sf, depth + 1);
-  if (n.importClause && isNode(n.importClause))
-    result.importClause = serializeNode(n.importClause, checker, sf, depth + 1);
-  if (n.namedBindings && isNode(n.namedBindings))
-    result.namedBindings = serializeNode(n.namedBindings, checker, sf, depth + 1);
-  if (n.isTypeOnly) result.isTypeOnly = true;
-  if (n.isExportEquals) result.isExportEquals = true;
+  result.moduleSpecifier = serializeChild(node, 'moduleSpecifier', checker, sf, depth);
+  result.importClause = serializeChild(node, 'importClause', checker, sf, depth);
+  result.namedBindings = serializeChild(node, 'namedBindings', checker, sf, depth);
+  result.isTypeOnly = hasTruthyProperty(node, 'isTypeOnly') ? true : undefined;
+  result.isExportEquals = hasTruthyProperty(node, 'isExportEquals') ? true : undefined;
 
   // Parameters / bindings
-  if (n.dotDotDotToken) result.dotDotDotToken = { kind: 'DotDotDotToken' };
-  if (n.propertyName && isNode(n.propertyName))
-    result.propertyName = serializeNode(n.propertyName, checker, sf, depth + 1);
+  result.dotDotDotToken = hasTruthyProperty(node, 'dotDotDotToken') ? { kind: 'DotDotDotToken' } : undefined;
+  result.propertyName = serializeChild(node, 'propertyName', checker, sf, depth);
 
   // Heritage clauses and union types
-  if (typeof n.token === 'number') result.token = n.token;
-  if (n.types && Array.isArray(n.types))
-    result.types = serializeArray(n.types, checker, sf, depth);
+  result.token = getNumberProperty(node, 'token');
+  result.types = serializeChildren(node, 'types', checker, sf, depth);
 
   // Type-specific children: ArrayType, TupleType, etc.
-  if (n.elementType && isNode(n.elementType))
-    (result as any).elementType = serializeNode(n.elementType, checker, sf, depth + 1);
-  if (n.typeName && isNode(n.typeName))
-    (result as any).typeName = serializeNode(n.typeName, checker, sf, depth + 1);
+  result.elementType = serializeChild(node, 'elementType', checker, sf, depth);
+  result.typeName = serializeChild(node, 'typeName', checker, sf, depth);
 
   // Leading comments
   const comments = getLeadingComments(node, sf);

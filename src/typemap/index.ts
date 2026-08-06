@@ -21,7 +21,7 @@
 import * as ts from 'typescript';
 import {
   IRType, Pure,
-  TyNat, TyInt, TyFloat, TyString, TyBool, TyUnit, TyNever,
+  TyInt, TyFloat, TyString, TyBool, TyUnit, TyNever,
   TyOption, TyArray, TyTuple, TyFn, TyMap, TySet, TyPromise,
   TyRef, TyVar, TypeParam,
 } from '../ir/types.js';
@@ -121,7 +121,7 @@ function mapUnion(t: ts.UnionType, checker: ts.TypeChecker, depth: number): IRTy
   const alias = getAliasName(t);
   if (alias) {
     // Propagate alias type arguments (e.g. Tree<T> → TyRef('Tree', [TyVar('T')]))
-    const aliasArgs = (t as any).aliasTypeArguments as ts.Type[] | undefined;
+    const aliasArgs = t.aliasTypeArguments;
     if (aliasArgs && aliasArgs.length > 0) {
       return TyRef(alias, aliasArgs.map(a => mapType(a, checker, depth + 1)));
     }
@@ -165,7 +165,10 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
   if (calls.length > 0) {
     const sig = calls[0];
     const params = sig.getParameters().map(p => {
-      const pt = checker.getTypeOfSymbolAtLocation(p, p.valueDeclaration ?? p.declarations?.[0]!);
+      const declaration = p.valueDeclaration ?? p.declarations?.[0];
+      const pt = declaration
+        ? checker.getTypeOfSymbolAtLocation(p, declaration)
+        : checker.getTypeOfSymbol(p);
       return mapType(pt, checker, depth + 1);
     });
     return TyFn(params, mapType(checker.getReturnTypeOfSignature(sig), checker, depth + 1), Pure);
@@ -364,7 +367,7 @@ export function extractStructFields(
     const isMethod = ts.isMethodSignature(m);
     if (!ts.isPropertySignature(m) && !ts.isPropertyDeclaration(m) && !isMethod) continue;
     const name = m.name?.getText() ?? '';
-    const sym  = checker.getSymbolAtLocation(m.name!);
+    const sym  = checker.getSymbolAtLocation(m.name);
     const ty   = sym ? checker.getTypeOfSymbol(sym) : checker.getAnyType();
     const opt  = !!m.questionToken;
     const mut  = !m.modifiers?.some(mod => mod.kind === ts.SyntaxKind.ReadonlyKeyword);

@@ -1,13 +1,12 @@
 // E2E project mode tests: run --project on full-project fixture.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { runCli } from '../helpers/run-cli.js';
 
 const ROOT   = process.cwd();
-const CLI    = path.join(ROOT, 'src/cli.ts');
 const FP_DIR = path.join(ROOT, 'tests/fixtures/full-project');
 
 let outDir: string;
@@ -15,7 +14,7 @@ let files: Record<string, string> = {};
 
 beforeAll(() => {
   outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-e2e-proj-'));
-  execSync(`npx tsx ${CLI} --project ${FP_DIR} -o ${outDir} --no-lakefile`, { stdio: 'pipe' });
+  runCli(['--project', FP_DIR, '-o', outDir, '--no-lakefile']);
   function read(dir: string) {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, e.name);
@@ -119,7 +118,7 @@ describe('Project output: balanced parentheses', () => {
 describe('Project with --verify', () => {
   it('produces valid output', () => {
     const vdir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-e2e-verify-'));
-    execSync(`npx tsx ${CLI} --project ${FP_DIR} -o ${vdir} --verify`, { stdio: 'pipe' });
+    runCli(['--project', FP_DIR, '-o', vdir, '--verify']);
     const leans = fs.readdirSync(vdir, { recursive: true, withFileTypes: true })
       .filter(e => e.isFile() && (e.name as string).endsWith('.lean'));
     expect(leans.length).toBeGreaterThan(0);

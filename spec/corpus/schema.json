@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tslean.dev/spec/corpus/schema.json",
+  "title": "TSLean semantic counterexample corpus",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "groups"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "groups": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": { "$ref": "#/$defs/group" }
+    }
+  },
+  "$defs": {
+    "groupName": {
+      "enum": [
+        "identity/heap",
+        "coercion/operators/truthiness",
+        "control-flow/completion",
+        "effects/callbacks",
+        "aliasing/mutation",
+        "classes/construction",
+        "globals/stdlib",
+        "modules/namespaces",
+        "scale/complexity",
+        "strict/proof-integrity exploits"
+      ]
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["group", "entries"],
+      "properties": {
+        "group": { "$ref": "#/$defs/groupName" },
+        "entries": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/entry" }
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "enum": ["result", "trace", "rejection", "error", "acceptance"] },
+        "value": { "type": "string", "minLength": 1 }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceRevision", "transcript", "sourceRefs"],
+      "properties": {
+        "sourceRevision": { "type": "string", "pattern": "\\S" },
+        "transcript": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?:msg_[A-Za-z0-9]+:[^@\\r\\n]+@[1-9][0-9]*|baseline-suite-[0-9]{4}-[0-9]{2}-[0-9]{2})$"
+        },
+        "sourceRefs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "source",
+        "partial",
+        "expected",
+        "priorLean",
+        "severity",
+        "provenance",
+        "status"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "title": { "type": "string", "minLength": 1 },
+        "source": { "type": "string" },
+        "partial": { "type": "boolean" },
+        "partialExplanation": { "type": "string", "minLength": 1 },
+        "expected": { "$ref": "#/$defs/outcome" },
+        "priorLean": { "$ref": "#/$defs/outcome" },
+        "severity": { "enum": ["critical", "high", "medium", "low"] },
+        "provenance": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/provenance" }
+        },
+        "status": { "const": "red" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "partial": { "const": true } }, "required": ["partial"] },
+          "then": { "required": ["partialExplanation"] },
+          "else": {
+            "properties": { "source": { "minLength": 1 } },
+            "not": { "required": ["partialExplanation"] }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">TSLean</h1>
   <p align="center">
-    <strong>TypeScript → Lean 4 transpiler with formal verification</strong>
+    <strong>TypeScript → Lean 4 transpiler under semantic reconstruction</strong>
   </p>
   <p align="center">
     <a href="#quick-start">Quick Start</a> &bull;
@@ -14,23 +14,25 @@
 
 ---
 
-![Tests](https://img.shields.io/badge/tests-1557%20passing-brightgreen)
-![Lean Build](https://img.shields.io/badge/lean%20build-112%20jobs-blue)
-![Fixpoint](https://img.shields.io/badge/fixpoint-9%2F10%20identical-yellow)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Lean](https://img.shields.io/badge/lean-4.29.0-purple)
+
+## Status
+
+TSLean is under reconstruction and currently supports an evolving TypeScript/ECMAScript subset. The semantic corpus is checked-in red evidence of known incorrect or unsupported behavior, not a completeness score. Legacy Lean runtime and stub declarations still use `sorry`; no formal soundness, completeness, or application-correctness claim is made.
+
+Current revision, toolchain, test, corpus, todo, Lean job, and content-hash evidence is generated in [`evidence/baseline-manifest.json`](evidence/baseline-manifest.json). See the [rebuild plan](docs/REBUILD_PLAN.md) and [evidence ledger](EVIDENCE.md).
 
 ## What is TSLean?
 
-TSLean converts typed TypeScript into compilable, verifiable **Lean 4** code. Write your application in TypeScript, transpile to Lean 4, and get machine-checked proofs that your system is correct.
+TSLean converts a supported subset of typed TypeScript into Lean 4 code. Generated code can be checked by Lean, but the current compiler pipeline does not establish that the TypeScript program or generated model is correct.
 
 It ships with:
-- A **complete runtime library** modeling Cloudflare Durable Objects as verified state machines
-- A **full JS standard library** mapping (String, Array, Map, Set, Math, Promise, JSON, Date)
+- A Lean runtime library with models for Cloudflare Durable Objects
+- JS standard library mappings for String, Array, Map, Set, Math, Promise, JSON, and Date operations
 - **npm type stubs** for node:fs, node:path, node:http, console, process
-- **7 formally verified Durable Object models** with safety invariant proofs
+- 7 Durable Object models with safety invariant theorems
 
-The transpiler handles the full TypeScript language: functions, classes, interfaces, enums, generics with constraints, discriminated unions, async/await, try/catch/finally, multi-file modules, and more.
+The implemented subset includes functions, classes, interfaces, enums, generics, discriminated unions, async/await, exceptions, and multi-file modules, with known semantic gaps tracked in the corpus.
 
 ## Quick Start
 
@@ -42,7 +44,7 @@ cd TSLean && bun install
 **Transpile a file:**
 
 ```bash
-$ npx tsx src/cli.ts examples/01-hello-world/hello.ts -o output.lean
+$ bun run src/cli.ts examples/01-hello-world/hello.ts -o output.lean
 ✓ examples/01-hello-world/hello.ts → output.lean
 ```
 
@@ -77,7 +79,7 @@ end TSLean.Generated.Hello
 **Transpile a project:**
 
 ```bash
-$ npx tsx src/cli.ts compile --project tsconfig.json -o lean/Generated/
+$ bun run src/cli.ts compile --project tsconfig.json -o lean/Generated/
 [1/5] Reading project configuration
 [2/5] Building dependency graph
 [3/5] Transpiling types.ts → Types.lean
@@ -91,7 +93,6 @@ $ npx tsx src/cli.ts compile --project tsconfig.json -o lean/Generated/
 
 ```bash
 $ cd lean && lake build
-Build completed successfully (112 jobs).
 ```
 
 ## Examples
@@ -146,15 +147,17 @@ def sort {T : Type} [Comparable T] (arr : Array T) : Array T := ...
 
 ### Effect System
 
-The transpiler automatically detects effects and assigns the correct monad stack:
+The transpiler currently maps detected effects to these Lean shapes. Combined stacks describe the intended mapping; effect discovery and propagation are not yet reliable for every supported construct.
 
-| Pattern | Effect | Lean 4 |
-|---------|--------|--------|
-| Pure functions | None | `def f (x : T) : U` |
-| `async/await` | IO | `def f (x : T) : IO U` |
-| `throw/try/catch` | Except | `def f (x : T) : ExceptT String (IO U)` |
-| Mutable state | State | `def f (x : T) : StateT S (IO U)` |
-| Combined | All three | `def f : StateT S (ExceptT E (IO U))` |
+| Pattern | Mapping | Lean 4 |
+|---------|---------|--------|
+| No detected effects | Current | `def f (x : T) : U` |
+| `async/await` | Current | `def f (x : T) : IO U` |
+| `throw/try/catch` | Current when detected | `def f (x : T) : ExceptT String (IO U)` |
+| Mutable state | Intended | `def f (x : T) : StateT S (IO U)` |
+| State, exceptions, and IO | Intended composition | `def f : StateT S (ExceptT E (IO U))` |
+
+Known propagation gaps include forward and parenthesized calls, higher-order, stored, indexed, destructured, and reassigned callbacks, callback effects mixed with direct IO, and effectful logical operands. These cases can leave callers incorrectly pure, discard actions, or produce ill-typed Lean; they are tracked in [`spec/corpus/counterexamples.json`](spec/corpus/counterexamples.json), especially the `effects/callbacks` group and `operators-effectful-compound-condition`.
 
 ### Discriminated Unions → Pattern Matching
 
@@ -279,7 +282,7 @@ tslean init [dir]                      Scaffold a new tslean project
 
 ## Standard Library Coverage
 
-Complete JS standard library mapping — **130+ methods across 6 categories**:
+The current library contains mappings across these categories. A mapping's presence does not establish ECMAScript semantic equivalence:
 
 | Category | Methods | Examples |
 |----------|---------|---------|
@@ -296,7 +299,7 @@ See [docs/stdlib-reference.md](docs/stdlib-reference.md) for the complete mappin
 
 ## Verification Library
 
-The `lean/` directory is a pure Lean 4.29 library (**no Mathlib**, no external dependencies):
+The `lean/` directory is a pure Lean library (**no Mathlib**, no external dependencies). It still contains legacy `sorry`-backed runtime and stub declarations:
 
 - **Runtime types**: `TSValue`, `TSError`, `DOMonad`, branded types, coercions
 - **Verified stdlib**: `AssocMap` (with `Nodup` proof), bounds-checked arrays
@@ -352,7 +355,7 @@ TSLean can transpile all 12 of its own source modules to Lean 4. The fixpoint ve
 
 ```bash
 # Run the self-hosting pipeline
-npx tsx src/cli.ts self-host
+bun run src/cli.ts self-host
 
 # Verify fixpoint
 bash scripts/fixpoint-verify.sh
@@ -363,7 +366,7 @@ bash scripts/fixpoint-verify.sh
 | Document | Description |
 |----------|-------------|
 | [Architecture](docs/architecture.md) | Pipeline design, module descriptions, data flow |
-| [Type Mapping](docs/type-mapping.md) | Complete TS → Lean type table |
+| [Type Mapping](docs/type-mapping.md) | Current TS → Lean type mappings |
 | [Stdlib Reference](docs/stdlib-reference.md) | Every mapped JS method with Lean function |
 | [Limitations](docs/limitations.md) | What can't work, error codes, workarounds |
 | [Contributing](docs/contributing.md) | Dev setup, how to add features, commit style |
@@ -375,40 +378,12 @@ bash scripts/fixpoint-verify.sh
 
 ```bash
 bun install              # Install dependencies
-bun run test             # 1557 tests
-bun run lint             # tsc --noEmit + eslint
-bun run build            # Compile to dist/
-
-cd lean && lake build    # 112 Lean build jobs
+bun run verify           # Format, lint, tests, TypeScript build, and Lean build
 ```
-
-## Real-World Validation: Cloudflare Agents SDK
-
-TSLean was validated against the full [Cloudflare Agents SDK](https://github.com/cloudflare/agents) — 68 source files, 20K+ lines of production TypeScript.
-
-| Metric | Value |
-|--------|-------|
-| Files transpiled | 68/68 (100%) |
-| Zero-sorry files | 66/68 (97%) |
-| Actual sorry axioms | 4 (in 2 files: JSX + ReadableStream) |
-| Default placeholders | ~25 across all files |
-| Lean compilation (types.ts) | Compiles correctly (enums, unions) |
-
-The 4 remaining sorrys are in `react.tsx` (JSX rendering) and `mcp/worker-transport.ts` (ReadableStream async iterators) — patterns with no pure Lean equivalent.
 
 ## Project Stats
 
-| Metric | Value |
-|--------|-------|
-| TypeScript tests | 1,588 |
-| Lean build jobs | 118 |
-| Fixpoint accuracy | 9/10 identical |
-| Stdlib methods | 130+ |
-| Verified DO models | 7 |
-| Example projects | 12 |
-| Proof theorems | 50+ (0 sorry in runtime) |
-| Lines of Lean | ~9,500 |
-| Lines of TypeScript | ~8,000 |
+Current measured counts are generated in [`evidence/baseline-manifest.json`](evidence/baseline-manifest.json) rather than duplicated here. Historical Agents SDK transpilation and fixpoint runs are not completeness or correctness evidence.
 
 ## License
 

@@ -2,7 +2,7 @@
   "name": "tslean",
   "version": "0.1.0",
   "type": "module",
-  "description": "TypeScript → Lean 4 transpiler with formal verification for Cloudflare Durable Objects",
+  "description": "TypeScript → Lean 4 transpiler under semantic reconstruction",
   "main": "dist/codegen/index.js",
   "types": "dist/codegen/index.d.ts",
   "bin": {
@@ -18,9 +18,13 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "lint": "tsc --noEmit && eslint src/",
+    "lint": "tsc --noEmit && eslint src/ scripts/*.mjs",
     "format": "prettier --write 'src/**/*.ts'",
     "format:check": "prettier --check 'src/**/*.ts'",
+    "format:check:foundation": "prettier --check 'scripts/*.mjs' 'evidence/*.json' package.json",
+    "evidence:generate": "bun scripts/generate-baseline-manifest.mjs",
+    "evidence:check": "bun scripts/generate-baseline-manifest.mjs --check",
+    "verify": "bun run format:check:foundation && bun run evidence:check && bun run lint && bun run test && bun run build && cd lean && lake build",
     "prepublishOnly": "bun run build"
   },
   "keywords": [

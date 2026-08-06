@@ -10,7 +10,7 @@ import { generateLean } from '../codegen/index.js';
 import { generateVerification } from '../verification/index.js';
 import type { IRModule } from '../ir/types.js';
 import { capitalize } from '../utils.js';
-import { fileToLeanModule, fileToLeanPath, type ModuleResolverOpts } from './module-resolver.js';
+import { fileToLeanPath } from './module-resolver.js';
 import { buildDependencyGraph, formatCycles, type DependencyGraph } from './dependency-graph.js';
 import { readProjectDir, readProjectConfig, toResolverOpts, type ProjectConfig } from './reader.js';
 import { writeLakefiles, type LakefileOpts } from './lakefile-gen.js';
@@ -76,7 +76,7 @@ export function transpileProject(opts: ProjectOpts): ProjectResult {
       const src = fs.readFileSync(node.filePath, 'utf-8');
       const parsed = parseFile({ fileName: node.filePath, sourceText: src });
       // Use project-level module name instead of parser's basename-only version
-      const fixed = fixModuleName(parsed, node.leanModule, resolverOpts);
+      const fixed = fixModuleName(parsed, node.leanModule);
       const rw = rewriteModule(fixed);
       let code = generateLean(rw);
       if (verify) {
@@ -86,7 +86,8 @@ export function transpileProject(opts: ProjectOpts): ProjectResult {
       const leanFile = fileToLeanPath(node.filePath, resolverOpts, config.outDir);
       results.push({ tsFile: node.filePath, leanFile, module: node.leanModule, content: code });
     } catch (err) {
-      errors.push(`${node.filePath}: ${(err as Error).message}`);
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push(`${node.filePath}: ${message}`);
     }
   }
 
@@ -116,7 +117,7 @@ export function writeProjectOutputs(result: ProjectResult): void {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function fixModuleName(mod: IRModule, leanModule: string, resolverOpts: ModuleResolverOpts): IRModule {
+function fixModuleName(mod: IRModule, leanModule: string): IRModule {
   const fixedImports = mod.imports.map(imp => {
     if (imp.module.startsWith('TSLean.') || imp.module.startsWith('Lean')) return imp;
     // External packages stay as TSLean.External.*
@@ -134,6 +135,7 @@ export { writeLakefiles } from './lakefile-gen.js';
 
 // Legacy helpers used by old project mode
 export function toLeanPath(tsFile: string, projectDir: string, outputDir: string, rootNS = 'TSLean.Generated'): string {
+  void rootNS;
   const rel = path.relative(projectDir, tsFile);
   const parts = rel.replace(/\.ts$/, '').split(path.sep).map(p => p.split(/[-_]/).map(capitalize).join(''));
   return path.join(outputDir, ...parts) + '.lean';

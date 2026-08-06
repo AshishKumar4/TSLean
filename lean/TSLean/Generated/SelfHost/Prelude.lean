@@ -2,7 +2,7 @@
 -- Forward declarations for ALL cross-file identifiers used by raw transpiler output.
 -- 94 identifiers covering ts.TypeFlags, ts.SyntaxKind, parser/codegen/effects/rewrite
 -- functions, and JS built-in type stubs.
--- Does NOT import IR_Types.lean to avoid cycles.
+-- Does NOT import ir_types.lean to avoid cycles.
 
 import TSLean.External.Typescript
 import TSLean.Runtime.Basic

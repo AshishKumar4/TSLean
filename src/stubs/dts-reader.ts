@@ -4,7 +4,7 @@
 import * as ts from 'typescript';
 import * as fs from 'fs';
 import * as path from 'path';
-import { capitalize } from '../utils.js';
+import { capitalize, escapeLeanComment } from '../utils.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -27,97 +27,182 @@ export interface StubModule {
 
 /** Extract stub declarations from a .d.ts file. */
 export function extractDtsStubs(dtsPath: string): StubDecl[] {
-  const sourceText = fs.readFileSync(dtsPath, 'utf-8');
-  const sf = ts.createSourceFile(dtsPath, sourceText, ts.ScriptTarget.ES2022, true);
-  const decls: StubDecl[] = [];
-
-  for (const stmt of sf.statements) {
-    const d = extractStmt(stmt);
-    if (d) decls.push(...(Array.isArray(d) ? d : [d]));
+  try {
+    fs.readFileSync(dtsPath, 'utf-8');
+  } catch {
+    throw new Error(`Unable to read .d.ts entry "${dtsPath}". Check that the file exists and is readable.`);
   }
 
+  const entryPath = path.resolve(dtsPath);
+  const program = ts.createProgram([entryPath], {
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    noEmit: true,
+    skipLibCheck: true,
+    target: ts.ScriptTarget.ES2022,
+  });
+  const sourceFile = program.getSourceFile(entryPath);
+  if (!sourceFile) {
+    throw new Error(`Unable to read .d.ts entry "${dtsPath}". Check that the file exists and is readable.`);
+  }
+
+  const checker = program.getTypeChecker();
+  const entrySymbol = checker.getSymbolAtLocation(sourceFile);
+  if (entrySymbol) return extractModuleExports(entrySymbol, checker);
+
+  const decls: StubDecl[] = [];
+  for (const statement of sourceFile.statements) {
+    if (!ts.isModuleDeclaration(statement)) continue;
+    const symbol = checker.getSymbolAtLocation(statement.name);
+    if (!symbol) continue;
+    const members = extractModuleExports(symbol, checker);
+    if (members.length === 0) continue;
+    decls.push({
+      kind: 'namespace',
+      name: statement.name.text,
+      members,
+      doc: getDoc(symbol, checker),
+    });
+  }
   return decls;
 }
 
-function extractStmt(node: ts.Statement): StubDecl | StubDecl[] | null {
-  // Exported function declarations
-  if (ts.isFunctionDeclaration(node) && node.name && isExported(node)) {
-    return extractFunctionDecl(node);
+function extractModuleExports(symbol: ts.Symbol, checker: ts.TypeChecker): StubDecl[] {
+  const decls: StubDecl[] = [];
+  for (const exportedSymbol of checker.getExportsOfModule(symbol)) {
+    const decl = extractExportedSymbol(exportedSymbol, checker);
+    if (decl) decls.push(...(Array.isArray(decl) ? decl : [decl]));
   }
-  // Exported interface/type alias → opaque type
-  if (ts.isInterfaceDeclaration(node) && isExported(node)) {
+  return decls;
+}
+
+function extractExportedSymbol(exportedSymbol: ts.Symbol, checker: ts.TypeChecker): StubDecl | StubDecl[] | null {
+  const symbol = exportedSymbol.flags & ts.SymbolFlags.Alias
+    ? checker.getAliasedSymbol(exportedSymbol)
+    : exportedSymbol;
+  const declaration = firstSupportedDeclaration(symbol);
+  if (!declaration) return null;
+
+  const exportedName = exportedSymbol.name === 'default'
+    ? declarationName(declaration)
+    : exportedSymbol.name;
+  if (!exportedName) return null;
+  const doc = getDoc(symbol, checker);
+
+  if (ts.isFunctionDeclaration(declaration)) {
+    return extractFunctionDecl(declaration, exportedName, doc);
+  }
+  if (ts.isInterfaceDeclaration(declaration) || ts.isTypeAliasDeclaration(declaration)) {
     return {
       kind: 'opaque-type',
-      name: node.name.text,
-      typeParams: node.typeParameters?.map(tp => tp.name.text),
-      doc: getDoc(node),
+      name: exportedName,
+      typeParams: extractTypeParamNames(declaration.typeParameters, exportedName),
+      doc,
     };
   }
-  if (ts.isTypeAliasDeclaration(node) && isExported(node)) {
+  if (ts.isClassDeclaration(declaration)) {
+    return extractClassDecl(declaration, exportedName, checker, doc);
+  }
+  if (ts.isEnumDeclaration(declaration)) {
+    return { kind: 'enum', name: exportedName, doc };
+  }
+  if (ts.isVariableDeclaration(declaration)) {
     return {
-      kind: 'opaque-type',
-      name: node.name.text,
-      typeParams: node.typeParameters?.map(tp => tp.name.text),
-      doc: getDoc(node),
+      kind: 'const',
+      name: exportedName,
+      leanType: declaration.type ? typeNodeToLean(declaration.type) : 'String',
+      doc,
     };
   }
-  // Exported class → opaque type + constructor axiom
-  if (ts.isClassDeclaration(node) && node.name && isExported(node)) {
-    return extractClassDecl(node);
-  }
-  // Exported enum → inductive type
-  if (ts.isEnumDeclaration(node) && isExported(node)) {
-    return { kind: 'enum', name: node.name.text, doc: getDoc(node) };
-  }
-  // Module declaration (namespace)
-  if (ts.isModuleDeclaration(node) && node.name) {
-    const name = ts.isStringLiteral(node.name) ? node.name.text : node.name.text;
-    const members = extractModuleBlock(node);
-    if (members.length > 0) {
-      return { kind: 'namespace', name, members, doc: getDoc(node) };
-    }
-  }
-  // Variable declarations (exported constants)
-  if (ts.isVariableStatement(node) && isExported(node)) {
-    return node.declarationList.declarations
-      .filter(d => ts.isIdentifier(d.name))
-      .map(d => ({
-        kind: 'const' as const,
-        name: (d.name as ts.Identifier).text,
-        leanType: d.type ? typeNodeToLean(d.type) : 'String',
-        doc: getDoc(node),
-      }));
+  if (ts.isModuleDeclaration(declaration)) {
+    const members = extractModuleExports(symbol, checker);
+    return members.length > 0
+      ? { kind: 'namespace', name: exportedName, members, doc }
+      : null;
   }
   return null;
 }
 
-function extractFunctionDecl(node: ts.FunctionDeclaration): StubDecl {
-  const name = node.name!.text;
+function firstSupportedDeclaration(symbol: ts.Symbol): ts.Declaration | undefined {
+  for (const declaration of symbol.declarations ?? []) {
+    if (ts.isFunctionDeclaration(declaration) ||
+        ts.isInterfaceDeclaration(declaration) ||
+        ts.isTypeAliasDeclaration(declaration) ||
+        ts.isClassDeclaration(declaration) ||
+        ts.isEnumDeclaration(declaration) ||
+        ts.isVariableDeclaration(declaration) ||
+        ts.isModuleDeclaration(declaration)) {
+      return declaration;
+    }
+  }
+  return undefined;
+}
+
+function declarationName(declaration: ts.Declaration): string | undefined {
+  if (ts.isFunctionDeclaration(declaration) || ts.isClassDeclaration(declaration)) {
+    return declaration.name?.text;
+  }
+  if (ts.isInterfaceDeclaration(declaration) ||
+      ts.isTypeAliasDeclaration(declaration) ||
+      ts.isEnumDeclaration(declaration) ||
+      ts.isModuleDeclaration(declaration)) {
+    return declaration.name.text;
+  }
+  if (ts.isVariableDeclaration(declaration) && ts.isIdentifier(declaration.name)) {
+    return declaration.name.text;
+  }
+  return undefined;
+}
+
+function getDoc(symbol: ts.Symbol, checker: ts.TypeChecker): string | undefined {
+  const doc = ts.displayPartsToString(symbol.getDocumentationComment(checker)).trim();
+  return doc || undefined;
+}
+
+function extractTypeParamNames(
+  typeParams: ts.NodeArray<ts.TypeParameterDeclaration> | undefined,
+  owner: string,
+): string[] | undefined {
+  return typeParams?.map(typeParam => {
+    if (typeParam.constraint) {
+      throw new Error(
+        `Unsupported generic constraint on "${owner}.${typeParam.name.text}": ${typeParam.constraint.getText()}`,
+      );
+    }
+    return typeParam.name.text;
+  });
+}
+
+function extractFunctionDecl(node: ts.FunctionDeclaration, name: string, doc?: string): StubDecl {
   const params = node.parameters.map(p => {
     const pName = ts.isIdentifier(p.name) ? p.name.text : '_';
     const pType = p.type ? typeNodeToLean(p.type) : 'String';
     return `(${pName} : ${pType})`;
   }).join(' ');
   const retType = node.type ? typeNodeToLean(node.type) : 'String';
-  const typeParams = node.typeParameters?.map(tp => tp.name.text);
-  const tpStr = typeParams?.map(t => `{${t} : Type}`).join(' ') ?? '';
+  const typeParams = extractTypeParamNames(node.typeParameters, name);
+  const tpStr = renderImplicitTypeParams(typeParams);
   return {
     kind: 'axiom-fn',
     name,
     leanType: `${tpStr} ${params} : ${retType}`.trim(),
     typeParams,
-    doc: getDoc(node),
+    doc,
   };
 }
 
-function extractClassDecl(node: ts.ClassDeclaration): StubDecl[] {
-  const name = node.name!.text;
-  const typeParams = node.typeParameters?.map(tp => tp.name.text);
+function extractClassDecl(
+  node: ts.ClassDeclaration,
+  name: string,
+  checker: ts.TypeChecker,
+  doc?: string,
+): StubDecl[] {
+  const typeParams = extractTypeParamNames(node.typeParameters, name);
   const decls: StubDecl[] = [{
     kind: 'opaque-type',
     name,
     typeParams,
-    doc: getDoc(node),
+    doc,
   }];
   // Extract public methods as axioms
   for (const member of node.members) {
@@ -129,31 +214,23 @@ function extractClassDecl(node: ts.ClassDeclaration): StubDecl[] {
         return `(${pName} : ${pType})`;
       }).join(' ');
       const retType = member.type ? typeNodeToLean(member.type) : 'Unit';
+      const methodTypeParams = extractTypeParamNames(member.typeParameters, `${name}.${mName}`);
+      const binders = [
+        renderImplicitTypeParams(typeParams),
+        renderImplicitTypeParams(methodTypeParams),
+        `(self : ${applyTypeParams(name, typeParams)})`,
+        params,
+      ].filter(Boolean).join(' ');
+      const symbol = checker.getSymbolAtLocation(member.name);
       decls.push({
         kind: 'axiom-fn',
         name: `${name}.${mName}`,
-        leanType: `(self : ${name}) ${params} : ${retType}`.trim(),
+        leanType: `${binders} : ${retType}`,
+        doc: symbol ? getDoc(symbol, checker) : undefined,
       });
     }
   }
   return decls;
-}
-
-function extractModuleBlock(node: ts.ModuleDeclaration): StubDecl[] {
-  const body = node.body;
-  if (!body) return [];
-  if (ts.isModuleBlock(body)) {
-    const decls: StubDecl[] = [];
-    for (const stmt of body.statements) {
-      const d = extractStmt(stmt);
-      if (d) decls.push(...(Array.isArray(d) ? d : [d]));
-    }
-    return decls;
-  }
-  if (ts.isModuleDeclaration(body)) {
-    return extractModuleBlock(body);
-  }
-  return [];
 }
 
 // ─── Type node → Lean type string ───────────────────────────────────────────────
@@ -175,7 +252,7 @@ function typeNodeToLean(node: ts.TypeNode): string {
   if (node.kind === ts.SyntaxKind.NullKeyword) return 'Unit';
   if (ts.isArrayTypeNode(node)) return `Array (${typeNodeToLean(node.elementType)})`;
   if (ts.isTupleTypeNode(node)) {
-    const elems = node.elements.map(e => typeNodeToLean(e as ts.TypeNode));
+    const elems = node.elements.map(e => typeNodeToLean(e));
     return elems.length === 0 ? 'Unit' : elems.join(' × ');
   }
   if (ts.isUnionTypeNode(node)) {
@@ -192,7 +269,6 @@ function typeNodeToLean(node: ts.TypeNode): string {
   if (ts.isTypeLiteralNode(node)) return 'String'; // object literal types → String
   if (ts.isLiteralTypeNode(node)) return 'String'; // literal types → String
   if (ts.isParenthesizedTypeNode(node)) return typeNodeToLean(node.type);
-  if (ts.isTypeParameterDeclaration(node as any)) return (node as any).name?.text ?? 'α';
   return 'String'; // fallback
 }
 
@@ -204,6 +280,18 @@ function mapKnownType(name: string): string {
     'WritableStream': 'IO Unit', 'Record': 'AssocMap String',
   };
   return map[name] ?? name;
+}
+
+function renderExplicitTypeParams(typeParams: string[] | undefined): string {
+  return typeParams?.map(typeParam => `(${typeParam} : Type)`).join(' ') ?? '';
+}
+
+function renderImplicitTypeParams(typeParams: string[] | undefined): string {
+  return typeParams?.map(typeParam => `{${typeParam} : Type}`).join(' ') ?? '';
+}
+
+function applyTypeParams(name: string, typeParams: string[] | undefined): string {
+  return typeParams?.length ? `${name} ${typeParams.join(' ')}` : name;
 }
 
 // ─── Lean stub generation ───────────────────────────────────────────────────────
@@ -229,28 +317,25 @@ export function generateLeanStub(mod: StubModule): string {
 
 function renderDecl(d: StubDecl, indent: string): string[] {
   const lines: string[] = [];
-  if (d.doc) lines.push(`${indent}/-- ${d.doc} -/`);
+  if (d.doc) lines.push(`${indent}/-- ${escapeLeanComment(d.doc)} -/`);
 
   switch (d.kind) {
-    case 'opaque-type': {
-      const tps = d.typeParams?.map(t => `(${t} : Type)`).join(' ') ?? '';
+    case 'opaque-type':
+    case 'class': {
+      const tps = renderExplicitTypeParams(d.typeParams);
       const sig = tps ? ` ${tps}` : '';
       lines.push(`${indent}opaque ${d.name}${sig} : Type`);
-      lines.push(`${indent}instance : Inhabited ${d.name} := ⟨sorry⟩`);
+      const instanceParams = renderImplicitTypeParams(d.typeParams);
+      const target = d.typeParams?.length ? `(${applyTypeParams(d.name, d.typeParams)})` : d.name;
+      lines.push(`${indent}instance${instanceParams ? ` ${instanceParams}` : ''} : Inhabited ${target} := ⟨sorry⟩`);
       break;
     }
     case 'axiom-fn': {
-      lines.push(`${indent}axiom ${d.name} : ${d.leanType ?? 'String'}`);
+      lines.push(`${indent}axiom ${d.name} ${d.leanType ?? ': String'}`);
       break;
     }
     case 'const': {
       lines.push(`${indent}axiom ${d.name} : ${d.leanType ?? 'String'}`);
-      break;
-    }
-    case 'class': {
-      const tps = d.typeParams?.map(t => `(${t} : Type)`).join(' ') ?? '';
-      lines.push(`${indent}opaque ${d.name}${tps ? ' ' + tps : ''} : Type`);
-      lines.push(`${indent}instance : Inhabited ${d.name} := ⟨sorry⟩`);
       break;
     }
     case 'enum': {

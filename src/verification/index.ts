@@ -1,6 +1,6 @@
 // Verification: generate proof obligation stubs for safety properties.
 
-import { IRModule, IRDecl, IRExpr, IRType, TyUnit, TyNat, TyFloat, TyArray, TyOption } from '../ir/types.js';
+import { IRModule, IRDecl, IRExpr } from '../ir/types.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

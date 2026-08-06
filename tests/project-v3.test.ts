@@ -1,14 +1,13 @@
 // V3 project mode tests: multi-file transpilation with full content verification.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { transpileProject, toLeanPath, toModuleName } from '../src/project/index.js';
+import { runCli } from './helpers/run-cli.js';
 
 const ROOT   = process.cwd();
-const CLI    = path.join(ROOT, 'src/cli.ts');
 const FP_DIR = path.join(ROOT, 'tests/fixtures/full-project');
 
 // ─── File content verification ─────────────────────────────────────────────────
@@ -19,7 +18,7 @@ describe('Project v3: content quality', () => {
 
   beforeAll(() => {
     outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-'));
-    execSync(`npx tsx ${CLI} --project ${FP_DIR} -o ${outDir} --no-lakefile`, { stdio: 'pipe' });
+    runCli(['--project', FP_DIR, '-o', outDir, '--no-lakefile']);
     function read(dir: string) {
       for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, e.name);
@@ -95,7 +94,7 @@ describe('Project v3: cross-file imports (no .js suffix)', () => {
   let files: Record<string, string> = {};
   beforeAll(() => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-imp-'));
-    execSync(`npx tsx ${CLI} --project ${FP_DIR} -o ${outDir} --no-lakefile`, { stdio: 'pipe' });
+    runCli(['--project', FP_DIR, '-o', outDir, '--no-lakefile']);
     function read(dir: string) {
       for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, e.name);
@@ -138,7 +137,7 @@ describe('Project v3: cross-file imports (no .js suffix)', () => {
 describe('Project v3: CLI project mode', () => {
   it('--project on basic/ transpiles 3 files', () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-basic-'));
-    execSync(`npx tsx ${CLI} --project ${path.join(ROOT, 'tests/fixtures/basic')} -o ${outDir} --no-lakefile`, { stdio: 'pipe' });
+    runCli(['--project', path.join(ROOT, 'tests/fixtures/basic'), '-o', outDir, '--no-lakefile']);
     // Files are in hierarchical module structure, find all .lean recursively
     const findLean = (dir: string): string[] => {
       const out: string[] = [];
@@ -157,7 +156,7 @@ describe('Project v3: CLI project mode', () => {
 
   it('--project on advanced/ transpiles fixtures', () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-adv-'));
-    execSync(`npx tsx ${CLI} --project ${path.join(ROOT, 'tests/fixtures/advanced')} -o ${outDir} --no-lakefile`, { stdio: 'pipe' });
+    runCli(['--project', path.join(ROOT, 'tests/fixtures/advanced'), '-o', outDir, '--no-lakefile']);
     const findLean = (dir: string): string[] => {
       const out: string[] = [];
       if (!fs.existsSync(dir)) return out;
@@ -175,7 +174,7 @@ describe('Project v3: CLI project mode', () => {
 
   it('--project with --verify adds obligations', () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-verify-'));
-    execSync(`npx tsx ${CLI} --project ${path.join(ROOT, 'tests/fixtures/basic')} -o ${outDir} --verify --no-lakefile`, { stdio: 'pipe' });
+    runCli(['--project', path.join(ROOT, 'tests/fixtures/basic'), '-o', outDir, '--verify', '--no-lakefile']);
     const findLean = (dir: string): string[] => {
       const out: string[] = [];
       if (!fs.existsSync(dir)) return out;
@@ -199,7 +198,7 @@ describe('Project v3: CLI project mode', () => {
 describe('Project v3: single-file CLI', () => {
   it('hello.ts generates correct output', () => {
     const out = path.join(os.tmpdir(), 'hello_v3.lean');
-    execSync(`npx tsx ${CLI} ${path.join(ROOT, 'tests/fixtures/basic/hello.ts')} -o ${out}`, { stdio: 'pipe' });
+    runCli([path.join(ROOT, 'tests/fixtures/basic/hello.ts'), '-o', out]);
     const content = fs.readFileSync(out, 'utf8');
     expect(content).toContain('partial def factorial');
     expect(content).toContain('def greet');
@@ -208,7 +207,7 @@ describe('Project v3: single-file CLI', () => {
 
   it('counter DO generates DO imports', () => {
     const out = path.join(os.tmpdir(), 'counter_v3.lean');
-    execSync(`npx tsx ${CLI} ${path.join(ROOT, 'tests/fixtures/durable-objects/counter.ts')} -o ${out}`, { stdio: 'pipe' });
+    runCli([path.join(ROOT, 'tests/fixtures/durable-objects/counter.ts'), '-o', out]);
     const content = fs.readFileSync(out, 'utf8');
     expect(content).toContain('import TSLean.DurableObjects.Http');
     expect(content).toContain('import TSLean.Runtime.Monad');
@@ -217,7 +216,7 @@ describe('Project v3: single-file CLI', () => {
 
   it('export-patterns.ts generates def createConfig', () => {
     const out = path.join(os.tmpdir(), 'exports_v3.lean');
-    execSync(`npx tsx ${CLI} ${path.join(ROOT, 'tests/fixtures/advanced/export-patterns.ts')} -o ${out}`, { stdio: 'pipe' });
+    runCli([path.join(ROOT, 'tests/fixtures/advanced/export-patterns.ts'), '-o', out]);
     const content = fs.readFileSync(out, 'utf8');
     expect(content).toMatch(/def createConfig/);
     fs.unlinkSync(out);

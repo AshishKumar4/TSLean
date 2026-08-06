@@ -17,14 +17,14 @@
  */
 
 import type {
-  IRModule, IRDecl, IRExpr, IRType, IRParam, IRCase, IRPattern,
-  DoStmt, Effect, BinOp, UnOp, IRImport,
+  IRModule, IRDecl, IRExpr, IRType, IRParam, IRPattern,
+  DoStmt, Effect,
 } from '../ir/types.js';
 import { Pure, isPure } from '../ir/types.js';
 import type {
   LeanFile, LeanDecl, LeanExpr, LeanTy, LeanPat,
   LeanTyParam, LeanParam, LeanField, LeanCtor,
-  LeanMatchArm, LeanFieldVal, SInterpPart,
+  LeanMatchArm, SInterpPart,
 } from './lean-ast.js';
 import { irTypeToLean } from '../typemap/index.js';
 
@@ -102,6 +102,7 @@ export function lowerModule(mod: IRModule): LeanFile {
   };
 }
 
+
 // ─── TS API boundary ────────────────────────────────────────────────────────────
 
 const TS_API_TYPES = new Set([
@@ -165,7 +166,7 @@ function fieldRefHasArrow(ty: LeanTy, structFields: Map<string, {name: string, t
       // Check if any field in the referenced struct has an arrow/IO type in the IR
       return fields.some(f => {
         const t = f.type;
-        return t && (t.tag === 'Function' || t.tag === 'Arrow' ||
+        return t && (t.tag === 'Function' ||
           (t.tag === 'TypeRef' && ['IO', 'StateT', 'ExceptT'].includes(t.name)));
       });
     }
@@ -480,14 +481,12 @@ class LowerCtx {
       const refs = new Set<string>();
       const collect = (t: IRType): void => {
         if (t.tag === 'TypeRef' && typeDecls.has(t.name) && t.name !== name) refs.add(t.name);
-        if ('inner' in t && t.inner) collect(t.inner as IRType);
-        if ('elem' in t && t.elem) collect(t.elem as IRType);
-        if ('key' in t && t.key) collect(t.key as IRType);
-        if ('value' in t && t.value) collect(t.value as IRType);
-        if ('ret' in t && t.ret) collect(t.ret as IRType);
-        if ('params' in t && Array.isArray(t.params)) (t.params as IRType[]).forEach(collect);
-        if ('args' in t && Array.isArray(t.args)) (t.args as IRType[]).forEach(collect);
-        if ('elems' in t && Array.isArray(t.elems)) (t.elems as IRType[]).forEach(collect);
+        if (t.tag === 'Option' || t.tag === 'Promise') collect(t.inner);
+        if (t.tag === 'Array' || t.tag === 'Set') collect(t.elem);
+        if (t.tag === 'Map') { collect(t.key); collect(t.value); }
+        if (t.tag === 'Function') { t.params.forEach(collect); collect(t.ret); }
+        if (t.tag === 'TypeRef') t.args.forEach(collect);
+        if (t.tag === 'Tuple') t.elems.forEach(collect);
       };
       if (d.tag === 'InductiveDef') for (const c of d.ctors) for (const f of c.fields) collect(f.type);
       if (d.tag === 'StructDef') for (const f of d.fields) collect(f.type);
@@ -531,7 +530,7 @@ class LowerCtx {
     const emittedNames = new Set<string>();
 
     for (const d of reordered) {
-      const name = 'name' in d ? (d as any).name : '';
+      const name = 'name' in d ? d.name ?? '' : '';
       if (inMutual.has(name) && !emittedMutuals.has(name)) {
         const group = mutualGroups.find(g => g.has(name))!;
         const mutualDecls: LeanDecl[] = [];
@@ -611,7 +610,9 @@ class LowerCtx {
       if (e.tag === 'UnOp') collectRefs(e.operand, refs);
       if (e.tag === 'Match') { collectRefs(e.scrutinee, refs); for (const c of e.cases) collectRefs(c.body, refs); }
       if (e.tag === 'Return') collectRefs(e.value, refs);
-      if (e.tag === 'DoBlock') for (const s of e.stmts) { if ('value' in s) collectRefs(s.value as IRExpr, refs); }
+      if (e.tag === 'DoBlock') for (const s of e.stmts) {
+        if (s.tag === 'DoLet' || s.tag === 'DoReturn') collectRefs(s.value, refs);
+      }
     };
     for (const [name, { decl }] of funcDecls) {
       const refs = new Set<string>();
@@ -668,7 +669,9 @@ class LowerCtx {
         nonFuncDecls.push(d);
       }
     }
-    funcDeclList.sort((a, b) => (funcOrder.get(a.name ?? '') ?? 999) - (funcOrder.get(b.name ?? '') ?? 999));
+    const funcDeclName = (d: IRDecl): string =>
+      d.tag === 'FuncDef' || d.tag === 'VarDecl' ? d.name : '';
+    funcDeclList.sort((a, b) => (funcOrder.get(funcDeclName(a)) ?? 999) - (funcOrder.get(funcDeclName(b)) ?? 999));
     return [...nonFuncDecls, ...funcDeclList];
   }
 
@@ -843,7 +846,7 @@ class LowerCtx {
     for (const p of d.params) {
       if (p.type.tag === 'Option') this.optionParams.add(p.name);
     }
-    const body = this.lowerFuncBody(d.body, fixedEffect, d.retType, d.name);
+    const body = this.lowerFuncBody(d.body, fixedEffect, d.retType);
     this.currentReturnType = prevRetType;
     this.currentReturnIRType = prevRetIRType;
     this.optionParams = prevOptionParams;
@@ -872,7 +875,7 @@ class LowerCtx {
         return { name: t.name, explicit: false, constraints: constraints.length ? constraints : undefined };
       });
 
-    let params: LeanParam[] = d.params.map(p => this.lowerParam(p, fixedEffect));
+    let params: LeanParam[] = d.params.map(p => this.lowerParam(p));
     let retTy = this.lowerRetSig(fixedEffect, this.lowerType(d.retType));
     // Substitute erased type params in params and return type
     if (erasedTypeParams.size > 0) {
@@ -930,7 +933,7 @@ class LowerCtx {
     };
   }
 
-  private lowerFuncBody(body: IRExpr, effect: Effect, retType: IRType, funcName: string): LeanExpr {
+  private lowerFuncBody(body: IRExpr, effect: Effect, retType: IRType): LeanExpr {
     if (!isPure(effect)) {
       // Effectful function: wrap body in `do`
       const inner = this.lowerExpr(body, effect);
@@ -1259,7 +1262,7 @@ class LowerCtx {
 
   private lowerVarDecl(d: Extract<IRDecl, { tag: 'VarDecl' }>): LeanDecl {
     let ty = this.lowerType(d.type);
-    let val = this.lowerExpr(d.value, Pure);
+    const val = this.lowerExpr(d.value, Pure);
     // Anonymous object values lowered to default → infer AssocMap type from field values
     if (val.tag === 'Default' && d.value?.tag === 'StructLit' && d.value.fields.length > 3) {
       const firstField = d.value.fields[0];
@@ -1317,14 +1320,11 @@ class LowerCtx {
       tag: 'Instance',
       typeClass: d.typeClass,
       args: d.typeArgs.map(t => this.lowerType(t)),
-      methods: d.methods.filter(m => m.tag === 'FuncDef').map(m => {
-        const fd = m as Extract<IRDecl, { tag: 'FuncDef' }>;
-        return {
-          name: fd.name,
-          params: fd.params.map(p => this.lowerParam(p, fd.effect)),
-          body: this.lowerExpr(fd.body, fd.effect),
-        };
-      }),
+      methods: d.methods.flatMap(m => m.tag === 'FuncDef' ? [{
+        name: m.name,
+        params: m.params.map(p => this.lowerParam(p)),
+        body: this.lowerExpr(m.body, m.effect),
+      }] : []),
     };
   }
 
@@ -1350,10 +1350,10 @@ class LowerCtx {
 
   private lowerNamespace(d: Extract<IRDecl, { tag: 'Namespace' }>): LeanDecl {
     // Detect forward refs among functions for mutual blocks
-    const funcNames = new Set(d.decls.filter(x => x.tag === 'FuncDef').map(x => (x as any).name as string));
+    const funcNames = new Set(d.decls.flatMap(x => x.tag === 'FuncDef' ? [x.name] : []));
     const hasForwardRefs = d.decls.some(x =>
       x.tag === 'FuncDef' && funcNames.size > 1 &&
-      bodyContainsAnyVarRef((x as any).body, funcNames, (x as any).name)
+      bodyContainsAnyVarRef(x.body, funcNames, x.name)
     );
 
     const decls: LeanDecl[] = [];
@@ -1504,7 +1504,7 @@ class LowerCtx {
 
   // ─── Parameter lowering ─────────────────────────────────────────────────────
 
-  lowerParam(p: IRParam, _eff: Effect): LeanParam {
+  lowerParam(p: IRParam): LeanParam {
     let ty = this.lowerType(p.type);
     // Resolve class→state mapping
     ty = this.resolveStateTy(ty);
@@ -1530,7 +1530,7 @@ class LowerCtx {
     if (!e) return { tag: 'Sorry' };
     try { return this._lowerExpr(e, ctx); }
     catch (err) {
-      const tag = (e as { tag?: string }).tag ?? 'unknown';
+      const tag = e.tag;
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[lower] failed to lower ${tag} expression: ${msg}`);
       currentTracker().addSorry({
@@ -1639,7 +1639,7 @@ class LowerCtx {
         if (isOptBinding && e.value?.type?.tag !== 'Option') {
           this.optionParams.add(e.name);
         }
-        let val = this.lowerExpr(e.value, ctx);
+        const val = this.lowerExpr(e.value, ctx);
         const body = this.lowerExpr(e.body, ctx);
         const isRec = e.value.tag === 'Lambda' && bodyContainsVarRef(e.value.body, e.name);
         let ty = e.annot ? this.lowerType(e.annot) : undefined;
@@ -1727,9 +1727,10 @@ class LowerCtx {
           const needsWrapInPure = isPure(ctx) && (s.tag === 'If' || s.tag === 'Match');
           if (!stmtTags.has(s.tag) || needsWrapInPure) {
             // In monadic context, use Bind (let _ ←) for monadic calls like Array.forM
-            const isMonadicCall = !isPure(ctx) && s.tag === 'App' && s.fn.tag === 'Var' &&
+            const fnName = s.tag === 'App' && s.fn.tag === 'Var' ? s.fn.name : undefined;
+            const isMonadicCall = !isPure(ctx) && fnName !== undefined &&
               ['Array.forM', 'List.forM', 'IO.eprintln', 'IO.println', 'IO.print',
-                'TSLean.Stdlib.Object.defineProperty'].some(n => s.fn.name === n);
+                'TSLean.Stdlib.Object.defineProperty'].some(n => fnName === n);
             if (isMonadicCall) {
               lowered[si] = { tag: 'Bind', name: '_', value: s, body: lowered[si + 1] };
             } else {
@@ -1753,9 +1754,10 @@ class LowerCtx {
         // wrap in `let _ := expr` to discard the value.
         if (lowered.length > 0) {
           const last = lowered[lowered.length - 1];
+          const fnName = last.tag === 'App' && last.fn.tag === 'Var' ? last.fn.name : undefined;
           const isPureValue = this.isPureAppStatement(last) || last.tag === 'FieldAccess' ||
-              (last.tag === 'App' && last.fn.tag === 'Var' && !['IO.eprintln', 'IO.println', 'IO.print',
-                'Array.forM', 'List.forM', 'throw', 'pure'].some(n => last.fn.name?.startsWith(n)));
+              (fnName !== undefined && !['IO.eprintln', 'IO.println', 'IO.print',
+                'Array.forM', 'List.forM', 'throw', 'pure'].some(n => fnName.startsWith(n)));
           if (isPureValue) {
             const unit = isPure(ctx) ? { tag: 'Lit' as const, value: '()' } : { tag: 'Pure' as const, value: { tag: 'Lit' as const, value: '()' } };
             lowered[lowered.length - 1] = { tag: 'Let', name: '_', value: last, body: unit };
@@ -1935,7 +1937,6 @@ class LowerCtx {
         }
         // instanceof with discriminated unions → check if the variant matches
         if (e.testType?.tag === 'TypeRef' && exprType?.tag === 'TypeRef') {
-          const inner = this.lowerExpr(e.expr, ctx);
           // For Error types: always true in catch blocks
           if (typeName === 'Error' || typeName.endsWith('Error')) return { tag: 'Lit', value: 'true' };
           // For known struct types → true (nominal type check)
@@ -2145,7 +2146,7 @@ class LowerCtx {
 
     // Method calls on known types → Lean function-call style
     if (e.fn.tag === 'FieldAccess') {
-      const result = this.lowerMethodCall(e, ctx);
+      const result = this.lowerMethodCall(e, e.fn, ctx);
       if (result) return result;
       // Method on unknown external type → graceful default
       const recvType = e.fn.obj?.type;
@@ -2238,13 +2239,13 @@ class LowerCtx {
     if (fn.tag === 'Var' && fn.name.startsWith('Storage.')) {
       const storageMethod = fn.name.slice('Storage.'.length);
       const args = e.args.map(a => this.lowerExprP(a, ctx));
-      return this.lowerStorageOp(storageMethod, args, e.type, ctx);
+      return this.lowerStorageOp(storageMethod, args);
     }
     // DO context operations → DOMonad calls
     if (fn.tag === 'Var' && fn.name.startsWith('DOCtx.')) {
       const ctxMethod = fn.name.slice('DOCtx.'.length);
       const args = e.args.map(a => this.lowerExprP(a, ctx));
-      return this.lowerDOCtxOp(ctxMethod, args, e.type);
+      return this.lowerDOCtxOp(ctxMethod, args);
     }
 
     // Auto-unwrap Option args for known functions that don't accept Option
@@ -2276,8 +2277,11 @@ class LowerCtx {
     return { tag: 'App', fn, args };
   }
 
-  private lowerMethodCall(e: Extract<IRExpr, { tag: 'App' }>, ctx: Effect): LeanExpr | null {
-    const fa = e.fn as Extract<IRExpr, { tag: 'FieldAccess' }>;
+  private lowerMethodCall(
+    e: Extract<IRExpr, { tag: 'App' }>,
+    fa: Extract<IRExpr, { tag: 'FieldAccess' }>,
+    ctx: Effect,
+  ): LeanExpr | null {
     const obj = this.lowerExprP(fa.obj, ctx);
     const method = fa.field;
     const isStr = fa.obj?.type?.tag === 'String' || (fa.obj?.type?.tag === 'TypeRef' && fa.obj?.type?.name === 'String');
@@ -2299,9 +2303,9 @@ class LowerCtx {
       const pattern = args[0];
       const replacement = args[1];
       // Regex patterns or callback replacements → can't be expressed in Lean String.replace
-      const isRegex = (pattern.tag === 'Lit' || pattern.tag === 'LitString') &&
+      const isRegex = pattern.tag === 'Lit' &&
                       typeof pattern.value === 'string' && (pattern.value.startsWith('"/') || pattern.value.startsWith('/'));
-      const isCallback = replacement.tag === 'Lambda' || replacement.tag === 'Lam';
+      const isCallback = replacement.tag === 'Lam';
       if (isRegex || isCallback) {
         return obj;
       }
@@ -2369,9 +2373,10 @@ class LowerCtx {
     } else if (e.cond.type && e.cond.type.tag !== 'Bool' && e.cond.type.tag !== 'Option') {
       // Non-Bool, non-Option: wrap in TSLean.toBool for JS truthiness semantics
       // (covers String, TSAny, Float, TypeRef, etc.)
-      const isBoolExpr = cond.tag === 'App' && cond.fn.tag === 'Var' &&
+      const condFnName = cond.tag === 'App' && cond.fn.tag === 'Var' ? cond.fn.name : undefined;
+      const isBoolExpr = condFnName !== undefined &&
         ['TSLean.toBool', 'Array.contains', 'AssocMap.contains', 'String.startsWith',
-          'String.endsWith', 'String.includes'].some(n => cond.fn.name === n);
+          'String.endsWith', 'String.includes'].some(n => condFnName === n);
       const isBoolField = cond.tag === 'FieldAccess' && ['isSome', 'isNone', 'isEmpty'].includes(cond.field);
       const isBoolBinOp = cond.tag === 'BinOp';
       const isBoolUnOp = cond.tag === 'UnOp';
@@ -2411,10 +2416,13 @@ class LowerCtx {
     // Branch type reconciliation: if one branch is a void statement and the
     // other is `()`, wrap the value branch in `let _ :=` to make it Unit too.
     const isUnit = (e: LeanExpr) => (e.tag === 'Lit' && e.value === '()') || (e.tag === 'Pure' && e.value.tag === 'Lit' && e.value.value === '()');
-    const isValue = (e: LeanExpr) => this.isPureAppStatement(e) || e.tag === 'Default' || e.tag === 'FieldAccess' ||
-      (e.tag === 'App' && e.fn.tag !== 'Var') || (e.tag === 'App' && e.fn.tag === 'Var' &&
+    const isValue = (e: LeanExpr) => {
+      const fnName = e.tag === 'App' && e.fn.tag === 'Var' ? e.fn.name : undefined;
+      return this.isPureAppStatement(e) || e.tag === 'Default' || e.tag === 'FieldAccess' ||
+      (e.tag === 'App' && e.fn.tag !== 'Var') || (fnName !== undefined &&
         ['AssocMap.insert', 'AssocMap.erase', 'Array.push', 'Array.contains', 'AssocMap.mergeWith',
-          'Array.filter', 'Array.map', 'Array.set'].some(n => e.fn.name.startsWith(n)));
+          'Array.filter', 'Array.map', 'Array.set'].some(n => fnName.startsWith(n)));
+    };
     if (isUnit(else_) && isValue(then_)) {
       then_ = { tag: 'Let', name: '_', value: then_, body: isPure(ctx) ? { tag: 'Lit', value: '()' } : { tag: 'Pure', value: { tag: 'Lit', value: '()' } } };
     }
@@ -2804,15 +2812,16 @@ class LowerCtx {
           && stmts[i + 1].tag === 'IfThenElse') {
         const chain: Array<{ cond: IRExpr; then: IRExpr }> = [{ cond: s.cond, then: s.then }];
         i++;
-        while (i < stmts.length && stmts[i].tag === 'IfThenElse' && isEmptyElse((stmts[i] as any).else_)
-               && i + 1 < stmts.length && stmts[i + 1].tag === 'IfThenElse') {
-          const next = stmts[i] as Extract<IRExpr, { tag: 'IfThenElse' }>;
+        while (i < stmts.length) {
+          const next = stmts[i];
+          if (next.tag !== 'IfThenElse' || !isEmptyElse(next.else_) ||
+              i + 1 >= stmts.length || stmts[i + 1].tag !== 'IfThenElse') break;
           chain.push({ cond: next.cond, then: next.then });
           i++;
         }
         // Last if in the chain: include its then and use its else (or LitUnit)
-        if (i < stmts.length && stmts[i].tag === 'IfThenElse') {
-          const last = stmts[i] as Extract<IRExpr, { tag: 'IfThenElse' }>;
+        const last = stmts[i];
+        if (last?.tag === 'IfThenElse') {
           chain.push({ cond: last.cond, then: last.then });
           let chained: IRExpr = last.else_;
           for (let j = chain.length - 1; j >= 0; j--) {
@@ -2887,7 +2896,7 @@ class LowerCtx {
   // Maps DO storage method calls to Lean DurableObjects.Model operations.
   // Storage is modeled as AssocMap StorageKey StorageValue in the DOMonad.
 
-  private lowerStorageOp(method: string, args: LeanExpr[], ty: IRType, ctx: Effect): LeanExpr {
+  private lowerStorageOp(method: string, args: LeanExpr[]): LeanExpr {
     // Storage operations are lowered to Lean DurableObjects.Model calls.
     // For reads: Storage.get/keys on a storage handle.
     // For writes: modify fun s => { s with storage := Storage.put/delete s.storage ... }
@@ -2951,7 +2960,7 @@ class LowerCtx {
   // ─── DO context operation lowering ────────────────────────────────────────────
   // Maps DurableObjectState method calls to Lean equivalents.
 
-  private lowerDOCtxOp(method: string, args: LeanExpr[], ty: IRType): LeanExpr {
+  private lowerDOCtxOp(method: string, args: LeanExpr[]): LeanExpr {
     switch (method) {
       case 'acceptWebSocket':
         // DOCtx.acceptWebSocket(ws, tags?) → openConnWithTags / openConn
@@ -3084,21 +3093,20 @@ function bodyContainsVarRef(expr: IRExpr, name: string): boolean {
 
 function bodyContainsAnyVarRef(expr: IRExpr, names: Set<string>, selfName: string): boolean {
   function check(e: IRExpr): boolean {
-    if (!e || typeof e !== 'object') return false;
     if (e.tag === 'Var' && names.has(e.name) && e.name !== selfName) return true;
     for (const v of Object.values(e)) {
       if (v && typeof v === 'object') {
         if (Array.isArray(v)) {
           for (const item of v) {
-            if (item && typeof item === 'object' && 'tag' in item && check(item as IRExpr)) return true;
+            if (item && typeof item === 'object' && isIRExpr(item) && check(item)) return true;
             if (item && typeof item === 'object') {
               for (const sub of Object.values(item)) {
-                if (sub && typeof sub === 'object' && 'tag' in (sub as any) && check(sub as IRExpr)) return true;
+                if (sub && typeof sub === 'object' && isIRExpr(sub) && check(sub)) return true;
               }
             }
           }
-        } else if ('tag' in v) {
-          if (check(v as IRExpr)) return true;
+        } else if (isIRExpr(v)) {
+          if (check(v)) return true;
         }
       }
     }
@@ -3111,7 +3119,6 @@ function collectFieldAccesses(expr: IRExpr, varName: string): Map<string, IRType
   const fields = new Map<string, IRType>();
   const methodCalls = new Set<string>();
   function walk(e: IRExpr): void {
-    if (!e || typeof e !== 'object') return;
     if (e.tag === 'App' && e.fn.tag === 'FieldAccess' && e.fn.obj.tag === 'Var' && e.fn.obj.name === varName)
       methodCalls.add(e.fn.field);
     if (e.tag === 'FieldAccess' && e.obj.tag === 'Var' && e.obj.name === varName)
@@ -3120,20 +3127,24 @@ function collectFieldAccesses(expr: IRExpr, varName: string): Map<string, IRType
       if (v && typeof v === 'object') {
         if (Array.isArray(v)) {
           for (const item of v) {
-            if (item && typeof item === 'object' && 'tag' in item) walk(item as IRExpr);
+            if (item && typeof item === 'object' && isIRExpr(item)) walk(item);
             if (item && typeof item === 'object') {
               for (const sub of Object.values(item)) {
-                if (sub && typeof sub === 'object' && 'tag' in (sub as any)) walk(sub as IRExpr);
+                if (sub && typeof sub === 'object' && isIRExpr(sub)) walk(sub);
               }
             }
           }
-        } else if ('tag' in v) walk(v as IRExpr);
+        } else if (isIRExpr(v)) walk(v);
       }
     }
   }
   walk(expr);
   for (const m of methodCalls) fields.delete(m);
   return fields;
+}
+
+function isIRExpr(value: object): value is IRExpr {
+  return 'tag' in value && 'type' in value && 'effect' in value;
 }
 
 function flattenConcat(e: IRExpr): IRExpr[] | null {
@@ -3190,5 +3201,3 @@ function constraintToTypeClasses(constraint: IRType): string[] {
       return [];
   }
 }
-
-

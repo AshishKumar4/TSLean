@@ -13,16 +13,19 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
+import { fileURLToPath } from 'url';
 import { parseFile } from './parser/index.js';
 import { rewriteModule } from './rewrite/index.js';
-import { generateLean, generateLeanTracked } from './codegen/index.js';
+import { generateLeanTracked } from './codegen/index.js';
 import { generateLeanV2 } from './codegen/v2.js';
 import { currentTracker } from './sorry-tracker.js';
 import { resetTimer } from './timing.js';
 import { generateVerification } from './verification/index.js';
 import { generateVeilStub } from './verification/veil-gen.js';
 import { transpileProject, writeProjectOutputs } from './project/index.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── Colors (ANSI, respects NO_COLOR and --no-color) ─────────────────────────
 
@@ -250,8 +253,9 @@ function compileSingle(opts: CompileOpts): boolean {
     if (timing) process.stdout.write(timer.report() + '\n');
     return true;
   } catch (err) {
-    error((err as Error).message);
-    if (process.env['DEBUG']) process.stderr.write((err as Error).stack + '\n');
+    const message = err instanceof Error ? err.message : String(err);
+    error(message);
+    if (process.env['DEBUG'] && err instanceof Error && err.stack) process.stderr.write(err.stack + '\n');
     return false;
   }
 }
@@ -319,10 +323,9 @@ function watchMode(opts: CompileOpts): void {
     if (!autoLake) return;
     info('Running lake build...');
     try {
-      const { execSync } = require('child_process') as typeof import('child_process');
-      execSync('lake build', { cwd: path.join(process.cwd(), 'lean'), stdio: 'pipe', timeout: 120000 });
+      execFileSync('lake', ['build'], { cwd: path.join(process.cwd(), 'lean'), stdio: 'pipe', timeout: 120000 });
       success('lake build passed');
-    } catch (err) {
+    } catch {
       error('lake build failed');
     }
   };
@@ -384,7 +387,7 @@ function selfHost(): boolean {
 
   info('Running self-hosting pipeline...');
   try {
-    execSync(`bash "${scriptPath}"`, { stdio: 'inherit', cwd: path.join(__dirname, '..') });
+    execFileSync('bash', [scriptPath], { stdio: 'inherit', cwd: path.join(__dirname, '..') });
     return true;
   } catch {
     error('Self-hosting pipeline failed.');
@@ -404,7 +407,7 @@ function fixpointVerify(): boolean {
 
   info('Running fixpoint verification...');
   try {
-    execSync(`bash "${scriptPath}"`, { stdio: 'inherit', cwd: path.join(__dirname, '..') });
+    execFileSync('bash', [scriptPath], { stdio: 'inherit', cwd: path.join(__dirname, '..') });
     return true;
   } catch {
     error('Fixpoint verification failed.');

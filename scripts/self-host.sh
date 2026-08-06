@@ -57,10 +57,6 @@ for name in "${NAMES[@]}"; do
   [ -f "$f" ] && cp "$f" "$LEAN_SH/${name}.lean" && echo "  ✓ ${name}.lean ($(wc -l < "$f") lines)"
 done
 
-echo "-- Redirect" > "$LEAN_SH/IR_Types.lean"
-echo "import TSLean.Generated.SelfHost.ir_types" >> "$LEAN_SH/IR_Types.lean"
-echo "  ✓ IR_Types.lean → ir_types.lean"
-
 echo ""
 echo "Step 3: lake build"
 cd "$PROJ/lean"

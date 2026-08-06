@@ -14,9 +14,9 @@
 
 import type {
   LeanFile, LeanDecl, LeanExpr, LeanTy, LeanPat,
-  LeanTyParam, LeanParam, LeanField, LeanCtor,
-  LeanMatchArm, LeanFieldVal, SInterpPart,
+  LeanTyParam, LeanParam,
 } from './lean-ast.js';
+import { escapeLeanComment } from '../utils.js';
 
 // ─── Configuration ──────────────────────────────────────────────────────────────
 
@@ -162,7 +162,7 @@ function printDecl(d: LeanDecl, depth: number, out: string[]): void {
 
     case 'Def': {
       if (d.docComment) {
-        out.push(`${ind}/-- ${d.docComment.trim()} -/`);
+        out.push(`${ind}/-- ${escapeLeanComment(d.docComment.trim())} -/`);
       } else if (d.comment) {
         printCommentLines(d.comment, ind, out);
       }
@@ -284,9 +284,9 @@ function printExpr(e: LeanExpr, depth: number): string {
       return `${ind}default`;
 
     case 'Sorry':
-      if (e.ty && e.reason) return `${ind}(sorry : ${printTy(e.ty)}) /- ${e.reason} -/`;
+      if (e.ty && e.reason) return `${ind}(sorry : ${printTy(e.ty)}) /- ${escapeLeanComment(e.reason)} -/`;
       if (e.ty) return `${ind}(sorry : ${printTy(e.ty)})`;
-      if (e.reason) return `${ind}sorry /- ${e.reason} -/`;
+      if (e.reason) return `${ind}sorry /- ${escapeLeanComment(e.reason)} -/`;
       return `${ind}sorry`;
 
     case 'ArrayLit':
@@ -372,8 +372,7 @@ function printExpr(e: LeanExpr, depth: number): string {
 
     case 'TryCatch': {
       // For complex bodies (Seq, Do with Seq), use block rendering
-      const needsBlock = e.body.tag === 'Do' || e.body.tag === 'Seq' ||
-        (e.body.tag === 'Do' && e.body.body.tag === 'Seq');
+      const needsBlock = e.body.tag === 'Do' || e.body.tag === 'Seq';
       if (needsBlock) {
         const bodyLines = printExpr(e.body, depth + 1);
         const handlerLines = printExpr(e.handler, depth + 1);
@@ -457,9 +456,9 @@ function printExprInline(e: LeanExpr): string {
     case 'None':        return 'none';
     case 'Default':     return e.ty ? `(default : ${printTy(e.ty)})` : 'default';
     case 'Sorry':
-      if (e.ty && e.reason) return `(sorry : ${printTy(e.ty)}) /- ${e.reason} -/`;
+      if (e.ty && e.reason) return `(sorry : ${printTy(e.ty)}) /- ${escapeLeanComment(e.reason)} -/`;
       if (e.ty)    return `(sorry : ${printTy(e.ty)})`;
-      if (e.reason) return `sorry /- ${e.reason} -/`;
+      if (e.reason) return `sorry /- ${escapeLeanComment(e.reason)} -/`;
       return 'sorry';
     case 'ArrayLit':
       if (e.elems.length === 0) return '#[]';

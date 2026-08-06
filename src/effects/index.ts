@@ -11,7 +11,7 @@
 
 import * as ts from 'typescript';
 import {
-  Effect, IRType, Pure, IO, Async, stateEffect, exceptEffect, combineEffects,
+  Effect, IRType, IO, Async, stateEffect, exceptEffect, combineEffects,
   TyString, TyUnit,
 } from '../ir/types.js';
 
@@ -47,6 +47,7 @@ const FALLBACK_ERROR_TYPE = 'TSError';
  * @returns The combined effect — Pure if no side effects were detected.
  */
 export function inferNodeEffect(node: ts.Node, checker: ts.TypeChecker): Effect {
+  void checker;
   const target = getFunctionBody(node) ?? node;
   const effects: Effect[] = [];
 

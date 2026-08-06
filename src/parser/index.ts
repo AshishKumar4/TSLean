@@ -25,7 +25,7 @@
 import * as ts from 'typescript';
 import * as path from 'path';
 import {
-  IRModule, IRDecl, IRExpr, IRType, IRParam, IRCase, IRPattern, DoStmt,
+  IRModule, IRDecl, IRExpr, IRType, IRParam, IRCase, IRPattern,
   IRImport, Effect, BinOp,
   Pure, IO, Async, stateEffect, exceptEffect, combineEffects,
   isPure, hasAsync,
@@ -115,7 +115,10 @@ class ParserCtx {
     for (const stmt of this.sf.statements) {
       if (ts.isImportDeclaration(stmt)) { this.collectImport(stmt); continue; }
       const d = this.parseStatement(stmt);
-      if (d) (Array.isArray(d) ? decls.push(...d) : decls.push(d));
+      if (d) {
+        if (Array.isArray(d)) decls.push(...d);
+        else decls.push(d);
+      }
     }
 
     if (this.needsDO) {
@@ -319,10 +322,6 @@ class ParserCtx {
       });
     }
 
-    // Collect parent class name for documentation
-    const extendsClause = node.heritageClauses?.find(h => h.token === ts.SyntaxKind.ExtendsKeyword);
-    const parentName = extendsClause?.types[0]?.expression.getText(this.sf);
-
     // Check if class has a method named 'init' to avoid collision with constructor
     const hasInitMethod = node.members.some(m =>
       ts.isMethodDeclaration(m) && m.name?.getText(this.sf) === 'init');
@@ -337,7 +336,7 @@ class ParserCtx {
         }
         if (d) methods.push(d);
       } else if (ts.isMethodDeclaration(m)) {
-        const d = this.parseMethod(m, name, stateType, isDO);
+        const d = this.parseMethod(m, name, stateType);
         if (d) methods.push(d);
       } else if (ts.isGetAccessorDeclaration(m)) {
         const d = this.parseGetter(m, name, stateType);
@@ -451,7 +450,7 @@ class ParserCtx {
     };
   }
 
-  private parseMethod(node: ts.MethodDeclaration, className: string, stateType: string, isDO: boolean): IRDecl | null {
+  private parseMethod(node: ts.MethodDeclaration, className: string, stateType: string): IRDecl | null {
     const name    = node.name?.getText(this.sf) ?? 'unknown';
     const isStatic = node.modifiers?.some(m => m.kind === ts.SyntaxKind.StaticKeyword);
     // Merge class type params with method's own type params
@@ -715,7 +714,10 @@ class ParserCtx {
     if (node.body && ts.isModuleBlock(node.body)) {
       for (const s of node.body.statements) {
         const d = this.parseStatement(s);
-        if (d) (Array.isArray(d) ? inner.push(...d) : inner.push(d));
+        if (d) {
+          if (Array.isArray(d)) inner.push(...d);
+          else inner.push(d);
+        }
       }
     }
     return { tag: 'Namespace', name: node.name.text, decls: inner };
@@ -883,7 +885,7 @@ class ParserCtx {
       const body = this.parseBlock(stmt.statement as ts.Block, eff);
       const cond = this.parseExpr(stmt.expression);
       // do { body } while (cond) → body; while (cond) { body }
-      const whileLoop = this.buildWhileLoop('_dowhile', cond, body, eff);
+      const whileLoop = this.buildWhileLoop('_dowhile', cond, body);
       const loop = seq(body, whileLoop);
       const c = cont();
       return c.tag === 'LitUnit' ? loop : seq(loop, c);
@@ -1152,10 +1154,10 @@ class ParserCtx {
     const body = ts.isBlock(node.statement)
       ? this.parseBlock(node.statement, eff)
       : this.parseStmt(node.statement as ts.Statement, [], eff);
-    return this.buildWhileLoop(`_while_${node.pos}`, cond, body, eff);
+    return this.buildWhileLoop(`_while_${node.pos}`, cond, body);
   }
 
-  private buildWhileLoop(name: string, cond: IRExpr, body: IRExpr, _eff: Effect): IRExpr {
+  private buildWhileLoop(name: string, cond: IRExpr, body: IRExpr): IRExpr {
     const recurse: IRExpr = { tag: 'App', fn: varExpr(name), args: [], type: TyUnit, effect: Pure };
     const lBody: IRExpr = {
       tag: 'IfThenElse', cond, then: seq(body, recurse),
@@ -1201,7 +1203,7 @@ class ParserCtx {
       const obj   = this.parseExpr(node.expression);
       const index = this.parseExpr(node.argumentExpression);
       // Optional element access node?.["key"]
-      if ((node as any).questionDotToken) {
+      if (node.questionDotToken) {
         return { tag: 'App', fn: varExpr('Array.get?'), args: [obj, index], type: TyOption(ty), effect: Pure };
       }
       return { tag: 'IndexAccess', obj, index, type: ty, effect: Pure };
@@ -1711,11 +1713,4 @@ function jsdocComment(node: ts.Node, sf: ts.SourceFile): string | undefined {
     }
   }
   return undefined;
-}
-
-/** Check if a statement has a const/let/var with an interface/object type that acts as index signature */
-function hasIndexSignature(node: ts.Node, checker: ts.TypeChecker): boolean {
-  if (!ts.isInterfaceDeclaration(node) && !ts.isTypeLiteralNode(node)) return false;
-  const members = ts.isInterfaceDeclaration(node) ? node.members : (node as ts.TypeLiteralNode).members;
-  return members.some(m => ts.isIndexSignatureDeclaration(m));
 }

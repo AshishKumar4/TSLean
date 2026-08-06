@@ -45,7 +45,7 @@ ln -sf /opt/lean4/lean-4.29.0-linux/bin/lake /usr/local/bin/lake
 ### Verify Setup
 
 ```bash
-# Run TypeScript tests (1557 tests across 37 test files)
+# Run TypeScript tests
 bun run test
 
 # Build the Lean library
@@ -53,7 +53,7 @@ export PATH="/opt/lean4/lean-4.29.0-linux/bin:$PATH"
 cd lean && lake build
 ```
 
-Both must pass before submitting changes.
+Run `bun run verify` before submitting changes. Current measured counts are recorded in [`../evidence/baseline-manifest.json`](../evidence/baseline-manifest.json), not hard-coded here.
 
 ## Project Structure
 
@@ -101,7 +101,7 @@ TSLean/
 │       ├── Proofs/             Transpiler correctness proofs
 │       ├── Generated/          Auto-generated transpiler output
 │       └── Veil/               Veil DSL for DO specification
-├── tests/                  Vitest test suite (37 files, 1557 tests)
+├── tests/                  Vitest test suite and semantic corpus obligations
 │   ├── fixtures/             Test input files (.ts)
 │   │   ├── basic/              hello.ts, classes.ts, interfaces.ts
 │   │   ├── advanced/           optional-chaining, template-literals, etc.
@@ -240,8 +240,8 @@ cd lean && lake build
 cd .. && bun run test
 
 # Test the mapping end-to-end
-echo 'const zipped = [1, 2].zip(["a", "b"]);' > /tmp/test.ts
-npx tsx src/cli.ts /tmp/test.ts
+printf '%s\n' 'const zipped = [1, 2].zip(["a", "b"]);' > /tmp/test.ts
+bun run src/cli.ts /tmp/test.ts
 ```
 
 ### Step 4: Add a test
@@ -346,7 +346,7 @@ it('transpiles discriminated union', () => {
 import { execSync } from 'child_process';
 
 it('transpiles via CLI', () => {
-  const result = execSync('npx tsx src/cli.ts tests/fixtures/basic/hello.ts', { encoding: 'utf8' });
+  const result = execSync('bun run src/cli.ts tests/fixtures/basic/hello.ts', { encoding: 'utf8' });
   expect(result).toContain('def hello');
 });
 ```
@@ -368,7 +368,7 @@ The Lean build compiles all modules in `lean/TSLean/`, including the `Proofs/` d
 
 ## Running the Fixpoint Verification
 
-The fixpoint verifies that the TypeScript transpiler and its self-hosted Lean equivalent produce identical output for 10 target source files:
+The fixpoint compares output from the TypeScript transpiler and its self-hosted Lean equivalent for 10 target source files. It is a structural regression check, not a semantic correctness proof:
 
 ```bash
 export PATH="/opt/lean4/lean-4.29.0-linux/bin:$PATH"
@@ -383,7 +383,7 @@ A fixpoint regression (fewer than 9/10 identical) means your changes broke the s
 ## Code Quality Rules
 
 1. **Strict DRY** — no duplicated logic. Extract shared behavior.
-2. **`bun run test` must pass** — all 1557+ tests green.
+2. **`bun run test` must pass** — all active tests green and known semantic gaps remain explicit todos.
 3. **`lake build` must pass** — the Lean library compiles cleanly.
 4. **Fixpoint must not regress** — maintain 9/10 identical files.
 5. **Every `sorry` tracked** — each sorry emitted by the lowerer must have a `SorryEntry` with category and hint via `src/sorry-tracker.ts`.
@@ -432,5 +432,5 @@ When filing a bug report, include:
 1. **Input TypeScript** — the `.ts` source that triggers the issue
 2. **Expected Lean output** — what you expected TSLean to produce
 3. **Actual Lean output** — what TSLean actually produced (or the error message)
-4. **TSLean version** — `npx tslean --version`
+4. **TSLean version** — `bun run tslean --version`
 5. **Lean version** — `lean --version` (should be 4.29.0)

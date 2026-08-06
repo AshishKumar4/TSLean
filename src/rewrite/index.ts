@@ -29,8 +29,7 @@
  */
 
 import {
-  IRModule, IRDecl, IRExpr, IRType, IRPattern, IRCase, DoStmt,
-  TyRef, TyFloat, TyString, TyUnit, Pure,
+  IRModule, IRDecl, IRExpr, IRCase, DoStmt,
 } from '../ir/types.js';
 import { DISCRIMINANT_FIELDS as DISCRIMINANT_FIELDS_LIST } from '../utils.js';
 
@@ -284,11 +283,12 @@ function substituteFieldAccesses(
 ): IRExpr {
   function go(e: IRExpr): IRExpr {
     // Direct substitution: s.field → patternVar
+    const replacement = e.tag === 'FieldAccess' ? subst.get(e.field) : undefined;
     if (e.tag === 'FieldAccess' &&
         e.obj.tag === 'Var' &&
         e.obj.name === scrutineeName &&
-        subst.has(e.field)) {
-      return { tag: 'Var', name: subst.get(e.field)!, type: e.type, effect: e.effect };
+        replacement !== undefined) {
+      return { tag: 'Var', name: replacement, type: e.type, effect: e.effect };
     }
     // Recursive traversal
     switch (e.tag) {

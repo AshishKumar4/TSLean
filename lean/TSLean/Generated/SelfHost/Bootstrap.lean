@@ -6,7 +6,6 @@
 -- it proves the transpiler can compile itself.
 
 -- Core IR types (mutual Effect/IRType/IRExpr inductive, 265 lines)
-import TSLean.Generated.SelfHost.IR_Types
 import TSLean.Generated.SelfHost.ir_types
 
 -- Transpiler pipeline stages (all pipeline-generated)

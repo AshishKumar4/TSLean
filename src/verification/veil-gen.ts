@@ -7,7 +7,7 @@
 //   - safety/invariant stubs (sorry)
 //   - Proof obligation theorems (sorry)
 
-import { IRModule, IRDecl, IRExpr, IRType, IRParam, Effect } from '../ir/types.js';
+import { IRModule, IRDecl, IRExpr, IRParam, Effect } from '../ir/types.js';
 
 export interface VeilResult {
   leanCode: string;
@@ -53,7 +53,7 @@ export function generateVeilStub(mod: IRModule, doName: string, leanModule: stri
 
   // Init predicate
   lines.push('-- Initial state predicate (extracted from constructor/blockConcurrencyWhile)');
-  const initFields = extractInitFields(ns, stateType);
+  const initFields = extractInitFields(ns);
   if (initFields.length > 0) {
     lines.push(`def initState (s : State) : Prop :=`);
     lines.push(`  ${initFields.join(' ∧\n  ')}`);
@@ -160,7 +160,7 @@ export function generateVeilStub(mod: IRModule, doName: string, leanModule: stri
 function findNamespace(mod: IRModule, name: string): Extract<IRDecl, { tag: 'Namespace' }> | null {
   for (const d of mod.decls) {
     if (d.tag === 'Namespace' && d.name === name)
-      return d as Extract<IRDecl, { tag: 'Namespace' }>;
+      return d;
   }
   return null;
 }
@@ -176,7 +176,8 @@ function extractPublicMethods(ns: Extract<IRDecl, { tag: 'Namespace' }>): Method
   const methods: MethodInfo[] = [];
   for (const d of ns.decls) {
     if (d.tag === 'FuncDef') {
-      const shortName = d.name.includes('.') ? d.name.split('.').pop()! : d.name;
+      const nameParts = d.name.split('.');
+      const shortName = d.name.includes('.') ? nameParts[nameParts.length - 1] ?? d.name : d.name;
       // Skip init (constructor) and private methods
       if (shortName === 'init' || shortName.startsWith('_')) continue;
       methods.push({
@@ -190,7 +191,7 @@ function extractPublicMethods(ns: Extract<IRDecl, { tag: 'Namespace' }>): Method
   return methods;
 }
 
-function extractInitFields(ns: Extract<IRDecl, { tag: 'Namespace' }>, stateType: string): string[] {
+function extractInitFields(ns: Extract<IRDecl, { tag: 'Namespace' }>): string[] {
   for (const d of ns.decls) {
     if (d.tag === 'FuncDef' && d.name.endsWith('.init')) {
       return extractFieldAssignments(d.body);

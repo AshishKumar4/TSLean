@@ -1,6 +1,6 @@
 // Stdlib mapping: TypeScript built-ins → Lean 4 equivalents.
 
-import { IRType, BinOp, TyString, TyFloat, TyBool, TyNat, TyUnit, TyArray, TyOption } from '../ir/types.js';
+import { IRType, BinOp, TyString, TyBool, TyNat, TyUnit, TyArray, TyOption } from '../ir/types.js';
 
 // ─── Method translations ──────────────────────────────────────────────────────
 
