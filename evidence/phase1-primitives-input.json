@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "outputPath": "evidence/phase1-primitives-manifest.json",
+  "baseRevision": "89c25711acc4f0e9a97a840790515d6a8305ce4f",
+  "branch": "rebuild/semantic-core",
+  "counts": {
+    "tests": {
+      "files": 40,
+      "passed": 1601,
+      "failed": 0,
+      "todo": 8
+    },
+    "lean": {
+      "jobs": 128,
+      "status": "passed"
+    },
+    "corpus": {
+      "entries": 102,
+      "red": 102
+    },
+    "auditedTheorems": 43,
+    "lint": "passed",
+    "build": "passed"
+  },
+  "knownTodos": [
+    {
+      "id": "completion-nested-forof-erased",
+      "location": "tests/e2e-v3.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased",
+      "location": "tests/pipeline-full.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased-cli",
+      "location": "tests/e2e/cli.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased-e2e",
+      "location": "tests/e2e/advanced.test.ts"
+    },
+    {
+      "id": "completion-safe-divide-catch-none",
+      "location": "tests/all-fixtures.test.ts"
+    },
+    {
+      "id": "objects-anonymous-shorthand-default",
+      "location": "tests/parser-types.test.ts"
+    },
+    {
+      "id": "objects-renamed-shorthand-default",
+      "location": "tests/parser-types.test.ts"
+    },
+    {
+      "id": "selfhost-typemap-one-hole",
+      "location": "tests/parser-advanced.test.ts"
+    }
+  ],
+  "validation": {
+    "testFiles": {
+      "directory": "tests",
+      "suffix": ".test.ts",
+      "countPath": "tests.files"
+    },
+    "todos": {
+      "directory": "tests",
+      "suffix": ".test.ts",
+      "countPath": "tests.todo"
+    },
+    "corpus": {
+      "path": "spec/corpus/counterexamples.json",
+      "entriesPath": "corpus.entries",
+      "redPath": "corpus.red"
+    },
+    "lineCounts": [
+      {
+        "path": "lean/TSLean/JS/AxiomAudit.lean",
+        "prefix": "#print axioms ",
+        "countPath": "auditedTheorems"
+      }
+    ]
+  },
+  "hashGroups": {
+    "source": {
+      "paths": ["src"]
+    },
+    "jsRuntime": {
+      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
+    },
+    "corpus": {
+      "paths": ["spec/corpus"]
+    },
+    "infrastructure": {
+      "paths": ["package.json", "vitest.config.ts", "scripts/generate-evidence-manifest.mjs"]
+    }
+  }
+}

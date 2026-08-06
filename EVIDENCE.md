@@ -33,7 +33,7 @@ $ cd lean && lake build
 Build completed successfully (117 jobs).
 ```
 
-The historical failing counts above were captured before the Phase 0 repairs and are retained as the before-state. Machine-readable current counts and explicit todos are in `evidence/baseline-input.json`; `evidence/baseline-manifest.json` records the explicit upstream revision, toolchain, and source, runtime, and corpus hashes for the Phase 0 snapshot.
+The historical failing counts above were captured before the Phase 0 repairs and are retained as the before-state. Machine-readable Phase 0 counts and explicit todos are in `evidence/baseline-input.json`; `evidence/baseline-manifest.json` records the explicit upstream revision, toolchain, and source, runtime, and corpus hashes for the immutable Phase 0 snapshot. Its source-derived validations and hash groups are read from the frozen `89c2571` tree, so current evidence checks never reinterpret or mutate the baseline. `bun run evidence:baseline:generate` and `bun run evidence:baseline:check` are explicit historical reproduction commands.
 
 ## 2026-08-05 — Local gate
 
@@ -53,3 +53,31 @@ Build completed successfully (117 jobs).
 ```
 
 The gate exited successfully. Lean emitted its existing warnings, including `declaration uses 'sorry'` in `TSLean.Runtime.Basic`, Workers stubs, `TSLean.Stubs.NodeHttp`, and `TSLean.Stubs.WebAPIs`; no warnings were suppressed. The increase from the captured 1,592-test repaired baseline to 1,601 passing tests reflects the additional Phase 0 corpus, declaration-reader, and CLI safety tests.
+
+## 2026-08-06 — Phase 1 ECMAScript value core
+
+The first isolated semantic slice under `lean/TSLean/JS/` passed these commands:
+
+```text
+$ cd lean && lake build TSLean.JS
+Build completed successfully (10 jobs).
+
+$ cd lean && lake env lean TSLean/JS/Tests.lean
+
+$ cd lean && lake env lean TSLean/JS/AxiomAudit.lean
+
+$ cd lean && if rg -n '(^|[[:space:]])(sorry|axiom|opaque|partial|unsafe|noncomputable)([[:space:]]|$)' 'TSLean/JS' 'TSLean/JS.lean'; then exit 1; fi
+
+$ cd lean && if rg --pcre2 -n '^import (?!TSLean\.JS(?:\.|$)|Init(?:\.|$)|Std(?:\.|$))' 'TSLean/JS' 'TSLean/JS.lean'; then exit 1; fi
+
+$ bun run evidence:generate
+
+$ bun run evidence:check
+
+$ bun run verify
+Build completed successfully (128 jobs).
+
+$ git diff --check
+```
+
+The Phase 1 commands generate and check `evidence/phase1-primitives-manifest.json` from the immutable `evidence/phase1-primitives-input.json`; `verify` checks that same current manifest and does not check or rewrite Phase 0 evidence. The two scans and `git diff --check` produced no output. The production `TSLean.JS` target excludes executable tests and audit commands; the full build reaches both through `TSLean.Tests`. `AxiomAudit.lean` audits all 43 exported theorems and reports at most Lean's foundational `propext` and `Quot.sound`; the new slice declares no assumptions and does not use `Classical.choice`.

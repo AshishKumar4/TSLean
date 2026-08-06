@@ -1,5 +1,8 @@
 -- TSLean: TypeScript → Lean 4 Runtime Library
 
+-- Isolated ECMAScript semantic core
+import TSLean.JS
+
 -- Runtime
 import TSLean.Runtime.Basic
 import TSLean.Runtime.Monad

@@ -1,48 +1,51 @@
 {
   "schemaVersion": 1,
+  "outputPath": "evidence/baseline-manifest.json",
   "upstreamRevision": "3c16098c2317929700c57f7419a80c924d4948a0",
   "branch": "rebuild/semantic-core",
-  "original": {
-    "typescriptErrors": 24,
-    "tests": {
-      "passed": 1439,
-      "failed": 46,
-      "skipped": 105
+  "counts": {
+    "original": {
+      "typescriptErrors": 24,
+      "tests": {
+        "passed": 1439,
+        "failed": 46,
+        "skipped": 105
+      },
+      "lean": {
+        "completedJobs": 115,
+        "totalJobs": 118,
+        "status": "failed",
+        "cause": "IR_Types.lean and ir_types.lean collide on a case-insensitive filesystem"
+      },
+      "redCorpusEntries": 100
     },
-    "lean": {
-      "completedJobs": 115,
-      "totalJobs": 118,
-      "status": "failed",
-      "cause": "IR_Types.lean and ir_types.lean collide on a case-insensitive filesystem"
+    "phase0Repaired": {
+      "tests": {
+        "files": 40,
+        "passed": 1592,
+        "failed": 0,
+        "todo": 8
+      },
+      "leanJobs": 117
     },
-    "redCorpusEntries": 100
-  },
-  "phase0Repaired": {
-    "tests": {
-      "files": 40,
-      "passed": 1592,
-      "failed": 0,
-      "todo": 8
-    },
-    "leanJobs": 117
-  },
-  "current": {
-    "tests": {
-      "files": 40,
-      "passed": 1601,
-      "failed": 0,
-      "todo": 8
-    },
-    "lean": {
-      "jobs": 117,
-      "status": "passed"
-    },
-    "corpus": {
-      "entries": 102,
-      "red": 102
-    },
-    "lint": "passed",
-    "build": "passed"
+    "current": {
+      "tests": {
+        "files": 40,
+        "passed": 1601,
+        "failed": 0,
+        "todo": 8
+      },
+      "lean": {
+        "jobs": 117,
+        "status": "passed"
+      },
+      "corpus": {
+        "entries": 102,
+        "red": 102
+      },
+      "lint": "passed",
+      "build": "passed"
+    }
   },
   "knownTodos": [
     {
@@ -77,5 +80,40 @@
       "id": "selfhost-typemap-one-hole",
       "location": "tests/parser-advanced.test.ts"
     }
-  ]
+  ],
+  "validation": {
+    "testFiles": {
+      "directory": "tests",
+      "suffix": ".test.ts",
+      "countPath": "current.tests.files",
+      "revision": "89c25711acc4f0e9a97a840790515d6a8305ce4f"
+    },
+    "todos": {
+      "directory": "tests",
+      "suffix": ".test.ts",
+      "countPath": "current.tests.todo",
+      "revision": "89c25711acc4f0e9a97a840790515d6a8305ce4f"
+    },
+    "corpus": {
+      "path": "spec/corpus/counterexamples.json",
+      "entriesPath": "current.corpus.entries",
+      "redPath": "current.corpus.red",
+      "revision": "89c25711acc4f0e9a97a840790515d6a8305ce4f"
+    },
+    "lineCounts": []
+  },
+  "hashGroups": {
+    "source": {
+      "paths": ["src"],
+      "revision": "89c25711acc4f0e9a97a840790515d6a8305ce4f"
+    },
+    "runtime": {
+      "paths": ["lean/TSLean"],
+      "revision": "89c25711acc4f0e9a97a840790515d6a8305ce4f"
+    },
+    "corpus": {
+      "paths": ["spec/corpus"],
+      "revision": "89c25711acc4f0e9a97a840790515d6a8305ce4f"
+    }
+  }
 }
