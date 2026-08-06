@@ -17,9 +17,10 @@ private def lookupWithFuel (heap : Heap) (key : PropertyKey) : Nat → RefId →
       match heap.get? ref with
       | .error fault => .error (.heap fault)
       | .ok object =>
-          match object.properties.lookup key with
-          | some descriptor => .ok (some (ref, descriptor))
-          | none =>
+          match heap.getOwnProperty ref key with
+          | .error fault => .error (.heap fault)
+          | .ok (some descriptor) => .ok (some (ref, descriptor))
+          | .ok none =>
               match object.prototype with
               | none => .ok none
               | some parent => lookupWithFuel heap key fuel parent

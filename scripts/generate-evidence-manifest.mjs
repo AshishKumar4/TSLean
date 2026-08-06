@@ -177,6 +177,42 @@ function validateCounts(value, label = 'counts') {
   }
 }
 
+function validateFormalDebt(value) {
+  const debt = object(value, 'formalDebt');
+  exactKeys(debt, ['counts', 'obligations'], 'formalDebt');
+  const counts = object(debt.counts, 'formalDebt.counts');
+  const areas = Object.keys(counts).filter((area) => area !== 'total');
+  if (areas.length === 0 || !Object.hasOwn(counts, 'total')) {
+    fail('formalDebt.counts must contain total and at least one area');
+  }
+  for (const [area, count] of Object.entries(counts)) {
+    if (!Number.isSafeInteger(count) || count < 0) fail(`formalDebt.counts.${area} must be a non-negative integer`);
+  }
+  if (!Array.isArray(debt.obligations) || debt.obligations.length !== counts.total) {
+    fail('formalDebt.obligations must match formalDebt.counts.total');
+  }
+  const actual = Object.fromEntries(areas.map((area) => [area, 0]));
+  const ids = new Set();
+  for (const [index, obligation] of debt.obligations.entries()) {
+    exactKeys(obligation, ['id', 'area', 'statement'], `formalDebt.obligations[${index}]`);
+    for (const key of ['id', 'area', 'statement']) {
+      if (typeof obligation[key] !== 'string' || obligation[key].length === 0) {
+        fail(`formalDebt.obligations[${index}].${key} must be non-empty`);
+      }
+    }
+    if (!Object.hasOwn(actual, obligation.area)) fail(`unknown formal debt area ${obligation.area}`);
+    if (ids.has(obligation.id)) fail(`duplicate formal debt id ${obligation.id}`);
+    ids.add(obligation.id);
+    actual[obligation.area] += 1;
+  }
+  for (const area of areas) {
+    if (actual[area] !== counts[area]) fail(`formalDebt.counts.${area} does not match its obligations`);
+  }
+  if (areas.reduce((sum, area) => sum + counts[area], 0) !== counts.total) {
+    fail('formalDebt area counts do not sum to total');
+  }
+}
+
 function selectedFiles(config, label) {
   const directory = repositoryPath(config.directory, `${label}.directory`);
   if (typeof config.suffix !== 'string' || config.suffix.length === 0) fail(`${label}.suffix must be non-empty`);
@@ -302,12 +338,14 @@ const expectedKeys = [
   'validation',
   'hashGroups',
 ];
+if (input.formalDebt !== undefined) expectedKeys.push('formalDebt');
 exactKeys(input, expectedKeys, 'input');
 if (input.schemaVersion !== 1) fail('unsupported evidence input schema');
 if (typeof input[revisionKey] !== 'string' || input[revisionKey].length === 0) fail(`${revisionKey} must be non-empty`);
 if (typeof input.branch !== 'string' || input.branch.length === 0) fail('branch must be non-empty');
 if (!Array.isArray(input.knownTodos)) fail('knownTodos must be an array');
 validateCounts(input.counts);
+if (input.formalDebt !== undefined) validateFormalDebt(input.formalDebt);
 
 const branch = textCommand('git', ['branch', '--show-current']);
 if (branch !== input.branch) fail(`expected branch ${input.branch}, found ${branch || '<detached HEAD>'}`);
@@ -332,6 +370,7 @@ const manifest = {
     lake: textCommand('lake', ['--version'], join(root, 'lean')),
   },
   counts: input.counts,
+  ...(input.formalDebt === undefined ? {} : { formalDebt: input.formalDebt }),
   knownTodos,
   hashes,
 };

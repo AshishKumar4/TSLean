@@ -62,11 +62,18 @@ function readExpectedAuditCount(path) {
   } catch (error) {
     fail(`invalid evidence JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
-  exactKeys(
-    input,
-    ['schemaVersion', 'outputPath', 'baseRevision', 'branch', 'counts', 'knownTodos', 'validation', 'hashGroups'],
-    'evidence input',
-  );
+  const expectedKeys = [
+    'schemaVersion',
+    'outputPath',
+    'baseRevision',
+    'branch',
+    'counts',
+    'knownTodos',
+    'validation',
+    'hashGroups',
+  ];
+  if (input.formalDebt !== undefined) expectedKeys.push('formalDebt');
+  exactKeys(input, expectedKeys, 'evidence input');
   if (input.schemaVersion !== 1) fail('unsupported evidence input schema');
   for (const key of ['outputPath', 'baseRevision', 'branch']) {
     if (typeof input[key] !== 'string' || input[key].length === 0) fail(`evidence input ${key} must be non-empty`);
@@ -74,6 +81,7 @@ function readExpectedAuditCount(path) {
   if (!Array.isArray(input.knownTodos)) fail('evidence input knownTodos must be an array');
   object(input.validation, 'evidence input validation');
   object(input.hashGroups, 'evidence input hashGroups');
+  if (input.formalDebt !== undefined) object(input.formalDebt, 'evidence input formalDebt');
   const counts = object(input.counts, 'counts');
   exactKeys(counts, ['tests', 'lean', 'corpus', 'auditedTheorems', 'lint', 'build'], 'counts');
   exactKeys(counts.tests, ['files', 'passed', 'failed', 'todo'], 'counts.tests');
@@ -179,10 +187,11 @@ function checkSources() {
   for (const name of files) validateSemanticSource(name, readFileSync(join(jsDirectory, name), 'utf8'));
   validateProductionBarrel(readFileSync(join(root, 'lean/TSLean/JS.lean'), 'utf8'));
   const heap = readFileSync(join(jsDirectory, 'Heap.lean'), 'utf8');
-  if (!/structure OrderedProps where\s+private mk ::/.test(heap)) fail('OrderedProps constructor is public');
+  const orderedProps = readFileSync(join(jsDirectory, 'OrderedProps.lean'), 'utf8');
+  if (!/structure OrderedProps where\s+private mk ::/.test(orderedProps)) fail('OrderedProps constructor is public');
   if (!/structure Heap where\s+private mk ::/.test(heap)) fail('Heap constructor is public');
   if (!/structure ObjectRecord where\s+private mk ::/.test(heap)) fail('ObjectRecord constructor is public');
-  if (!/private def insert\b/.test(heap) || !/private def delete\b/.test(heap)) {
+  if (!/private def insertRep\b/.test(orderedProps) || !/private def deleteRep\b/.test(orderedProps)) {
     fail('OrderedProps mutation is public');
   }
   if (/\bdef (setProperties|setExtensible)\b/.test(heap)) fail('raw heap mutation is public');

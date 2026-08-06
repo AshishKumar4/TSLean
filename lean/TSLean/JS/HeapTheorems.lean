@@ -42,55 +42,6 @@ theorem Heap.object_equality_is_reference_identity (left right : RefId) :
     strictEqual (.object left) (.object right) = decide (left = right) :=
   strictEqual_object left right
 
-private theorem mappedTrue_ne_false (result : Except ε α) (next : α) :
-    result.map (fun value => (true, value)) ≠ .ok (false, next) := by
-  intro equal
-  cases result <;> cases equal
-
-/-- A rejected valid descriptor update returns the original heap. -/
-theorem Heap.failed_define_preserves_heap
-    (heap next : Heap) (ref : RefId) (key : PropertyKey) (update : DescriptorUpdate)
-    (rejected : heap.defineOwnProperty ref key update = .ok (false, next)) :
-    next = heap := by
-  unfold Heap.defineOwnProperty at rejected
-  split at rejected <;> try contradiction
-  split at rejected <;> try contradiction
-  split at rejected <;> try contradiction
-  split at rejected <;> try contradiction
-  · simpa using rejected.symm
-  · exact (mappedTrue_ne_false _ next rejected).elim
-
-/-- A rejected deletion returns the original heap. -/
-theorem Heap.failed_delete_preserves_heap
-    (heap next : Heap) (ref : RefId) (key : PropertyKey)
-    (rejected : heap.deleteProperty ref key = .ok (false, next)) :
-    next = heap := by
-  cases objectResult : heap.get? ref with
-  | error fault => simp [Heap.deleteProperty, objectResult] at rejected
-  | ok object =>
-      cases propertyResult : object.properties.lookup key with
-      | none => simp [Heap.deleteProperty, objectResult, propertyResult] at rejected
-      | some property =>
-          cases property with
-          | data data =>
-              cases configurable : data.configurable with
-              | false =>
-                  simpa [Heap.deleteProperty, objectResult, propertyResult, configurable]
-                    using rejected.symm
-              | true =>
-                  simp only [Heap.deleteProperty, objectResult, propertyResult, configurable,
-                    ↓reduceIte] at rejected
-                  exact (mappedTrue_ne_false _ next rejected).elim
-          | accessor accessor =>
-              cases configurable : accessor.configurable with
-              | false =>
-                  simpa [Heap.deleteProperty, objectResult, propertyResult, configurable]
-                    using rejected.symm
-              | true =>
-                  simp only [Heap.deleteProperty, objectResult, propertyResult, configurable,
-                    ↓reduceIte] at rejected
-                  exact (mappedTrue_ne_false _ next rejected).elim
-
 /-- A nonextensible change is rejected before an invalid candidate is traversed. -/
 theorem Heap.nonextensible_rejects_before_candidate
     (heap : Heap) (ref : RefId) (object : ObjectRecord) (candidate : Option RefId)
@@ -101,7 +52,8 @@ theorem Heap.nonextensible_rejects_before_candidate
 
 -- TODO(theorem): prove private `OrderedProps.insert/delete`, including threshold-crossing and
 -- deletion compaction, preserve exact bidirectional metadata `WellFormed`; derive duplicate-free
--- partitioned `ownKeys`; and prove allocation plus every successful public heap mutation preserves
--- complete `Heap.WellFormed`.
+-- partitioned `ownKeys`; and prove ordinary plus array mutation preserve complete `Heap.WellFormed`.
+-- Array shrink rejection is deliberately excluded from the old heap-preservation claim because a
+-- blocked shrink commits all configurable higher-index deletions before returning `false`.
 
 end TSLean.JS

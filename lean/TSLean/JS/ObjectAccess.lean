@@ -10,11 +10,20 @@ private def undefined : Value := .primitive .undefined
 private def typeError (message : String) : Value :=
   .primitive (.string (JSString.ofLeanString ("TypeError: " ++ message)))
 
+private def rangeError (message : String) : Value :=
+  .primitive (.string (JSString.ofLeanString ("RangeError: " ++ message)))
+
 private def heapFault (fault : HeapFault) : ModelFault := .runtime (.heap fault)
 
 private def prototypeFault : PrototypeFault → ModelFault
   | .heap fault => heapFault fault
   | .cycleOrFuelExhausted => heapFault .cycleOrFuelExhausted
+
+/-- Produces a catchable ECMAScript TypeError completion. -/
+def throwTypeError (message : String) : JSM P α := JSM.throwJS (typeError message)
+
+/-- Produces a catchable ECMAScript RangeError completion. -/
+def throwRangeError (message : String) : JSM P α := JSM.throwJS (rangeError message)
 
 /-- Gets a property through the prototype chain, preserving the original receiver for accessors. -/
 def get (hook : BodyHook P) (ref : RefId) (key : PropertyKey) (receiver : Value) : JSM P Value :=
@@ -39,12 +48,28 @@ private def defineValue (heap : Heap) (receiver : RefId) (key : PropertyKey) (va
       else .ok (false, heap)
   | .ok none => heap.createDataProperty receiver key value
 
-private def defineFault : DefinePropertyFault → ModelFault
-  | .heap fault => heapFault fault
-  | .syntax _ => heapFault .cycleOrFuelExhausted
-  | .invalidValueRef ref => heapFault (.invalidRef ref)
-  | .invalidAccessor ref => heapFault (.invalidRef ref)
-  | .nonCallableAccessor ref => heapFault (.invalidRef ref)
+private def completeDefinition (result : Except DefinePropertyFault (Bool × Heap)) : JSM P Bool :=
+  fun machine =>
+    match result with
+    | .ok (success, heap) => .done (.normal success) (machine.setHeap heap)
+    | .error (.heap fault) => .fault (heapFault fault) machine
+    | .error (.invalidValueRef ref) | .error (.invalidAccessor ref) =>
+        .fault (heapFault (.invalidRef ref)) machine
+    | .error (.syntax _) => .done (.thrown (typeError "invalid property descriptor")) machine
+    | .error (.nonCallableAccessor _) =>
+        .done (.thrown (typeError "property accessor is not callable")) machine
+    | .error (.invalidArrayLength _) | .error (.arrayTooLong _) =>
+        .done (.thrown (rangeError "invalid array length")) machine
+    | .error (.invalidArrayLengthValue _) =>
+        .done (.thrown (typeError "array length must be a number")) machine
+
+/-- Defines a property while preserving JavaScript descriptor and array-length exceptions. -/
+def defineOwnProperty (ref : RefId) (key : PropertyKey) (update : DescriptorUpdate) : JSM P Bool :=
+  fun machine => completeDefinition (machine.heap.defineOwnProperty ref key update) machine
+
+/-- Creates an enumerable writable configurable data property with typed semantic completion. -/
+def createDataProperty (ref : RefId) (key : PropertyKey) (value : Value) : JSM P Bool :=
+  fun machine => completeDefinition (machine.heap.createDataProperty ref key value) machine
 
 /-- Sets a property using ordinary receiver semantics. Inherited writable data properties create
 an own receiver property; inherited accessors invoke their setter with that receiver. -/
@@ -58,9 +83,7 @@ def set (hook : BodyHook P) (ref : RefId) (key : PropertyKey) (value receiver : 
           match receiver with
           | .primitive _ => .done (.normal false) machine
           | .object receiverRef =>
-              match defineValue machine.heap receiverRef key value with
-              | .error fault => .fault (defineFault fault) machine
-              | .ok (success, heap) => .done (.normal success) (machine.setHeap heap)
+              completeDefinition (defineValue machine.heap receiverRef key value) machine
     | .ok (some (_, .accessor descriptor)) =>
         match descriptor.set with
         | none => .done (.normal false) machine
@@ -76,9 +99,7 @@ def set (hook : BodyHook P) (ref : RefId) (key : PropertyKey) (value receiver : 
         match receiver with
         | .primitive _ => .done (.normal false) machine
         | .object receiverRef =>
-            match defineValue machine.heap receiverRef key value with
-            | .error fault => .fault (defineFault fault) machine
-            | .ok (success, heap) => .done (.normal success) (machine.setHeap heap)
+            completeDefinition (defineValue machine.heap receiverRef key value) machine
 
 /-- Strict assignment turns an ordinary `false` rejection into a modeled TypeError throw. -/
 def setStrict (hook : BodyHook P) (ref : RefId) (key : PropertyKey)

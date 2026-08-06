@@ -1,291 +1,6 @@
-import Std.Data.HashMap
-import TSLean.JS.Descriptor
-import TSLean.JS.PropertyKey
+import TSLean.JS.OrderedProps
 
 namespace TSLean.JS
-
-private structure StoredProperty where
-  descriptor : PropertyDescriptor
-  orderPosition : Option Nat
-
-/-- An ordinary property's descriptor store and bounded key-order metadata.
-
-The constructor is private. Descriptors live only in the hash table; arrays retain non-index
-insertion order with tombstones. Lookup, update, and insertion are expected O(1); deletion is
-amortized O(1) because compaction occasionally rebuilds one order partition.
-`ownKeys` is O(n log n) because integer indices are sorted at enumeration. When an order array has
-at least 64 slots and more than half are tombstones, it is compacted and map positions are rebuilt. -/
-structure OrderedProps where
-  private mk ::
-  entries : Std.HashMap PropertyKey StoredProperty
-  stringOrder : Array (Option JSString)
-  symbolOrder : Array (Option SymbolId)
-  stringTombstones : Nat
-  symbolTombstones : Nat
-
-namespace OrderedProps
-
-/-- Minimum metadata size at which tombstone-ratio compaction runs. -/
-def compactionThreshold : Nat := 64
-
-/-- An empty valid property collection. -/
-def empty : OrderedProps := .mk Std.HashMap.emptyWithCapacity #[] #[] 0 0
-
-/-- Number of live own properties. -/
-def size (properties : OrderedProps) : Nat := properties.entries.size
-
-/-- Current string and symbol order-array sizes, exposed for invariant diagnostics. -/
-def metadataSlots (properties : OrderedProps) : Nat × Nat :=
-  (properties.stringOrder.size, properties.symbolOrder.size)
-
-/-- All live complete descriptors, without exposing mutable representation metadata. -/
-def descriptors (properties : OrderedProps) : List PropertyDescriptor :=
-  properties.entries.toList.map (·.2.descriptor)
-
-/-- Looks up an own property using lawful UTF-16 or symbol-identity hashing. -/
-def lookup (properties : OrderedProps) (key : PropertyKey) : Option PropertyDescriptor :=
-  (properties.entries.get? key).map (·.descriptor)
-
-private def shouldCompact (slots tombstones : Nat) : Bool :=
-  compactionThreshold ≤ slots && slots < tombstones * 2
-
-private def compactStrings
-    (entries : Std.HashMap PropertyKey StoredProperty) (order : Array (Option JSString)) :
-    Std.HashMap PropertyKey StoredProperty × Array (Option JSString) :=
-  order.foldl (fun state slot =>
-    match slot with
-    | none => state
-    | some key =>
-        match state.1.get? (.string key) with
-        | none => state
-        | some stored =>
-            let position := state.2.size
-            (state.1.insert (.string key) { stored with orderPosition := some position },
-              state.2.push (some key))) (entries, #[])
-
-private def compactSymbols
-    (entries : Std.HashMap PropertyKey StoredProperty) (order : Array (Option SymbolId)) :
-    Std.HashMap PropertyKey StoredProperty × Array (Option SymbolId) :=
-  order.foldl (fun state slot =>
-    match slot with
-    | none => state
-    | some key =>
-        match state.1.get? (.symbol key) with
-        | none => state
-        | some stored =>
-            let position := state.2.size
-            (state.1.insert (.symbol key) { stored with orderPosition := some position },
-              state.2.push (some key))) (entries, #[])
-
-/-- Inserts or updates a property. Updates preserve their existing position. -/
-private def insert (properties : OrderedProps) (key : PropertyKey)
-    (descriptor : PropertyDescriptor) : OrderedProps :=
-  match properties.entries.get? key with
-  | some stored =>
-      .mk (properties.entries.insert key { stored with descriptor })
-        properties.stringOrder properties.symbolOrder
-        properties.stringTombstones properties.symbolTombstones
-  | none =>
-      match key with
-      | .string stringKey =>
-          match PropertyKey.arrayIndex? stringKey with
-          | some _ =>
-              .mk (properties.entries.insert key ⟨descriptor, none⟩)
-                properties.stringOrder properties.symbolOrder
-                properties.stringTombstones properties.symbolTombstones
-          | none =>
-              let position := properties.stringOrder.size
-              let entries := properties.entries.insert key ⟨descriptor, some position⟩
-              let order := properties.stringOrder.push (some stringKey)
-              if shouldCompact order.size properties.stringTombstones then
-                let compacted := compactStrings entries order
-                .mk compacted.1 compacted.2 properties.symbolOrder 0 properties.symbolTombstones
-              else
-                .mk entries order properties.symbolOrder
-                  properties.stringTombstones properties.symbolTombstones
-      | .symbol symbolKey =>
-          let position := properties.symbolOrder.size
-          let entries := properties.entries.insert key ⟨descriptor, some position⟩
-          let order := properties.symbolOrder.push (some symbolKey)
-          if shouldCompact order.size properties.symbolTombstones then
-            let compacted := compactSymbols entries order
-            .mk compacted.1 properties.stringOrder compacted.2 properties.stringTombstones 0
-          else
-            .mk entries properties.stringOrder order
-              properties.stringTombstones properties.symbolTombstones
-
-private def tombstone (order : Array (Option α)) (position : Nat) : Array (Option α) :=
-  if inBounds : position < order.size then order.set position none inBounds else order
-
-private def deleteString
-    (properties : OrderedProps) (entries : Std.HashMap PropertyKey StoredProperty)
-    (position : Nat) : OrderedProps :=
-  let order := tombstone properties.stringOrder position
-  let tombstones := properties.stringTombstones + 1
-  if shouldCompact order.size tombstones then
-    let compacted := compactStrings entries order
-    .mk compacted.1 compacted.2 properties.symbolOrder 0 properties.symbolTombstones
-  else
-    .mk entries order properties.symbolOrder tombstones properties.symbolTombstones
-
-private def deleteSymbol
-    (properties : OrderedProps) (entries : Std.HashMap PropertyKey StoredProperty)
-    (position : Nat) : OrderedProps :=
-  let order := tombstone properties.symbolOrder position
-  let tombstones := properties.symbolTombstones + 1
-  if shouldCompact order.size tombstones then
-    let compacted := compactSymbols entries order
-    .mk compacted.1 properties.stringOrder compacted.2 properties.stringTombstones 0
-  else
-    .mk entries properties.stringOrder order properties.stringTombstones tombstones
-
-/-- Deletes a property. Reinserting a non-index key appends after current keys in its class. -/
-private def delete (properties : OrderedProps) (key : PropertyKey) : OrderedProps :=
-  match properties.entries.get? key with
-  | none => properties
-  | some stored =>
-      let entries := properties.entries.erase key
-      match key, stored.orderPosition with
-      | .string stringKey, some position =>
-          if (PropertyKey.arrayIndex? stringKey).isSome then
-            .mk entries properties.stringOrder properties.symbolOrder
-              properties.stringTombstones properties.symbolTombstones
-          else deleteString properties entries position
-      | .symbol _, some position => deleteSymbol properties entries position
-      | _, none =>
-          .mk entries properties.stringOrder properties.symbolOrder
-            properties.stringTombstones properties.symbolTombstones
-
-private def orderedStrings (properties : OrderedProps) : List PropertyKey :=
-  properties.stringOrder.foldl (fun keys slot =>
-    match slot with
-    | some key =>
-        if properties.entries.contains (.string key) then .string key :: keys else keys
-    | none => keys) [] |>.reverse
-
-private def orderedSymbols (properties : OrderedProps) : List PropertyKey :=
-  properties.symbolOrder.foldl (fun keys slot =>
-    match slot with
-    | some key =>
-        if properties.entries.contains (.symbol key) then .symbol key :: keys else keys
-    | none => keys) [] |>.reverse
-
-private def sortedIndices (properties : OrderedProps) : List PropertyKey :=
-  properties.entries.toList.filterMap (fun entry =>
-    match entry.1 with
-    | .string key => PropertyKey.arrayIndex? key
-    | .symbol _ => none)
-  |>.mergeSort (· < ·)
-  |>.map (fun index => .string (PropertyKey.arrayIndexString index))
-
-/-- Returns indices ascending, then strings and symbols in insertion order. -/
-def ownKeys (properties : OrderedProps) : List PropertyKey :=
-  sortedIndices properties ++ orderedStrings properties ++ orderedSymbols properties
-
-private def tombstoneCount (order : Array (Option α)) : Nat :=
-  order.foldl (fun count slot => if slot.isNone then count + 1 else count) 0
-
-private def entryMetadataConsistent (properties : OrderedProps)
-    (entry : PropertyKey × StoredProperty) : Bool :=
-  match entry.1 with
-  | .string key =>
-      match PropertyKey.arrayIndex? key with
-      | some _ => entry.2.orderPosition.isNone
-      | none =>
-          match entry.2.orderPosition with
-          | none => false
-          | some position => properties.stringOrder[position]? == some (some key)
-  | .symbol key =>
-      match entry.2.orderPosition with
-      | none => false
-      | some position => properties.symbolOrder[position]? == some (some key)
-
-private def stringSlotConsistent (properties : OrderedProps)
-    (slot : Option JSString × Nat) : Bool :=
-  match slot.1 with
-  | none => true
-  | some key =>
-      match properties.entries.get? (.string key) with
-      | none => false
-      | some stored =>
-          (PropertyKey.arrayIndex? key).isNone && stored.orderPosition == some slot.2
-
-private def symbolSlotConsistent (properties : OrderedProps)
-    (slot : Option SymbolId × Nat) : Bool :=
-  match slot.1 with
-  | none => true
-  | some key =>
-      match properties.entries.get? (.symbol key) with
-      | none => false
-      | some stored => stored.orderPosition == some slot.2
-
-private def occupiedStrings (properties : OrderedProps) : List JSString :=
-  properties.stringOrder.toList.filterMap id
-
-private def occupiedSymbols (properties : OrderedProps) : List SymbolId :=
-  properties.symbolOrder.toList.filterMap id
-
-/-- Exact bidirectional agreement between map entries and occupied order slots. -/
-def metadataConsistent (properties : OrderedProps) : Bool :=
-  properties.entries.toList.all (entryMetadataConsistent properties) &&
-  properties.stringOrder.zipIdx.all (stringSlotConsistent properties) &&
-  properties.symbolOrder.zipIdx.all (symbolSlotConsistent properties)
-
-/-- Executable complete observable and metadata consistency check. -/
-private def invariantChecks (properties : OrderedProps) : List Bool :=
-  [properties.metadataConsistent,
-    decide (occupiedStrings properties).Nodup,
-    decide (occupiedSymbols properties).Nodup,
-    decide properties.ownKeys.Nodup,
-    properties.ownKeys.length == properties.size,
-    tombstoneCount properties.stringOrder == properties.stringTombstones,
-    tombstoneCount properties.symbolOrder == properties.symbolTombstones,
-    decide (properties.stringOrder.size < compactionThreshold ∨
-      properties.stringTombstones * 2 ≤ properties.stringOrder.size),
-    decide (properties.symbolOrder.size < compactionThreshold ∨
-      properties.symbolTombstones * 2 ≤ properties.symbolOrder.size)]
-
-/-- Executable complete observable and metadata consistency check. -/
-def isWellFormed (properties : OrderedProps) : Bool := properties.invariantChecks.all id
-
-/-- Complete observable and metadata consistency for an ordered property collection. -/
-def WellFormed (properties : OrderedProps) : Prop := properties.isWellFormed = true
-
-/-- The empty property collection is well formed. -/
-theorem empty_wellFormed : WellFormed empty := by
-  simp [WellFormed, isWellFormed, invariantChecks, metadataConsistent, stringSlotConsistent,
-    symbolSlotConsistent, occupiedStrings, occupiedSymbols, ownKeys, sortedIndices,
-    orderedStrings, orderedSymbols, empty, size, tombstoneCount, compactionThreshold]
-
-private def adversarialDescriptor : PropertyDescriptor :=
-  .data ⟨.primitive .undefined, true, true, true⟩
-
-private def swappedMetadata : OrderedProps :=
-  let first := JSString.ofLeanString "first"
-  let second := JSString.ofLeanString "second"
-  .mk (Std.HashMap.emptyWithCapacity
-      |>.insert (.string first) ⟨adversarialDescriptor, some 0⟩
-      |>.insert (.string second) ⟨adversarialDescriptor, some 1⟩)
-    #[some second, some first] #[] 0 0
-
-private def staleMetadata : OrderedProps :=
-  let live := JSString.ofLeanString "live"
-  let stale := JSString.ofLeanString "stale"
-  .mk (Std.HashMap.emptyWithCapacity.insert (.string live) ⟨adversarialDescriptor, some 0⟩)
-    #[some live, some stale] #[] 0 0
-
-/-- Internal adversarial check for swapped positions and stale occupied slots. -/
-def adversarialMetadataRejected : Bool :=
-  !swappedMetadata.isWellFormed && !staleMetadata.isWellFormed
-
-/-- The proposition and executable ordered-property validity check coincide definitionally. -/
-theorem wellFormed_iff_isWellFormed (properties : OrderedProps) :
-    WellFormed properties ↔ properties.isWellFormed = true := Iff.rfl
-
--- TODO(theorem): prove private `insert` and `delete`, including every compaction branch, preserve
--- the exact bidirectional `WellFormed` correspondence.
-
-end OrderedProps
 
 /-- ECMAScript function invocation categories. -/
 inductive FunctionKind where
@@ -311,11 +26,54 @@ structure FunctionSlots where
   lexicalThis : Option Value
   deriving DecidableEq
 
+/-- Array exotic state. Element descriptors remain in the ordinary property store; holes are
+absence from that store. -/
+structure ArraySlots where
+  length : Nat
+  lengthWritable : Bool
+  deriving DecidableEq
+
+/-- Array iterator state owned by the heap. -/
+structure ArrayIteratorSlots where
+  target : RefId
+  nextIndex : Nat
+  done : Bool
+  deriving DecidableEq
+
+/-- Primitive value retained by an ECMAScript wrapper object. Null and undefined are never boxed. -/
+structure PrimitiveWrapperSlots where
+  value : Primitive
+  deriving DecidableEq
+
 /-- Object categories represented by the heap. -/
 inductive ObjectKind where
   | ordinary
   | function (slots : FunctionSlots)
+  | array (slots : ArraySlots)
+  | arrayIterator (slots : ArrayIteratorSlots)
+  | primitiveWrapper (slots : PrimitiveWrapperSlots)
   deriving DecidableEq
+
+/-- Stable object-kind labels used by typed wrong-kind faults. -/
+inductive ObjectKindTag where
+  | ordinary
+  | function
+  | array
+  | arrayIterator
+  | primitiveWrapper
+  deriving DecidableEq
+
+namespace ObjectKind
+
+/-- Returns the stable label for an object's internal-method category. -/
+def tag : ObjectKind → ObjectKindTag
+  | .ordinary => .ordinary
+  | .function _ => .function
+  | .array _ => .array
+  | .arrayIterator _ => .arrayIterator
+  | .primitiveWrapper _ => .primitiveWrapper
+
+end ObjectKind
 
 /-- Read-only heap payload for an ECMAScript object. -/
 structure ObjectRecord where
@@ -335,6 +93,8 @@ structure Heap where
 inductive HeapFault where
   | invalidRef (ref : RefId)
   | invalidPrototype (ref : RefId)
+  | wrongObjectKind (ref : RefId) (expected actual : ObjectKindTag)
+  | cannotBoxPrimitive (value : Primitive)
   | cycleOrFuelExhausted
   | invalidFunctionMetadata
   deriving DecidableEq
@@ -346,6 +106,9 @@ inductive DefinePropertyFault where
   | invalidValueRef (ref : RefId)
   | invalidAccessor (ref : RefId)
   | nonCallableAccessor (ref : RefId)
+  | invalidArrayLength (value : JSNumber)
+  | invalidArrayLengthValue (value : Value)
+  | arrayTooLong (length : Nat)
   deriving DecidableEq
 
 namespace Heap
@@ -381,10 +144,163 @@ def allocate (heap : Heap) (prototype : Option RefId := none) (extensible : Bool
     | some ref => .error (.invalidPrototype ref)
     | none => .error .cycleOrFuelExhausted
 
+private def primitiveBoxable : Primitive → Bool
+  | .null | .undefined => false
+  | _ => true
+
+/-- Allocates an honest ECMAScript primitive wrapper. String indexed properties and `length` are
+synthetic; all other primitive wrappers begin without own properties. -/
+def allocatePrimitiveWrapper (heap : Heap) (value : Primitive)
+    (prototype : Option RefId := none) : Except HeapFault (RefId × Heap) :=
+  if !primitiveBoxable value then
+    .error (.cannotBoxPrimitive value)
+  else if validPrototype heap prototype then
+    let ref := ⟨heap.objects.size⟩
+    .ok (ref, .mk (heap.objects.push (.mk OrderedProps.empty prototype true
+      (.primitiveWrapper ⟨value⟩))) heap.nextFunctionId)
+  else
+    match prototype with
+    | some ref => .error (.invalidPrototype ref)
+    | none => .error .cycleOrFuelExhausted
+
+/-- The largest valid ECMAScript array length. -/
+def maxArrayLength : Nat := 4294967295
+
+/-- The canonical property key for an array's synthetic `length` property. -/
+def lengthPropertyKey : PropertyKey := .string (JSString.ofLeanString "length")
+
+private def floorLog2Aux : Nat → Nat → Nat
+  | 0, _ => 0
+  | fuel + 1, n => if n < 2 then 0 else floorLog2Aux fuel (n / 2) + 1
+
+private def floorLog2 (n : Nat) : Nat := floorLog2Aux 64 n
+
 private def replace (heap : Heap) (ref : RefId) (object : ObjectRecord) : Except HeapFault Heap :=
   if inBounds : ref.value < heap.objects.size then
     .ok (.mk (heap.objects.set ref.value object inBounds) heap.nextFunctionId)
   else .error (.invalidRef ref)
+
+/-- Exact binary64 encoding of a valid array length. This uses integer bit construction rather than
+an unproved bridge through Lean `Float`. -/
+def arrayLengthNumber (length : Nat) : JSNumber :=
+  if length = 0 then .positiveZero
+  else
+    let exponent := floorLog2 length
+    let leading := 1 <<< exponent
+    let fraction := (length - leading) <<< (52 - exponent)
+    ⟨UInt64.ofNat (((exponent + 1023) <<< 52) + fraction)⟩
+
+/-- Decodes exactly those binary64 values that are integral valid array lengths. Both signed zeros
+decode to zero; NaN, infinities, fractions, negatives, and `2^32` or larger are rejected. -/
+def validArrayLength? (number : JSNumber) : Option Nat :=
+  let bits := number.bits.toNat
+  let magnitude := bits % (1 <<< 63)
+  if magnitude = 0 then some 0
+  else if number.sign || number.isNaN || number.isInfinite then none
+  else
+    let encodedExponent := (bits / (1 <<< 52)) % 2048
+    if encodedExponent < 1023 then none
+    else
+      let exponent := encodedExponent - 1023
+      if 32 ≤ exponent then none
+      else
+        let significand := (1 <<< 52) + bits % (1 <<< 52)
+        let divisor := 1 <<< (52 - exponent)
+        if significand % divisor != 0 then none
+        else
+          let length := significand / divisor
+          if length ≤ maxArrayLength then some length else none
+
+private def appendArray (heap : Heap) (prototype : Option RefId)
+    (elements : Array (Option Value)) : RefId × Heap :=
+  let properties := elements.foldl (fun state element =>
+    let index := state.1
+    let properties := match element with
+      | none => state.2
+      | some value => state.2.insert (.string (PropertyKey.arrayIndexString index))
+          (.data ⟨value, true, true, true⟩)
+    (index + 1, properties)) (0, OrderedProps.empty) |>.2
+  let ref := ⟨heap.objects.size⟩
+  (ref, .mk (heap.objects.push (.mk properties prototype true
+    (.array ⟨elements.size, true⟩))) heap.nextFunctionId)
+
+/-- Allocates an array from an indexed collection, validating the prototype and every present object
+reference before issuing its stable identity. -/
+def allocateArrayFromArray (heap : Heap) (elements : Array (Option Value))
+    (prototype : Option RefId := none) : Except DefinePropertyFault (RefId × Heap) :=
+  if elements.size > maxArrayLength then .error (.arrayTooLong elements.size)
+  else
+    match prototype with
+    | some ref =>
+        match heap.get? ref with
+        | .error _ => .error (.heap (.invalidPrototype ref))
+        | .ok _ =>
+            let invalid := elements.foldl (fun found element =>
+              match found, element with
+              | some ref, _ => some ref
+              | none, some (.object ref) => if ref.value < heap.size then none else some ref
+              | none, _ => none) none
+            match invalid with
+            | some invalidRef => .error (.invalidValueRef invalidRef)
+            | none => .ok (appendArray heap prototype elements)
+    | none =>
+        let invalid := elements.foldl (fun found element =>
+          match found, element with
+          | some ref, _ => some ref
+          | none, some (.object ref) => if ref.value < heap.size then none else some ref
+          | none, _ => none) none
+        match invalid with
+        | some invalidRef => .error (.invalidValueRef invalidRef)
+        | none => .ok (appendArray heap prototype elements)
+
+/-- List-input array allocation. Holes are represented by `none`, never by `undefined`. -/
+def allocateArray (heap : Heap) (elements : List (Option Value))
+    (prototype : Option RefId := none) : Except DefinePropertyFault (RefId × Heap) :=
+  heap.allocateArrayFromArray elements.toArray prototype
+
+/-- Reads the exact current length of a valid array object. -/
+def arrayLength (heap : Heap) (ref : RefId) : Except HeapFault Nat := do
+  let object ← heap.get? ref
+  match object.kind with
+  | .array slots => pure slots.length
+  | actual => throw (.wrongObjectKind ref .array actual.tag)
+
+/-- Allocates a distinct iterator object for an existing array target. -/
+def allocateArrayIterator (heap : Heap) (target : RefId)
+    (prototype : Option RefId := none) : Except HeapFault (RefId × Heap) := do
+  let targetObject ← heap.get? target
+  match targetObject.kind with
+  | .array _ => pure ()
+  | actual => throw (.wrongObjectKind target .array actual.tag)
+  match prototype with
+  | some ref =>
+      match heap.get? ref with
+      | .ok _ => pure ()
+      | .error _ => throw (.invalidPrototype ref)
+  | none => pure ()
+  let ref := ⟨heap.objects.size⟩
+  pure (ref, .mk (heap.objects.push (.mk OrderedProps.empty prototype true
+    (.arrayIterator ⟨target, 0, false⟩))) heap.nextFunctionId)
+
+/-- Advances iterator state against the target's current length. A completed iterator remains done
+even if the target later grows. -/
+def advanceArrayIterator (heap : Heap) (iterator : RefId) :
+    Except HeapFault (Option (RefId × Nat) × Heap) := do
+  let object ← heap.get? iterator
+  match object.kind with
+  | .arrayIterator slots =>
+      if slots.done then pure (none, heap)
+      else
+        let length ← heap.arrayLength slots.target
+        if slots.nextIndex < length then
+          let nextSlots := { slots with nextIndex := slots.nextIndex + 1 }
+          let next ← heap.replace iterator { object with kind := .arrayIterator nextSlots }
+          pure (some (slots.target, slots.nextIndex), next)
+        else
+          let nextSlots := { slots with done := true }
+          let next ← heap.replace iterator { object with kind := .arrayIterator nextSlots }
+          pure (none, next)
+  | actual => throw (.wrongObjectKind iterator .arrayIterator actual.tag)
 
 private def validateValue (heap : Heap) : Value → Except DefinePropertyFault Unit
   | .object ref =>
@@ -401,13 +317,14 @@ private def validateAccessor (heap : Heap) : Option RefId → Except DefinePrope
       | .ok object =>
           match object.kind with
           | .function _ => .ok ()
-          | .ordinary => .error (.nonCallableAccessor ref)
+          | .ordinary | .array _ | .arrayIterator _ | .primitiveWrapper _ =>
+              .error (.nonCallableAccessor ref)
 
 /-- Returns function metadata only for a valid function object. -/
 def functionSlots? (heap : Heap) (ref : RefId) : Except HeapFault (Option FunctionSlots) := do
   let object ← heap.get? ref
   match object.kind with
-  | .ordinary => pure none
+  | .ordinary | .array _ | .arrayIterator _ | .primitiveWrapper _ => pure none
   | .function slots => pure (some slots)
 
 /-- Reports whether a valid reference has the ECMAScript `[[Call]]` internal method. -/
@@ -520,6 +437,175 @@ private def validateDescriptorReferences (heap : Heap) (update : DescriptorUpdat
   | .present setter => validateAccessor heap setter
   | .absent => pure ()
 
+private def syntheticLengthDescriptor (slots : ArraySlots) : PropertyDescriptor :=
+  .data ⟨.primitive (.number (arrayLengthNumber slots.length)), slots.lengthWritable, false, false⟩
+
+private def wrapperString? (slots : PrimitiveWrapperSlots) : Option JSString :=
+  match slots.value with
+  | .string value => some value
+  | _ => none
+
+private def syntheticWrapperDescriptor? (slots : PrimitiveWrapperSlots) (key : PropertyKey) :
+    Option PropertyDescriptor :=
+  match slots.value, key with
+  | .string value, .string stringKey =>
+      if stringKey.equal (JSString.ofLeanString "length") then
+        some (.data ⟨.primitive (.number (arrayLengthNumber value.length)), false, false, false⟩)
+      else
+        match PropertyKey.arrayIndex? stringKey with
+        | some index =>
+            match value.codeUnits[index]? with
+            | some unit => some (.data ⟨.primitive (.string ⟨[unit]⟩), false, true, false⟩)
+            | none => none
+        | none => none
+  | _, _ => none
+
+private def wrapperOwnKeys (object : ObjectRecord) (slots : PrimitiveWrapperSlots) : List PropertyKey :=
+  match wrapperString? slots with
+  | none => object.properties.ownKeys
+  | some value =>
+      let stored := object.properties.ownKeys
+      let storedIndices := stored.filter fun key => match key with
+        | .string stringKey => (PropertyKey.arrayIndex? stringKey).isSome
+        | .symbol _ => false
+      let rest := stored.filter fun key => match key with
+        | .string stringKey => (PropertyKey.arrayIndex? stringKey).isNone
+        | .symbol _ => true
+      (List.range value.length).map (fun index =>
+        .string (PropertyKey.arrayIndexString index)) ++ storedIndices ++ lengthPropertyKey :: rest
+
+/-- Reads an own descriptor, including an array's synthetic `length` property. -/
+def getOwnProperty (heap : Heap) (ref : RefId) (key : PropertyKey) :
+    Except HeapFault (Option PropertyDescriptor) := do
+  let object ← heap.get? ref
+  match object.kind with
+  | .array slots =>
+      if key == lengthPropertyKey then pure (some (syntheticLengthDescriptor slots))
+      else pure (object.properties.lookup key)
+  | .primitiveWrapper slots =>
+      pure ((syntheticWrapperDescriptor? slots key).orElse fun _ => object.properties.lookup key)
+  | _ => pure (object.properties.lookup key)
+
+/-- Returns own keys in ECMAScript order, inserting synthetic array `length` after indices and
+before all other strings and symbols. -/
+def ownPropertyKeys (heap : Heap) (ref : RefId) : Except HeapFault (List PropertyKey) :=
+  match heap.get? ref with
+  | .error fault => .error fault
+  | .ok object =>
+      let keys := object.properties.ownKeys
+      match object.kind with
+      | .array _ =>
+          let indices := keys.filter fun key => match key with
+            | .string value => (PropertyKey.arrayIndex? value).isSome
+            | .symbol _ => false
+          let rest := keys.filter fun key => match key with
+            | .string value => (PropertyKey.arrayIndex? value).isNone
+            | .symbol _ => true
+          .ok (indices ++ lengthPropertyKey :: rest)
+      | .primitiveWrapper slots => .ok (wrapperOwnKeys object slots)
+      | _ => .ok keys
+
+private def ordinaryDefineValidated (heap : Heap) (ref : RefId) (object : ObjectRecord)
+    (key : PropertyKey) (update : DescriptorUpdate) (kind : DescriptorKind) :
+    Except DefinePropertyFault (Bool × Heap) :=
+  match update.applyValidatedDescriptor (object.properties.lookup key) object.extensible kind with
+  | .error _ => .ok (false, heap)
+  | .ok descriptor =>
+      heap.replace ref { object with properties := object.properties.insert key descriptor }
+        |>.mapError DefinePropertyFault.heap
+        |>.map fun next => (true, next)
+
+private def arrayIndexOfKey? : PropertyKey → Option Nat
+  | .string value => PropertyKey.arrayIndex? value
+  | .symbol _ => none
+
+private def arrayIndexEntry? (key : PropertyKey) : Option (Nat × PropertyKey) :=
+  (arrayIndexOfKey? key).map (·, key)
+
+private def deleteArrayIndicesFrom (properties : OrderedProps) (newLength : Nat) :
+    Option Nat × OrderedProps :=
+  let descending := properties.ownKeys.filterMap arrayIndexEntry? |>.reverse
+  descending.foldl (fun state entry =>
+    match state.1 with
+    | some _ => state
+    | none =>
+        let index := entry.1
+        let key := entry.2
+        if index < newLength then state
+        else
+          match state.2.lookup key with
+          | some (.data descriptor) =>
+              if descriptor.configurable then (none, state.2.delete key) else (some index, state.2)
+          | some (.accessor descriptor) =>
+              if descriptor.configurable then (none, state.2.delete key) else (some index, state.2)
+          | none => state) (none, properties)
+
+private def defineArrayLength (heap : Heap) (ref : RefId) (object : ObjectRecord)
+    (slots : ArraySlots) (update : DescriptorUpdate) (kind : DescriptorKind) :
+    Except DefinePropertyFault (Bool × Heap) :=
+  let requestedLength : Except DefinePropertyFault (Nat × DescriptorUpdate) :=
+    match update.value with
+    | .absent => .ok (slots.length, update)
+    | .present (.primitive (.number number)) =>
+        match validArrayLength? number with
+        | some length => .ok (length, { update with
+            value := .present (.primitive (.number (arrayLengthNumber length))) })
+        | none => .error (.invalidArrayLength number)
+    | .present value => .error (.invalidArrayLengthValue value)
+  match requestedLength with
+  | .error fault => .error fault
+  | .ok (newLength, normalizedUpdate) =>
+      match normalizedUpdate.applyValidatedDescriptor
+          (some (syntheticLengthDescriptor slots)) true kind with
+      | .error _ => .ok (false, heap)
+      | .ok (.accessor _) => .ok (false, heap)
+      | .ok (.data descriptor) =>
+          if slots.length < newLength then
+            heap.replace ref { object with kind := .array ⟨newLength, descriptor.writable⟩ }
+              |>.mapError DefinePropertyFault.heap |>.map fun next => (true, next)
+          else if slots.length = newLength then
+            heap.replace ref { object with kind := .array ⟨newLength, descriptor.writable⟩ }
+              |>.mapError DefinePropertyFault.heap |>.map fun next => (true, next)
+          else if !slots.lengthWritable then .ok (false, heap)
+          else
+            let deleted := deleteArrayIndicesFrom object.properties newLength
+            match deleted.1 with
+            | none =>
+                heap.replace ref (.mk deleted.2 object.prototype object.extensible
+                    (.array ⟨newLength, descriptor.writable⟩))
+                  |>.mapError DefinePropertyFault.heap |>.map fun next => (true, next)
+            | some blocked =>
+                heap.replace ref (.mk deleted.2 object.prototype object.extensible
+                    (.array ⟨blocked + 1, descriptor.writable⟩))
+                  |>.mapError DefinePropertyFault.heap |>.map fun next => (false, next)
+
+private def defineArrayIndex (heap : Heap) (ref : RefId) (object : ObjectRecord)
+    (slots : ArraySlots) (index : Nat) (key : PropertyKey) (update : DescriptorUpdate)
+    (kind : DescriptorKind) : Except DefinePropertyFault (Bool × Heap) :=
+  if slots.length ≤ index && !slots.lengthWritable then .ok (false, heap)
+  else
+    match ordinaryDefineValidated heap ref object key update kind with
+    | .error fault => .error fault
+    | .ok (false, _) => .ok (false, heap)
+    | .ok (true, next) =>
+        if index < slots.length then .ok (true, next)
+        else
+          match next.get? ref with
+          | .error fault => .error (.heap fault)
+          | .ok nextObject =>
+              next.replace ref { nextObject with kind := .array ⟨index + 1, slots.lengthWritable⟩ }
+                |>.mapError DefinePropertyFault.heap |>.map fun finalHeap => (true, finalHeap)
+
+private def defineWrapperProperty (heap : Heap) (ref : RefId) (object : ObjectRecord)
+    (slots : PrimitiveWrapperSlots) (key : PropertyKey) (update : DescriptorUpdate)
+    (kind : DescriptorKind) : Except DefinePropertyFault (Bool × Heap) :=
+  match syntheticWrapperDescriptor? slots key with
+  | none => ordinaryDefineValidated heap ref object key update kind
+  | some current =>
+      match update.applyValidatedDescriptor (some current) true kind with
+      | .ok _ => .ok (true, heap)
+      | .error _ => .ok (false, heap)
+
 /-- Defines an own property through the heap's complete validation boundary. -/
 def defineOwnProperty (heap : Heap) (ref : RefId) (key : PropertyKey)
     (update : DescriptorUpdate) : Except DefinePropertyFault (Bool × Heap) :=
@@ -532,13 +618,16 @@ def defineOwnProperty (heap : Heap) (ref : RefId) (key : PropertyKey)
           match validateDescriptorReferences heap update with
           | .error fault => .error fault
           | .ok () =>
-              match update.applyValidatedDescriptor
-                  (object.properties.lookup key) object.extensible kind with
-              | .error _ => .ok (false, heap)
-              | .ok descriptor =>
-                  heap.replace ref { object with properties := object.properties.insert key descriptor }
-                    |>.mapError DefinePropertyFault.heap
-                    |>.map fun next => (true, next)
+              match object.kind with
+              | .array slots =>
+                  if key == lengthPropertyKey then defineArrayLength heap ref object slots update kind
+                  else
+                    match arrayIndexOfKey? key with
+                    | some index => defineArrayIndex heap ref object slots index key update kind
+                    | none => ordinaryDefineValidated heap ref object key update kind
+              | .primitiveWrapper slots =>
+                  defineWrapperProperty heap ref object slots key update kind
+              | _ => ordinaryDefineValidated heap ref object key update kind
 
 /-- Creates a writable, enumerable, configurable own data property. -/
 def createDataProperty (heap : Heap) (ref : RefId) (key : PropertyKey) (value : Value) :
@@ -550,24 +639,59 @@ def createDataProperty (heap : Heap) (ref : RefId) (key : PropertyKey) (value : 
     configurable := .present true
   }
 
+private def hasSyntheticNonconfigurableProperty (object : ObjectRecord) (key : PropertyKey) : Bool :=
+  match object.kind with
+  | .array _ => key == lengthPropertyKey
+  | .primitiveWrapper slots => (syntheticWrapperDescriptor? slots key).isSome
+  | _ => false
+
+private def deleteStoredProperty (heap : Heap) (ref : RefId) (object : ObjectRecord)
+    (key : PropertyKey) : Except HeapFault (Bool × Heap) :=
+  match object.properties.lookup key with
+  | none => .ok (true, heap)
+  | some (.data descriptor) =>
+      if descriptor.configurable then
+        heap.replace ref { object with properties := object.properties.delete key }
+          |>.map fun next => (true, next)
+      else .ok (false, heap)
+  | some (.accessor descriptor) =>
+      if descriptor.configurable then
+        heap.replace ref { object with properties := object.properties.delete key }
+          |>.map fun next => (true, next)
+      else .ok (false, heap)
+
 /-- Deletes a configurable own property through the validated heap boundary. -/
 def deleteProperty (heap : Heap) (ref : RefId) (key : PropertyKey) :
     Except HeapFault (Bool × Heap) :=
   match heap.get? ref with
   | .error fault => .error fault
   | .ok object =>
-      match object.properties.lookup key with
-      | none => .ok (true, heap)
-      | some (.data descriptor) =>
-          if descriptor.configurable then
-            heap.replace ref { object with properties := object.properties.delete key }
-              |>.map fun next => (true, next)
-          else .ok (false, heap)
-      | some (.accessor descriptor) =>
-          if descriptor.configurable then
-            heap.replace ref { object with properties := object.properties.delete key }
-              |>.map fun next => (true, next)
-          else .ok (false, heap)
+      if hasSyntheticNonconfigurableProperty object key then .ok (false, heap)
+      else deleteStoredProperty heap ref object key
+
+private theorem mappedTrue_ne_false (result : Except ε α) (next : α) :
+    result.map (fun value => (true, value)) ≠ .ok (false, next) := by
+  intro equal
+  cases result <;> cases equal
+
+/-- Every `false` property deletion leaves the heap unchanged, including synthetic array and
+primitive-wrapper properties. Array length shrink is a define operation and is not a deletion. -/
+theorem failed_delete_preserves_heap
+    (heap next : Heap) (ref : RefId) (key : PropertyKey)
+    (rejected : heap.deleteProperty ref key = .ok (false, next)) : next = heap := by
+  unfold deleteProperty at rejected
+  split at rejected <;> try contradiction
+  split at rejected
+  · simpa using rejected.symm
+  · unfold deleteStoredProperty at rejected
+    split at rejected
+    · cases rejected
+    · split at rejected
+      · exact (mappedTrue_ne_false _ next rejected).elim
+      · simpa using rejected.symm
+    · split at rejected
+      · exact (mappedTrue_ne_false _ next rejected).elim
+      · simpa using rejected.symm
 
 /-- Irreversibly makes an existing object nonextensible. -/
 def preventExtensions (heap : Heap) (ref : RefId) : Except HeapFault Heap :=
@@ -627,6 +751,23 @@ private def functionSlotsValid (heap : Heap) (slots : FunctionSlots) : Bool :=
   !(slots.constructorMode = .derived && slots.kind != .classConstructor) &&
   (if slots.kind = .arrow then slots.lexicalThis.isSome else slots.lexicalThis.isNone)
 
+private def arraySlotsValid (object : ObjectRecord) (slots : ArraySlots) : Bool :=
+  slots.length ≤ maxArrayLength && object.properties.keysAll fun key =>
+    match arrayIndexOfKey? key with
+    | some index => index < slots.length
+    | none => key != lengthPropertyKey
+
+private def primitiveWrapperSlotsValid (object : ObjectRecord) (slots : PrimitiveWrapperSlots) : Bool :=
+  primitiveBoxable slots.value && object.properties.keysAll fun key =>
+    (syntheticWrapperDescriptor? slots key).isNone
+
+private def arrayIteratorSlotsValid (heap : Heap) (slots : ArrayIteratorSlots) : Bool :=
+  match heap.objects[slots.target.value]? with
+  | some target => match target.kind with
+      | .array _ => true
+      | _ => false
+  | none => false
+
 private def objectReferencesValid (heap : Heap) (object : ObjectRecord) : Bool :=
   object.properties.isWellFormed &&
   object.properties.descriptors.all (descriptorReferencesValid heap) &&
@@ -634,12 +775,15 @@ private def objectReferencesValid (heap : Heap) (object : ObjectRecord) : Bool :
   match object.kind with
   | .ordinary => true
   | .function slots => functionSlotsValid heap slots
+  | .array slots => arraySlotsValid object slots
+  | .arrayIterator slots => arrayIteratorSlotsValid heap slots
+  | .primitiveWrapper slots => primitiveWrapperSlotsValid object slots
 
 /-- Function slots in object allocation order. -/
 def functionSlotList (heap : Heap) : List FunctionSlots :=
   heap.objects.toList.filterMap fun object =>
     match object.kind with
-    | .ordinary => none
+    | .ordinary | .array _ | .arrayIterator _ | .primitiveWrapper _ => none
     | .function slots => some slots
 
 /-- Captured environments referenced by all function objects. -/
@@ -703,6 +847,13 @@ def isWellFormed (heap : Heap) : Bool :=
 /-- Complete heap validity represented by its executable checker. -/
 def WellFormed (heap : Heap) : Prop := heap.isWellFormed = true
 
+/-- A rejected delete preserves complete heap validity because it preserves the heap exactly. -/
+theorem failed_delete_preserves_wellFormed
+    (heap next : Heap) (ref : RefId) (key : PropertyKey) (valid : heap.WellFormed)
+    (rejected : heap.deleteProperty ref key = .ok (false, next)) : next.WellFormed := by
+  rw [failed_delete_preserves_heap heap next ref key rejected]
+  exact valid
+
 /-- The empty heap satisfies the complete executable invariant. -/
 theorem empty_wellFormed : WellFormed empty := by
   rfl
@@ -714,12 +865,7 @@ theorem empty_allocate_wellFormed :
     | .error _ => False := by
   simp [allocate, validPrototype, empty, WellFormed, isWellFormed, functionSlotList,
     objectReferencesValid, prototypeGraphAcyclic, validatePrototypeGraphAux, visitPrototype,
-    finishPrototypePath, functionIdsSequential, OrderedProps.empty,
-    OrderedProps.isWellFormed, OrderedProps.invariantChecks, OrderedProps.metadataConsistent,
-    OrderedProps.ownKeys, OrderedProps.occupiedStrings, OrderedProps.occupiedSymbols,
-    OrderedProps.sortedIndices, OrderedProps.orderedStrings, OrderedProps.orderedSymbols,
-    OrderedProps.descriptors, OrderedProps.size, OrderedProps.tombstoneCount, size,
-    functionCount]
+    finishPrototypePath, functionIdsSequential, size, functionCount]
 
 /-- Empty-heap arrow allocation preserves the complete executable heap invariant. -/
 theorem empty_arrow_allocate_wellFormed :
@@ -730,14 +876,31 @@ theorem empty_arrow_allocate_wellFormed :
   simp [allocateFunction, validateOptionalRef, appendFunction, empty, WellFormed, isWellFormed,
     functionSlotList, objectReferencesValid, functionSlotsValid, valueValid,
     prototypeGraphAcyclic, validatePrototypeGraphAux, visitPrototype, finishPrototypePath,
-    functionIdsSequential, OrderedProps.empty, OrderedProps.isWellFormed,
-    OrderedProps.invariantChecks, OrderedProps.metadataConsistent, OrderedProps.ownKeys,
-    OrderedProps.occupiedStrings, OrderedProps.occupiedSymbols, OrderedProps.sortedIndices,
-    OrderedProps.orderedStrings, OrderedProps.orderedSymbols, OrderedProps.descriptors,
-    OrderedProps.size, OrderedProps.tombstoneCount, size, functionCount]
+    functionIdsSequential, size, functionCount]
 
--- TODO(theorem): prove `allocate`, successful `defineOwnProperty`, `createDataProperty`,
--- `deleteProperty`, `preventExtensions`, and `setPrototypeOf` preserve `WellFormed`.
+/-- Empty-array allocation preserves the complete executable heap invariant. -/
+theorem empty_array_allocate_wellFormed :
+    match Heap.empty.allocateArray [] with
+    | .ok (_, next) => next.WellFormed
+    | .error _ => False := by
+  simp [allocateArray, allocateArrayFromArray, appendArray, empty, WellFormed, isWellFormed,
+    functionSlotList, objectReferencesValid, arraySlotsValid,
+    prototypeGraphAcyclic, validatePrototypeGraphAux, visitPrototype, finishPrototypePath,
+    functionIdsSequential, size, functionCount, maxArrayLength]
+
+/-- Empty-heap primitive wrapper allocation preserves the complete executable heap invariant. -/
+theorem empty_primitive_wrapper_allocate_wellFormed :
+    match Heap.empty.allocatePrimitiveWrapper (.boolean true) with
+    | .ok (_, next) => next.WellFormed
+    | .error _ => False := by
+  simp [allocatePrimitiveWrapper, primitiveBoxable, validPrototype, empty, WellFormed,
+    isWellFormed, functionSlotList, objectReferencesValid, primitiveWrapperSlotsValid,
+    prototypeGraphAcyclic, validatePrototypeGraphAux, visitPrototype,
+    finishPrototypePath, functionIdsSequential, size, functionCount]
+
+-- TODO(theorem): prove general successful `defineOwnProperty`, `createDataProperty`,
+-- `deleteProperty`, iterator advancement, `preventExtensions`, and `setPrototypeOf` preserve
+-- `WellFormed`; blocked array shrink requires its separate partial-commit characterization.
 
 end Heap
 end TSLean.JS

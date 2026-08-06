@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "outputPath": "evidence/phase1-arrays-manifest.json",
+  "baseRevision": "5b4da5a67288cf920bcba80d1e897000b73e90f4",
+  "branch": "rebuild/semantic-core",
+  "counts": {
+    "tests": {
+      "files": 42,
+      "passed": 1603,
+      "failed": 0,
+      "todo": 8
+    },
+    "lean": {
+      "jobs": 161,
+      "status": "passed"
+    },
+    "corpus": {
+      "entries": 102,
+      "red": 102
+    },
+    "auditedTheorems": 130,
+    "lint": "passed",
+    "build": "passed"
+  },
+  "formalDebt": {
+    "counts": {
+      "orderedProps": 4,
+      "heap": 2,
+      "array": 1,
+      "hookConditional": 3,
+      "total": 10
+    },
+    "obligations": [
+      {
+        "id": "ordered-props-insert-preservation",
+        "area": "orderedProps",
+        "statement": "OrderedProps.insert preserves complete OrderedProps.WellFormed, including threshold crossings."
+      },
+      {
+        "id": "ordered-props-delete-preservation",
+        "area": "orderedProps",
+        "statement": "OrderedProps.delete preserves complete OrderedProps.WellFormed."
+      },
+      {
+        "id": "ordered-props-compaction-preservation",
+        "area": "orderedProps",
+        "statement": "String and symbol tombstone compaction preserve exact bidirectional metadata and order."
+      },
+      {
+        "id": "ordered-props-own-keys-correspondence",
+        "area": "orderedProps",
+        "statement": "OrderedProps.ownKeys is duplicate-free and corresponds exactly to live entries in index, string, and symbol order."
+      },
+      {
+        "id": "heap-public-mutation-preservation",
+        "area": "heap",
+        "statement": "Successful public heap mutation operations preserve complete Heap.WellFormed."
+      },
+      {
+        "id": "heap-prototype-preservation",
+        "area": "heap",
+        "statement": "Successful prototype mutation preserves complete Heap.WellFormed and prototype-graph validity."
+      },
+      {
+        "id": "array-blocked-shrink-general",
+        "area": "array",
+        "statement": "Blocked array shrink preserves the required descending deletions, commits the first blocked length and writability transition, and leaves lower descriptors unchanged."
+      },
+      {
+        "id": "copy-hook-conditional-preservation",
+        "area": "hookConditional",
+        "statement": "Copy, assign, spread, and slice preserve Heap.WellFormed for body hooks that preserve Machine.WellFormed."
+      },
+      {
+        "id": "iterator-hook-conditional-preservation",
+        "area": "hookConditional",
+        "statement": "Array iterator allocation and advancement preserve Heap.WellFormed, including ordinary Get effects under preserving hooks."
+      },
+      {
+        "id": "machine-hook-conditional-preservation",
+        "area": "hookConditional",
+        "statement": "The composed array, copy, and iterator JSM operations preserve Machine.WellFormed under an explicit hook-preservation premise."
+      }
+    ]
+  },
+  "knownTodos": [
+    {
+      "id": "completion-nested-forof-erased",
+      "location": "tests/e2e-v3.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased",
+      "location": "tests/pipeline-full.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased-cli",
+      "location": "tests/e2e/cli.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased-e2e",
+      "location": "tests/e2e/advanced.test.ts"
+    },
+    {
+      "id": "completion-safe-divide-catch-none",
+      "location": "tests/all-fixtures.test.ts"
+    },
+    {
+      "id": "objects-anonymous-shorthand-default",
+      "location": "tests/parser-types.test.ts"
+    },
+    {
+      "id": "objects-renamed-shorthand-default",
+      "location": "tests/parser-types.test.ts"
+    },
+    {
+      "id": "selfhost-typemap-one-hole",
+      "location": "tests/parser-advanced.test.ts"
+    }
+  ],
+  "validation": {
+    "testFiles": {
+      "directory": "tests",
+      "suffix": ".test.ts",
+      "countPath": "tests.files"
+    },
+    "todos": {
+      "directory": "tests",
+      "suffix": ".test.ts",
+      "countPath": "tests.todo"
+    },
+    "corpus": {
+      "path": "spec/corpus/counterexamples.json",
+      "entriesPath": "corpus.entries",
+      "redPath": "corpus.red"
+    },
+    "lineCounts": []
+  },
+  "hashGroups": {
+    "source": {
+      "paths": ["src"]
+    },
+    "jsRuntime": {
+      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
+    },
+    "corpus": {
+      "paths": ["spec/corpus"]
+    },
+    "infrastructure": {
+      "paths": [
+        "package.json",
+        "vitest.config.ts",
+        "scripts/generate-evidence-manifest.mjs",
+        "scripts/check-js-axioms.mjs",
+        "tests/js-trust.test.ts",
+        "tests/lean-fixtures/axiom-audit-synthetic.lean",
+        "tests/package.test.ts"
+      ]
+    }
+  }
+}

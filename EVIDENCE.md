@@ -243,3 +243,64 @@ $ git diff --check
 A deliberately replaced callable source hash was rejected by `evidence:check` as stale at line 69 before regeneration. `evidence/phase1-execution-input.json` now resolves every source-derived validation and hash group from immutable revision `9a7c7b50c5775add36cd07b9759af03a8281559e`; its manifest remains byte-for-byte unchanged at SHA-256 `a90c0e141153cba34bf6600c18b22c911afcfbb7cc0f990f813f1259dc94e650`. Current `evidence:generate`, `evidence:check`, and `js:trust` commands target callable evidence. Explicit baseline, primitive, heap, and execution generate/check commands retain historical reproduction.
 
 The full 155-job build still emits warnings from legacy global runtime and generated/stub modules, including existing `sorry` declarations. Those warnings remain outside the isolated `TSLean.JS` trust boundary and are not suppressed or presented as repository-wide soundness. The JS gate scans the production JS runtime and barrel, excludes support/test modules, and mechanically discovers and audits all 115 elaborated proof declarations against only `propext`, `Classical.choice`, and `Quot.sound`.
+
+## 2026-08-06 - Phase 1 arrays, copy, and iteration
+
+This slice is based on `5b4da5a67288cf920bcba80d1e897000b73e90f4` on `rebuild/semantic-core`. The array API consists of `Heap.allocateArrayFromArray`, `Heap.allocateArray`, `Heap.arrayLength`, `Heap.allocateArrayIterator`, and `Heap.advanceArrayIterator`, with array behavior integrated into `Heap.getOwnProperty`, `Heap.ownPropertyKeys`, `Heap.defineOwnProperty`, `Heap.createDataProperty`, and `Heap.deleteProperty`. `ArrayCopy.slice` preserves holes while observing inherited indexed properties and getters, and `ArrayCopy.spread` consumes a live iterator so holes become explicit `undefined` and appends before completion are visible. `Iterator.arrayValues` and `Iterator.next` expose stable iterator identity and ordinary `Get` behavior. `Copy.copyDataProperties`, `Copy.objectAssign`, and `Copy.objectSpread` snapshot keys, re-read descriptors and values in order, run getters, preserve symbol keys and nested reference identity, and retain the `Set` versus `CreateDataProperty` distinction.
+
+Primitive-to-object conversion is explicit. Nullish assignment targets throw; nullish sources are skipped. Boolean, number, bigint, symbol, and string values allocate fresh primitive wrappers. String wrappers expose immutable indexed UTF-16 code-unit properties and length, while the other wrappers have no synthetic enumerable source keys. Primitive `Object.assign` targets return their new wrapper identity.
+
+Runtime review found no unresolved executable-semantics defect within this scoped array/copy/iterator implementation and its tests. The review did require the property-order implementation to sort `(array index, original key)` pairs and return the original stored keys instead of reconstructing keys after sorting. That refactor is present in `OrderedProps.sortedIndices`; it keeps ordering separate from key identity. This result is a source-and-test review result, not a proof-completeness claim.
+
+The compiled scale executable exercised dense and sparse arrays of length 100,000, 100,001 iterator results including one live append, and a 10,000-key spread. Array construction took 96 ms, complete heap validation 133 ms, and own-key enumeration 184 ms. Iterator construction took 101 ms, iteration 71 ms, and final validation 183 ms. Copy-source construction took 229 ms, copying 437 ms, own-key enumeration 2 ms, and validation 15 ms. The complete executable took 2.01 seconds real time. These large-input smoke timings are consistent with the intended near-linear runtime paths; they are machine-local observations under the checked limits, not portable guarantees or complexity proofs.
+
+The manifest records 130 discovered and allowlisted proof declarations, but proof completeness is not claimed. Ten general obligations remain explicit formal debt: four `OrderedProps` obligations for insert preservation, delete preservation, compaction preservation, and exact duplicate-free `ownKeys` correspondence; two heap obligations for public mutation and prototype-mutation preservation; one general blocked-array-shrink theorem; and three hook-conditional preservation obligations for copy operations, iterator operations, and composed `Machine.WellFormed`. The executable invariant checks and concrete theorems do not discharge those obligations. They must be proved before this runtime can support translation certificates that rely on general array, copy, iterator, heap-mutation, or machine preservation.
+
+Commands and results:
+
+```text
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase1-arrays-manifest.json
+533cdabb76d201e7e52252c5ee52ca465f74dd6e2bff61da6585e082da82a4f8  evidence/phase1-arrays-manifest.json
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase1-arrays-manifest.json
+533cdabb76d201e7e52252c5ee52ca465f74dd6e2bff61da6585e082da82a4f8  evidence/phase1-arrays-manifest.json
+
+$ bun run evidence:check
+$ bun run evidence:baseline:check
+$ bun run evidence:primitives:check
+$ bun run evidence:heap:check
+$ bun run evidence:execution:check
+$ bun run evidence:callable:check
+
+$ bun run js:trust
+JS trust checks passed: 130 elaborated proof declarations
+JS trust gate passed: 130 proof declarations
+
+$ bun scripts/check-js-axioms.mjs --self-test
+synthetic environment audit passed
+
+$ cd lean && lake build js-array-scale-tests && /usr/bin/time -p .lake/build/bin/js-array-scale-tests
+Build completed successfully (44 jobs).
+array-scale dense=100000 sparseLength=100000 constructionMs=96 wellFormedMs=133 ownKeysMs=184 totalMs=413
+iterator-scale steps=100001 liveAppends=1 constructionMs=101 iterationMs=71 wellFormedMs=183 totalMs=355
+copy-scale keys=10000 constructionMs=229 copyMs=437 ownKeysMs=2 wellFormedMs=15 totalMs=683
+real 2.01
+user 1.25
+sys 0.19
+
+$ bun run verify
+Test Files  42 passed (42)
+Tests  1603 passed | 8 todo (1611)
+Build completed successfully (161 jobs).
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 273
+Unpacked size: 2.22MB
+
+$ git diff --check
+```
+
+A deliberately changed arrays manifest hash was rejected by `evidence:check` as stale before the canonical manifest was regenerated. `evidence/phase1-callable-input.json` now resolves every source-derived validation and hash group from immutable revision `5b4da5a67288cf920bcba80d1e897000b73e90f4`; its manifest remains byte-for-byte unchanged at SHA-256 `2223fd8bcf3e36a433976ae42d567b820923c9db7eb7857066452664e391f883`. Current `evidence:generate`, `evidence:check`, and `js:trust` commands target arrays evidence. Explicit baseline, primitive, heap, execution, and callable generate/check commands retain historical reproduction.
+
+The full 161-job build still emits warnings from legacy global runtime and generated/stub modules, including existing `sorry` declarations. Those warnings remain outside the isolated `TSLean.JS` trust boundary and are not suppressed or presented as repository-wide soundness. The direct Lean interpreter also reaches its recursion limit in the 10,000-key copy smoke workload; the checked timing command therefore builds and runs the native `js-array-scale-tests` executable. The JS gate scans the production runtime and barrel, excludes support/test modules, and audits all 130 discovered proof declarations against only `propext`, `Classical.choice`, and `Quot.sound`.

@@ -60,29 +60,35 @@
     "testFiles": {
       "directory": "tests",
       "suffix": ".test.ts",
-      "countPath": "tests.files"
+      "countPath": "tests.files",
+      "revision": "5b4da5a67288cf920bcba80d1e897000b73e90f4"
     },
     "todos": {
       "directory": "tests",
       "suffix": ".test.ts",
-      "countPath": "tests.todo"
+      "countPath": "tests.todo",
+      "revision": "5b4da5a67288cf920bcba80d1e897000b73e90f4"
     },
     "corpus": {
       "path": "spec/corpus/counterexamples.json",
       "entriesPath": "corpus.entries",
-      "redPath": "corpus.red"
+      "redPath": "corpus.red",
+      "revision": "5b4da5a67288cf920bcba80d1e897000b73e90f4"
     },
     "lineCounts": []
   },
   "hashGroups": {
     "source": {
-      "paths": ["src"]
+      "paths": ["src"],
+      "revision": "5b4da5a67288cf920bcba80d1e897000b73e90f4"
     },
     "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
+      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
+      "revision": "5b4da5a67288cf920bcba80d1e897000b73e90f4"
     },
     "corpus": {
-      "paths": ["spec/corpus"]
+      "paths": ["spec/corpus"],
+      "revision": "5b4da5a67288cf920bcba80d1e897000b73e90f4"
     },
     "infrastructure": {
       "paths": [
@@ -93,7 +99,8 @@
         "tests/js-trust.test.ts",
         "tests/lean-fixtures/axiom-audit-synthetic.lean",
         "tests/package.test.ts"
-      ]
+      ],
+      "revision": "5b4da5a67288cf920bcba80d1e897000b73e90f4"
     }
   }
 }
