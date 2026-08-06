@@ -1,0 +1,85 @@
+evidence/phase1-heap-input.json
+  s_a24f8b33d2ec7b::t_e3bd42fe013bec 1-98
+evidence/phase1-heap-manifest.json
+  s_b13f3f0002e146::t_bfef8b25acda50 1-74
+lean/TSLean/JS.lean
+  s_8ffef43c339ecb::t_aa7d40227391e1 2,4-5,8-9,11
+lean/TSLean/JS/AxiomAudit.lean
+  s_af05b0acd6797c::t_eaf86af66e29fe 1-2,4
+lean/TSLean/JS/AxiomAuditMeta.lean
+  s_af05b0acd6797c::t_a5dcb43be9de6d 1-26
+lean/TSLean/JS/Descriptor.lean
+  s_6ca33ca8799205::t_8cd8b4f6fded03 1-192
+lean/TSLean/JS/Heap.lean
+  s_a24f8b33d2ec7b::t_08b83caf9bb0ef 1-512
+lean/TSLean/JS/HeapTests.lean
+  s_a24f8b33d2ec7b::t_bcf0381c8bf00a 1-291
+lean/TSLean/JS/Id.lean
+  s_6ca33ca8799205::t_bcf496c0ff5ec7 27-34,40-47
+lean/TSLean/JS/OrderedProps.lean
+  s_af05b0acd6797c::t_c7a2a46d3e4d59 1
+lean/TSLean/JS/OrdinaryObject.lean
+  s_af05b0acd6797c::t_8a772ba450ce7b 1-21
+lean/TSLean/JS/PropertyKey.lean
+  s_6ca33ca8799205::t_39992b58e12771 10,14-42,50-70
+lean/TSLean/JS/Prototype.lean
+  s_af05b0acd6797c::t_f0e1a2ac350a44 1-36
+lean/TSLean/JS/String.lean
+  s_6ca33ca8799205::t_af2b73403be7a9 9,62-74
+lean/TSLean/Tests.lean
+  s_8ffef43c339ecb::t_45739c7ec6e5d6 28
+package.json
+  s_a24f8b33d2ec7b::t_7302dcea8d5065 25-28,31-32
+tests/js-trust.test.ts
+  s_a24f8b33d2ec7b::t_9c3e227f1fd049 1-13
+tests/lean-fixtures/axiom-audit-synthetic.lean
+  s_a24f8b33d2ec7b::t_5289e18674fe49 1-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "cfeda92b09ba4990c61ef70066df61df4004674a",
+  "prompts": {},
+  "sessions": {
+    "s_6ca33ca8799205": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_037cf4233ffeun10uERnLny25u",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_8ffef43c339ecb": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_028426498ffepxiRREOfwJ3RVp",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_a24f8b33d2ec7b": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0557e411bffe1uab6RIcL1yfCq",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_af05b0acd6797c": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_02841fa94ffem4bPQnpZac5691",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_b13f3f0002e146": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_02799280effeBo1dPI3bi5ckGn",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    }
+  }
+}
