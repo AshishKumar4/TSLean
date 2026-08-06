@@ -181,3 +181,65 @@ $ git diff --check
 A deliberately changed execution source hash was rejected by `evidence:check` as stale at line 69 before the canonical manifest was regenerated. `evidence/phase1-heap-input.json` now resolves every source-derived validation and hash group from immutable `cfeda92`; its checked manifest remains byte-for-byte unchanged at SHA-256 `8a2d52b2361905023d65d1679d82d6662184d09a5e5238280d3798d954adf530`. The current `evidence:generate`, `evidence:check`, and `js:trust` commands target execution evidence. Explicit baseline, primitive, and heap commands retain historical reproduction.
 
 The full 146-job build still emits warnings from legacy global runtime and generated/stub modules, including existing `sorry` declarations. Those warnings remain outside the isolated `TSLean.JS` trust boundary and are not suppressed or presented as repository-wide soundness. The JS gate mechanically discovers and audits all 93 elaborated proof declarations in the production JS runtime while excluding support/test modules from the production barrel.
+
+## 2026-08-06 - Phase 1 callable objects
+
+The callable-object slice is based on `9a7c7b50c5775add36cd07b9759af03a8281559e` on `rebuild/semantic-core`. Its allocation API is `Function.allocateOrdinary`, `Function.allocateArrow`, `Function.allocateBareConstructor`, `Function.allocateConstructor`, and `Function.allocateClass`. It adds checked property access through `ObjectAccess.get`, `ObjectAccess.set`, and `ObjectAccess.setStrict`; checked invocation through `Call.call`; supported constructor invocation through `Construct.construct`; ordinary prototype identity testing through `Instanceof.ordinaryHasInstance`; and complete primitive/object/function classification through `Value.typeof`. Function metadata carries stable function identity, captured environment, function kind, constructibility, constructor mode, lexical `this`, and optional home object. Constructor/prototype pairs and complete class allocations are atomic after any heritage accessor effects have committed.
+
+`BodyHook P := RefId -> Value -> Array Value -> JSM P Unit` is the evaluator boundary. It supplies body execution without embedding a syntax evaluator in this slice: normal completion is fallthrough, explicit return is `Completion.returned`, throw remains a JavaScript throw, and escaping break/continue becomes a model fault. `Call.call` checks callable metadata, rejects class constructors under ordinary call, selects lexical `this` for arrows, and validates every returned or thrown object reference against the heap committed by the body. `Construct.construct` checks constructibility, reads the current `prototype` through ordinary accessor dispatch, allocates the receiver, applies the object-return override rule, and otherwise returns that receiver. Derived construction is explicitly unsupported: a derived constructor reaches `ModelFault.runtime (.unsupportedDerivedConstruction constructor)` before receiver allocation because `super()` and uninitialized-`this` semantics are not modeled.
+
+The proved additions cover body fallthrough and return/throw normalization, dangling escaping-reference rejection, escaping-break rejection, function allocation freshness/size/count/stability, lexical-arrow receiver validity, constructor/prototype identities and descriptor recipes, direct prototype reachability, callable `typeof`, and checked getter dispatch. The remaining generic theorem TODO is complete `Heap.WellFormed` preservation for constructor/class pairs, the atomic class-element loop, and ordinary get/set; it depends on the private ordered-map preservation lemmas already identified in `HeapTheorems`. The executable tests do not replace that proof.
+
+`FunctionTests.lean` exercises 15 groups: metadata identity, arrow lexical `this`, dangling body values, checked completion normalization, class elements and call rejection, accessor and null heritage, primitive heritage rejection, construction dispatch, dynamic construction prototype selection, accessor receiver/order, throwing accessor state commitment, receiver-own conflicts, `typeof`/`instanceof` and faults, validity checks, and the function-mode matrix. One isolated run completed in 0.74 seconds real time (0.95 user, 0.15 system). `FunctionScaleTests.lean` allocated 100,000 callable objects in 70 ms, checked their well-formedness in 1,031 ms, built a 10,000-edge prototype chain in 3 ms, resolved `instanceof` in 0 ms, and checked chain well-formedness in 97 ms; the complete isolated run took 1.55 seconds real time (1.42 user, 0.13 system). These are machine-local smoke measurements under limits of 5,000 ms for callable allocation and validity, 3,000 ms for chain construction, 1,000 ms for lookup, and 2,000 ms for chain validity. They are not portable performance guarantees or complexity proofs.
+
+Commands and results:
+
+```text
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase1-callable-manifest.json
+2223fd8bcf3e36a433976ae42d567b820923c9db7eb7857066452664e391f883  evidence/phase1-callable-manifest.json
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase1-callable-manifest.json
+2223fd8bcf3e36a433976ae42d567b820923c9db7eb7857066452664e391f883  evidence/phase1-callable-manifest.json
+
+$ bun run evidence:check
+
+$ bun run evidence:baseline:check
+$ bun run evidence:primitives:check
+$ bun run evidence:heap:check
+$ bun run evidence:execution:check
+
+$ bun run js:trust
+JS trust checks passed: 115 elaborated proof declarations
+JS trust gate passed: 115 proof declarations
+
+$ bun scripts/check-js-axioms.mjs --self-test
+synthetic environment audit passed
+
+$ cd lean && /usr/bin/time -p lake env lean TSLean/JS/FunctionTests.lean
+real 0.74
+user 0.95
+sys 0.15
+
+$ cd lean && /usr/bin/time -p lake env lean TSLean/JS/FunctionScaleTests.lean
+function-scale allocations=100000 buildMs=70 validityMs=1031
+prototype-scale depth=10000 buildMs=3 lookupMs=0 validityMs=97
+real 1.55
+user 1.42
+sys 0.13
+
+$ bun run verify
+Test Files  42 passed (42)
+Tests  1603 passed | 8 todo (1611)
+Build completed successfully (155 jobs).
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 266
+Unpacked size: 2.15MB
+
+$ git diff --check
+```
+
+A deliberately replaced callable source hash was rejected by `evidence:check` as stale at line 69 before regeneration. `evidence/phase1-execution-input.json` now resolves every source-derived validation and hash group from immutable revision `9a7c7b50c5775add36cd07b9759af03a8281559e`; its manifest remains byte-for-byte unchanged at SHA-256 `a90c0e141153cba34bf6600c18b22c911afcfbb7cc0f990f813f1259dc94e650`. Current `evidence:generate`, `evidence:check`, and `js:trust` commands target callable evidence. Explicit baseline, primitive, heap, and execution generate/check commands retain historical reproduction.
+
+The full 155-job build still emits warnings from legacy global runtime and generated/stub modules, including existing `sorry` declarations. Those warnings remain outside the isolated `TSLean.JS` trust boundary and are not suppressed or presented as repository-wide soundness. The JS gate scans the production JS runtime and barrel, excludes support/test modules, and mechanically discovers and audits all 115 elaborated proof declarations against only `propext`, `Classical.choice`, and `Quot.sound`.

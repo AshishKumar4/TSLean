@@ -42,14 +42,6 @@ theorem Heap.object_equality_is_reference_identity (left right : RefId) :
     strictEqual (.object left) (.object right) = decide (left = right) :=
   strictEqual_object left right
 
-/-- The empty heap is valid and acyclic. -/
-theorem Heap.empty_wellFormed : Heap.WellFormed Heap.empty := by
-  constructor
-  · intro ref object found
-    simp [Heap.empty, Heap.get?] at found
-  · intro ref valid
-    simp [Heap.empty, Heap.size] at valid
-
 private theorem mappedTrue_ne_false (result : Except ε α) (next : α) :
     result.map (fun value => (true, value)) ≠ .ok (false, next) := by
   intro equal

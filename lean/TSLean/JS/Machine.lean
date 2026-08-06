@@ -38,6 +38,9 @@ inductive RuntimeFault where
   | invalidEnvironment (id : EnvId)
   | duplicateBinding (name : JSString)
   | unresolvableBinding (name : JSString)
+  | escapingFunctionControl
+  | danglingEscapingValue (ref : RefId)
+  | unsupportedDerivedConstruction (constructor : RefId)
   deriving DecidableEq
 
 /-- A total machine with append-only identity arenas and newest-first trace storage. -/
@@ -129,6 +132,48 @@ def switchEnvironment (machine : Machine P) (id : EnvId) : Except RuntimeFault (
   match machine.getEnvironment id with
   | .error fault => .error fault
   | .ok _ => .ok { machine with currentEnv := id }
+
+private def environmentTerminates (machine : Machine P) : Nat → EnvId → Bool
+  | 0, _ => false
+  | fuel + 1, id =>
+      match machine.environments[id.value]? with
+      | none => false
+      | some environment =>
+          match environment.parent with
+          | none => true
+          | some parent => environmentTerminates machine fuel parent
+
+private def environmentValidAt (machine : Machine P) (entry : EnvironmentRecord × Nat) : Bool :=
+  entry.1.parent.all (fun parent => parent.value < machine.environments.size) &&
+  entry.1.bindings.toList.all (fun binding => binding.2.value < machine.cells.size) &&
+  environmentTerminates machine (machine.environments.size + 1) ⟨entry.2⟩
+
+private def cellValid (machine : Machine P) (cell : Cell) : Bool :=
+  match cell.state with
+  | .uninitialized => true
+  | .initialized value => machine.heap.valueValid value
+
+/-- Executable complete machine invariant, including heap validity, arena references, acyclic
+environment parents, binding cells, current environment, and every function's captured environment. -/
+def isWellFormed (machine : Machine P) : Bool :=
+  machine.heap.isWellFormed &&
+  machine.currentEnv.value < machine.environments.size &&
+  machine.cells.toList.all (cellValid machine) &&
+  machine.environments.toList.zipIdx.all (environmentValidAt machine) &&
+  machine.heap.functionEnvironments.all fun environment =>
+    environment.value < machine.environments.size
+
+/-- Complete machine validity represented by its executable checker. -/
+def WellFormed (machine : Machine P) : Prop := machine.isWellFormed = true
+
+/-- A fresh machine satisfies heap, arena, and captured-environment validity. -/
+theorem initial_wellFormed (P : Platform) (fuel : Nat) :
+    (Machine.initial P fuel).WellFormed := by
+  have heapValid : Heap.empty.isWellFormed = true := Heap.empty_wellFormed
+  simp only [WellFormed, isWellFormed, initial]
+  rw [heapValid]
+  simp [environmentValidAt, environmentTerminates, Heap.functionEnvironments,
+    Heap.functionSlotList, Heap.empty]
 
 end Machine
 end TSLean.JS

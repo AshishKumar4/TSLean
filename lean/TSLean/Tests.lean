@@ -27,6 +27,8 @@ import TSLean.Generated.SelfHost.Bootstrap
 import TSLean.JS.AxiomAudit
 import TSLean.JS.ExecutionScaleTests
 import TSLean.JS.ExecutionTests
+import TSLean.JS.FunctionScaleTests
+import TSLean.JS.FunctionTests
 import TSLean.JS.HeapTests
 import TSLean.JS.Tests
 

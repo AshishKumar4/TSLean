@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase1-execution-manifest.json",
-  "baseRevision": "cfeda92b09ba4990c61ef70066df61df4004674a",
+  "outputPath": "evidence/phase1-callable-manifest.json",
+  "baseRevision": "9a7c7b50c5775add36cd07b9759af03a8281559e",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": {
@@ -11,14 +11,14 @@
       "todo": 8
     },
     "lean": {
-      "jobs": 146,
+      "jobs": 155,
       "status": "passed"
     },
     "corpus": {
       "entries": 102,
       "red": 102
     },
-    "auditedTheorems": 93,
+    "auditedTheorems": 115,
     "lint": "passed",
     "build": "passed"
   },
@@ -60,35 +60,29 @@
     "testFiles": {
       "directory": "tests",
       "suffix": ".test.ts",
-      "countPath": "tests.files",
-      "revision": "9a7c7b50c5775add36cd07b9759af03a8281559e"
+      "countPath": "tests.files"
     },
     "todos": {
       "directory": "tests",
       "suffix": ".test.ts",
-      "countPath": "tests.todo",
-      "revision": "9a7c7b50c5775add36cd07b9759af03a8281559e"
+      "countPath": "tests.todo"
     },
     "corpus": {
       "path": "spec/corpus/counterexamples.json",
       "entriesPath": "corpus.entries",
-      "redPath": "corpus.red",
-      "revision": "9a7c7b50c5775add36cd07b9759af03a8281559e"
+      "redPath": "corpus.red"
     },
     "lineCounts": []
   },
   "hashGroups": {
     "source": {
-      "paths": ["src"],
-      "revision": "9a7c7b50c5775add36cd07b9759af03a8281559e"
+      "paths": ["src"]
     },
     "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "9a7c7b50c5775add36cd07b9759af03a8281559e"
+      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
     },
     "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "9a7c7b50c5775add36cd07b9759af03a8281559e"
+      "paths": ["spec/corpus"]
     },
     "infrastructure": {
       "paths": [
@@ -97,9 +91,9 @@
         "scripts/generate-evidence-manifest.mjs",
         "scripts/check-js-axioms.mjs",
         "tests/js-trust.test.ts",
-        "tests/lean-fixtures/axiom-audit-synthetic.lean"
-      ],
-      "revision": "9a7c7b50c5775add36cd07b9759af03a8281559e"
+        "tests/lean-fixtures/axiom-audit-synthetic.lean",
+        "tests/package.test.ts"
+      ]
     }
   }
 }

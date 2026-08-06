@@ -9,9 +9,7 @@ structure DataDescriptor where
   enumerable : Bool
   configurable : Bool
 
-/-- An ordinary ECMAScript accessor property descriptor.
-
-Accessor execution and callable-object classification are outside this heap slice. -/
+/-- An ordinary ECMAScript accessor property descriptor. -/
 structure AccessorDescriptor where
   get : Option RefId
   set : Option RefId

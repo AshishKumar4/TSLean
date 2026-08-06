@@ -1,10 +1,14 @@
 import TSLean.JS.Conversion
 import TSLean.JS.Completion
+import TSLean.JS.Call
 import TSLean.JS.Control
+import TSLean.JS.Construct
 import TSLean.JS.Descriptor
 import TSLean.JS.Environment
 import TSLean.JS.Equality
 import TSLean.JS.External
+import TSLean.JS.Function
+import TSLean.JS.FunctionTheorems
 import TSLean.JS.ExecutionTheorems
 import TSLean.JS.Heap
 import TSLean.JS.HeapTheorems
@@ -14,9 +18,12 @@ import TSLean.JS.Monad
 import TSLean.JS.Number
 import TSLean.JS.OrderedProps
 import TSLean.JS.OrdinaryObject
+import TSLean.JS.ObjectAccess
 import TSLean.JS.PropertyKey
 import TSLean.JS.Prototype
 import TSLean.JS.Platform
 import TSLean.JS.String
 import TSLean.JS.Theorems
+import TSLean.JS.Typeof
 import TSLean.JS.Value
+import TSLean.JS.Instanceof

@@ -287,10 +287,34 @@ theorem wellFormed_iff_isWellFormed (properties : OrderedProps) :
 
 end OrderedProps
 
-/-- Object categories represented by the heap. `function` is reserved for the next slice. -/
+/-- ECMAScript function invocation categories. -/
+inductive FunctionKind where
+  | ordinary
+  | arrow
+  | classConstructor
+  deriving DecidableEq
+
+/-- Constructor receiver initialization mode. Derived bodies require `super()` semantics. -/
+inductive ConstructorMode where
+  | base
+  | derived
+  deriving DecidableEq
+
+/-- Data-only function metadata. Source evaluation remains outside the heap. -/
+structure FunctionSlots where
+  functionId : FunctionId
+  environment : EnvId
+  kind : FunctionKind
+  constructible : Bool
+  constructorMode : ConstructorMode
+  homeObject : Option RefId
+  lexicalThis : Option Value
+  deriving DecidableEq
+
+/-- Object categories represented by the heap. -/
 inductive ObjectKind where
   | ordinary
-  | function
+  | function (slots : FunctionSlots)
   deriving DecidableEq
 
 /-- Read-only heap payload for an ECMAScript object. -/
@@ -305,12 +329,14 @@ structure ObjectRecord where
 structure Heap where
   private mk ::
   objects : Array ObjectRecord
+  nextFunctionId : Nat
 
 /-- Heap validation and access failures. -/
 inductive HeapFault where
   | invalidRef (ref : RefId)
   | invalidPrototype (ref : RefId)
   | cycleOrFuelExhausted
+  | invalidFunctionMetadata
   deriving DecidableEq
 
 /-- Abrupt/model errors from property definition, distinct from invariant rejection. -/
@@ -325,10 +351,13 @@ inductive DefinePropertyFault where
 namespace Heap
 
 /-- The empty valid heap. -/
-def empty : Heap := .mk #[]
+def empty : Heap := .mk #[] 0
 
 /-- Number of stable allocated references. -/
 def size (heap : Heap) : Nat := heap.objects.size
+
+/-- Number of function metadata identities issued by this heap. -/
+def functionCount (heap : Heap) : Nat := heap.nextFunctionId
 
 /-- Reads an object or returns a typed invalid-reference fault. -/
 def get? (heap : Heap) (ref : RefId) : Except HeapFault ObjectRecord :=
@@ -345,7 +374,8 @@ def allocate (heap : Heap) (prototype : Option RefId := none) (extensible : Bool
     Except HeapFault (RefId × Heap) :=
   if validPrototype heap prototype then
     let ref := ⟨heap.objects.size⟩
-    .ok (ref, .mk (heap.objects.push (.mk OrderedProps.empty prototype extensible .ordinary)))
+    .ok (ref, .mk (heap.objects.push (.mk OrderedProps.empty prototype extensible .ordinary))
+      heap.nextFunctionId)
   else
     match prototype with
     | some ref => .error (.invalidPrototype ref)
@@ -353,7 +383,7 @@ def allocate (heap : Heap) (prototype : Option RefId := none) (extensible : Bool
 
 private def replace (heap : Heap) (ref : RefId) (object : ObjectRecord) : Except HeapFault Heap :=
   if inBounds : ref.value < heap.objects.size then
-    .ok (.mk (heap.objects.set ref.value object inBounds))
+    .ok (.mk (heap.objects.set ref.value object inBounds) heap.nextFunctionId)
   else .error (.invalidRef ref)
 
 private def validateValue (heap : Heap) : Value → Except DefinePropertyFault Unit
@@ -369,7 +399,114 @@ private def validateAccessor (heap : Heap) : Option RefId → Except DefinePrope
       match heap.get? ref with
       | .error _ => .error (.invalidAccessor ref)
       | .ok object =>
-          if object.kind = .function then .ok () else .error (.nonCallableAccessor ref)
+          match object.kind with
+          | .function _ => .ok ()
+          | .ordinary => .error (.nonCallableAccessor ref)
+
+/-- Returns function metadata only for a valid function object. -/
+def functionSlots? (heap : Heap) (ref : RefId) : Except HeapFault (Option FunctionSlots) := do
+  let object ← heap.get? ref
+  match object.kind with
+  | .ordinary => pure none
+  | .function slots => pure (some slots)
+
+/-- Reports whether a valid reference has the ECMAScript `[[Call]]` internal method. -/
+def isCallable (heap : Heap) (ref : RefId) : Except HeapFault Bool := do
+  let slots ← heap.functionSlots? ref
+  pure slots.isSome
+
+/-- Reports whether a valid reference has a construct operation. -/
+def isConstructor (heap : Heap) (ref : RefId) : Except HeapFault Bool := do
+  let slots ← heap.functionSlots? ref
+  pure (slots.any (·.constructible))
+
+private def validateRef (heap : Heap) (ref : RefId) : Except HeapFault Unit :=
+  match heap.get? ref with
+  | .ok _ => .ok ()
+  | .error fault => .error fault
+
+private def validateOptionalRef (heap : Heap) : Option RefId → Except HeapFault Unit
+  | none => .ok ()
+  | some ref => validateRef heap ref
+
+/-- Reports whether a value contains no dangling heap reference. -/
+def valueValid (heap : Heap) : Value → Bool
+  | .object ref => ref.value < heap.size
+  | .primitive _ => true
+
+private def appendFunction (heap : Heap) (environment : EnvId) (kind : FunctionKind)
+    (constructible : Bool) (prototype homeObject : Option RefId)
+    (constructorMode : ConstructorMode := .base)
+    (lexicalThis : Option Value := none)
+    (properties : OrderedProps := OrderedProps.empty) : RefId × Heap :=
+  let ref := ⟨heap.objects.size⟩
+  let slots : FunctionSlots :=
+    ⟨⟨heap.nextFunctionId⟩, environment, kind, constructible, constructorMode, homeObject, lexicalThis⟩
+  (ref, .mk (heap.objects.push (.mk properties prototype true (.function slots)))
+    (heap.nextFunctionId + 1))
+
+/-- Allocates one validated function object. Environment validity is checked by the machine layer. -/
+def allocateFunction (heap : Heap) (environment : EnvId) (kind : FunctionKind)
+    (constructible : Bool) (prototype : Option RefId) (homeObject : Option RefId := none)
+    (constructorMode : ConstructorMode := .base) (lexicalThis : Option Value := none) :
+    Except HeapFault (RefId × Heap) :=
+  match validateOptionalRef heap prototype with
+  | .error fault => .error fault
+  | .ok () =>
+      match validateOptionalRef heap homeObject with
+      | .error fault => .error fault
+      | .ok () =>
+          if constructorMode = .derived && (kind != .classConstructor || !constructible) then
+            .error .invalidFunctionMetadata
+          else
+            match lexicalThis with
+            | some value =>
+                if !heap.valueValid value then
+                  match value with
+                  | .object ref => .error (.invalidRef ref)
+                  | .primitive _ => .error .invalidFunctionMetadata
+                else if kind != .arrow then .error .invalidFunctionMetadata
+                else if constructible then .error .invalidFunctionMetadata
+                else .ok (appendFunction heap environment kind constructible prototype homeObject
+                  constructorMode lexicalThis)
+            | none =>
+                if kind = .arrow then .error .invalidFunctionMetadata
+                else if kind = .classConstructor && !constructible then .error .invalidFunctionMetadata
+                else .ok (appendFunction heap environment kind constructible prototype homeObject
+                  constructorMode)
+
+private def dataProperty (value : Value) (writable enumerable configurable : Bool) :
+    PropertyDescriptor := .data ⟨value, writable, enumerable, configurable⟩
+
+/-- Atomically allocates a constructible function and its fresh instance prototype. -/
+def allocateConstructorPair (heap : Heap) (environment : EnvId)
+    (functionPrototype objectPrototype : Option RefId) (classConstructor : Bool := false)
+    (constructorMode : ConstructorMode := .base) :
+    Except HeapFault (RefId × RefId × Heap) :=
+  match validateOptionalRef heap functionPrototype with
+  | .error fault => .error fault
+  | .ok () =>
+      match validateOptionalRef heap objectPrototype with
+      | .error fault => .error fault
+      | .ok () =>
+          if constructorMode = .derived && !classConstructor then
+            .error .invalidFunctionMetadata
+          else
+          let constructorRef : RefId := ⟨heap.objects.size⟩
+          let prototypeRef : RefId := ⟨heap.objects.size + 1⟩
+          let constructorProperties := OrderedProps.empty.insert
+            (.string (JSString.ofLeanString "prototype"))
+            (dataProperty (.object prototypeRef) (!classConstructor) false false)
+          let prototypeProperties := OrderedProps.empty.insert
+            (.string (JSString.ofLeanString "constructor"))
+            (dataProperty (.object constructorRef) true false true)
+          let kind := if classConstructor then FunctionKind.classConstructor else FunctionKind.ordinary
+          let slots : FunctionSlots :=
+            ⟨⟨heap.nextFunctionId⟩, environment, kind, true, constructorMode, none, none⟩
+          let objects := heap.objects
+            |>.push (.mk constructorProperties functionPrototype true (.function slots))
+            |>.push (.mk prototypeProperties objectPrototype true .ordinary)
+          .ok (constructorRef, prototypeRef, .mk objects (heap.nextFunctionId + 1))
 
 private def validateDescriptorReferences (heap : Heap) (update : DescriptorUpdate) :
     Except DefinePropertyFault Unit := do
@@ -470,40 +607,134 @@ def setPrototypeOf (heap : Heap) (ref : RefId) (prototype : Option RefId) :
             | .ok false =>
                 heap.replace ref { object with prototype := some parent } |>.map fun next => (true, next)
 
-private def terminatesWithFuel (heap : Heap) : Nat → RefId → Bool
-  | 0, _ => false
-  | fuel + 1, ref =>
-      match heap.get? ref with
-      | .error _ => false
-      | .ok object =>
-          match object.prototype with
-          | none => true
-          | some parent => terminatesWithFuel heap fuel parent
+private def callableReferenceValid (heap : Heap) (ref : RefId) : Bool :=
+  match heap.isCallable ref with
+  | .ok callable => callable
+  | .error _ => false
 
-private def valueReferenceValid (heap : Heap) : Value → Prop
-  | .object ref => ref.value < heap.size
-  | .primitive _ => True
-
-private def callableReferenceValid (heap : Heap) (ref : RefId) : Prop :=
-  ∃ object, heap.get? ref = .ok object ∧ object.kind = .function
-
-private def descriptorReferencesValid (heap : Heap) : PropertyDescriptor → Prop
-  | .data descriptor => valueReferenceValid heap descriptor.value
+private def descriptorReferencesValid (heap : Heap) : PropertyDescriptor → Bool
+  | .data descriptor => heap.valueValid descriptor.value
   | .accessor descriptor =>
-      (∀ ref, descriptor.get = some ref → callableReferenceValid heap ref) ∧
-      (∀ ref, descriptor.set = some ref → callableReferenceValid heap ref)
+      descriptor.get.all (callableReferenceValid heap) &&
+      descriptor.set.all (callableReferenceValid heap)
 
-private def objectReferencesValid (heap : Heap) (object : ObjectRecord) : Prop :=
-  object.properties.WellFormed ∧
-  (∀ descriptor ∈ object.properties.descriptors, descriptorReferencesValid heap descriptor) ∧
-  object.kind = .ordinary ∧
-  (∀ prototype, object.prototype = some prototype → prototype.value < heap.size)
+private def functionSlotsValid (heap : Heap) (slots : FunctionSlots) : Bool :=
+  slots.functionId.value < heap.functionCount &&
+  slots.homeObject.all (fun home => home.value < heap.size) &&
+  slots.lexicalThis.all heap.valueValid &&
+  !(slots.kind = .arrow && slots.constructible) &&
+  !(slots.kind = .classConstructor && !slots.constructible) &&
+  !(slots.constructorMode = .derived && slots.kind != .classConstructor) &&
+  (if slots.kind = .arrow then slots.lexicalThis.isSome else slots.lexicalThis.isNone)
 
-/-- Complete ordinary-heap validity: property metadata, descriptor references, object-kind
-constraints, allocated prototypes, and acyclic prototype chains. -/
-def WellFormed (heap : Heap) : Prop :=
-  (∀ ref object, heap.get? ref = .ok object → objectReferencesValid heap object) ∧
-  (∀ ref : RefId, ref.value < heap.size → terminatesWithFuel heap (heap.size + 1) ref = true)
+private def objectReferencesValid (heap : Heap) (object : ObjectRecord) : Bool :=
+  object.properties.isWellFormed &&
+  object.properties.descriptors.all (descriptorReferencesValid heap) &&
+  object.prototype.all (fun prototype => prototype.value < heap.size) &&
+  match object.kind with
+  | .ordinary => true
+  | .function slots => functionSlotsValid heap slots
+
+/-- Function slots in object allocation order. -/
+def functionSlotList (heap : Heap) : List FunctionSlots :=
+  heap.objects.toList.filterMap fun object =>
+    match object.kind with
+    | .ordinary => none
+    | .function slots => some slots
+
+/-- Captured environments referenced by all function objects. -/
+def functionEnvironments (heap : Heap) : List EnvId :=
+  heap.functionSlotList.map (·.environment)
+
+private inductive PrototypeColor where
+  | unseen
+  | visiting
+  | done
+  deriving DecidableEq
+
+private def finishPrototypePath (colors : Array PrototypeColor) (path : List RefId) :
+    Array PrototypeColor :=
+  path.foldl (fun current ref => current.setIfInBounds ref.value .done) colors
+
+private def visitPrototype (heap : Heap) : Nat → Array PrototypeColor → List RefId → RefId →
+    Option (Array PrototypeColor)
+  | 0, _, _, _ => none
+  | fuel + 1, colors, path, ref =>
+      match colors[ref.value]?, heap.objects[ref.value]? with
+      | some .done, some _ => some (finishPrototypePath colors path)
+      | some .visiting, some _ => none
+      | some .unseen, some object =>
+          let nextColors := colors.setIfInBounds ref.value .visiting
+          let nextPath := ref :: path
+          match object.prototype with
+          | none => some (finishPrototypePath nextColors nextPath)
+          | some parent => visitPrototype heap fuel nextColors nextPath parent
+      | _, _ => none
+
+private def validatePrototypeGraphAux (heap : Heap) : Nat → Nat → Array PrototypeColor → Bool
+  | 0, index, _ => index == heap.size
+  | remaining + 1, index, colors =>
+      match colors[index]? with
+      | none => index == heap.size
+      | some .done => validatePrototypeGraphAux heap remaining (index + 1) colors
+      | some _ =>
+          match visitPrototype heap (heap.size + 1) colors [] ⟨index⟩ with
+          | none => false
+          | some next => validatePrototypeGraphAux heap remaining (index + 1) next
+
+/-- Stack-safe linear prototype graph validation. Each object changes color at most twice. -/
+def prototypeGraphAcyclic (heap : Heap) : Bool :=
+  validatePrototypeGraphAux heap heap.size 0 (Array.replicate heap.size .unseen)
+
+private def functionIdsSequential : Nat → List FunctionSlots → Bool
+  | _, [] => true
+  | expected, slots :: rest =>
+      slots.functionId.value == expected && functionIdsSequential (expected + 1) rest
+
+/-- Executable complete heap invariant with linear function-identity and prototype-graph passes.
+Captured environments are checked by `Machine.isWellFormed`. -/
+def isWellFormed (heap : Heap) : Bool :=
+  let slots := heap.functionSlotList
+  heap.objects.toList.all (objectReferencesValid heap) &&
+  functionIdsSequential 0 slots &&
+  slots.length == heap.functionCount &&
+  heap.prototypeGraphAcyclic
+
+/-- Complete heap validity represented by its executable checker. -/
+def WellFormed (heap : Heap) : Prop := heap.isWellFormed = true
+
+/-- The empty heap satisfies the complete executable invariant. -/
+theorem empty_wellFormed : WellFormed empty := by
+  rfl
+
+/-- Empty-heap ordinary allocation preserves the complete executable heap invariant. -/
+theorem empty_allocate_wellFormed :
+    match Heap.empty.allocate none true with
+    | .ok (_, next) => next.WellFormed
+    | .error _ => False := by
+  simp [allocate, validPrototype, empty, WellFormed, isWellFormed, functionSlotList,
+    objectReferencesValid, prototypeGraphAcyclic, validatePrototypeGraphAux, visitPrototype,
+    finishPrototypePath, functionIdsSequential, OrderedProps.empty,
+    OrderedProps.isWellFormed, OrderedProps.invariantChecks, OrderedProps.metadataConsistent,
+    OrderedProps.ownKeys, OrderedProps.occupiedStrings, OrderedProps.occupiedSymbols,
+    OrderedProps.sortedIndices, OrderedProps.orderedStrings, OrderedProps.orderedSymbols,
+    OrderedProps.descriptors, OrderedProps.size, OrderedProps.tombstoneCount, size,
+    functionCount]
+
+/-- Empty-heap arrow allocation preserves the complete executable heap invariant. -/
+theorem empty_arrow_allocate_wellFormed :
+    match Heap.empty.allocateFunction ⟨0⟩ .arrow false none none .base
+        (some (.primitive .undefined)) with
+    | .ok (_, next) => next.WellFormed
+    | .error _ => False := by
+  simp [allocateFunction, validateOptionalRef, appendFunction, empty, WellFormed, isWellFormed,
+    functionSlotList, objectReferencesValid, functionSlotsValid, valueValid,
+    prototypeGraphAcyclic, validatePrototypeGraphAux, visitPrototype, finishPrototypePath,
+    functionIdsSequential, OrderedProps.empty, OrderedProps.isWellFormed,
+    OrderedProps.invariantChecks, OrderedProps.metadataConsistent, OrderedProps.ownKeys,
+    OrderedProps.occupiedStrings, OrderedProps.occupiedSymbols, OrderedProps.sortedIndices,
+    OrderedProps.orderedStrings, OrderedProps.orderedSymbols, OrderedProps.descriptors,
+    OrderedProps.size, OrderedProps.tombstoneCount, size, functionCount]
 
 -- TODO(theorem): prove `allocate`, successful `defineOwnProperty`, `createDataProperty`,
 -- `deleteProperty`, `preventExtensions`, and `setPrototypeOf` preserve `WellFormed`.
