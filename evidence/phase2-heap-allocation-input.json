@@ -1,24 +1,13 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase2-ordered-props-manifest.json",
-  "baseRevision": "04d31a1dc46450ba532c5553b9ebadf3784f5bba",
+  "outputPath": "evidence/phase2-heap-allocation-manifest.json",
+  "baseRevision": "54ca2aac56c74745a496f23f34176fe521c1c5e3",
   "branch": "rebuild/semantic-core",
   "counts": {
-    "tests": {
-      "files": 43,
-      "passed": 1633,
-      "failed": 0,
-      "todo": 8
-    },
-    "lean": {
-      "jobs": 172,
-      "status": "passed"
-    },
-    "corpus": {
-      "entries": 102,
-      "red": 102
-    },
-    "auditedTheorems": 233,
+    "tests": { "files": 43, "passed": 1633, "failed": 0, "todo": 8 },
+    "lean": { "jobs": 172, "status": "passed" },
+    "corpus": { "entries": 102, "red": 102 },
+    "auditedTheorems": 252,
     "differential": {
       "scenarioGroups": 16,
       "fixed": 734,
@@ -71,13 +60,7 @@
     ]
   },
   "formalDebt": {
-    "counts": {
-      "heap": 2,
-      "array": 1,
-      "hookConditional": 3,
-      "effectfulEquivalence": 1,
-      "total": 7
-    },
+    "counts": { "heap": 2, "array": 1, "hookConditional": 3, "effectfulEquivalence": 1, "total": 7 },
     "obligations": [
       {
         "id": "heap-public-mutation-preservation",
@@ -117,51 +100,18 @@
     ]
   },
   "knownTodos": [
-    {
-      "id": "completion-nested-forof-erased",
-      "location": "tests/e2e-v3.test.ts"
-    },
-    {
-      "id": "completion-process-items-forof-erased",
-      "location": "tests/pipeline-full.test.ts"
-    },
-    {
-      "id": "completion-process-items-forof-erased-cli",
-      "location": "tests/e2e/cli.test.ts"
-    },
-    {
-      "id": "completion-process-items-forof-erased-e2e",
-      "location": "tests/e2e/advanced.test.ts"
-    },
-    {
-      "id": "completion-safe-divide-catch-none",
-      "location": "tests/all-fixtures.test.ts"
-    },
-    {
-      "id": "objects-anonymous-shorthand-default",
-      "location": "tests/parser-types.test.ts"
-    },
-    {
-      "id": "objects-renamed-shorthand-default",
-      "location": "tests/parser-types.test.ts"
-    },
-    {
-      "id": "selfhost-typemap-one-hole",
-      "location": "tests/parser-advanced.test.ts"
-    }
+    { "id": "completion-nested-forof-erased", "location": "tests/e2e-v3.test.ts" },
+    { "id": "completion-process-items-forof-erased", "location": "tests/pipeline-full.test.ts" },
+    { "id": "completion-process-items-forof-erased-cli", "location": "tests/e2e/cli.test.ts" },
+    { "id": "completion-process-items-forof-erased-e2e", "location": "tests/e2e/advanced.test.ts" },
+    { "id": "completion-safe-divide-catch-none", "location": "tests/all-fixtures.test.ts" },
+    { "id": "objects-anonymous-shorthand-default", "location": "tests/parser-types.test.ts" },
+    { "id": "objects-renamed-shorthand-default", "location": "tests/parser-types.test.ts" },
+    { "id": "selfhost-typemap-one-hole", "location": "tests/parser-advanced.test.ts" }
   ],
   "validation": {
-    "revision": "54ca2aac56c74745a496f23f34176fe521c1c5e3",
-    "testFiles": {
-      "directory": "tests",
-      "suffix": ".test.ts",
-      "countPath": "tests.files"
-    },
-    "todos": {
-      "directory": "tests",
-      "suffix": ".test.ts",
-      "countPath": "tests.todo"
-    },
+    "testFiles": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.files" },
+    "todos": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.todo" },
     "corpus": {
       "path": "spec/corpus/counterexamples.json",
       "entriesPath": "corpus.entries",
@@ -261,18 +211,9 @@
     ]
   },
   "hashGroups": {
-    "source": {
-      "paths": ["src"],
-      "revision": "54ca2aac56c74745a496f23f34176fe521c1c5e3"
-    },
-    "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "54ca2aac56c74745a496f23f34176fe521c1c5e3"
-    },
-    "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "54ca2aac56c74745a496f23f34176fe521c1c5e3"
-    },
+    "source": { "paths": ["src"] },
+    "jsRuntime": { "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"] },
+    "corpus": { "paths": ["spec/corpus"] },
     "differentialSpecHarness": {
       "paths": [
         "spec/differential",
@@ -282,8 +223,7 @@
         "scripts/generate-differential-manifest.mjs",
         "tests/js-model-differential.test.ts",
         "tests/differential"
-      ],
-      "revision": "54ca2aac56c74745a496f23f34176fe521c1c5e3"
+      ]
     },
     "proofTestsAudit": {
       "paths": [
@@ -292,8 +232,7 @@
         "tests/js-trust.test.ts",
         "tests/lean-fixtures/axiom-audit-synthetic.lean",
         "tests/lean-fixtures/ordered-props-transitions.lean"
-      ],
-      "revision": "54ca2aac56c74745a496f23f34176fe521c1c5e3"
+      ]
     },
     "trustEvidenceInfrastructure": {
       "paths": [
@@ -305,8 +244,7 @@
         "tests/corpus-schema.test.ts",
         "tests/package.test.ts",
         "lean/lakefile.toml"
-      ],
-      "revision": "54ca2aac56c74745a496f23f34176fe521c1c5e3"
+      ]
     }
   }
 }

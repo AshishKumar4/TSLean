@@ -186,6 +186,50 @@ private def replace (heap : Heap) (ref : RefId) (object : ObjectRecord) : Except
     .ok (.mk (heap.objects.set ref.value object inBounds) heap.nextFunctionId)
   else .error (.invalidRef ref)
 
+/-- Replacing an existing object does not change the stable reference arena size. -/
+theorem replace_size (heap next : Heap) (ref : RefId) (object : ObjectRecord)
+    (replaced : heap.replace ref object = .ok next) : next.size = heap.size := by
+  unfold replace at replaced
+  split at replaced
+  · cases replaced
+    simp [size]
+  · contradiction
+
+/-- Replacing an existing object does not issue a function identity. -/
+theorem replace_functionCount (heap next : Heap) (ref : RefId) (object : ObjectRecord)
+    (replaced : heap.replace ref object = .ok next) :
+    next.functionCount = heap.functionCount := by
+  unfold replace at replaced
+  split at replaced
+  · cases replaced
+    rfl
+  · contradiction
+
+/-- Reading the replaced reference returns exactly the replacement object. -/
+theorem get?_replace_same (heap next : Heap) (ref : RefId) (object : ObjectRecord)
+    (replaced : heap.replace ref object = .ok next) : next.get? ref = .ok object := by
+  unfold replace at replaced
+  split at replaced
+  · cases replaced
+    simp [get?]
+  · contradiction
+
+/-- Replacing one object leaves every other reference lookup unchanged. -/
+theorem get?_replace_ne (heap next : Heap) (target ref : RefId) (object : ObjectRecord)
+    (different : ref ≠ target) (replaced : heap.replace target object = .ok next) :
+    next.get? ref = heap.get? ref := by
+  unfold replace at replaced
+  split at replaced
+  · cases replaced
+    have differentIndex : ref.value ≠ target.value := by
+      intro equal
+      apply different
+      cases ref
+      cases target
+      simp_all
+    simp [get?, Ne.symm differentIndex]
+  · contradiction
+
 private theorem replace_preserves_objectKind (heap next : Heap) (target ref : RefId)
     (current replacement : ObjectRecord) (found : heap.get? target = .ok current)
     (sameKind : replacement.kind = current.kind)
@@ -383,6 +427,14 @@ private def validateOptionalRef (heap : Heap) : Option RefId → Except HeapFaul
 def valueValid (heap : Heap) : Value → Bool
   | .object ref => ref.value < heap.size
   | .primitive _ => true
+
+/-- Replacing one object preserves validity of every reference. -/
+theorem valueValid_replace (heap next : Heap) (target : RefId) (object : ObjectRecord)
+    (replaced : heap.replace target object = .ok next) (value : Value) :
+    next.valueValid value = heap.valueValid value := by
+  cases value with
+  | primitive value => rfl
+  | object ref => simp [valueValid, replace_size heap next target object replaced]
 
 private def appendFunction (heap : Heap) (environment : EnvId) (kind : FunctionKind)
     (constructible : Bool) (prototype homeObject : Option RefId)
@@ -924,6 +976,744 @@ private def validatePrototypeGraphAux (heap : Heap) : Nat → Nat → Array Prot
 def prototypeGraphAcyclic (heap : Heap) : Bool :=
   validatePrototypeGraphAux heap heap.size 0 (Array.replicate heap.size .unseen)
 
+private def prototypeAt (heap : Heap) (index : Nat) : Option (Option RefId) :=
+  (heap.objects[index]?).map (·.prototype)
+
+private def PrototypeEquivalent (left right : Heap) : Prop :=
+  left.size = right.size ∧ ∀ index, prototypeAt left index = prototypeAt right index
+
+private theorem visitPrototype_prototypeEquivalent (left right : Heap)
+    (equivalent : PrototypeEquivalent left right) (fuel : Nat) (colors : Array PrototypeColor)
+    (path : List RefId) (ref : RefId) :
+    visitPrototype left fuel colors path ref = visitPrototype right fuel colors path ref := by
+  induction fuel generalizing colors path ref with
+  | zero => rfl
+  | succ fuel ih =>
+      unfold visitPrototype
+      cases colorFound : colors[ref.value]? with
+      | none => rfl
+      | some color =>
+          cases leftFound : left.objects[ref.value]? with
+          | none =>
+              have same := equivalent.2 ref.value
+              simp [prototypeAt, leftFound] at same
+              cases rightFound : right.objects[ref.value]? <;> simp_all
+          | some leftObject =>
+              have same := equivalent.2 ref.value
+              simp [prototypeAt, leftFound] at same
+              cases rightFound : right.objects[ref.value]? with
+              | none => simp [prototypeAt, rightFound] at same
+              | some rightObject =>
+                  simp [prototypeAt, rightFound] at same
+                  cases color with
+                  | done => rfl
+                  | visiting => rfl
+                  | unseen =>
+                      simp only [leftFound, rightFound, colorFound]
+                      rw [same]
+                      cases rightObject.prototype
+                      · rfl
+                      · exact ih _ _ _
+
+private theorem validatePrototypeGraphAux_prototypeEquivalent (left right : Heap)
+    (equivalent : PrototypeEquivalent left right) (remaining index : Nat)
+    (colors : Array PrototypeColor) :
+    validatePrototypeGraphAux left remaining index colors =
+      validatePrototypeGraphAux right remaining index colors := by
+  induction remaining generalizing index colors with
+  | zero => simp [validatePrototypeGraphAux, equivalent.1]
+  | succ remaining ih =>
+      simp only [validatePrototypeGraphAux]
+      cases colorFound : colors[index]? with
+      | none => simp [equivalent.1]
+      | some color =>
+          cases color with
+          | done => exact ih _ _
+          | unseen =>
+              rw [equivalent.1]
+              rw [visitPrototype_prototypeEquivalent left right equivalent]
+              cases right.visitPrototype (right.size + 1) colors [] ⟨index⟩
+              · rfl
+              · exact ih _ _
+          | visiting =>
+              rw [equivalent.1]
+              rw [visitPrototype_prototypeEquivalent left right equivalent]
+              cases right.visitPrototype (right.size + 1) colors [] ⟨index⟩
+              · rfl
+              · exact ih _ _
+
+private theorem prototypeGraphAcyclic_prototypeEquivalent (left right : Heap)
+    (equivalent : PrototypeEquivalent left right) :
+    left.prototypeGraphAcyclic = right.prototypeGraphAcyclic := by
+  unfold prototypeGraphAcyclic
+  rw [equivalent.1]
+  exact validatePrototypeGraphAux_prototypeEquivalent left right equivalent _ _ _
+
+private theorem finishPrototypePath_push (colors : Array PrototypeColor) (path : List RefId)
+    (valid : ∀ ref ∈ path, ref.value < colors.size) :
+    finishPrototypePath (colors.push .unseen) path =
+      (finishPrototypePath colors path).push .unseen := by
+  unfold finishPrototypePath
+  induction path generalizing colors with
+  | nil => rfl
+  | cons ref path ih =>
+      rw [List.foldl_cons, List.foldl_cons]
+      have refValid := valid ref (by simp)
+      have restValid : ∀ item ∈ path,
+          item.value < (colors.setIfInBounds ref.value .done).size := by
+        intro item member
+        simpa using valid item (by simp [member])
+      rw [show (colors.push .unseen).setIfInBounds ref.value .done =
+          (colors.setIfInBounds ref.value .done).push .unseen by
+        rw [Array.setIfInBounds_def, dif_pos (by simp; omega)]
+        rw [Array.setIfInBounds_def, dif_pos refValid]
+        rw [Array.set_push, dif_pos refValid]]
+      exact ih _ restValid
+
+private theorem visitPrototype_fuel_mono (heap : Heap) (fuel : Nat)
+    (colors : Array PrototypeColor) (path : List RefId) (ref : RefId)
+    (result : Array PrototypeColor)
+    (visited : visitPrototype heap fuel colors path ref = some result) :
+    visitPrototype heap (fuel + 1) colors path ref = some result := by
+  induction fuel generalizing colors path ref result with
+  | zero => simp [visitPrototype] at visited
+  | succ fuel ih =>
+      simp only [visitPrototype] at visited ⊢
+      cases colorFound : colors[ref.value]? with
+      | none => simp [colorFound] at visited
+      | some color =>
+          cases objectFound : heap.objects[ref.value]? with
+          | none => simp [colorFound, objectFound] at visited
+          | some object =>
+              simp only [colorFound, objectFound] at visited
+              cases color with
+              | done => exact visited
+              | visiting => contradiction
+              | unseen =>
+                  cases prototypeEq : object.prototype with
+                  | none => simpa [prototypeEq] using visited
+                  | some parent =>
+                      simp only [prototypeEq] at visited ⊢
+                      exact ih _ _ _ _ visited
+
+private theorem visitPrototype_push (heap : Heap) (newObject : ObjectRecord)
+    (nextFunctionId fuel : Nat) (colors : Array PrototypeColor) (path : List RefId)
+    (ref : RefId)
+    (referencesValid : ∀ (index : Nat) (object : ObjectRecord),
+      heap.objects[index]? = some object →
+      object.prototype.all (fun prototype => prototype.value < heap.size) = true)
+    (colorsSize : colors.size = heap.size)
+    (refValid : ref.value < heap.size)
+    (pathValid : ∀ item ∈ path, item.value < heap.size) :
+    visitPrototype
+        (.mk (heap.objects.push newObject) nextFunctionId) fuel
+        (colors.push .unseen) path ref =
+      (visitPrototype heap fuel colors path ref).map (·.push .unseen) := by
+  induction fuel generalizing colors path ref with
+  | zero => rfl
+  | succ fuel ih =>
+      have colorLookup : (colors.push .unseen)[ref.value]? = colors[ref.value]? := by
+        rw [Array.getElem?_push, if_neg (by omega)]
+      have objectLookup : (heap.objects.push newObject)[ref.value]? =
+          heap.objects[ref.value]? := by
+        rw [Array.getElem?_push, if_neg (by simpa [size] using Nat.ne_of_lt refValid)]
+      simp only [visitPrototype, colorLookup, objectLookup]
+      cases colorFound : colors[ref.value]? with
+      | none => rfl
+      | some color =>
+          cases objectFound : heap.objects[ref.value]? with
+          | none => cases color <;> rfl
+          | some object =>
+              cases color with
+              | done =>
+                  simp only [Option.map_some]
+                  rw [finishPrototypePath_push colors path]
+                  intro item member
+                  rw [colorsSize]
+                  exact pathValid item member
+              | visiting => simp
+              | unseen =>
+                  have setPush : (colors.push .unseen).setIfInBounds ref.value .visiting =
+                      (colors.setIfInBounds ref.value .visiting).push .unseen := by
+                    rw [Array.setIfInBounds_def, dif_pos (by simp; omega)]
+                    rw [Array.setIfInBounds_def, dif_pos (by omega)]
+                    rw [Array.set_push, dif_pos (by omega)]
+                  rw [setPush]
+                  cases prototypeEq : object.prototype with
+                  | none =>
+                      simp only [prototypeEq, Option.map_some]
+                      rw [finishPrototypePath_push]
+                      intro item member
+                      simp only [List.mem_cons] at member
+                      cases member with
+                      | inl same =>
+                          rw [Array.size_setIfInBounds, colorsSize]
+                          simpa [same] using refValid
+                      | inr member =>
+                          rw [Array.size_setIfInBounds, colorsSize]
+                          exact pathValid item member
+                  | some parent =>
+                      simp only [prototypeEq]
+                      have parentValid : parent.value < heap.size := by
+                        have := referencesValid ref.value object objectFound
+                        simp [prototypeEq] at this
+                        exact this
+                      apply ih (colors := colors.setIfInBounds ref.value .visiting)
+                        (path := ref :: path) (ref := parent) (by simpa using colorsSize) parentValid
+                      intro item member
+                      simp only [List.mem_cons] at member
+                      cases member with
+                      | inl same => simpa [same] using refValid
+                      | inr member => exact pathValid item member
+
+private theorem finishPrototypePath_preserves_done (colors : Array PrototypeColor)
+    (path : List RefId) (ref : RefId) (done : colors[ref.value]? = some .done) :
+    (finishPrototypePath colors path)[ref.value]? = some .done := by
+  unfold finishPrototypePath
+  induction path generalizing colors with
+  | nil => exact done
+  | cons item path ih =>
+      rw [List.foldl_cons]
+      apply ih
+      rw [Array.getElem?_setIfInBounds]
+      by_cases same : item.value = ref.value
+      · simp [same, (Array.getElem?_eq_some_iff.mp done).choose]
+      · simp [same, done]
+
+private theorem finishPrototypePath_done (colors : Array PrototypeColor) (path : List RefId)
+    (ref : RefId) (member : ref ∈ path) (valid : ref.value < colors.size) :
+    (finishPrototypePath colors path)[ref.value]? = some .done := by
+  unfold finishPrototypePath
+  induction path generalizing colors with
+  | nil => contradiction
+  | cons head path ih =>
+      rw [List.foldl_cons]
+      simp only [List.mem_cons] at member
+      cases member with
+      | inl same =>
+          subst head
+          apply finishPrototypePath_preserves_done
+          simp [Array.getElem?_setIfInBounds, valid]
+      | inr member =>
+          apply ih _ member
+          simpa using valid
+
+private theorem visitPrototype_preserves_done (heap : Heap) (fuel : Nat)
+    (colors result : Array PrototypeColor) (path : List RefId) (start ref : RefId)
+    (done : colors[ref.value]? = some .done)
+    (visited : visitPrototype heap fuel colors path start = some result) :
+    result[ref.value]? = some .done := by
+  induction fuel generalizing colors result path start with
+  | zero => simp [visitPrototype] at visited
+  | succ fuel ih =>
+      simp only [visitPrototype] at visited
+      cases colorFound : colors[start.value]? with
+      | none => simp [colorFound] at visited
+      | some color =>
+          cases objectFound : heap.objects[start.value]? with
+          | none => simp [colorFound, objectFound] at visited
+          | some object =>
+              simp only [colorFound, objectFound] at visited
+              cases color with
+              | done =>
+                  cases visited
+                  exact finishPrototypePath_preserves_done colors path ref done
+              | visiting => contradiction
+              | unseen =>
+                  have nextDone :
+                      (colors.setIfInBounds start.value .visiting)[ref.value]? = some .done := by
+                    rw [Array.getElem?_setIfInBounds]
+                    by_cases same : start.value = ref.value
+                    · rw [if_pos same]
+                      have inBounds : start.value < colors.size :=
+                        (Array.getElem?_eq_some_iff.mp colorFound).choose
+                      simp [inBounds]
+                      rw [same] at colorFound
+                      simp [colorFound] at done
+                    · simp [same, done]
+                  cases prototypeEq : object.prototype with
+                  | none =>
+                      simp [prototypeEq] at visited
+                      cases visited
+                      exact finishPrototypePath_preserves_done _ _ ref nextDone
+                  | some parent =>
+                      simp [prototypeEq] at visited
+                      exact ih _ _ _ _ nextDone visited
+
+private theorem visitPrototype_marks_path_done (heap : Heap) (fuel : Nat)
+    (colors result : Array PrototypeColor) (path : List RefId) (start ref : RefId)
+    (referencesValid : ∀ (index : Nat) (object : ObjectRecord),
+      heap.objects[index]? = some object →
+      object.prototype.all (fun prototype => prototype.value < heap.size) = true)
+    (colorsSize : colors.size = heap.size) (startValid : start.value < heap.size)
+    (pathValid : ∀ item ∈ path, item.value < heap.size)
+    (member : ref = start ∨ ref ∈ path)
+    (visited : visitPrototype heap fuel colors path start = some result) :
+    result[ref.value]? = some .done := by
+  induction fuel generalizing colors result path start with
+  | zero => simp [visitPrototype] at visited
+  | succ fuel ih =>
+      simp only [visitPrototype] at visited
+      have colorSome : ∃ color, colors[start.value]? = some color := by
+        cases found : colors[start.value]? with
+        | none =>
+            have := Array.getElem?_eq_none_iff.mp found
+            omega
+        | some color => exact ⟨color, rfl⟩
+      obtain ⟨color, colorFound⟩ := colorSome
+      have objectSome : ∃ object, heap.objects[start.value]? = some object := by
+        cases found : heap.objects[start.value]? with
+        | none =>
+            have := Array.getElem?_eq_none_iff.mp found
+            simp [size] at startValid
+            omega
+        | some object => exact ⟨object, rfl⟩
+      obtain ⟨object, objectFound⟩ := objectSome
+      simp only [colorFound, objectFound] at visited
+      cases color with
+      | visiting => contradiction
+      | done =>
+          cases visited
+          cases member with
+          | inl same =>
+              exact finishPrototypePath_preserves_done colors path ref (by simpa [same] using colorFound)
+          | inr member =>
+              apply finishPrototypePath_done colors path ref member
+              rw [colorsSize]
+              exact pathValid ref member
+      | unseen =>
+          cases prototypeEq : object.prototype with
+          | none =>
+              simp [prototypeEq] at visited
+              cases visited
+              apply finishPrototypePath_done _ (start :: path) ref
+              · simpa [member]
+              · rw [Array.size_setIfInBounds, colorsSize]
+                cases member with
+                | inl same => simpa [same] using startValid
+                | inr member => exact pathValid ref member
+          | some parent =>
+              simp [prototypeEq] at visited
+              have parentValid : parent.value < heap.size := by
+                have := referencesValid start.value object objectFound
+                simp [prototypeEq] at this
+                exact this
+              apply ih (colors := colors.setIfInBounds start.value .visiting)
+                (result := result) (path := start :: path) (start := parent)
+                (by simpa using colorsSize) parentValid
+              · intro item itemMember
+                simp only [List.mem_cons] at itemMember
+                cases itemMember with
+                | inl same => simpa [same] using startValid
+                | inr itemMember => exact pathValid item itemMember
+              · exact Or.inr (by simpa [member])
+              · exact visited
+
+private theorem finishPrototypePath_size (colors : Array PrototypeColor) (path : List RefId) :
+    (finishPrototypePath colors path).size = colors.size := by
+  unfold finishPrototypePath
+  induction path generalizing colors with
+  | nil => rfl
+  | cons ref path ih =>
+      rw [List.foldl_cons, ih]
+      simp
+
+private theorem visitPrototype_size (heap : Heap) (fuel : Nat) (colors result : Array PrototypeColor)
+    (path : List RefId) (ref : RefId)
+    (visited : visitPrototype heap fuel colors path ref = some result) :
+    result.size = colors.size := by
+  induction fuel generalizing colors result path ref with
+  | zero => simp [visitPrototype] at visited
+  | succ fuel ih =>
+      simp only [visitPrototype] at visited
+      cases colorFound : colors[ref.value]? with
+      | none => simp [colorFound] at visited
+      | some color =>
+          cases objectFound : heap.objects[ref.value]? with
+          | none => simp [colorFound, objectFound] at visited
+          | some object =>
+              simp only [colorFound, objectFound] at visited
+              cases color with
+              | done =>
+                  cases visited
+                  exact finishPrototypePath_size colors path
+              | visiting => contradiction
+              | unseen =>
+                  cases prototypeEq : object.prototype with
+                  | none =>
+                      simp [prototypeEq] at visited
+                      cases visited
+                      rw [finishPrototypePath_size]
+                      simp
+                  | some parent =>
+                      simp [prototypeEq] at visited
+                      have sizeEq := ih (colors.setIfInBounds ref.value .visiting) result
+                        (ref :: path) parent visited
+                      simpa using sizeEq
+
+private theorem validatePrototypeGraphAux_push_end (heap : Heap) (newObject : ObjectRecord)
+    (nextFunctionId remaining : Nat) (colors : Array PrototypeColor)
+    (newPrototypeValid : newObject.prototype.all
+      (fun prototype => prototype.value < heap.size) = true)
+    (colorsSize : colors.size = heap.size)
+    (allDone : ∀ i < heap.size, colors[i]? = some .done) :
+    validatePrototypeGraphAux (.mk (heap.objects.push newObject) nextFunctionId)
+      (remaining + 1) heap.size (colors.push .unseen) = true := by
+  let next : Heap := .mk (heap.objects.push newObject) nextFunctionId
+  change validatePrototypeGraphAux next (remaining + 1) heap.size
+    (colors.push .unseen) = true
+  have nextSize : next.size = heap.size + 1 := by simp [next, size]
+  have lastColor : (colors.push .unseen)[heap.size]? = some .unseen := by
+    rw [show heap.size = colors.size by omega]
+    simp
+  have lastObject : next.objects[heap.size]? = some newObject := by
+    simp [next, size]
+  have visitNew : ∃ result,
+      visitPrototype next (next.size + 1) (colors.push .unseen) [] ⟨heap.size⟩ = some result := by
+    cases prototypeEq : newObject.prototype with
+    | none =>
+        refine ⟨finishPrototypePath
+          ((colors.push .unseen).setIfInBounds heap.size .visiting) [⟨heap.size⟩], ?_⟩
+        simp [visitPrototype, lastColor, lastObject, prototypeEq]
+    | some parent =>
+        have parentValid : parent.value < heap.size := by
+          simpa [prototypeEq] using newPrototypeValid
+        have parentDone : (colors.push .unseen)[parent.value]? = some .done := by
+          rw [Array.getElem?_push, if_neg (by omega)]
+          exact allDone parent.value parentValid
+        have parentObject : ∃ object, next.objects[parent.value]? = some object := by
+          cases found : heap.objects[parent.value]? with
+          | none =>
+              have := Array.getElem?_eq_none_iff.mp found
+              simp [size] at parentValid
+              omega
+          | some object =>
+              refine ⟨object, ?_⟩
+              simp [next, Array.getElem?_push, show parent.value ≠ heap.objects.size by
+                simpa [size] using Nat.ne_of_lt parentValid, found]
+        obtain ⟨parentObject, parentFound⟩ := parentObject
+        refine ⟨finishPrototypePath
+          ((colors.push .unseen).setIfInBounds heap.size .visiting) [⟨heap.size⟩], ?_⟩
+        have parentDoneAfter :
+            ((colors.push .unseen).setIfInBounds heap.size .visiting)[parent.value]? =
+              some .done := by
+          rw [Array.getElem?_setIfInBounds]
+          simp [show heap.size ≠ parent.value by omega, parentDone]
+        rw [visitPrototype]
+        rw [lastColor, lastObject]
+        simp only [prototypeEq]
+        rw [nextSize]
+        simp only [visitPrototype]
+        rw [parentDoneAfter, parentFound]
+  obtain ⟨result, visitNew⟩ := visitNew
+  simp only [validatePrototypeGraphAux, lastColor, visitNew]
+  have resultSize := visitPrototype_size next (next.size + 1) (colors.push .unseen)
+    result [] ⟨heap.size⟩ visitNew
+  have pastEnd : result[heap.size + 1]? = none := by
+    rw [Array.getElem?_eq_none_iff]
+    simp at resultSize
+    omega
+  cases remaining with
+  | zero => simp [validatePrototypeGraphAux, pastEnd, nextSize]
+  | succ remaining => simp [validatePrototypeGraphAux, pastEnd, nextSize]
+
+private theorem validatePrototypeGraphAux_push (heap : Heap) (newObject : ObjectRecord)
+    (nextFunctionId remaining index : Nat) (colors : Array PrototypeColor)
+    (referencesValid : ∀ (i : Nat) (object : ObjectRecord),
+      heap.objects[i]? = some object →
+      object.prototype.all (fun prototype => prototype.value < heap.size) = true)
+    (newPrototypeValid : newObject.prototype.all
+      (fun prototype => prototype.value < heap.size) = true)
+    (colorsSize : colors.size = heap.size)
+    (doneBefore : ∀ i < index, colors[i]? = some .done)
+    (valid : validatePrototypeGraphAux heap remaining index colors = true) :
+    validatePrototypeGraphAux (.mk (heap.objects.push newObject) nextFunctionId)
+      (remaining + 1) index (colors.push .unseen) = true := by
+  induction remaining generalizing index colors with
+  | zero =>
+      simp only [validatePrototypeGraphAux] at valid
+      have indexEq : index = heap.size := by simpa using valid
+      subst index
+      exact validatePrototypeGraphAux_push_end heap newObject nextFunctionId 0 colors
+        newPrototypeValid colorsSize doneBefore
+  | succ remaining ih =>
+      rw [validatePrototypeGraphAux] at valid
+      cases colorFound : colors[index]? with
+      | none =>
+          have indexEq : index = heap.size := by simpa [colorFound] using valid
+          subst index
+          exact validatePrototypeGraphAux_push_end heap newObject nextFunctionId
+            (remaining + 1) colors newPrototypeValid colorsSize doneBefore
+      | some color =>
+          have indexBound : index < colors.size :=
+            (Array.getElem?_eq_some_iff.mp colorFound).choose
+          have indexOld : index < heap.size := by simpa [colorsSize] using indexBound
+          have indexNe : index ≠ colors.size := Nat.ne_of_lt indexBound
+          rw [validatePrototypeGraphAux]
+          rw [Array.getElem?_push, if_neg indexNe, colorFound]
+          simp only [colorFound] at valid
+          cases color with
+          | done =>
+              apply ih (colors := colors) (index := index + 1) colorsSize
+              · intro i before
+                by_cases same : i = index
+                · simpa [same] using colorFound
+                · exact doneBefore i (by omega)
+              · exact valid
+          | visiting =>
+              cases visited : visitPrototype heap (heap.size + 1) colors [] ⟨index⟩ with
+              | none => simp [visited] at valid
+              | some nextColors =>
+                  simp only [visited] at valid
+                  have pushedVisit := visitPrototype_push heap newObject nextFunctionId
+                    (heap.size + 1) colors [] ⟨index⟩ referencesValid colorsSize indexOld (by simp)
+                  rw [visited] at pushedVisit
+                  have nextVisited := visitPrototype_fuel_mono
+                    (.mk (heap.objects.push newObject) nextFunctionId) (heap.size + 1)
+                    (colors.push .unseen) [] ⟨index⟩ (nextColors.push .unseen) (by simpa using pushedVisit)
+                  have nextSize : (.mk (heap.objects.push newObject) nextFunctionId : Heap).size + 1 =
+                      heap.size + 1 + 1 := by simp [size]
+                  have nextVisited' : visitPrototype
+                      (.mk (heap.objects.push newObject) nextFunctionId)
+                      ((.mk (heap.objects.push newObject) nextFunctionId : Heap).size + 1)
+                      (colors.push .unseen) [] ⟨index⟩ = some (nextColors.push .unseen) := by
+                    rw [nextSize]
+                    exact nextVisited
+                  rw [nextVisited']
+                  apply ih (colors := nextColors) (index := index + 1)
+                  · rw [visitPrototype_size heap (heap.size + 1) colors nextColors [] ⟨index⟩ visited,
+                      colorsSize]
+                  · intro i before
+                    by_cases same : i = index
+                    · subst i
+                      exact visitPrototype_marks_path_done heap (heap.size + 1) colors nextColors
+                        [] ⟨index⟩ ⟨index⟩ referencesValid colorsSize indexOld (by simp)
+                        (Or.inl rfl) visited
+                    · exact visitPrototype_preserves_done heap (heap.size + 1) colors nextColors
+                        [] ⟨index⟩ ⟨i⟩ (doneBefore i (by omega)) visited
+                  · exact valid
+          | unseen =>
+              cases visited : visitPrototype heap (heap.size + 1) colors [] ⟨index⟩ with
+              | none => simp [visited] at valid
+              | some nextColors =>
+                  simp only [visited] at valid
+                  have pushedVisit := visitPrototype_push heap newObject nextFunctionId
+                    (heap.size + 1) colors [] ⟨index⟩ referencesValid colorsSize indexOld (by simp)
+                  rw [visited] at pushedVisit
+                  have nextVisited := visitPrototype_fuel_mono
+                    (.mk (heap.objects.push newObject) nextFunctionId) (heap.size + 1)
+                    (colors.push .unseen) [] ⟨index⟩ (nextColors.push .unseen) (by simpa using pushedVisit)
+                  have nextSize : (.mk (heap.objects.push newObject) nextFunctionId : Heap).size + 1 =
+                      heap.size + 1 + 1 := by simp [size]
+                  have nextVisited' : visitPrototype
+                      (.mk (heap.objects.push newObject) nextFunctionId)
+                      ((.mk (heap.objects.push newObject) nextFunctionId : Heap).size + 1)
+                      (colors.push .unseen) [] ⟨index⟩ = some (nextColors.push .unseen) := by
+                    rw [nextSize]
+                    exact nextVisited
+                  rw [nextVisited']
+                  apply ih (colors := nextColors) (index := index + 1)
+                  · rw [visitPrototype_size heap (heap.size + 1) colors nextColors [] ⟨index⟩ visited,
+                      colorsSize]
+                  · intro i before
+                    by_cases same : i = index
+                    · subst i
+                      exact visitPrototype_marks_path_done heap (heap.size + 1) colors nextColors
+                        [] ⟨index⟩ ⟨index⟩ referencesValid colorsSize indexOld (by simp)
+                        (Or.inl rfl) visited
+                    · exact visitPrototype_preserves_done heap (heap.size + 1) colors nextColors
+                        [] ⟨index⟩ ⟨i⟩ (doneBefore i (by omega)) visited
+                  · exact valid
+
+private theorem prototypeGraphAcyclic_push (heap : Heap) (newObject : ObjectRecord)
+    (nextFunctionId : Nat)
+    (referencesValid : ∀ (i : Nat) (object : ObjectRecord),
+      heap.objects[i]? = some object →
+      object.prototype.all (fun prototype => prototype.value < heap.size) = true)
+    (newPrototypeValid : newObject.prototype.all
+      (fun prototype => prototype.value < heap.size) = true)
+    (valid : heap.prototypeGraphAcyclic = true) :
+    prototypeGraphAcyclic (.mk (heap.objects.push newObject) nextFunctionId) = true := by
+  unfold prototypeGraphAcyclic at valid ⊢
+  have pushed := validatePrototypeGraphAux_push heap newObject nextFunctionId heap.size 0
+    (Array.replicate heap.size .unseen) referencesValid newPrototypeValid (by simp) (by simp) valid
+  simpa [size, Array.replicate_succ] using pushed
+
+private theorem valueValid_push (heap : Heap) (newObject : ObjectRecord)
+    (nextFunctionId : Nat) (value : Value) (valid : heap.valueValid value = true) :
+    valueValid (.mk (heap.objects.push newObject) nextFunctionId) value = true := by
+  cases value with
+  | primitive value => rfl
+  | object ref =>
+      unfold valueValid size at valid ⊢
+      simp at valid ⊢
+      omega
+
+private theorem callableReferenceValid_push (heap : Heap) (newObject : ObjectRecord)
+    (nextFunctionId : Nat) (ref : RefId) (valid : callableReferenceValid heap ref = true) :
+    callableReferenceValid (.mk (heap.objects.push newObject) nextFunctionId) ref = true := by
+  unfold callableReferenceValid isCallable functionSlots? at valid ⊢
+  cases found : heap.get? ref with
+  | error fault =>
+      simp [found, Bind.bind, Except.instMonad, Monad.toBind, Except.bind] at valid
+  | ok object =>
+      have refValid : ref.value < heap.size := by
+        unfold get? at found
+        cases lookup : heap.objects[ref.value]? with
+        | none => simp [lookup] at found
+        | some current =>
+            have := (Array.getElem?_eq_some_iff.mp lookup).choose
+            simpa [size] using this
+      have nextFound : (.mk (heap.objects.push newObject) nextFunctionId : Heap).get? ref = .ok object := by
+        unfold get? at found ⊢
+        rw [Array.getElem?_push, if_neg (by simpa [size] using Nat.ne_of_lt refValid)]
+        exact found
+      rw [nextFound]
+      rw [found] at valid
+      cases object.kind <;> simp_all
+
+private theorem descriptorReferencesValid_push (heap : Heap) (newObject : ObjectRecord)
+    (nextFunctionId : Nat) (descriptor : PropertyDescriptor)
+    (valid : descriptorReferencesValid heap descriptor = true) :
+    descriptorReferencesValid (.mk (heap.objects.push newObject) nextFunctionId) descriptor = true := by
+  cases descriptor with
+  | data descriptor => exact valueValid_push heap newObject nextFunctionId descriptor.value valid
+  | accessor descriptor =>
+      cases descriptor with
+      | mk getter setter enumerable configurable =>
+          cases getter <;> cases setter <;>
+            simp_all [descriptorReferencesValid, callableReferenceValid_push]
+
+private theorem objectReferencesValid_push (heap : Heap) (newObject object : ObjectRecord)
+    (nextFunctionId : Nat) (countMono : heap.nextFunctionId ≤ nextFunctionId)
+    (valid : objectReferencesValid heap object = true) :
+    objectReferencesValid (.mk (heap.objects.push newObject) nextFunctionId) object = true := by
+  unfold objectReferencesValid at valid ⊢
+  simp only [Bool.and_eq_true] at valid ⊢
+  refine ⟨⟨⟨valid.1.1.1, ?_⟩, ?_⟩, ?_⟩
+  · rw [List.all_eq_true] at valid ⊢
+    intro descriptor member
+    exact descriptorReferencesValid_push heap newObject nextFunctionId descriptor
+      (valid.1.1.2 descriptor member)
+  · cases prototypeEq : object.prototype with
+    | none => rfl
+    | some prototype =>
+        simp only [prototypeEq] at valid ⊢
+        simp [size] at valid ⊢
+        omega
+  · cases kindEq : object.kind with
+    | ordinary => simpa [kindEq] using valid.2
+    | array slots => simpa [kindEq] using valid.2
+    | primitiveWrapper slots => simpa [kindEq] using valid.2
+    | function slots =>
+        simp only [kindEq] at valid ⊢
+        unfold functionSlotsValid at valid ⊢
+        simp only [Bool.and_eq_true] at valid ⊢
+        refine ⟨⟨⟨⟨⟨⟨?_, ?_⟩, ?_⟩, valid.2.1.1.1.2⟩,
+          valid.2.1.1.2⟩, valid.2.1.2⟩, valid.2.2⟩
+        · simp [functionCount] at valid ⊢
+          omega
+        · cases homeEq : slots.homeObject with
+          | none => rfl
+          | some home =>
+              simp only [homeEq] at valid ⊢
+              simp [size] at valid ⊢
+              omega
+        · cases lexicalEq : slots.lexicalThis with
+          | none => rfl
+          | some value =>
+              simp only [lexicalEq] at valid ⊢
+              exact valueValid_push heap newObject nextFunctionId value valid.2.1.1.1.1.2
+    | arrayIterator slots =>
+        simp only [kindEq, arrayIteratorSlotsValid] at valid ⊢
+        have targetNe : slots.target.value ≠ heap.objects.size := by
+          cases targetFound : heap.objects[slots.target.value]? with
+          | none => simp [targetFound] at valid
+          | some target =>
+              have inBounds := (Array.getElem?_eq_some_iff.mp targetFound).choose
+              exact Nat.ne_of_lt inBounds
+        simp [Array.getElem?_push, targetNe, valid]
+
+private theorem objectReferencesValid_push_two (heap : Heap) (first second object : ObjectRecord)
+    (nextFunctionId : Nat) (countMono : heap.nextFunctionId ≤ nextFunctionId)
+    (valid : objectReferencesValid heap object = true) :
+    objectReferencesValid
+      (.mk ((heap.objects.push first).push second) nextFunctionId) object = true := by
+  exact objectReferencesValid_push
+    (.mk (heap.objects.push first) nextFunctionId) second object nextFunctionId (Nat.le_refl _)
+    (objectReferencesValid_push heap first object nextFunctionId countMono valid)
+
+private theorem prototypeGraphAcyclic_push_two (heap : Heap) (first second : ObjectRecord)
+    (nextFunctionId : Nat)
+    (referencesValid : ∀ (i : Nat) (object : ObjectRecord),
+      heap.objects[i]? = some object →
+      object.prototype.all (fun prototype => prototype.value < heap.size) = true)
+    (firstPrototypeValid : first.prototype.all
+      (fun prototype => prototype.value < heap.size) = true)
+    (secondPrototypeValid : second.prototype.all
+      (fun prototype => prototype.value < heap.size) = true)
+    (valid : heap.prototypeGraphAcyclic = true) :
+    prototypeGraphAcyclic
+      (.mk ((heap.objects.push first).push second) nextFunctionId) = true := by
+  let afterFirst : Heap := .mk (heap.objects.push first) nextFunctionId
+  apply prototypeGraphAcyclic_push afterFirst second nextFunctionId
+  · intro index object found
+    unfold afterFirst at found ⊢
+    rw [Array.getElem?_push] at found
+    split at found
+    · rename_i last
+      subst index
+      simp at found
+      subst object
+      cases prototypeEq : first.prototype with
+      | none => rfl
+      | some prototype =>
+          simp only [prototypeEq] at firstPrototypeValid ⊢
+          simp [size] at firstPrototypeValid ⊢
+          omega
+    · rename_i notLast
+      have oldValid := referencesValid index object found
+      cases prototypeEq : object.prototype with
+      | none => rfl
+      | some prototype =>
+          simp only [prototypeEq] at oldValid ⊢
+          simp [size] at oldValid ⊢
+          omega
+  · cases prototypeEq : second.prototype with
+    | none => rfl
+    | some prototype =>
+        simp only [prototypeEq] at secondPrototypeValid ⊢
+        simp [afterFirst, size] at secondPrototypeValid ⊢
+        omega
+  · exact prototypeGraphAcyclic_push heap first nextFunctionId referencesValid
+      firstPrototypeValid valid
+
+/-- Replacing an object without changing its prototype preserves the prototype graph check. -/
+theorem prototypeGraphAcyclic_replace (heap next : Heap) (ref : RefId)
+    (current replacement : ObjectRecord) (found : heap.get? ref = .ok current)
+    (samePrototype : replacement.prototype = current.prototype)
+    (replaced : heap.replace ref replacement = .ok next) :
+    next.prototypeGraphAcyclic = heap.prototypeGraphAcyclic := by
+  apply prototypeGraphAcyclic_prototypeEquivalent
+  constructor
+  · exact replace_size heap next ref replacement replaced
+  · intro index
+    unfold replace at replaced
+    split at replaced
+    · cases replaced
+      unfold prototypeAt
+      by_cases sameIndex : index = ref.value
+      · subst index
+        have currentFound : heap.objects[ref.value]? = some current := by
+          cases lookup : heap.objects[ref.value]? with
+          | none => simp [get?, lookup] at found
+          | some object =>
+              simp [get?, lookup] at found
+              simpa [found] using lookup
+        simp [currentFound, samePrototype]
+      · simp [Ne.symm sameIndex]
+    · contradiction
+
 private def functionIdsSequential : Nat → List FunctionSlots → Bool
   | _, [] => true
   | expected, slots :: rest =>
@@ -941,6 +1731,633 @@ def isWellFormed (heap : Heap) : Bool :=
 /-- Complete heap validity represented by its executable checker. -/
 def WellFormed (heap : Heap) : Prop := heap.isWellFormed = true
 
+private theorem functionIdsSequential_append (expected : Nat) (slots : List FunctionSlots)
+    (newSlots : FunctionSlots) (valid : functionIdsSequential expected slots = true)
+    (newId : newSlots.functionId.value = expected + slots.length) :
+    functionIdsSequential expected (slots ++ [newSlots]) = true := by
+  induction slots generalizing expected with
+  | nil => simp [functionIdsSequential, newId]
+  | cons slot slots ih =>
+      simp [functionIdsSequential] at valid ⊢
+      refine ⟨valid.1, ih (expected + 1) valid.2 (by simp at newId ⊢; omega)⟩
+
+private theorem appendObject_preserves_wellFormed (heap : Heap) (newObject : ObjectRecord)
+    (nextFunctionId : Nat) (valid : heap.WellFormed)
+    (countMono : heap.nextFunctionId ≤ nextFunctionId)
+    (newPrototypeValid : newObject.prototype.all
+      (fun prototype => prototype.value < heap.size) = true)
+    (newValid : objectReferencesValid
+      (.mk (heap.objects.push newObject) nextFunctionId) newObject = true)
+    (idsValid : functionIdsSequential 0
+      (functionSlotList (.mk (heap.objects.push newObject) nextFunctionId)) = true)
+    (countValid : (functionSlotList (.mk (heap.objects.push newObject) nextFunctionId)).length =
+      nextFunctionId) :
+    WellFormed (.mk (heap.objects.push newObject) nextFunctionId) := by
+  unfold WellFormed isWellFormed at valid ⊢
+  simp only [Bool.and_eq_true] at valid ⊢
+  refine ⟨⟨⟨?_, idsValid⟩, by simpa [functionCount] using countValid⟩, ?_⟩
+  · rw [Array.toList_push, List.all_append, List.all_cons, List.all_nil]
+    simp only [Bool.and_true, Bool.and_eq_true]
+    refine ⟨?_, newValid⟩
+    rw [List.all_eq_true] at valid ⊢
+    intro object member
+    exact objectReferencesValid_push heap newObject object nextFunctionId countMono
+      (valid.1.1.1 object member)
+  · apply prototypeGraphAcyclic_push heap newObject nextFunctionId
+    · intro index object found
+      have objectValid := valid.1.1.1
+      rw [List.all_eq_true] at objectValid
+      have member : object ∈ heap.objects.toList := by
+        rw [Array.mem_toList_iff]
+        exact Array.mem_of_getElem? found
+      have references := objectValid object member
+      unfold objectReferencesValid at references
+      simp only [Bool.and_eq_true] at references
+      exact references.1.2
+    · exact newPrototypeValid
+    · exact valid.2
+
+private theorem appendTwoObjects_preserves_wellFormed (heap : Heap)
+    (first second : ObjectRecord) (nextFunctionId : Nat) (valid : heap.WellFormed)
+    (countMono : heap.nextFunctionId ≤ nextFunctionId)
+    (firstPrototypeValid : first.prototype.all
+      (fun prototype => prototype.value < heap.size) = true)
+    (secondPrototypeValid : second.prototype.all
+      (fun prototype => prototype.value < heap.size) = true)
+    (firstValid : objectReferencesValid
+      (.mk ((heap.objects.push first).push second) nextFunctionId) first = true)
+    (secondValid : objectReferencesValid
+      (.mk ((heap.objects.push first).push second) nextFunctionId) second = true)
+    (idsValid : functionIdsSequential 0
+      (functionSlotList (.mk ((heap.objects.push first).push second) nextFunctionId)) = true)
+    (countValid :
+      (functionSlotList (.mk ((heap.objects.push first).push second) nextFunctionId)).length =
+        nextFunctionId) :
+    WellFormed (.mk ((heap.objects.push first).push second) nextFunctionId) := by
+  unfold WellFormed isWellFormed at valid ⊢
+  simp only [Bool.and_eq_true] at valid ⊢
+  refine ⟨⟨⟨?_, idsValid⟩, by simpa [functionCount] using countValid⟩, ?_⟩
+  · simp only [Array.toList_push, List.all_append, List.all_cons, List.all_nil,
+      Bool.and_true, Bool.and_eq_true]
+    refine ⟨⟨?_, firstValid⟩, secondValid⟩
+    rw [List.all_eq_true] at valid ⊢
+    intro object member
+    exact objectReferencesValid_push_two heap first second object nextFunctionId countMono
+      (valid.1.1.1 object member)
+  · apply prototypeGraphAcyclic_push_two heap first second nextFunctionId
+    · intro index object found
+      have objectValid := valid.1.1.1
+      rw [List.all_eq_true] at objectValid
+      have member : object ∈ heap.objects.toList := by
+        rw [Array.mem_toList_iff]
+        exact Array.mem_of_getElem? found
+      have references := objectValid object member
+      unfold objectReferencesValid at references
+      simp only [Bool.and_eq_true] at references
+      exact references.1.2
+    · exact firstPrototypeValid
+    · exact secondPrototypeValid
+    · exact valid.2
+
+/-- Exact propositional form of the descriptor-reference clause in `Heap.isWellFormed`. -/
+def DescriptorReferencesValid (heap : Heap) (descriptor : PropertyDescriptor) : Prop :=
+  descriptorReferencesValid heap descriptor = true
+
+/-- Reference validity for every value and accessor explicitly supplied by a descriptor update. -/
+def DescriptorUpdateReferencesValid (heap : Heap) (update : DescriptorUpdate) : Prop :=
+  (match update.value with
+    | .absent => True
+    | .present value => heap.valueValid value = true) ∧
+  (match update.get with
+    | .absent => True
+    | .present getter => getter.all (callableReferenceValid heap) = true) ∧
+  (match update.set with
+    | .absent => True
+    | .present setter => setter.all (callableReferenceValid heap) = true)
+
+private theorem callableReferenceValid_eq_objectKind (heap : Heap) (ref : RefId) :
+    callableReferenceValid heap ref =
+      match heap.objectKind? ref with
+      | some (.function _) => true
+      | _ => false := by
+  unfold callableReferenceValid isCallable functionSlots? objectKind?
+  cases heap.get? ref with
+  | error fault => rfl
+  | ok object =>
+      cases object
+      rename_i properties prototype extensible kind
+      cases kind <;> rfl
+
+private theorem validateValue_iff_valueValid (heap : Heap) (value : Value) :
+    validateValue heap value = .ok () ↔ heap.valueValid value = true := by
+  cases value with
+  | primitive value => simp [validateValue, valueValid]
+  | object ref =>
+      unfold validateValue valueValid size get?
+      cases found : heap.objects[ref.value]? with
+      | none =>
+          have outOfBounds : ¬ref.value < heap.objects.size := by
+            simpa [Array.getElem?_eq_none_iff] using found
+          simp [found, outOfBounds]
+      | some object =>
+          have inBounds : ref.value < heap.objects.size :=
+            (Array.getElem?_eq_some_iff.mp found).choose
+          simp [found, inBounds]
+
+private theorem validateAccessor_iff_valid (heap : Heap) (accessor : Option RefId) :
+    validateAccessor heap accessor = .ok () ↔
+      accessor.all (callableReferenceValid heap) = true := by
+  cases accessor with
+  | none => simp [validateAccessor]
+  | some ref =>
+      change validateAccessor heap (some ref) = .ok () ↔
+        callableReferenceValid heap ref = true
+      rw [callableReferenceValid_eq_objectKind]
+      unfold validateAccessor objectKind?
+      cases found : heap.get? ref with
+      | error fault => simp [found]
+      | ok object =>
+          cases object
+          rename_i properties prototype extensible kind
+          cases kind <;> simp [found]
+
+private theorem except_unit_sequence_ok_iff (first second : Except ε Unit) :
+    (do
+      let _ ← first
+      second) = .ok () ↔ first = .ok () ∧ second = .ok () := by
+  unfold Bind.bind Except.instMonad Monad.toBind Except.bind
+  dsimp
+  cases first with
+  | error error =>
+      simp only
+      simp
+  | ok value =>
+      cases value
+      simp only
+      simp
+
+private theorem except_pure_unit_ok : (pure () : Except ε Unit) = .ok () := by
+  rfl
+
+/-- The descriptor reference validator is sound and complete for its exact logical predicate. -/
+theorem validateDescriptorReferences_iff (heap : Heap) (update : DescriptorUpdate) :
+    validateDescriptorReferences heap update = .ok () ↔
+      DescriptorUpdateReferencesValid heap update := by
+  unfold validateDescriptorReferences DescriptorUpdateReferencesValid
+  cases valueField : update.value <;> cases getField : update.get <;>
+    cases setField : update.set <;>
+    simp [valueField, getField, setField, except_unit_sequence_ok_iff,
+      except_pure_unit_ok, validateValue_iff_valueValid, validateAccessor_iff_valid]
+
+private theorem optionAll_iff_policy (predicate : α → Bool) (value : Option α) :
+    value.all predicate = true ↔
+      match value with | none => True | some item => predicate item = true := by
+  cases value <;> simp
+
+private theorem fieldOptionAll_iff_policy (predicate : α → Bool)
+    (field : FieldUpdate (Option α)) :
+    (match field with
+      | .absent => True
+      | .present value => value.all predicate = true) ↔
+    (match field with
+      | .absent => True
+      | .present value => match value with
+        | none => True
+        | some item => predicate item = true) := by
+  cases field with
+  | absent => rfl
+  | present value => exact optionAll_iff_policy predicate value
+
+private theorem descriptorReferencesValid_iff_policy (heap : Heap)
+    (descriptor : PropertyDescriptor) :
+    descriptorReferencesValid heap descriptor = true ↔
+      DescriptorUpdate.DescriptorReferencesValid
+        (fun value => heap.valueValid value = true)
+        (fun ref => callableReferenceValid heap ref = true) descriptor := by
+  cases descriptor with
+  | data descriptor => rfl
+  | accessor descriptor =>
+      cases getEq : descriptor.get <;> cases setEq : descriptor.set <;>
+        simp [descriptorReferencesValid, DescriptorUpdate.DescriptorReferencesValid,
+          getEq, setEq]
+
+private theorem descriptorUpdateReferencesValid_iff_policy (heap : Heap)
+    (update : DescriptorUpdate) :
+    DescriptorUpdateReferencesValid heap update ↔
+      update.ReferencesValid
+        (fun value => heap.valueValid value = true)
+        (fun ref => callableReferenceValid heap ref = true) := by
+  unfold DescriptorUpdateReferencesValid DescriptorUpdate.ReferencesValid
+  constructor
+  · rintro ⟨valueValid, getValid, setValid⟩
+    refine ⟨by simpa only using valueValid, ?_, ?_⟩
+    · cases getEq : update.get with
+      | absent => trivial
+      | present getter =>
+          simp only [getEq] at getValid ⊢
+          cases getter <;> simp_all
+    · cases setEq : update.set with
+      | absent => trivial
+      | present setter =>
+          simp only [setEq] at setValid ⊢
+          cases setter <;> simp_all
+  · rintro ⟨valueValid, getValid, setValid⟩
+    refine ⟨by simpa only using valueValid, ?_, ?_⟩
+    · cases getEq : update.get with
+      | absent => trivial
+      | present getter =>
+          simp only [getEq] at getValid ⊢
+          cases getter <;> simp_all
+    · cases setEq : update.set with
+      | absent => trivial
+      | present setter =>
+          simp only [setEq] at setValid ⊢
+          cases setter <;> simp_all
+
+/-- A validated descriptor update preserves value-reference and accessor-callability validity. -/
+theorem applyValidatedDescriptor_referencesValid (heap : Heap) (update : DescriptorUpdate)
+    (current : Option PropertyDescriptor) (extensible : Bool) (kind : DescriptorKind)
+    (descriptor : PropertyDescriptor)
+    (currentValid : current.all (descriptorReferencesValid heap) = true)
+    (referencesValid : validateDescriptorReferences heap update = .ok ())
+    (applied : update.applyValidatedDescriptor current extensible kind = .ok descriptor) :
+    descriptorReferencesValid heap descriptor = true := by
+  rw [descriptorReferencesValid_iff_policy]
+  apply DescriptorUpdate.applyValidatedDescriptor_referencesValid update current extensible kind
+    descriptor (fun value => heap.valueValid value = true)
+    (fun ref => callableReferenceValid heap ref = true) (by rfl)
+  · exact (descriptorUpdateReferencesValid_iff_policy heap update).mp
+      ((validateDescriptorReferences_iff heap update).mp referencesValid)
+  · cases current with
+    | none => trivial
+    | some current =>
+        change descriptorReferencesValid heap current = true at currentValid
+        exact (descriptorReferencesValid_iff_policy heap current).mp currentValid
+  · exact applied
+
+private theorem callableReferenceValid_replace (heap next : Heap) (target ref : RefId)
+    (current replacement : ObjectRecord) (found : heap.get? target = .ok current)
+    (sameKind : replacement.kind = current.kind)
+    (replaced : heap.replace target replacement = .ok next) :
+    callableReferenceValid next ref = callableReferenceValid heap ref := by
+  rw [callableReferenceValid_eq_objectKind, callableReferenceValid_eq_objectKind,
+    replace_preserves_objectKind heap next target ref current replacement found sameKind replaced]
+
+private theorem descriptorReferencesValid_replace (heap next : Heap) (target : RefId)
+    (current replacement : ObjectRecord) (found : heap.get? target = .ok current)
+    (sameKind : replacement.kind = current.kind)
+    (replaced : heap.replace target replacement = .ok next) (descriptor : PropertyDescriptor) :
+    descriptorReferencesValid next descriptor = descriptorReferencesValid heap descriptor := by
+  cases descriptor with
+  | data descriptor =>
+      exact valueValid_replace heap next target replacement replaced descriptor.value
+  | accessor descriptor =>
+    unfold descriptorReferencesValid
+    cases descriptor with
+    | mk getter setter enumerable configurable =>
+        cases getter <;> cases setter <;>
+          simp [callableReferenceValid_replace heap next target _ current replacement found sameKind replaced]
+
+private theorem functionSlotsValid_replace (heap next : Heap) (target : RefId)
+    (replacement : ObjectRecord) (replaced : heap.replace target replacement = .ok next)
+    (slots : FunctionSlots) : functionSlotsValid next slots = functionSlotsValid heap slots := by
+  unfold functionSlotsValid
+  rw [replace_functionCount heap next target replacement replaced,
+    replace_size heap next target replacement replaced]
+  cases slots.lexicalThis <;>
+    simp [valueValid_replace heap next target replacement replaced]
+
+private theorem arrayIteratorSlotsValid_replace (heap next : Heap) (target : RefId)
+    (current replacement : ObjectRecord) (found : heap.get? target = .ok current)
+    (sameKind : replacement.kind = current.kind)
+    (replaced : heap.replace target replacement = .ok next) (slots : ArrayIteratorSlots) :
+    arrayIteratorSlotsValid next slots = arrayIteratorSlotsValid heap slots := by
+  unfold arrayIteratorSlotsValid
+  by_cases sameRef : slots.target = target
+  · subst target
+    have currentFound : heap.objects[slots.target.value]? = some current := by
+      cases lookup : heap.objects[slots.target.value]? with
+      | none => simp [get?, lookup] at found
+      | some object =>
+          simp [get?, lookup] at found
+          simpa [found] using lookup
+    unfold replace at replaced
+    split at replaced
+    · cases replaced
+      simp [currentFound, sameKind]
+    · contradiction
+  · have differentIndex : slots.target.value ≠ target.value := by
+      intro equal
+      apply sameRef
+      cases slots with
+      | mk iteratorTarget nextIndex done =>
+          cases iteratorTarget
+          cases target
+          simp_all
+    unfold replace at replaced
+    split at replaced
+    · cases replaced
+      simp [Ne.symm differentIndex]
+    · contradiction
+
+private theorem objectReferencesValid_replace_heap (heap next : Heap) (target : RefId)
+    (current replacement object : ObjectRecord) (found : heap.get? target = .ok current)
+    (sameKind : replacement.kind = current.kind)
+    (replaced : heap.replace target replacement = .ok next)
+    (valid : objectReferencesValid heap object = true) :
+    objectReferencesValid next object = true := by
+  unfold objectReferencesValid at valid ⊢
+  simp only [Bool.and_eq_true] at valid ⊢
+  refine ⟨⟨⟨valid.1.1.1, ?_⟩, ?_⟩, ?_⟩
+  · rw [List.all_eq_true] at valid ⊢
+    intro descriptor member
+    rw [descriptorReferencesValid_replace heap next target current replacement found sameKind replaced]
+    exact valid.1.1.2 descriptor member
+  · simpa [replace_size heap next target replacement replaced] using valid.1.2
+  ·
+    cases kindEq : object.kind with
+    | ordinary => simpa [kindEq] using valid.2
+    | function slots =>
+        simp only [kindEq] at valid ⊢
+        rw [functionSlotsValid_replace heap next target replacement replaced slots]
+        exact valid.2
+    | array slots => simpa [kindEq] using valid.2
+    | arrayIterator slots =>
+        simp only [kindEq] at valid ⊢
+        rw [arrayIteratorSlotsValid_replace heap next target current replacement found sameKind replaced slots]
+        exact valid.2
+    | primitiveWrapper slots => simpa [kindEq] using valid.2
+
+private theorem functionSlotList_replace (heap next : Heap) (target : RefId)
+    (current replacement : ObjectRecord) (found : heap.get? target = .ok current)
+    (sameKind : replacement.kind = current.kind)
+    (replaced : heap.replace target replacement = .ok next) :
+    next.functionSlotList = heap.functionSlotList := by
+  unfold replace at replaced
+  split at replaced
+  · cases replaced
+    unfold functionSlotList
+    rw [Array.toList_set]
+    have atTarget : heap.objects.toList[target.value]? = some current := by
+      cases lookup : heap.objects[target.value]? with
+      | none => simp [get?, lookup] at found
+      | some object =>
+          simp [get?, lookup] at found
+          simpa [found] using lookup
+    have mapped : (match replacement.kind with
+        | .function slots => some slots
+        | _ => none) =
+      (match current.kind with
+        | .function slots => some slots
+        | _ => none) := by rw [sameKind]
+    let index := target.value
+    change List.filterMap _ (heap.objects.toList.set index replacement) = _
+    have atIndex : heap.objects.toList[index]? = some current := by simpa [index] using atTarget
+    let project : ObjectRecord → Option FunctionSlots := fun object => match object.kind with
+      | .ordinary | .array _ | .arrayIterator _ | .primitiveWrapper _ => none
+      | .function slots => some slots
+    have go : ∀ (objects : List ObjectRecord) (index : Nat),
+        objects[index]? = some current →
+        List.filterMap project (objects.set index replacement) = List.filterMap project objects := by
+      intro objects index atIndex
+      induction objects generalizing index with
+      | nil => simp at atIndex
+      | cons head tail ih =>
+          cases index with
+          | zero =>
+              simp at atIndex
+              subst head
+              simp only [List.set, List.filterMap_cons]
+              rw [show project replacement = project current by
+                unfold project
+                rw [sameKind]]
+          | succ index =>
+              simp only [List.getElem?_cons_succ] at atIndex
+              simp only [List.set, List.filterMap_cons]
+              rw [ih index atIndex]
+    simpa [project] using go heap.objects.toList index atIndex
+  · contradiction
+
+/-- Replacing one object with a valid record of the same kind and prototype preserves the complete
+heap invariant. -/
+theorem replace_preserves_wellFormed (heap next : Heap) (target : RefId)
+    (current replacement : ObjectRecord) (valid : heap.WellFormed)
+    (found : heap.get? target = .ok current) (sameKind : replacement.kind = current.kind)
+    (samePrototype : replacement.prototype = current.prototype)
+    (replaced : heap.replace target replacement = .ok next)
+    (replacementValid : objectReferencesValid next replacement = true) : next.WellFormed := by
+  unfold WellFormed isWellFormed at valid ⊢
+  simp only [Bool.and_eq_true] at valid ⊢
+  have slotsEqual := functionSlotList_replace heap next target current replacement found sameKind replaced
+  refine ⟨⟨⟨?_, ?_⟩, ?_⟩, ?_⟩
+  ·
+    unfold replace at replaced
+    split at replaced
+    · cases replaced
+      rw [Array.toList_set]
+      let concrete : Heap :=
+        { objects := heap.objects.set target.value replacement ‹_›,
+          nextFunctionId := heap.nextFunctionId }
+      have atTarget : heap.objects.toList[target.value]? = some current := by
+        cases lookup : heap.objects[target.value]? with
+        | none => simp [get?, lookup] at found
+        | some object =>
+            simp [get?, lookup] at found
+            simpa [found] using lookup
+      have preserveOld : ∀ object, objectReferencesValid heap object = true →
+          objectReferencesValid concrete object = true := by
+        intro object objectValid
+        exact objectReferencesValid_replace_heap heap concrete target current replacement object
+          found sameKind (by
+            unfold replace
+            simp [concrete, ‹target.value < heap.objects.size›]) objectValid
+      have go : ∀ (objects : List ObjectRecord) (index : Nat),
+          objects[index]? = some current →
+          objects.all (objectReferencesValid heap) = true →
+          (objects.set index replacement).all (objectReferencesValid concrete) = true := by
+        intro objects index atIndex objectsValid
+        induction objects generalizing index with
+        | nil => simp at atIndex
+        | cons head tail ih =>
+            rw [List.all_cons] at objectsValid
+            have validParts : objectReferencesValid heap head = true ∧
+                tail.all (objectReferencesValid heap) = true := by
+              simpa only [Bool.and_eq_true] using objectsValid
+            cases index with
+            | zero =>
+                simp at atIndex
+                subst head
+                rw [List.set, List.all_cons]
+                simpa only [Bool.and_eq_true] using And.intro replacementValid
+                  (List.all_eq_true.mpr fun object member =>
+                    preserveOld object (List.all_eq_true.mp validParts.2 object member))
+            | succ index =>
+                simp only [List.getElem?_cons_succ] at atIndex
+                rw [List.set, List.all_cons]
+                simpa only [Bool.and_eq_true] using And.intro (preserveOld head validParts.1)
+                  (ih index atIndex validParts.2)
+      exact go heap.objects.toList target.value atTarget valid.1.1.1
+    · contradiction
+  · rw [slotsEqual]
+    exact valid.1.1.2
+  · rw [slotsEqual, replace_functionCount heap next target replacement replaced]
+    exact valid.1.2
+  · rw [prototypeGraphAcyclic_replace heap next target current replacement found samePrototype replaced]
+    exact valid.2
+
+private theorem wellFormed_object (heap : Heap) (ref : RefId) (object : ObjectRecord)
+    (valid : heap.WellFormed) (found : heap.get? ref = .ok object) :
+    objectReferencesValid heap object = true := by
+  unfold WellFormed isWellFormed at valid
+  simp only [Bool.and_eq_true] at valid
+  rw [List.all_eq_true] at valid
+  apply valid.1.1.1 object
+  rw [Array.mem_toList_iff]
+  cases lookup : heap.objects[ref.value]? with
+  | none => simp [get?, lookup] at found
+  | some current =>
+      simp [get?, lookup] at found
+      subst current
+      exact Array.mem_of_getElem? lookup
+
+/-- Making an object nonextensible preserves the complete heap invariant. -/
+theorem preventExtensions_preserves_wellFormed (heap next : Heap) (ref : RefId)
+    (valid : heap.WellFormed) (updated : heap.preventExtensions ref = .ok next) :
+    next.WellFormed := by
+  unfold preventExtensions at updated
+  cases found : heap.get? ref with
+  | error fault => simp [found] at updated
+  | ok object =>
+      rw [found] at updated
+      cases extensible : object.extensible with
+      | false =>
+          simp [extensible] at updated
+          cases updated
+          exact valid
+      | true =>
+          simp [extensible] at updated
+          cases replaced : heap.replace ref { object with extensible := false } with
+          | error fault => simp [replaced] at updated
+          | ok replacedHeap =>
+              rw [replaced] at updated
+              cases updated
+              apply replace_preserves_wellFormed heap next ref object
+                { object with extensible := false } valid found rfl rfl replaced
+              have oldValid := wellFormed_object heap ref object valid found
+              have preserved := objectReferencesValid_replace_heap heap next ref object
+                { object with extensible := false } object found rfl replaced oldValid
+              simpa [objectReferencesValid] using preserved
+
+private theorem deleteReplacement_referencesValid (heap next : Heap) (ref : RefId)
+    (object : ObjectRecord) (key : PropertyKey) (valid : heap.WellFormed)
+    (found : heap.get? ref = .ok object)
+    (replaced : heap.replace ref { object with properties := object.properties.delete key } =
+      .ok next) :
+    objectReferencesValid next { object with properties := object.properties.delete key } = true := by
+  have sourceValid := wellFormed_object heap ref object valid found
+  unfold objectReferencesValid at sourceValid ⊢
+  simp only [Bool.and_eq_true] at sourceValid ⊢
+  refine ⟨⟨⟨OrderedProps.delete_wellFormed object.properties key sourceValid.1.1.1, ?_⟩,
+    ?_⟩, ?_⟩
+  · have descriptors := OrderedProps.descriptors_all_delete object.properties key
+      (descriptorReferencesValid heap) sourceValid.1.1.1 sourceValid.1.1.2
+    rw [List.all_eq_true] at descriptors ⊢
+    intro descriptor member
+    rw [descriptorReferencesValid_replace heap next ref object
+      { object with properties := object.properties.delete key } found rfl replaced]
+    exact descriptors descriptor member
+  · simpa [replace_size heap next ref
+      { object with properties := object.properties.delete key } replaced] using sourceValid.1.2
+  · cases kindEq : object.kind with
+    | ordinary => simpa [kindEq] using sourceValid.2
+    | function slots =>
+        simp only [kindEq] at sourceValid ⊢
+        rw [functionSlotsValid_replace heap next ref
+          { object with properties := object.properties.delete key } replaced slots]
+        exact sourceValid.2
+    | array slots =>
+        simp only [kindEq, arraySlotsValid, Bool.and_eq_true] at sourceValid ⊢
+        exact ⟨sourceValid.2.1, OrderedProps.keysAll_delete object.properties key _
+          sourceValid.1.1.1 sourceValid.2.2⟩
+    | arrayIterator slots =>
+        simp only [kindEq] at sourceValid ⊢
+        rw [arrayIteratorSlotsValid_replace heap next ref object
+          { object with properties := object.properties.delete key } found rfl replaced slots]
+        exact sourceValid.2
+    | primitiveWrapper slots =>
+        simp only [kindEq, primitiveWrapperSlotsValid, Bool.and_eq_true] at sourceValid ⊢
+        exact ⟨sourceValid.2.1, OrderedProps.keysAll_delete object.properties key _
+          sourceValid.1.1.1 sourceValid.2.2⟩
+
+/-- Every successful property deletion result preserves the complete heap invariant. -/
+theorem deleteProperty_preserves_wellFormed (heap next : Heap) (ref : RefId) (key : PropertyKey)
+    (success : Bool) (valid : heap.WellFormed)
+    (deleted : heap.deleteProperty ref key = .ok (success, next)) : next.WellFormed := by
+  unfold deleteProperty at deleted
+  cases found : heap.get? ref with
+  | error fault => simp [found] at deleted
+  | ok object =>
+      rw [found] at deleted
+      simp_all only [Except.ok.injEq]
+      split at deleted
+      · cases deleted
+        exact valid
+      · unfold deleteStoredProperty at deleted
+        cases lookup : object.properties.lookup key with
+        | none =>
+            simp [lookup] at deleted
+            cases deleted
+            subst next
+            exact valid
+        | some descriptor =>
+            cases descriptor with
+            | data descriptor =>
+                rw [lookup] at deleted
+                cases configurable : descriptor.configurable with
+                | false =>
+                    simp [configurable] at deleted
+                    cases deleted
+                    subst next
+                    exact valid
+                | true =>
+                    simp [configurable] at deleted
+                    cases replaced : heap.replace ref
+                        { object with properties := object.properties.delete key } with
+                    | error fault =>
+                        rw [replaced] at deleted
+                        change Except.error fault = Except.ok (success, next) at deleted
+                        contradiction
+                    | ok replacedHeap =>
+                        rw [replaced] at deleted
+                        cases deleted
+                        apply replace_preserves_wellFormed heap next ref object
+                          { object with properties := object.properties.delete key }
+                          valid found rfl rfl replaced
+                        exact deleteReplacement_referencesValid heap next ref object key valid found replaced
+            | accessor descriptor =>
+                rw [lookup] at deleted
+                cases configurable : descriptor.configurable with
+                | false =>
+                    simp [configurable] at deleted
+                    cases deleted
+                    subst next
+                    exact valid
+                | true =>
+                    simp [configurable] at deleted
+                    cases replaced : heap.replace ref
+                        { object with properties := object.properties.delete key } with
+                    | error fault =>
+                        rw [replaced] at deleted
+                        change Except.error fault = Except.ok (success, next) at deleted
+                        contradiction
+                    | ok replacedHeap =>
+                        rw [replaced] at deleted
+                        cases deleted
+                        apply replace_preserves_wellFormed heap next ref object
+                          { object with properties := object.properties.delete key }
+                          valid found rfl rfl replaced
+                        exact deleteReplacement_referencesValid heap next ref object key valid found replaced
+
 /-- A rejected delete preserves complete heap validity because it preserves the heap exactly. -/
 theorem failed_delete_preserves_wellFormed
     (heap next : Heap) (ref : RefId) (key : PropertyKey) (valid : heap.WellFormed)
@@ -952,48 +2369,539 @@ theorem failed_delete_preserves_wellFormed
 theorem empty_wellFormed : WellFormed empty := by
   rfl
 
-/-- Empty-heap ordinary allocation preserves the complete executable heap invariant. -/
-theorem empty_allocate_wellFormed :
-    match Heap.empty.allocate none true with
-    | .ok (_, next) => next.WellFormed
-    | .error _ => False := by
-  simp [allocate, validPrototype, empty, WellFormed, isWellFormed, functionSlotList,
-    objectReferencesValid, prototypeGraphAcyclic, validatePrototypeGraphAux, visitPrototype,
-    finishPrototypePath, functionIdsSequential, size, functionCount]
+/-- Every successful ordinary allocation preserves the complete heap invariant. -/
+theorem allocate_preserves_wellFormed (heap next : Heap) (prototype : Option RefId)
+    (extensible : Bool) (ref : RefId) (valid : heap.WellFormed)
+    (allocated : heap.allocate prototype extensible = .ok (ref, next)) : next.WellFormed := by
+  unfold allocate at allocated
+  split at allocated
+  · rcases allocated with ⟨rfl, rfl⟩
+    apply appendObject_preserves_wellFormed heap
+      (.mk OrderedProps.empty prototype extensible .ordinary) heap.nextFunctionId valid
+      (by omega)
+    · cases prototype <;> simp_all [validPrototype, size]
+    · unfold objectReferencesValid
+      simp [OrderedProps.empty_wellFormed, size]
+      cases prototype <;> simp_all [validPrototype, size] <;> omega
+    · unfold functionSlotList
+      simp
+      unfold WellFormed isWellFormed at valid
+      simp only [Bool.and_eq_true] at valid
+      exact valid.1.1.2
+    · unfold functionSlotList
+      simp
+      unfold WellFormed isWellFormed at valid
+      simp only [Bool.and_eq_true] at valid
+      simpa [functionCount] using valid.1.2
+  · cases prototype <;> simp_all
 
-/-- Empty-heap arrow allocation preserves the complete executable heap invariant. -/
-theorem empty_arrow_allocate_wellFormed :
-    match Heap.empty.allocateFunction ⟨0⟩ .arrow false none none .base
-        (some (.primitive .undefined)) with
-    | .ok (_, next) => next.WellFormed
-    | .error _ => False := by
-  simp [allocateFunction, validateOptionalRef, appendFunction, empty, WellFormed, isWellFormed,
-    functionSlotList, objectReferencesValid, functionSlotsValid, valueValid,
-    prototypeGraphAcyclic, validatePrototypeGraphAux, visitPrototype, finishPrototypePath,
-    functionIdsSequential, size, functionCount]
+/-- Every successful primitive-wrapper allocation preserves the complete heap invariant. -/
+theorem allocatePrimitiveWrapper_preserves_wellFormed (heap next : Heap) (value : Primitive)
+    (prototype : Option RefId) (ref : RefId) (valid : heap.WellFormed)
+    (allocated : heap.allocatePrimitiveWrapper value prototype = .ok (ref, next)) :
+    next.WellFormed := by
+  unfold allocatePrimitiveWrapper at allocated
+  split at allocated <;> try contradiction
+  split at allocated
+  · rcases allocated with ⟨rfl, rfl⟩
+    apply appendObject_preserves_wellFormed heap
+      (.mk OrderedProps.empty prototype true (.primitiveWrapper ⟨value⟩))
+      heap.nextFunctionId valid (by omega)
+    · cases prototype <;> simp_all [validPrototype, size]
+    · unfold objectReferencesValid primitiveWrapperSlotsValid
+      cases prototype <;> simp_all [validPrototype, primitiveBoxable, size]
+      all_goals omega
+    · unfold functionSlotList
+      simp
+      unfold WellFormed isWellFormed at valid
+      simp only [Bool.and_eq_true] at valid
+      exact valid.1.1.2
+    · unfold functionSlotList
+      simp
+      unfold WellFormed isWellFormed at valid
+      simp only [Bool.and_eq_true] at valid
+      simpa [functionCount] using valid.1.2
+  · cases prototype <;> simp_all
 
-/-- Empty-array allocation preserves the complete executable heap invariant. -/
-theorem empty_array_allocate_wellFormed :
-    match Heap.empty.allocateArray [] with
-    | .ok (_, next) => next.WellFormed
-    | .error _ => False := by
-  simp [allocateArray, allocateArrayFromArray, appendArray, empty, WellFormed, isWellFormed,
-    functionSlotList, objectReferencesValid, arraySlotsValid,
-    prototypeGraphAcyclic, validatePrototypeGraphAux, visitPrototype, finishPrototypePath,
-    functionIdsSequential, size, functionCount, maxArrayLength]
+private theorem arrayElementFold_preserves_validity (heap : Heap)
+    (elements : List (Option Value)) (index length : Nat) (properties : OrderedProps)
+    (propertiesValid : properties.WellFormed)
+    (descriptorsValid : properties.descriptors.all (descriptorReferencesValid heap) = true)
+    (keysValid : properties.keysAll (fun key =>
+      match arrayIndexOfKey? key with
+      | some storedIndex => storedIndex < length
+      | none => key != lengthPropertyKey) = true)
+    (valuesValid : elements.all (fun element => element.all heap.valueValid) = true)
+    (lengthBound : length ≤ maxArrayLength)
+    (withinLength : index + elements.length ≤ length) :
+    let result := elements.foldl (fun state element =>
+      let nextIndex := state.1
+      let nextProperties := match element with
+        | none => state.2
+        | some value => state.2.insert (.string (PropertyKey.arrayIndexString nextIndex))
+            (.data ⟨value, true, true, true⟩)
+      (nextIndex + 1, nextProperties)) (index, properties)
+    result.1 = index + elements.length ∧
+      result.2.WellFormed ∧
+      result.2.descriptors.all (descriptorReferencesValid heap) = true ∧
+      result.2.keysAll (fun key =>
+        match arrayIndexOfKey? key with
+        | some storedIndex => storedIndex < length
+        | none => key != lengthPropertyKey) = true := by
+  induction elements generalizing index properties with
+  | nil => exact ⟨rfl, propertiesValid, descriptorsValid, keysValid⟩
+  | cons element rest ih =>
+      simp only [List.all_cons, Bool.and_eq_true] at valuesValid
+      simp only [List.length_cons] at withinLength
+      have restWithin : index + 1 + rest.length ≤ length := by
+        omega
+      have indexLt : index < length := by omega
+      cases element with
+      | none =>
+          simpa [List.foldl_cons, Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using
+            ih (index + 1) properties propertiesValid descriptorsValid keysValid valuesValid.2
+              restWithin
+      | some value =>
+          let key : PropertyKey := .string (PropertyKey.arrayIndexString index)
+          let descriptor : PropertyDescriptor := .data ⟨value, true, true, true⟩
+          have keyValid : (match arrayIndexOfKey? key with
+              | some storedIndex => storedIndex < length
+              | none => key != lengthPropertyKey) = true := by
+            unfold key arrayIndexOfKey?
+            have parsed : PropertyKey.arrayIndex? (PropertyKey.arrayIndexString index) = some index := by
+              apply PropertyKey.arrayIndex?_arrayIndexString
+              unfold maxArrayLength at lengthBound
+              unfold PropertyKey.maxArrayIndex
+              omega
+            simp [parsed, indexLt]
+          have nextPropertiesValid := OrderedProps.insert_wellFormed properties key descriptor
+            propertiesValid
+          have nextDescriptorsValid := OrderedProps.descriptors_all_insert properties key descriptor
+            (descriptorReferencesValid heap) descriptorsValid (by
+              simpa [descriptor, descriptorReferencesValid] using valuesValid.1)
+          have nextKeysValid := OrderedProps.keysAll_insert properties key descriptor _ keysValid keyValid
+          simpa [List.foldl_cons, key, descriptor, Nat.add_assoc, Nat.add_comm,
+            Nat.add_left_comm] using
+            ih (index + 1) (properties.insert key descriptor) nextPropertiesValid
+              nextDescriptorsValid nextKeysValid valuesValid.2 restWithin
 
-/-- Empty-heap primitive wrapper allocation preserves the complete executable heap invariant. -/
-theorem empty_primitive_wrapper_allocate_wellFormed :
-    match Heap.empty.allocatePrimitiveWrapper (.boolean true) with
-    | .ok (_, next) => next.WellFormed
-    | .error _ => False := by
-  simp [allocatePrimitiveWrapper, primitiveBoxable, validPrototype, empty, WellFormed,
-    isWellFormed, functionSlotList, objectReferencesValid, primitiveWrapperSlotsValid,
-    prototypeGraphAcyclic, validatePrototypeGraphAux, visitPrototype,
-    finishPrototypePath, functionIdsSequential, size, functionCount]
+private theorem arrayInvalidFold_started (heap : Heap) (elements : List (Option Value))
+    (ref : RefId) :
+    elements.foldl (fun found element =>
+      match found, element with
+      | some ref, _ => some ref
+      | none, some (.object ref) => if ref.value < heap.size then none else some ref
+      | none, _ => none) (some ref) = some ref := by
+  induction elements with
+  | nil => rfl
+  | cons element rest ih => simpa [List.foldl_cons] using ih
+
+private theorem arrayInvalidFold_none_valuesValid (heap : Heap)
+    (elements : List (Option Value))
+    (checked : elements.foldl (fun found element =>
+      match found, element with
+      | some ref, _ => some ref
+      | none, some (.object ref) => if ref.value < heap.size then none else some ref
+      | none, _ => none) none = none) :
+    elements.all (fun element => element.all heap.valueValid) = true := by
+  induction elements with
+  | nil => rfl
+  | cons element rest ih =>
+      cases element with
+      | none =>
+          simp only [List.foldl_cons] at checked
+          simpa [List.all_cons] using ih checked
+      | some value =>
+          cases value with
+          | primitive value =>
+              simp only [List.foldl_cons] at checked
+              simpa [List.all_cons, valueValid] using ih checked
+          | object ref =>
+              by_cases inBounds : ref.value < heap.size
+              · simp only [List.foldl_cons] at checked
+                simp [inBounds] at checked
+                have restValid := ih checked
+                simp [List.all_cons, valueValid, inBounds, restValid]
+              · simp only [List.foldl_cons] at checked
+                simp [inBounds, arrayInvalidFold_started heap rest ref] at checked
+
+private theorem appendArray_preserves_wellFormed (heap : Heap)
+    (elements : Array (Option Value)) (prototype : Option RefId) (valid : heap.WellFormed)
+    (lengthBound : elements.size ≤ maxArrayLength)
+    (prototypeValid : prototype.all (fun ref => ref.value < heap.size) = true)
+    (valuesValid : elements.toList.all (fun element => element.all heap.valueValid) = true) :
+    (appendArray heap prototype elements).2.WellFormed := by
+  unfold appendArray
+  rw [← Array.foldl_toList]
+  let properties := elements.toList.foldl (fun state element =>
+    let index := state.1
+    let properties := match element with
+      | none => state.2
+      | some value => state.2.insert (.string (PropertyKey.arrayIndexString index))
+          (.data ⟨value, true, true, true⟩)
+    (index + 1, properties)) (0, OrderedProps.empty) |>.2
+  have folded := arrayElementFold_preserves_validity heap elements.toList 0 elements.size
+    OrderedProps.empty OrderedProps.empty_wellFormed (by simp) (by simp) valuesValid
+    lengthBound (by simp)
+  change WellFormed (.mk (heap.objects.push (.mk properties prototype true
+    (.array ⟨elements.size, true⟩))) heap.nextFunctionId)
+  apply appendObject_preserves_wellFormed heap
+    (.mk properties prototype true (.array ⟨elements.size, true⟩)) heap.nextFunctionId
+    valid (by omega) prototypeValid
+  · unfold objectReferencesValid arraySlotsValid
+    simp only [Bool.and_eq_true]
+    refine ⟨⟨⟨folded.2.1, ?_⟩, ?_⟩, (by simpa using lengthBound), folded.2.2.2⟩
+    · have oldDescriptors := folded.2.2.1
+      rw [List.all_eq_true] at oldDescriptors ⊢
+      intro descriptor member
+      exact descriptorReferencesValid_push heap
+        (.mk properties prototype true (.array ⟨elements.size, true⟩))
+        heap.nextFunctionId descriptor (oldDescriptors descriptor member)
+    · cases prototype with
+      | none => rfl
+      | some ref =>
+          simp [size] at prototypeValid ⊢
+          omega
+  · unfold functionSlotList
+    simp
+    unfold WellFormed isWellFormed at valid
+    simp only [Bool.and_eq_true] at valid
+    exact valid.1.1.2
+  · unfold functionSlotList
+    simp
+    unfold WellFormed isWellFormed at valid
+    simp only [Bool.and_eq_true] at valid
+    simpa [functionCount] using valid.1.2
+
+/-- Every successful list-input array allocation preserves the complete heap invariant. -/
+theorem allocateArray_preserves_wellFormed (heap next : Heap)
+    (elements : List (Option Value)) (prototype : Option RefId) (ref : RefId)
+    (valid : heap.WellFormed)
+    (allocated : heap.allocateArray elements prototype = .ok (ref, next)) :
+    next.WellFormed := by
+  unfold allocateArray allocateArrayFromArray at allocated
+  split at allocated <;> try contradiction
+  cases prototype with
+  | none =>
+      simp only at allocated
+      rw [← Array.foldl_toList] at allocated
+      simp only at allocated
+      cases invalid : elements.foldl (fun found element =>
+        match found, element with
+        | some ref, _ => some ref
+        | none, some (.object ref) => if ref.value < heap.size then none else some ref
+        | none, _ => none) none with
+      | some invalidRef => simp [invalid] at allocated
+      | none =>
+          simp [invalid] at allocated
+          rcases allocated with ⟨rfl, rfl⟩
+          apply appendArray_preserves_wellFormed heap elements.toArray none valid
+            (by simpa using ‹¬elements.length > maxArrayLength›) rfl
+          simpa using arrayInvalidFold_none_valuesValid heap elements invalid
+  | some prototype =>
+      simp only at allocated
+      cases prototypeFound : heap.get? prototype with
+      | error fault => simp [prototypeFound] at allocated
+      | ok object =>
+          rw [prototypeFound, ← Array.foldl_toList] at allocated
+          simp only at allocated
+          cases invalid : elements.foldl (fun found element =>
+            match found, element with
+            | some ref, _ => some ref
+            | none, some (.object ref) => if ref.value < heap.size then none else some ref
+            | none, _ => none) none with
+          | some invalidRef => simp [prototypeFound, invalid] at allocated
+          | none =>
+              simp [prototypeFound, invalid] at allocated
+              rcases allocated with ⟨rfl, rfl⟩
+              have prototypeValid : prototype.value < heap.size := by
+                unfold get? at prototypeFound
+                cases lookup : heap.objects[prototype.value]? with
+                | none => simp [lookup] at prototypeFound
+                | some current =>
+                    simpa [size] using (Array.getElem?_eq_some_iff.mp lookup).choose
+              apply appendArray_preserves_wellFormed heap elements.toArray (some prototype) valid
+                (by simpa using ‹¬elements.length > maxArrayLength›) (by simpa)
+              simpa using arrayInvalidFold_none_valuesValid heap elements invalid
+
+private theorem validateOptionalRef_valid (heap : Heap) (ref : Option RefId) (unit : Unit)
+    (checked : validateOptionalRef heap ref = .ok unit) :
+    ref.all (fun value => value.value < heap.size) = true := by
+  cases ref with
+  | none => rfl
+  | some ref =>
+      unfold validateOptionalRef validateRef at checked
+      cases found : heap.get? ref with
+      | error fault => simp [found] at checked
+      | ok object =>
+          unfold get? at found
+          cases lookup : heap.objects[ref.value]? with
+          | none => simp [lookup] at found
+          | some current =>
+              have inBounds := (Array.getElem?_eq_some_iff.mp lookup).choose
+              simpa [size] using inBounds
+
+/-- Every successful function allocation, for every supported metadata mode, preserves the complete
+heap invariant. Captured-environment validity remains a machine-layer obligation. -/
+theorem allocateFunction_preserves_wellFormed (heap next : Heap) (environment : EnvId)
+    (kind : FunctionKind) (constructible : Bool) (prototype homeObject : Option RefId)
+    (constructorMode : ConstructorMode) (lexicalThis : Option Value) (ref : RefId)
+    (valid : heap.WellFormed)
+    (allocated : heap.allocateFunction environment kind constructible prototype homeObject
+      constructorMode lexicalThis = .ok (ref, next)) : next.WellFormed := by
+  unfold allocateFunction at allocated
+  all_goals (split at allocated <;> try simp_all)
+  all_goals (split at allocated <;> try simp_all)
+  all_goals (split at allocated <;> try simp_all)
+  cases lexicalEq : lexicalThis with
+  | some lexicalValue =>
+      all_goals (split at allocated <;> try simp_all)
+      all_goals (split at allocated <;> try simp_all)
+      all_goals (split at allocated <;> try simp_all)
+      split at allocated <;> try contradiction
+      rcases allocated with ⟨rfl, rfl⟩
+      apply appendObject_preserves_wellFormed heap
+        (.mk OrderedProps.empty prototype true
+          (.function ⟨⟨heap.nextFunctionId⟩, environment, .arrow, false,
+            constructorMode, homeObject, some lexicalValue⟩))
+        (heap.nextFunctionId + 1) valid (by omega)
+      · apply validateOptionalRef_valid heap prototype
+        assumption
+      · unfold objectReferencesValid functionSlotsValid
+        have prototypeValid := validateOptionalRef_valid heap prototype _ (by assumption)
+        have homeValid := validateOptionalRef_valid heap homeObject _ (by assumption)
+        have prototypeNext : prototype.all
+            (fun ref => ref.value < heap.objects.size + 1) = true := by
+          cases prototype <;> simp_all [size] <;> omega
+        have homeNext : homeObject.all
+            (fun ref => ref.value < heap.objects.size + 1) = true := by
+          cases homeObject <;> simp_all [size] <;> omega
+        have lexicalOld : heap.valueValid lexicalValue = true := by assumption
+        have lexicalNext := valueValid_push heap
+          (.mk OrderedProps.empty prototype true
+            (.function ⟨⟨heap.nextFunctionId⟩, environment, .arrow, false,
+              constructorMode, homeObject, some lexicalValue⟩))
+          (heap.nextFunctionId + 1) lexicalValue lexicalOld
+        simp_all [functionCount, size, valueValid]
+      · unfold functionSlotList
+        simp
+        apply functionIdsSequential_append 0 heap.functionSlotList
+        · unfold WellFormed isWellFormed at valid
+          simp only [Bool.and_eq_true] at valid
+          exact valid.1.1.2
+        · unfold WellFormed isWellFormed at valid
+          simp only [Bool.and_eq_true] at valid
+          exact Eq.symm (by simpa [functionCount] using valid.1.2)
+      · unfold functionSlotList
+        simp
+        unfold WellFormed isWellFormed at valid
+        simp only [Bool.and_eq_true] at valid
+        simpa [functionCount] using valid.1.2
+
+  | none =>
+      all_goals (split at allocated <;> try simp_all)
+      all_goals (split at allocated <;> try simp_all)
+      split at allocated <;> try contradiction
+      rcases allocated with ⟨rfl, rfl⟩
+      apply appendObject_preserves_wellFormed heap
+        (.mk OrderedProps.empty prototype true
+          (.function ⟨⟨heap.nextFunctionId⟩, environment, kind, constructible,
+            constructorMode, homeObject, none⟩))
+        (heap.nextFunctionId + 1) valid (by omega)
+      · apply validateOptionalRef_valid heap prototype
+        assumption
+      · unfold objectReferencesValid functionSlotsValid
+        have prototypeValid := validateOptionalRef_valid heap prototype _ (by assumption)
+        have homeValid := validateOptionalRef_valid heap homeObject _ (by assumption)
+        have prototypeNext : prototype.all
+            (fun ref => ref.value < heap.objects.size + 1) = true := by
+          cases prototype <;> simp_all [size] <;> omega
+        have homeNext : homeObject.all
+            (fun ref => ref.value < heap.objects.size + 1) = true := by
+          cases homeObject <;> simp_all [size] <;> omega
+        simp_all [functionCount, size, valueValid]
+        constructor
+        · by_cases classKind : kind = .classConstructor <;> simp_all
+        · by_cases derivedMode : constructorMode = .derived <;> simp_all
+      · unfold functionSlotList
+        simp
+        apply functionIdsSequential_append 0 heap.functionSlotList
+        · unfold WellFormed isWellFormed at valid
+          simp only [Bool.and_eq_true] at valid
+          exact valid.1.1.2
+        · unfold WellFormed isWellFormed at valid
+          simp only [Bool.and_eq_true] at valid
+          exact Eq.symm (by simpa [functionCount] using valid.1.2)
+      · unfold functionSlotList
+        simp
+        unfold WellFormed isWellFormed at valid
+        simp only [Bool.and_eq_true] at valid
+        simpa [functionCount] using valid.1.2
+
+/-- Atomic constructor/prototype allocation preserves the complete heap invariant for ordinary and
+class constructors. Captured-environment validity remains a machine-layer obligation. -/
+theorem allocateConstructorPair_preserves_wellFormed (heap next : Heap) (environment : EnvId)
+    (functionPrototype objectPrototype : Option RefId) (classConstructor : Bool)
+    (constructorMode : ConstructorMode) (constructor prototype : RefId)
+    (valid : heap.WellFormed)
+    (allocated : heap.allocateConstructorPair environment functionPrototype objectPrototype
+      classConstructor constructorMode = .ok (constructor, prototype, next)) : next.WellFormed := by
+  unfold allocateConstructorPair at allocated
+  split at allocated <;> try contradiction
+  split at allocated <;> try contradiction
+  split at allocated <;> try contradiction
+  rcases allocated with ⟨rfl, rfl, rfl⟩
+  let constructorRef : RefId := ⟨heap.objects.size⟩
+  let prototypeRef : RefId := ⟨heap.objects.size + 1⟩
+  let constructorDescriptor : PropertyDescriptor :=
+    dataProperty (.object prototypeRef) (!classConstructor) false false
+  let prototypeDescriptor : PropertyDescriptor :=
+    dataProperty (.object constructorRef) true false true
+  let constructorProperties := OrderedProps.empty.insert
+    (.string (JSString.ofLeanString "prototype")) constructorDescriptor
+  let prototypeProperties := OrderedProps.empty.insert
+    (.string (JSString.ofLeanString "constructor")) prototypeDescriptor
+  let kind := if classConstructor then FunctionKind.classConstructor else FunctionKind.ordinary
+  let slots : FunctionSlots :=
+    ⟨⟨heap.nextFunctionId⟩, environment, kind, true, constructorMode, none, none⟩
+  let constructorObject : ObjectRecord :=
+    .mk constructorProperties functionPrototype true (.function slots)
+  let prototypeObject : ObjectRecord :=
+    .mk prototypeProperties objectPrototype true .ordinary
+  apply appendTwoObjects_preserves_wellFormed heap constructorObject prototypeObject
+    (heap.nextFunctionId + 1) valid (by omega)
+  · exact validateOptionalRef_valid heap functionPrototype _ (by assumption)
+  · exact validateOptionalRef_valid heap objectPrototype _ (by assumption)
+  · unfold constructorObject objectReferencesValid
+    simp only [Bool.and_eq_true]
+    refine ⟨⟨⟨OrderedProps.insert_wellFormed _ _ _ OrderedProps.empty_wellFormed, ?_⟩,
+      ?_⟩, ?_⟩
+    · apply OrderedProps.descriptors_all_insert
+      · simp [constructorProperties]
+      · simp [constructorDescriptor, dataProperty, descriptorReferencesValid, valueValid,
+          prototypeRef, size]
+    · have prototypeValid := validateOptionalRef_valid heap functionPrototype _ (by assumption)
+      cases functionPrototype <;> simp_all [size]
+      omega
+    · unfold functionSlotsValid
+      have modeValid : constructorMode = .derived → classConstructor = true := by
+        intro derived
+        simp_all
+      simp [slots, kind, functionCount, size]
+      by_cases isClass : classConstructor = true <;> simp_all
+  · unfold prototypeObject objectReferencesValid
+    simp only [Bool.and_eq_true]
+    refine ⟨⟨⟨OrderedProps.insert_wellFormed _ _ _ OrderedProps.empty_wellFormed, ?_⟩,
+      ?_⟩, trivial⟩
+    · apply OrderedProps.descriptors_all_insert
+      · simp [prototypeProperties]
+      · simp [prototypeDescriptor, dataProperty, descriptorReferencesValid, valueValid,
+          constructorRef, size]
+        omega
+    · have prototypeValid := validateOptionalRef_valid heap objectPrototype _ (by assumption)
+      cases objectPrototype <;> simp_all [size]
+      omega
+  · unfold functionSlotList constructorObject prototypeObject
+    simp
+    apply functionIdsSequential_append 0 heap.functionSlotList
+    · unfold WellFormed isWellFormed at valid
+      simp only [Bool.and_eq_true] at valid
+      exact valid.1.1.2
+    · unfold slots
+      unfold WellFormed isWellFormed at valid
+      simp only [Bool.and_eq_true] at valid
+      exact Eq.symm (by simpa [functionCount] using valid.1.2)
+  · unfold functionSlotList constructorObject prototypeObject
+    simp
+    unfold WellFormed isWellFormed at valid
+    simp only [Bool.and_eq_true] at valid
+    simpa [functionCount] using valid.1.2
+
+/-- Every successful array-iterator allocation preserves the complete heap invariant. -/
+theorem allocateArrayIterator_preserves_wellFormed (heap next : Heap) (target : RefId)
+    (prototype : Option RefId) (ref : RefId) (valid : heap.WellFormed)
+    (allocated : heap.allocateArrayIterator target prototype = .ok (ref, next)) :
+    next.WellFormed := by
+  unfold allocateArrayIterator at allocated
+  simp only [Bind.bind, Except.instMonad, Monad.toBind, Except.bind] at allocated
+  cases targetFound : heap.get? target with
+  | error fault => simp [targetFound] at allocated
+  | ok targetObject =>
+      cases targetKind : targetObject.kind with
+      | ordinary => simp [targetFound, targetKind] at allocated
+      | function slots => simp [targetFound, targetKind] at allocated
+      | arrayIterator slots => simp [targetFound, targetKind] at allocated
+      | primitiveWrapper slots => simp [targetFound, targetKind] at allocated
+      | array slots =>
+          cases prototype with
+          | none =>
+              simp [targetFound, targetKind] at allocated
+              rcases allocated with ⟨rfl, rfl⟩
+              apply appendObject_preserves_wellFormed heap
+                (.mk OrderedProps.empty none true (.arrayIterator ⟨target, 0, false⟩))
+                heap.nextFunctionId valid (by omega) (by rfl)
+              · unfold objectReferencesValid arrayIteratorSlotsValid
+                unfold get? at targetFound
+                cases lookup : heap.objects[target.value]? with
+                | none => simp [lookup] at targetFound
+                | some object =>
+                    simp [lookup] at targetFound
+                    subst object
+                    have targetNe : target.value ≠ heap.objects.size :=
+                      Nat.ne_of_lt (Array.getElem?_eq_some_iff.mp lookup).choose
+                    simp [Array.getElem?_push, targetNe, lookup, targetKind]
+              · unfold functionSlotList
+                simp
+                unfold WellFormed isWellFormed at valid
+                simp only [Bool.and_eq_true] at valid
+                exact valid.1.1.2
+              · unfold functionSlotList
+                simp
+                unfold WellFormed isWellFormed at valid
+                simp only [Bool.and_eq_true] at valid
+                simpa [functionCount] using valid.1.2
+          | some prototype =>
+              cases prototypeFound : heap.get? prototype with
+              | error fault =>
+                  simp [targetFound, targetKind, prototypeFound, Bind.bind, Except.bind,
+                    Pure.pure, Except.pure] at allocated
+              | ok prototypeObject =>
+                  simp [targetFound, targetKind, prototypeFound] at allocated
+                  rcases allocated with ⟨rfl, rfl⟩
+                  have prototypeValid := validateOptionalRef_valid heap (some prototype) () (by
+                    simp [validateOptionalRef, validateRef, prototypeFound])
+                  apply appendObject_preserves_wellFormed heap
+                    (.mk OrderedProps.empty (some prototype) true
+                      (.arrayIterator ⟨target, 0, false⟩))
+                    heap.nextFunctionId valid (by omega) prototypeValid
+                  · unfold objectReferencesValid arrayIteratorSlotsValid
+                    unfold get? at targetFound
+                    cases lookup : heap.objects[target.value]? with
+                    | none => simp [lookup] at targetFound
+                    | some object =>
+                        simp [lookup] at targetFound
+                        subst object
+                        have targetNe : target.value ≠ heap.objects.size :=
+                          Nat.ne_of_lt (Array.getElem?_eq_some_iff.mp lookup).choose
+                        have prototypeNext : prototype.value < heap.objects.size + 1 := by
+                          have prototypeOld : prototype.value < heap.objects.size := by
+                            simpa [size] using prototypeValid
+                          omega
+                        simp [size, Array.getElem?_push, targetNe, lookup, targetKind,
+                          prototypeNext]
+                  · unfold functionSlotList
+                    simp
+                    unfold WellFormed isWellFormed at valid
+                    simp only [Bool.and_eq_true] at valid
+                    exact valid.1.1.2
+                  · unfold functionSlotList
+                    simp
+                    unfold WellFormed isWellFormed at valid
+                    simp only [Bool.and_eq_true] at valid
+                    simpa [functionCount] using valid.1.2
 
 -- TODO(theorem): prove general successful `defineOwnProperty`, `createDataProperty`,
--- `deleteProperty`, iterator advancement, `preventExtensions`, and `setPrototypeOf` preserve
+-- iterator advancement, and `setPrototypeOf` preserve
 -- `WellFormed`; blocked array shrink requires its separate partial-commit characterization.
 
 end Heap

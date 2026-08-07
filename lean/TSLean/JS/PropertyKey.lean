@@ -119,6 +119,105 @@ theorem arrayIndex?_injective {left right : JSString} {index : Nat}
     left = right := by
   rw [arrayIndex?_sound leftParsed, arrayIndex?_sound rightParsed]
 
+private theorem lt_ten_cases (value : Nat) (bound : value < 10) :
+    value = 0 ∨ value = 1 ∨ value = 2 ∨ value = 3 ∨ value = 4 ∨ value = 5 ∨
+      value = 6 ∨ value = 7 ∨ value = 8 ∨ value = 9 := by omega
+
+private theorem decimalDigit?_ofNat (digit : Nat) (bound : digit < 10) :
+    decimalDigit? (UInt16.ofNat (48 + digit)) = some digit := by
+  rcases lt_ten_cases digit bound with
+    rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> decide
+
+private theorem encode_digitChar (digit : Nat) (bound : digit < 10) :
+    (JSString.ofLeanString (String.singleton (Nat.digitChar digit))).codeUnits =
+      [UInt16.ofNat (48 + digit)] := by
+  rcases lt_ten_cases digit bound with
+    rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> decide
+
+private theorem parseDecimal_append_digit (acc value digit : Nat) (units : List UInt16)
+    (parsed : parseDecimal acc units = some value) (digitBound : digit < 10)
+    (nextBound : value * 10 + digit ≤ maxArrayIndex) :
+    parseDecimal acc (units ++ [UInt16.ofNat (48 + digit)]) = some (value * 10 + digit) := by
+  induction units generalizing acc with
+  | nil =>
+      simp only [parseDecimal] at parsed
+      cases parsed
+      change parseDecimal value [UInt16.ofNat (48 + digit)] = some (value * 10 + digit)
+      simp only [parseDecimal]
+      rw [decimalDigit?_ofNat digit digitBound]
+      simp [nextBound]
+  | cons unit rest ih =>
+      unfold parseDecimal at parsed ⊢
+      cases decoded : decimalDigit? unit with
+      | none => simp [decoded] at parsed
+      | some headDigit =>
+          by_cases prefixBound : acc * 10 + headDigit ≤ maxArrayIndex
+          · simp [decoded, prefixBound] at parsed ⊢
+            have unitEq : (48 : UInt16) + UInt16.ofNat digit =
+                UInt16.ofNat (48 + digit) := (UInt16.ofNat_add 48 digit).symm
+            rw [unitEq]
+            exact ih (acc * 10 + headDigit) parsed
+          · simp [decoded, prefixBound] at parsed
+
+private theorem arrayIndexCandidate?_arrayIndexString {index : Nat}
+    (bound : index ≤ maxArrayIndex) :
+    arrayIndexCandidate? (arrayIndexString index) = some index := by
+  induction index using Nat.strongRecOn with
+  | ind index ih =>
+      by_cases small : index < 10
+      · rcases lt_ten_cases index small with
+          rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> decide
+      · have tenLe : 10 ≤ index := by omega
+        let leading := index / 10
+        let digit := index % 10
+        have leadingLt : leading < index := by omega
+        have leadingPositive : 0 < leading := by omega
+        have leadingBound : leading ≤ maxArrayIndex := by omega
+        have leadingParsed := ih leading leadingLt leadingBound
+        have digitBound : digit < 10 := by omega
+        have nextBound : leading * 10 + digit ≤ maxArrayIndex := by
+          dsimp [leading, digit]
+          omega
+        have digitCodeUnits := encode_digitChar digit digitBound
+        unfold JSString.ofLeanString at digitCodeUnits
+        simp only [String.toList_singleton, List.flatMap_cons, List.flatMap_nil,
+          List.append_nil] at digitCodeUnits
+        have codeUnitsEq : (arrayIndexString index).codeUnits =
+            (arrayIndexString leading).codeUnits ++ [UInt16.ofNat (48 + digit)] := by
+          unfold arrayIndexString JSString.ofLeanString
+          rw [Nat.repr_of_ge tenLe]
+          simp only [String.toList_append, List.flatMap_append, String.toList_singleton]
+          simpa [leading, digit] using digitCodeUnits
+        cases leadingUnits : (arrayIndexString leading).codeUnits with
+        | nil => simp [arrayIndexCandidate?, leadingUnits] at leadingParsed
+        | cons first rest =>
+            unfold arrayIndexCandidate? at leadingParsed ⊢
+            rw [leadingUnits] at leadingParsed
+            rw [codeUnitsEq, leadingUnits]
+            simp only [List.cons_append]
+            by_cases leadingZero : first.toNat = 48
+            · simp [leadingZero] at leadingParsed
+              cases rest <;> simp_all
+            · cases firstDigit : decimalDigit? first with
+              | none => simp [leadingZero, firstDigit] at leadingParsed
+              | some firstValue =>
+                  by_cases firstZero : firstValue = 0
+                  · simp [leadingZero, firstDigit, firstZero] at leadingParsed
+                  · simp [leadingZero, firstDigit, firstZero] at leadingParsed ⊢
+                    have result := parseDecimal_append_digit firstValue leading digit rest
+                      leadingParsed digitBound nextBound
+                    have indexEq : leading * 10 + digit = index := by
+                      dsimp [leading, digit]
+                      omega
+                    simpa [indexEq] using result
+
+/-- Every in-range canonical decimal index spelling is recognized at its original value. -/
+theorem arrayIndex?_arrayIndexString {index : Nat} (bound : index ≤ maxArrayIndex) :
+    arrayIndex? (arrayIndexString index) = some index := by
+  unfold arrayIndex?
+  rw [arrayIndexCandidate?_arrayIndexString bound]
+  simp
+
 /-- Compares property keys by code-unit equality or symbol identity. -/
 def equal : PropertyKey → PropertyKey → Bool
   | .string left, .string right => JSString.equal left right

@@ -92,7 +92,8 @@ theorem Copy.objectAssign_returns_target : assignReturnsTargetCheck = true := by
 -- are committed, and all lower descriptors are unchanged.
 -- TODO(theorem): lift the executable copy/slice/spread fresh-top-level and shared-nested-reference
 -- checks to general preservation theorems over valid heaps and effectful getter traces.
--- TODO(theorem): generalize executable `isWellFormed` preservation checks for array/wrapper
--- allocation, index extension, deletion, iterator advancement, and copy operations.
+-- TODO(theorem): generalize executable `isWellFormed` preservation checks for array index
+-- extension, iterator advancement, and copy operations. Wrapper/array allocation and deletion
+-- preservation are proved in `Heap.lean`.
 
 end TSLean.JS

@@ -2628,6 +2628,107 @@ theorem delete_wellFormed (properties : OrderedProps) (key : PropertyKey)
   rw [wellFormed_iff_valid] at valid ⊢
   exact deleteRep_valid properties.rep key valid
 
+/-- Inserting a descriptor that satisfies a predicate preserves that predicate for all descriptors. -/
+theorem descriptors_all_insert (properties : OrderedProps) (key : PropertyKey)
+    (descriptor : PropertyDescriptor) (predicate : PropertyDescriptor → Bool)
+    (current : properties.descriptors.all predicate = true) (inserted : predicate descriptor = true) :
+    (properties.insert key descriptor).descriptors.all predicate = true := by
+  rw [List.all_eq_true] at current ⊢
+  intro observed member
+  rw [descriptors, List.mem_map] at member
+  obtain ⟨entry, entryMember, rfl⟩ := member
+  have found := Std.HashMap.mem_toList_iff_getElem?_eq_some.mp entryMember
+  have descriptorFound := congrArg (Option.map (·.descriptor)) found
+  change Option.map _ ((insertRep properties.rep key descriptor).entries.get? entry.1) = _
+    at descriptorFound
+  rw [insertRep_lookup] at descriptorFound
+  simp only [Option.map_some] at descriptorFound
+  split at descriptorFound
+  · cases descriptorFound
+    exact inserted
+  · cases oldFound : properties.rep.entries[entry.1]? with
+    | none => simp [oldFound] at descriptorFound
+    | some oldEntry =>
+        have oldMember := Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr oldFound
+        have oldValid := current oldEntry.descriptor (by
+          rw [descriptors, List.mem_map]
+          exact ⟨(entry.1, oldEntry), oldMember, rfl⟩)
+        simp [oldFound] at descriptorFound
+        rw [← descriptorFound]
+        exact oldValid
+
+/-- Deleting a property preserves every predicate satisfied by all remaining descriptors. -/
+theorem descriptors_all_delete (properties : OrderedProps) (key : PropertyKey)
+    (predicate : PropertyDescriptor → Bool) (valid : WellFormed properties)
+    (current : properties.descriptors.all predicate = true) :
+    (properties.delete key).descriptors.all predicate = true := by
+  rw [List.all_eq_true] at current ⊢
+  intro observed member
+  rw [descriptors, List.mem_map] at member
+  obtain ⟨entry, entryMember, rfl⟩ := member
+  have found := Std.HashMap.mem_toList_iff_getElem?_eq_some.mp entryMember
+  have descriptorFound := congrArg (Option.map (·.descriptor)) found
+  change Option.map _ ((deleteRep properties.rep key).entries.get? entry.1) = _
+    at descriptorFound
+  rw [deleteRep_lookup properties.rep key entry.1
+    ((wellFormed_iff_valid properties).mp valid)] at descriptorFound
+  simp only [Option.map_some] at descriptorFound
+  split at descriptorFound
+  · simp at descriptorFound
+  · cases oldFound : properties.rep.entries[entry.1]? with
+    | none => simp [oldFound] at descriptorFound
+    | some oldEntry =>
+        have oldMember := Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr oldFound
+        have oldValid := current oldEntry.descriptor (by
+          rw [descriptors, List.mem_map]
+          exact ⟨(entry.1, oldEntry), oldMember, rfl⟩)
+        simp [oldFound] at descriptorFound
+        rw [← descriptorFound]
+        exact oldValid
+
+/-- Inserting a key satisfying a predicate preserves that predicate for all stored keys. -/
+theorem keysAll_insert (properties : OrderedProps) (key : PropertyKey)
+    (descriptor : PropertyDescriptor) (predicate : PropertyKey → Bool)
+    (current : properties.keysAll predicate = true) (inserted : predicate key = true) :
+    (properties.insert key descriptor).keysAll predicate = true := by
+  unfold keysAll at current ⊢
+  rw [List.all_eq_true] at current ⊢
+  intro entry member
+  have found := Std.HashMap.mem_toList_iff_getElem?_eq_some.mp member
+  have descriptorFound := congrArg (Option.map (·.descriptor)) found
+  change Option.map _ ((insertRep properties.rep key descriptor).entries.get? entry.1) = _
+    at descriptorFound
+  rw [insertRep_lookup] at descriptorFound
+  split at descriptorFound
+  · simp_all
+  · cases oldFound : properties.rep.entries[entry.1]? with
+    | none => simp [oldFound] at descriptorFound
+    | some oldEntry =>
+        exact current (entry.1, oldEntry)
+          (Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr oldFound)
+
+/-- Deleting a property preserves every predicate satisfied by all remaining keys. -/
+theorem keysAll_delete (properties : OrderedProps) (key : PropertyKey)
+    (predicate : PropertyKey → Bool) (valid : WellFormed properties)
+    (current : properties.keysAll predicate = true) :
+    (properties.delete key).keysAll predicate = true := by
+  unfold keysAll at current ⊢
+  rw [List.all_eq_true] at current ⊢
+  intro entry member
+  have found := Std.HashMap.mem_toList_iff_getElem?_eq_some.mp member
+  have descriptorFound := congrArg (Option.map (·.descriptor)) found
+  change Option.map _ ((deleteRep properties.rep key).entries.get? entry.1) = _
+    at descriptorFound
+  rw [deleteRep_lookup properties.rep key entry.1
+    ((wellFormed_iff_valid properties).mp valid)] at descriptorFound
+  split at descriptorFound
+  · simp at descriptorFound
+  · cases oldFound : properties.rep.entries[entry.1]? with
+    | none => simp [oldFound] at descriptorFound
+    | some oldEntry =>
+        exact current (entry.1, oldEntry)
+          (Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr oldFound)
+
 /-- Insertion installs the supplied descriptor at the inserted key. -/
 theorem lookup_insert_same (properties : OrderedProps) (key : PropertyKey)
     (descriptor : PropertyDescriptor) :

@@ -589,3 +589,87 @@ $ git diff --check
 ```
 
 The deliberate tamper changed only the checked source hash and was rejected at that exact manifest line before canonical regeneration. The 233 audited declarations and executable tests support only the theorem statements listed above; they do not discharge the remaining heap, prototype, array, hook-conditional, or effectful-refinement obligations. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and were not suppressed or changed.
+
+## 2026-08-07 - Heap allocation preservation
+
+This proof snapshot is based on `54ca2aac56c74745a496f23f34176fe521c1c5e3` on `rebuild/semantic-core`. The ordered-properties input now resolves every source-derived validation and hash from that immutable revision. Its manifest remains byte-for-byte unchanged at SHA-256 `008bdb172fcd36a53e38369b05e90eb2782a0e7f59409f4c0e187cb0c38aba4b`, and its explicit generate/check commands remain available with all earlier historical commands. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target `phase2-heap-allocation-input.json`.
+
+Review approved these exact general preservation theorems and premises under `TSLean.JS.Heap`:
+
+- `allocate_preserves_wellFormed`: `heap.WellFormed` and `heap.allocate prototype extensible = .ok (ref, next)` imply `next.WellFormed`.
+- `allocatePrimitiveWrapper_preserves_wellFormed`: `heap.WellFormed` and `heap.allocatePrimitiveWrapper value prototype = .ok (ref, next)` imply `next.WellFormed`.
+- `allocateArray_preserves_wellFormed`: `heap.WellFormed` and `heap.allocateArray elements prototype = .ok (ref, next)` imply `next.WellFormed`.
+- `allocateFunction_preserves_wellFormed`: `heap.WellFormed` and `heap.allocateFunction environment kind constructible prototype homeObject constructorMode lexicalThis = .ok (ref, next)` imply `next.WellFormed`; captured-environment validity remains a machine-layer obligation.
+- `allocateConstructorPair_preserves_wellFormed`: `heap.WellFormed` and `heap.allocateConstructorPair environment functionPrototype objectPrototype classConstructor constructorMode = .ok (constructor, prototype, next)` imply `next.WellFormed`; captured-environment validity remains a machine-layer obligation.
+- `allocateArrayIterator_preserves_wellFormed`: `heap.WellFormed` and `heap.allocateArrayIterator target prototype = .ok (ref, next)` imply `next.WellFormed`.
+- `deleteProperty_preserves_wellFormed`: for either returned `success : Bool`, `heap.WellFormed` and `heap.deleteProperty ref key = .ok (success, next)` imply `next.WellFormed`.
+- `preventExtensions_preserves_wellFormed`: `heap.WellFormed` and `heap.preventExtensions ref = .ok next` imply `next.WellFormed`.
+
+The six allocation families are ordinary objects, primitive wrappers, arrays, functions, atomic constructor/prototype pairs, and array iterators. General deletion and `preventExtensions` preservation are also approved. The generic evidence schema does not admit a `formalProgress` field, so this progress and review status are recorded here while the manifest carries only validated measurement counts.
+
+This approval is deliberately narrower than the `heap-public-mutation-preservation` obligation. General successful `defineOwnProperty` and `createDataProperty` preservation remains open, so that obligation is not removed. General `setPrototypeOf` preservation and prototype-graph validity remain open under `heap-prototype-preservation`. The other unchanged debt is blocked array shrink, copy/assign/spread/slice hook-conditional preservation, iterator allocation and advancement under preserving hooks, composed machine hook-conditional preservation, and effectful coercion trace/state refinement. The formal debt therefore remains exactly seven obligations: two heap/prototype, one array, three hook-conditional, and one effectful-equivalence obligation. The four executable Float assumptions are carried forward unchanged as runtime assumptions, not proof axioms.
+
+The phase-2 manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:25150fe2d245718fc511f65f39e583fefd2d54124665bb769d5fab0483fbccb5`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, proof tests and audit `sha256:abf9a5876478d1d597353267b09cd914012f594122a80a909622b7b2db40303c`, and trust/evidence infrastructure `sha256:628418e3e45c715b5ff7c3ad8e0f518656f0a64efbe430aba8a7b5a01c9119e`. The manifest SHA-256 is `580fb1a872b2884e94a4f320c55af237546a2e5dd7f7c1faf2996595706ead27`.
+
+Commands and results:
+
+```text
+$ bun run evidence:generate
+$ bun run evidence:check
+
+$ bun run evidence:check
+Cannot generate evidence manifest: evidence/phase2-heap-allocation-manifest.json is stale at line 170
+-     "source": "sha256:0a74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3",
++     "source": "sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3",
+$ bun run evidence:generate
+$ bun run evidence:check
+
+$ bun run evidence:baseline:check
+$ bun run evidence:primitives:check
+$ bun run evidence:heap:check
+$ bun run evidence:execution:check
+$ bun run evidence:callable:check
+$ bun run evidence:arrays:check
+$ bun run evidence:primitive-ops:check
+$ bun run evidence:abstract-ops:check
+$ bun run evidence:differential:check
+$ bun run evidence:differential-compact:check
+$ bun run evidence:ordered-props:check
+$ bun run evidence:heap-allocation:check
+
+$ bun run differential:check
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+
+$ bun run js:trust
+JS trust checks passed: 252 elaborated proof declarations
+JS trust gate passed: 252 proof declarations
+
+$ bun scripts/check-js-axioms.mjs --self-test
+synthetic environment audit passed
+
+$ /usr/bin/time -p bun run verify
+All matched files use Prettier code style!
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+JS trust checks passed: 252 elaborated proof declarations
+JS trust gate passed: 252 proof declarations
+Test Files  43 passed (43)
+Tests  1633 passed | 8 todo (1641)
+Build completed successfully (172 jobs).
+real 115.69
+user 157.02
+sys 16.94
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 304
+Unpacked size: 3.0MB
+
+$ shasum -a 256 evidence/phase2-ordered-props-manifest.json evidence/phase2-heap-allocation-manifest.json
+008bdb172fcd36a53e38369b05e90eb2782a0e7f59409f4c0e187cb0c38aba4b  evidence/phase2-ordered-props-manifest.json
+580fb1a872b2884e94a4f320c55af237546a2e5dd7f7c1faf2996595706ead27  evidence/phase2-heap-allocation-manifest.json
+
+$ git diff --check
+```
+
+The deliberate tamper changed only the checked source hash and was rejected at that exact manifest line before canonical regeneration. The 252 audited declarations and complete verification gate support only the theorem statements and premises above. They do not discharge the remaining define/create, prototype, blocked-array-shrink, hook-conditional, or effectful-refinement obligations. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and were not suppressed or changed.

@@ -207,8 +207,7 @@ theorem ObjectAccess.get_getter_checked (hook : BodyHook P) (machine : Machine P
     ObjectAccess.get hook ref key receiver machine = Call.call hook getter receiver #[] machine := by
   simp [ObjectAccess.get, lookup, present]
 
--- TODO(theorem): prove generic complete `Heap.WellFormed` preservation for constructor/class pairs,
--- the atomic class-element loop, and ordinary get/set. This requires the private ordered-map
--- preservation lemmas noted in `HeapTheorems`; executable tests cover the concrete allocations now.
+-- TODO(theorem): prove generic complete `Heap.WellFormed` preservation for the atomic class-element
+-- loop and ordinary get/set. Executable tests cover these operations now.
 
 end TSLean.JS
