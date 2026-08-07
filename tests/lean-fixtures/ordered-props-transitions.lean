@@ -1,0 +1,25 @@
+import TSLean.JS.OrderedProps
+
+#check TSLean.JS.OrderedProps.arrayIndices_delete_index
+#check TSLean.JS.OrderedProps.arrayIndices_delete_nonIndex_string
+#check TSLean.JS.OrderedProps.arrayIndices_delete_symbol
+#check TSLean.JS.OrderedProps.arrayIndices_insert_existing
+#check TSLean.JS.OrderedProps.arrayIndices_insert_fresh_index
+#check TSLean.JS.OrderedProps.arrayIndices_insert_nonIndex_string
+#check TSLean.JS.OrderedProps.arrayIndices_insert_symbol
+#check TSLean.JS.OrderedProps.lookup_delete_ne
+#check TSLean.JS.OrderedProps.lookup_delete_same
+#check TSLean.JS.OrderedProps.lookup_insert_ne
+#check TSLean.JS.OrderedProps.lookup_insert_same
+#check TSLean.JS.OrderedProps.orderedKeys_delete
+#check TSLean.JS.OrderedProps.orderedKeys_insert_fresh_index
+#check TSLean.JS.OrderedProps.orderedKeys_insert_fresh_string
+#check TSLean.JS.OrderedProps.orderedKeys_insert_fresh_symbol
+#check TSLean.JS.OrderedProps.ownKeys_delete
+#check TSLean.JS.OrderedProps.ownKeys_delete_insert_index
+#check TSLean.JS.OrderedProps.ownKeys_eq_projections
+#check TSLean.JS.OrderedProps.ownKeys_insert_existing
+#check TSLean.JS.OrderedProps.projections_delete_insert_string
+#check TSLean.JS.OrderedProps.projections_delete_insert_symbol
+#check TSLean.JS.OrderedProps.stringKeys_insert_existing
+#check TSLean.JS.OrderedProps.symbolKeys_insert_existing

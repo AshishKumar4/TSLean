@@ -1,0 +1,177 @@
+{
+  "schemaVersion": 1,
+  "baseRevision": "04d31a1dc46450ba532c5553b9ebadf3784f5bba",
+  "branch": "rebuild/semantic-core",
+  "toolchain": {
+    "bun": "1.3.14",
+    "node": "v22.23.1",
+    "typescript": "6.0.3",
+    "vitest": "vitest/4.1.10 darwin-arm64 node-v22.23.1",
+    "prettier": "3.9.6",
+    "eslint": "v10.8.0",
+    "lean": "Lean (version 4.29.0, arm64-apple-darwin24.6.0, commit 98dc76e3c0a9b856c9b98726b713fb04fab16740, Release)",
+    "lake": "Lake version 5.0.0-src+98dc76e (Lean version 4.29.0)"
+  },
+  "counts": {
+    "tests": {
+      "files": 43,
+      "passed": 1633,
+      "failed": 0,
+      "todo": 8
+    },
+    "lean": {
+      "jobs": 172,
+      "status": "passed"
+    },
+    "corpus": {
+      "entries": 102,
+      "red": 102
+    },
+    "auditedTheorems": 233,
+    "differential": {
+      "scenarioGroups": 16,
+      "fixed": 734,
+      "generated": 6530,
+      "comparisons": 7264,
+      "uniqueOperationInputs": 6088,
+      "preservedDuplicates": 1176,
+      "legacyInventoryIds": 97,
+      "coverage": {
+        "total": 102,
+        "modelCovered": 13,
+        "compilerOnly": 43,
+        "modelPending": 26,
+        "proofIntegrity": 11,
+        "scale": 9
+      },
+      "aggregateFixtureBudget": 65536
+    },
+    "lint": "passed",
+    "build": "passed"
+  },
+  "executableAssumptions": {
+    "statement": "These are executable trusted-computing-base assumptions, not proof axioms. No theorem claims that these Lean runtime primitives implement ECMAScript correctly.",
+    "assumptions": [
+      {
+        "id": "lean-float-bits",
+        "primitives": {
+          "ofBits": "Float.ofBits",
+          "toBits": "Float.toBits"
+        },
+        "statement": "Lean's Float bit conversion primitives preserve the intended finite binary64 encodings used by JSNumber."
+      },
+      {
+        "id": "lean-float-arithmetic",
+        "primitives": {
+          "add": "Float.add",
+          "subtract": "Float.sub",
+          "multiply": "Float.mul",
+          "divide": "Float.div"
+        },
+        "statement": "Lean's Float arithmetic primitives execute the binary64 operations used by ECMAScript Number arithmetic."
+      },
+      {
+        "id": "lean-float-comparison",
+        "primitives": {
+          "lessThan": "LT.lt Float"
+        },
+        "statement": "Lean's executable Float ordering agrees with the finite binary64 ordering used by ECMAScript Number comparison."
+      },
+      {
+        "id": "lean-float-of-scientific",
+        "primitives": {
+          "ofScientific": "Float.ofScientific"
+        },
+        "statement": "Lean's Float.ofScientific supplies an executable decimal candidate; exact integer rounding checks and corrects that candidate at binary64 boundaries."
+      }
+    ]
+  },
+  "formalDebt": {
+    "counts": {
+      "heap": 2,
+      "array": 1,
+      "hookConditional": 3,
+      "effectfulEquivalence": 1,
+      "total": 7
+    },
+    "obligations": [
+      {
+        "id": "heap-public-mutation-preservation",
+        "area": "heap",
+        "statement": "Successful public heap mutation operations preserve complete Heap.WellFormed."
+      },
+      {
+        "id": "heap-prototype-preservation",
+        "area": "heap",
+        "statement": "Successful prototype mutation preserves complete Heap.WellFormed and prototype-graph validity."
+      },
+      {
+        "id": "array-blocked-shrink-general",
+        "area": "array",
+        "statement": "Blocked array shrink preserves the required descending deletions, commits the first blocked length and writability transition, and leaves lower descriptors unchanged."
+      },
+      {
+        "id": "copy-hook-conditional-preservation",
+        "area": "hookConditional",
+        "statement": "Copy, assign, spread, and slice preserve Heap.WellFormed for body hooks that preserve Machine.WellFormed."
+      },
+      {
+        "id": "iterator-hook-conditional-preservation",
+        "area": "hookConditional",
+        "statement": "Array iterator allocation and advancement preserve Heap.WellFormed, including ordinary Get effects under preserving hooks."
+      },
+      {
+        "id": "machine-hook-conditional-preservation",
+        "area": "hookConditional",
+        "statement": "The composed array, copy, and iterator JSM operations preserve Machine.WellFormed under an explicit hook-preservation premise."
+      },
+      {
+        "id": "abstract-effectful-coercion-refinement",
+        "area": "effectfulEquivalence",
+        "statement": "GetMethod and effectful coercion hooks have a trace/state refinement relation that preserves getter and call ordering."
+      }
+    ]
+  },
+  "knownTodos": [
+    {
+      "id": "completion-nested-forof-erased",
+      "location": "tests/e2e-v3.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased-cli",
+      "location": "tests/e2e/cli.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased-e2e",
+      "location": "tests/e2e/advanced.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased",
+      "location": "tests/pipeline-full.test.ts"
+    },
+    {
+      "id": "completion-safe-divide-catch-none",
+      "location": "tests/all-fixtures.test.ts"
+    },
+    {
+      "id": "objects-anonymous-shorthand-default",
+      "location": "tests/parser-types.test.ts"
+    },
+    {
+      "id": "objects-renamed-shorthand-default",
+      "location": "tests/parser-types.test.ts"
+    },
+    {
+      "id": "selfhost-typemap-one-hole",
+      "location": "tests/parser-advanced.test.ts"
+    }
+  ],
+  "hashes": {
+    "source": "sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3",
+    "jsRuntime": "sha256:adb67de8f37029cb1ad7041188e72573d3c0ee7f38e9a820de9512920ba1c1fd",
+    "corpus": "sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec",
+    "differentialSpecHarness": "sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e",
+    "proofTestsAudit": "sha256:abf9a5876478d1d597353267b09cd914012f594122a80a909622b7b2db40303c",
+    "trustEvidenceInfrastructure": "sha256:f1e4a8083768e65b30960230ccd16f5fdff7089aa8b436757110f5bc84a1b4b1"
+  }
+}

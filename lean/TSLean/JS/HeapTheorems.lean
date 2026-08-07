@@ -50,9 +50,7 @@ theorem Heap.nonextensible_rejects_before_candidate
     heap.setPrototypeOf ref candidate = .ok (false, heap) := by
   simp [Heap.setPrototypeOf, found, changed, fixed]
 
--- TODO(theorem): prove private `OrderedProps.insert/delete`, including threshold-crossing and
--- deletion compaction, preserve exact bidirectional metadata `WellFormed`; derive duplicate-free
--- partitioned `ownKeys`; and prove ordinary plus array mutation preserve complete `Heap.WellFormed`.
+-- TODO(theorem): prove ordinary plus array mutation preserve complete `Heap.WellFormed`.
 -- Array shrink rejection is deliberately excluded from the old heap-preservation claim because a
 -- blocked shrink commits all configurable higher-index deletions before returning `false`.
 

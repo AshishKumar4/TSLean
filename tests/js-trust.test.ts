@@ -9,5 +9,13 @@ describe('JS elaborated-environment trust audit', () => {
       encoding: 'utf8',
     });
     expect(output.trim()).toBe('synthetic environment audit passed');
+  }, 20_000);
+
+  it('discovers ordered-property transition theorems', () => {
+    const output = execFileSync('lake', ['env', 'lean', '../tests/lean-fixtures/ordered-props-transitions.lean'], {
+      cwd: resolve(import.meta.dirname, '../lean'),
+      encoding: 'utf8',
+    });
+    expect(output).toContain('TSLean.JS.OrderedProps.ownKeys_delete');
   });
 });

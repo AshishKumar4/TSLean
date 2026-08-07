@@ -276,13 +276,24 @@ function validationText(path, revision, label) {
 
 function validateEvidence(input) {
   const validation = object(input.validation, 'validation');
+  const validationRevision = validation.revision;
   exactKeys(
     validation,
     validation.jsonMetrics === undefined
-      ? ['testFiles', 'todos', 'corpus', 'lineCounts']
-      : ['testFiles', 'todos', 'corpus', 'lineCounts', 'jsonMetrics'],
+      ? ['testFiles', 'todos', 'corpus', 'lineCounts', ...(validationRevision === undefined ? [] : ['revision'])]
+      : [
+          'testFiles',
+          'todos',
+          'corpus',
+          'lineCounts',
+          'jsonMetrics',
+          ...(validationRevision === undefined ? [] : ['revision']),
+        ],
     'validation',
   );
+  if (validationRevision !== undefined && (typeof validationRevision !== 'string' || validationRevision.length === 0)) {
+    fail('validation.revision must be a non-empty string');
+  }
 
   exactKeys(
     validation.testFiles,
@@ -291,7 +302,10 @@ function validateEvidence(input) {
       : ['directory', 'suffix', 'countPath', 'revision'],
     'validation.testFiles',
   );
-  const tests = selectedFiles(validation.testFiles, 'validation.testFiles');
+  const tests = selectedFiles(
+    validationRevision === undefined ? validation.testFiles : { ...validation.testFiles, revision: validationRevision },
+    'validation.testFiles',
+  );
   const expectedTestFiles = countAt(input.counts, validation.testFiles.countPath);
   if (tests.length !== expectedTestFiles) fail(`expected ${expectedTestFiles} test files, found ${tests.length}`);
 
@@ -302,7 +316,10 @@ function validateEvidence(input) {
       : ['directory', 'suffix', 'countPath', 'revision'],
     'validation.todos',
   );
-  const todoFiles = selectedFiles(validation.todos, 'validation.todos');
+  const todoFiles = selectedFiles(
+    validationRevision === undefined ? validation.todos : { ...validation.todos, revision: validationRevision },
+    'validation.todos',
+  );
   const todoPattern = /\b(?:it|test)\.todo\s*\(\s*(?:'([^']+)'|"([^"]+)")/g;
   const todos = todoFiles
     .flatMap((file) =>
@@ -332,7 +349,7 @@ function validateEvidence(input) {
     'validation.corpus',
   );
   const corpus = JSON.parse(
-    validationText(validation.corpus.path, validation.corpus.revision, 'validation.corpus.path'),
+    validationText(validation.corpus.path, validation.corpus.revision ?? validationRevision, 'validation.corpus.path'),
   );
   if (!Array.isArray(corpus.groups)) fail('corpus groups are unavailable');
   const entries = corpus.groups.flatMap((group) => {
@@ -356,9 +373,11 @@ function validateEvidence(input) {
     if (typeof lineCount.prefix !== 'string' || lineCount.prefix.length === 0) {
       fail(`validation.lineCounts[${index}].prefix must be non-empty`);
     }
-    const lines = validationText(lineCount.path, lineCount.revision, `validation.lineCounts[${index}].path`).split(
-      '\n',
-    );
+    const lines = validationText(
+      lineCount.path,
+      lineCount.revision ?? validationRevision,
+      `validation.lineCounts[${index}].path`,
+    ).split('\n');
     const actual = lines.filter((line) => line.startsWith(lineCount.prefix)).length;
     const expected = countAt(input.counts, lineCount.countPath);
     if (actual !== expected) fail(`expected ${expected} matching lines in ${lineCount.path}, found ${actual}`);
@@ -378,7 +397,7 @@ function validateEvidence(input) {
         exactKeys(metric.where, ['path', 'equals'], `${label}.where`);
         if (metric.measure !== 'count') fail(`${label}.where requires count measurement`);
       }
-      const document = JSON.parse(validationText(metric.path, undefined, `${label}.path`));
+      const document = JSON.parse(validationText(metric.path, validationRevision, `${label}.path`));
       const selected = valueAt(document, metric.jsonPath, `${label}.jsonPath`);
       let actual;
       if (metric.measure === 'value') actual = selected;

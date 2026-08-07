@@ -517,3 +517,75 @@ This corrective snapshot is based on `4e0953fa3a5a81b8db24077b0d28ddbcdb397655`.
 The compact manifest retains the 16 scenario groups, 734 fixed vectors, 6,530 generated vectors, 7,264 comparisons, 6,088 unique operation/input pairs, 1,176 preserved duplicates, all operation and classification counts, 19 regression tags, and the 97-entry legacy inventory count. Tests regenerate every vector in memory, verify each compact count and hash, run every Node/Lean comparison, reject source/vector/generator digest tampering, verify stable replay IDs, and enforce a 50 KiB manifest limit. No expected outcomes or expanded fixture list are checked in.
 
 The corrective evidence manifest is `evidence/phase1-differential-compact-manifest.json` at SHA-256 `66b643a832525bf85beeb5012ac405dcb775fdfc8bee89bd3473d7097a9bea3e`. It records differential-spec hash `sha256:d3b15082682a4e357e1b3f8c5feb0dd9a5d6a544b860987abbb7e874474c92df` and infrastructure hash `sha256:4fb40742ef0c091dc62a51cd393390e363aa76b4ed907f7146ce58e5803c5b05`. The preceding `phase1-differential-manifest.json` remains unchanged at `354abd947b6875df7c87ffa4e3eb0abef95cf55ee5578cf232710c4b79f59194`; its input now resolves hash groups from immutable `4e0953f` objects so the historical check no longer reinterprets the compact current tree.
+
+## 2026-08-07 - Ordered-property proofs
+
+This proof snapshot is based on `04d31a1dc46450ba532c5553b9ebadf3784f5bba` on `rebuild/semantic-core`. The preceding compact differential input now resolves all source-derived validations and hashes from that immutable revision. Its manifest remains byte-for-byte unchanged at SHA-256 `66b643a832525bf85beeb5012ac405dcb775fdfc8bee89bd3473d7097a9bea3e`, and explicit `evidence:differential-compact:generate` and `evidence:differential-compact:check` commands preserve its historical reproduction alongside every earlier evidence command. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target `phase2-ordered-props-input.json`.
+
+The audit discovers these exact new general theorems under `TSLean.JS.OrderedProps`: `metadataConsistent_iff_valid`, `isWellFormed_iff_valid`, `wellFormed_iff_valid`, `insert_wellFormed`, `delete_wellFormed`, `lookup_insert_same`, `lookup_insert_ne`, `lookup_delete_same`, `lookup_delete_ne`, `mem_ownKeys_iff_lookup_isSome`, `ownKeys_nodup`, `arrayIndices_nodup`, `ownKeys_length`, `ownKeys_indices_ascending`, `ownKeys_partition`, and `ownKeys_eq_projections`.
+
+The exact transition theorems are `arrayIndices_insert_existing`, `stringKeys_insert_existing`, `symbolKeys_insert_existing`, `ownKeys_insert_existing`, `arrayIndices_insert_nonIndex_string`, `orderedKeys_insert_fresh_string`, `arrayIndices_insert_symbol`, `orderedKeys_insert_fresh_symbol`, `arrayIndices_insert_fresh_index`, `orderedKeys_insert_fresh_index`, `orderedKeys_delete`, `arrayIndices_delete_nonIndex_string`, `arrayIndices_delete_symbol`, `arrayIndices_delete_index`, `ownKeys_delete`, `projections_delete_insert_string`, `projections_delete_insert_symbol`, and `ownKeys_delete_insert_index`.
+
+Review approval is scoped to closing the four recorded OrderedProps obligations: complete insertion preservation including compaction branches, complete deletion preservation, string and symbol compaction preservation, and duplicate-free exact `ownKeys` correspondence and ordering. The general and transition theorem statements, elaborated-environment audit, explicit transition discovery fixture, and complete verification gate support that reduction. This approval does not claim complete `Heap.WellFormed` preservation. The seven existing obligations remain unchanged: two heap/prototype obligations, one blocked-array-shrink obligation, three hook-conditional obligations, and one effectful-coercion refinement obligation. The four executable Float assumptions are also carried forward unchanged and remain runtime assumptions rather than proof axioms.
+
+The phase-2 manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:adb67de8f37029cb1ad7041188e72573d3c0ee7f38e9a820de9512920ba1c1fd`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, proof tests and audit `sha256:abf9a5876478d1d597353267b09cd914012f594122a80a909622b7b2db40303c`, and trust/evidence infrastructure `sha256:f1e4a8083768e65b30960230ccd16f5fdff7089aa8b436757110f5bc84a1b4b1`.
+
+Commands and results:
+
+```text
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase2-ordered-props-manifest.json
+008bdb172fcd36a53e38369b05e90eb2782a0e7f59409f4c0e187cb0c38aba4b  evidence/phase2-ordered-props-manifest.json
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase2-ordered-props-manifest.json
+008bdb172fcd36a53e38369b05e90eb2782a0e7f59409f4c0e187cb0c38aba4b  evidence/phase2-ordered-props-manifest.json
+
+$ bun run evidence:check
+Cannot generate evidence manifest: evidence/phase2-ordered-props-manifest.json is stale at line 170
+$ bun run evidence:generate
+$ bun run evidence:check
+
+$ bun run evidence:baseline:check
+$ bun run evidence:primitives:check
+$ bun run evidence:heap:check
+$ bun run evidence:execution:check
+$ bun run evidence:callable:check
+$ bun run evidence:arrays:check
+$ bun run evidence:primitive-ops:check
+$ bun run evidence:abstract-ops:check
+$ bun run evidence:differential:check
+$ bun run evidence:differential-compact:check
+$ bun run evidence:ordered-props:check
+
+$ bun run differential:check
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+
+$ bun run js:trust
+JS trust checks passed: 233 elaborated proof declarations
+JS trust gate passed: 233 proof declarations
+
+$ bun scripts/check-js-axioms.mjs --self-test
+synthetic environment audit passed
+
+$ /usr/bin/time -p bun run verify
+All matched files use Prettier code style!
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+JS trust checks passed: 233 elaborated proof declarations
+JS trust gate passed: 233 proof declarations
+Test Files  43 passed (43)
+Tests  1633 passed | 8 todo (1641)
+Build completed successfully (172 jobs).
+real 148.20
+user 167.24
+sys 12.62
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 304
+Unpacked size: 2.93MB
+
+$ git diff --check
+```
+
+The deliberate tamper changed only the checked source hash and was rejected at that exact manifest line before canonical regeneration. The 233 audited declarations and executable tests support only the theorem statements listed above; they do not discharge the remaining heap, prototype, array, hook-conditional, or effectful-refinement obligations. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and were not suppressed or changed.

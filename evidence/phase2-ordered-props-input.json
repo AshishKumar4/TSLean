@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase1-differential-compact-manifest.json",
-  "baseRevision": "4e0953fa3a5a81b8db24077b0d28ddbcdb397655",
+  "outputPath": "evidence/phase2-ordered-props-manifest.json",
+  "baseRevision": "04d31a1dc46450ba532c5553b9ebadf3784f5bba",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": {
       "files": 43,
-      "passed": 1632,
+      "passed": 1633,
       "failed": 0,
       "todo": 8
     },
@@ -18,7 +18,7 @@
       "entries": 102,
       "red": 102
     },
-    "auditedTheorems": 199,
+    "auditedTheorems": 233,
     "differential": {
       "scenarioGroups": 16,
       "fixed": 734,
@@ -72,34 +72,13 @@
   },
   "formalDebt": {
     "counts": {
-      "orderedProps": 4,
       "heap": 2,
       "array": 1,
       "hookConditional": 3,
       "effectfulEquivalence": 1,
-      "total": 11
+      "total": 7
     },
     "obligations": [
-      {
-        "id": "ordered-props-insert-preservation",
-        "area": "orderedProps",
-        "statement": "OrderedProps.insert preserves complete OrderedProps.WellFormed, including threshold crossings."
-      },
-      {
-        "id": "ordered-props-delete-preservation",
-        "area": "orderedProps",
-        "statement": "OrderedProps.delete preserves complete OrderedProps.WellFormed."
-      },
-      {
-        "id": "ordered-props-compaction-preservation",
-        "area": "orderedProps",
-        "statement": "String and symbol tombstone compaction preserve exact bidirectional metadata and order."
-      },
-      {
-        "id": "ordered-props-own-keys-correspondence",
-        "area": "orderedProps",
-        "statement": "OrderedProps.ownKeys is duplicate-free and corresponds exactly to live entries in index, string, and symbol order."
-      },
       {
         "id": "heap-public-mutation-preservation",
         "area": "heap",
@@ -172,7 +151,6 @@
     }
   ],
   "validation": {
-    "revision": "04d31a1dc46450ba532c5553b9ebadf3784f5bba",
     "testFiles": {
       "directory": "tests",
       "suffix": ".test.ts",
@@ -282,42 +260,40 @@
     ]
   },
   "hashGroups": {
-    "source": {
-      "paths": ["src"],
-      "revision": "04d31a1dc46450ba532c5553b9ebadf3784f5bba"
+    "source": { "paths": ["src"] },
+    "jsRuntime": { "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"] },
+    "corpus": { "paths": ["spec/corpus"] },
+    "differentialSpecHarness": {
+      "paths": [
+        "spec/differential",
+        "scripts/check-differential-inventory.mjs",
+        "scripts/differential-manifest-lib.d.mts",
+        "scripts/differential-manifest-lib.mjs",
+        "scripts/generate-differential-manifest.mjs",
+        "tests/js-model-differential.test.ts",
+        "tests/differential"
+      ]
     },
-    "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "04d31a1dc46450ba532c5553b9ebadf3784f5bba"
+    "proofTestsAudit": {
+      "paths": [
+        "lean/TSLean/JS/AxiomAudit.lean",
+        "lean/TSLean/JS/AxiomAuditMeta.lean",
+        "tests/js-trust.test.ts",
+        "tests/lean-fixtures/axiom-audit-synthetic.lean",
+        "tests/lean-fixtures/ordered-props-transitions.lean"
+      ]
     },
-    "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "04d31a1dc46450ba532c5553b9ebadf3784f5bba"
-    },
-    "differentialSpec": {
-      "paths": ["spec/differential"],
-      "revision": "04d31a1dc46450ba532c5553b9ebadf3784f5bba"
-    },
-    "infrastructure": {
+    "trustEvidenceInfrastructure": {
       "paths": [
         "package.json",
         "vitest.config.ts",
         "scripts/generate-evidence-manifest.mjs",
         "scripts/check-js-axioms.mjs",
-        "scripts/check-differential-inventory.mjs",
-        "scripts/differential-manifest-lib.d.mts",
-        "scripts/differential-manifest-lib.mjs",
-        "scripts/generate-differential-manifest.mjs",
-        "tests/js-trust.test.ts",
-        "tests/js-model-differential.test.ts",
-        "tests/differential",
         "tests/helpers/json-schema.ts",
         "tests/corpus-schema.test.ts",
         "tests/package.test.ts",
-        "tests/lean-fixtures/axiom-audit-synthetic.lean",
         "lean/lakefile.toml"
-      ],
-      "revision": "04d31a1dc46450ba532c5553b9ebadf3784f5bba"
+      ]
     }
   }
 }
