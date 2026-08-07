@@ -37,6 +37,13 @@ function nonNegativeInteger(value, label) {
   if (!Number.isSafeInteger(value) || value < 0) fail(`${label} must be a non-negative integer`);
 }
 
+function countObject(value, label) {
+  for (const [key, entry] of Object.entries(object(value, label))) {
+    if (entry !== null && typeof entry === 'object' && !Array.isArray(entry)) countObject(entry, `${label}.${key}`);
+    else nonNegativeInteger(entry, `${label}.${key}`);
+  }
+}
+
 function repositoryFile(path) {
   if (typeof path !== 'string' || path.length === 0 || isAbsolute(path)) {
     fail('--evidence must be a repository-relative path');
@@ -89,6 +96,7 @@ function readExpectedAuditCount(path) {
   const counts = object(input.counts, 'counts');
   const countKeys = ['tests', 'lean', 'corpus', 'auditedTheorems', 'lint', 'build'];
   if (counts.differentialScenarios !== undefined) countKeys.push('differentialScenarios');
+  if (counts.differential !== undefined) countKeys.push('differential');
   exactKeys(counts, countKeys, 'counts');
   exactKeys(counts.tests, ['files', 'passed', 'failed', 'todo'], 'counts.tests');
   for (const key of ['files', 'passed', 'failed', 'todo']) nonNegativeInteger(counts.tests[key], `counts.tests.${key}`);
@@ -104,6 +112,7 @@ function readExpectedAuditCount(path) {
   if (counts.differentialScenarios !== undefined) {
     nonNegativeInteger(counts.differentialScenarios, 'counts.differentialScenarios');
   }
+  if (counts.differential !== undefined) countObject(counts.differential, 'counts.differential');
   if (counts.lint !== 'passed') fail('counts.lint must be passed');
   if (counts.build !== 'passed') fail('counts.build must be passed');
   return counts.auditedTheorems;
@@ -163,6 +172,7 @@ function stripLeanComments(source) {
 
 function moduleRole(name) {
   const stem = name.endsWith('.lean') ? name.slice(0, -'.lean'.length) : name;
+  if (stem.split('.').includes('Oracle')) return 'oracle';
   const leaf = stem.split('.').at(-1);
   return /(?:Tests|Audit|Meta)$/.test(leaf) ? 'support' : 'semantic';
 }
@@ -270,6 +280,16 @@ function selfTest() {
     'semantic test import',
     () => validateSemanticSource('Value.lean', 'import TSLean.JS.FutureTests\n'),
     'imports non-semantic JS module TSLean.JS.FutureTests',
+  );
+  expectSourceFailure(
+    'production oracle import',
+    () => validateProductionBarrel('import TSLean.JS.Oracle.Primitive\n'),
+    'imports non-semantic JS module TSLean.JS.Oracle.Primitive',
+  );
+  expectSourceFailure(
+    'semantic oracle import',
+    () => validateSemanticSource('Value.lean', 'import TSLean.JS.Oracle.Protocol\n'),
+    'imports non-semantic JS module TSLean.JS.Oracle.Protocol',
   );
   validateProductionBarrel('  import TSLean.JS.Value\n');
   validateProductionBarrel(`

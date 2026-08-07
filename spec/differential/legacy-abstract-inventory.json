@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "revision": "be709a4",
+  "files": {
+    "tests/js-abstract-operations-differential.test.ts": "ff666b59cdc6d2d48eba8e2192c62741e07c44c7077867a726a988d65db22190",
+    "lean/TSLean/JS/AbstractOperationsOracleTests.lean": "c2ba2a41bbc6e66d59769a55f10e87096b737053f4706ea49eab731a23f70ef0"
+  },
+  "totalEntries": 97,
+  "groups": [
+    {
+      "scenarioId": "abstract-coercion-operators",
+      "count": 30,
+      "vectorIds": [
+        "add-string",
+        "to-number",
+        "to-string",
+        "loose-string",
+        "loose-number",
+        "loose-bigint",
+        "loose-true",
+        "loose-false",
+        "loose-null",
+        "loose-undefined",
+        "loose-symbol",
+        "loose-self",
+        "loose-other-object",
+        "loose-symbol-same",
+        "loose-symbol-other",
+        "add-pair",
+        "less-pair",
+        "greater-reversed",
+        "less-equal-pair",
+        "greater-equal-reversed",
+        "less-reversed",
+        "greater-pair",
+        "less-equal-reversed",
+        "greater-equal-pair",
+        "object-result",
+        "throw-right",
+        "throw-add-order",
+        "throw-relational-order",
+        "throw-string",
+        "throw-range-error"
+      ]
+    },
+    {
+      "scenarioId": "abstract-ordinary-conversion",
+      "count": 8,
+      "vectorIds": [
+        "undefined-method",
+        "null-method",
+        "noncallable-method",
+        "number-fallback",
+        "string-preference",
+        "getter-call",
+        "getter-throw",
+        "ordinary-object-results"
+      ]
+    },
+    {
+      "scenarioId": "abstract-instanceof",
+      "count": 10,
+      "vectorIds": [
+        "custom-truthy",
+        "custom-false",
+        "getter-throw",
+        "method-throw",
+        "noncallable-method",
+        "ordinary-true",
+        "ordinary-false",
+        "rhs-noncallable-object",
+        "primitive-prototype",
+        "primitive-rhs"
+      ]
+    },
+    {
+      "scenarioId": "abstract-realm-copy",
+      "count": 31,
+      "vectorIds": [
+        "boolean-number",
+        "number-add",
+        "number-string",
+        "string-add",
+        "string-string",
+        "bigint-add",
+        "bigint-string",
+        "symbol-valueof",
+        "symbol-string",
+        "number-loose",
+        "boolean-prototype",
+        "number-prototype",
+        "string-prototype",
+        "bigint-prototype",
+        "symbol-prototype",
+        "assign-boolean-prototype",
+        "assign-string",
+        "spread-string",
+        "spread-empty",
+        "boolean-prototype-valueof",
+        "boolean-prototype-tostring",
+        "number-prototype-valueof",
+        "number-prototype-tostring",
+        "string-prototype-valueof",
+        "string-prototype-tostring",
+        "bigint-prototype-valueof",
+        "bigint-prototype-tostring",
+        "symbol-prototype-valueof",
+        "symbol-prototype-tostring",
+        "mutate-intrinsic-prototype",
+        "mutate-wrapper-prototype"
+      ]
+    },
+    {
+      "scenarioId": "abstract-wrapper-matrix",
+      "count": 18,
+      "vectorIds": [
+        "sample-0-same",
+        "sample-0-next",
+        "sample-1-same",
+        "sample-1-next",
+        "sample-2-same",
+        "sample-2-next",
+        "sample-3-same",
+        "sample-3-next",
+        "sample-4-same",
+        "sample-4-next",
+        "sample-5-same",
+        "sample-5-next",
+        "sample-6-same",
+        "sample-6-next",
+        "sample-7-same",
+        "sample-7-next",
+        "sample-8-same",
+        "sample-8-next"
+      ]
+    }
+  ]
+}

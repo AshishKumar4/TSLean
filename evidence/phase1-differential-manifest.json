@@ -1,12 +1,21 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase1-abstract-ops-manifest.json",
-  "baseRevision": "3d4da073e94666ff8576b71e80c173420299a58e",
+  "baseRevision": "be709a49dd663bef8c37545a58a80a8403381839",
   "branch": "rebuild/semantic-core",
+  "toolchain": {
+    "bun": "1.3.14",
+    "node": "v22.23.1",
+    "typescript": "6.0.3",
+    "vitest": "vitest/4.1.10 darwin-arm64 node-v22.23.1",
+    "prettier": "3.9.6",
+    "eslint": "v10.8.0",
+    "lean": "Lean (version 4.29.0, arm64-apple-darwin24.6.0, commit 98dc76e3c0a9b856c9b98726b713fb04fab16740, Release)",
+    "lake": "Lake version 5.0.0-src+98dc76e (Lean version 4.29.0)"
+  },
   "counts": {
     "tests": {
-      "files": 44,
-      "passed": 1611,
+      "files": 43,
+      "passed": 1632,
       "failed": 0,
       "todo": 8
     },
@@ -19,7 +28,24 @@
       "red": 102
     },
     "auditedTheorems": 199,
-    "differentialScenarios": 97,
+    "differential": {
+      "scenarioGroups": 16,
+      "fixed": 734,
+      "generated": 6530,
+      "comparisons": 7264,
+      "uniqueOperationInputs": 6088,
+      "preservedDuplicates": 1176,
+      "legacyInventoryIds": 97,
+      "coverage": {
+        "total": 102,
+        "modelCovered": 13,
+        "compilerOnly": 43,
+        "modelPending": 26,
+        "proofIntegrity": 11,
+        "scale": 9
+      },
+      "aggregateFixtureBudget": 65536
+    },
     "lint": "passed",
     "build": "passed"
   },
@@ -133,16 +159,16 @@
       "location": "tests/e2e-v3.test.ts"
     },
     {
-      "id": "completion-process-items-forof-erased",
-      "location": "tests/pipeline-full.test.ts"
-    },
-    {
       "id": "completion-process-items-forof-erased-cli",
       "location": "tests/e2e/cli.test.ts"
     },
     {
       "id": "completion-process-items-forof-erased-e2e",
       "location": "tests/e2e/advanced.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased",
+      "location": "tests/pipeline-full.test.ts"
     },
     {
       "id": "completion-safe-divide-catch-none",
@@ -161,56 +187,11 @@
       "location": "tests/parser-advanced.test.ts"
     }
   ],
-  "validation": {
-    "testFiles": {
-      "directory": "tests",
-      "suffix": ".test.ts",
-      "countPath": "tests.files",
-      "revision": "be709a49dd663bef8c37545a58a80a8403381839"
-    },
-    "todos": {
-      "directory": "tests",
-      "suffix": ".test.ts",
-      "countPath": "tests.todo",
-      "revision": "be709a49dd663bef8c37545a58a80a8403381839"
-    },
-    "corpus": {
-      "path": "spec/corpus/counterexamples.json",
-      "entriesPath": "corpus.entries",
-      "redPath": "corpus.red",
-      "revision": "be709a49dd663bef8c37545a58a80a8403381839"
-    },
-    "lineCounts": []
-  },
-  "hashGroups": {
-    "source": {
-      "paths": ["src"],
-      "revision": "be709a49dd663bef8c37545a58a80a8403381839"
-    },
-    "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "be709a49dd663bef8c37545a58a80a8403381839"
-    },
-    "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "be709a49dd663bef8c37545a58a80a8403381839"
-    },
-    "infrastructure": {
-      "paths": [
-        "package.json",
-        "vitest.config.ts",
-        "scripts/generate-evidence-manifest.mjs",
-        "scripts/check-js-axioms.mjs",
-        "tests/js-trust.test.ts",
-        "tests/js-primitives-differential.test.ts",
-        "tests/js-abstract-operations-differential.test.ts",
-        "tests/lean-fixtures/axiom-audit-synthetic.lean",
-        "tests/package.test.ts",
-        "lean/TSLean/JS/PrimitiveOracleTests.lean",
-        "lean/TSLean/JS/AbstractOperationsOracleTests.lean",
-        "lean/lakefile.toml"
-      ],
-      "revision": "be709a49dd663bef8c37545a58a80a8403381839"
-    }
+  "hashes": {
+    "source": "sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3",
+    "jsRuntime": "sha256:a569c99166aaf9a4f7aaa2827cfac2fe3f6dc79f05397d545222b372132e2051",
+    "corpus": "sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec",
+    "differentialSpec": "sha256:ba957241f80001ed5eb3b3a71410030bd7b1759d4cb29e02babda6424a8c37ed",
+    "infrastructure": "sha256:eba39a3065cbdee070498d5f59c6dbccc22199d99b6af3f52d89326727d5e9c6"
   }
 }

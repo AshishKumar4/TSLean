@@ -1,0 +1,509 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tslean.dev/spec/differential/schema.json",
+  "title": "TSLean model differential suite",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "suite", "registry", "scenarios"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "suite": { "$ref": "#/$defs/id" },
+    "registry": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/operation" }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/scenario" }
+    },
+    "graphs": { "type": "array", "items": { "$ref": "#/$defs/graph" } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$" },
+    "codeUnits": {
+      "type": "array",
+      "maxItems": 65536,
+      "items": { "type": "integer", "minimum": 0, "maximum": 65535 }
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "domain", "arity", "source"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "domain": { "enum": ["primitive", "graph"] },
+        "arity": { "enum": [1, 2] },
+        "source": { "type": "string", "minLength": 1 }
+      }
+    },
+    "fixture": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "enum": ["undefined", "null"] } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "const": "boolean" },
+            "value": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "bits"],
+          "properties": {
+            "kind": { "const": "number" },
+            "bits": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "Canonical unsigned-decimal lexical form. Mandatory semantic validation additionally rejects values above 18446744073709551615."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": { "const": "string" },
+            "value": { "type": "string", "maxLength": 65536 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "decimal"],
+          "properties": {
+            "kind": { "const": "bigint" },
+            "decimal": { "type": "string", "pattern": "^(?:0|-?[1-9][0-9]*)$" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "identity"],
+          "properties": {
+            "kind": { "const": "symbol" },
+            "identity": { "$ref": "#/$defs/id" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "graph", "arguments", "observe"],
+          "properties": {
+            "kind": { "const": "graph" },
+            "graph": { "$ref": "#/$defs/id" },
+            "arguments": { "type": "array", "maxItems": 1024, "items": { "$ref": "#/$defs/modelValue" } },
+            "observe": { "type": "array", "maxItems": 1024, "items": { "$ref": "#/$defs/modelValue" } }
+          }
+        }
+      ]
+    },
+    "vector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "operation", "fixtures", "tags", "corpusIds"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "operation": { "$ref": "#/$defs/id" },
+        "source": { "type": "string", "minLength": 1 },
+        "fixtures": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/fixture" }
+        },
+        "tags": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "corpusIds": { "type": "array", "items": { "$ref": "#/$defs/id" } }
+      }
+    },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "seed", "count"],
+      "properties": {
+        "algorithm": {
+          "enum": ["decimal-cases-v1", "trim-code-units-v1", "finite-binary64-v1", "primitive-operators-v1"]
+        },
+        "seed": { "type": "string", "minLength": 1 },
+        "count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "operations", "vectors", "fixtures", "generators", "expectedCount"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "vectors": { "type": "array", "items": { "$ref": "#/$defs/vector" } },
+        "fixtures": { "type": "array", "items": { "$ref": "#/$defs/fixture" } },
+        "generators": { "type": "array", "items": { "$ref": "#/$defs/generator" } },
+        "expectedCount": { "type": "integer", "minimum": 1 }
+        ,
+        "corpusIds": { "type": "array", "items": { "$ref": "#/$defs/id" } }
+      }
+    },
+    "modelValue": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "enum": ["undefined", "null"] } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": { "kind": { "const": "boolean" }, "value": { "type": "boolean" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "bits"], "properties": { "kind": { "const": "number" }, "bits": { "type": "string", "pattern": "^(?:0|[1-9][0-9]{0,19})$" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "units"], "properties": { "kind": { "const": "string" }, "units": { "$ref": "#/$defs/codeUnits" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "decimal"], "properties": { "kind": { "const": "bigint" }, "decimal": { "type": "string", "pattern": "^(?:0|-?[1-9][0-9]*)$" } } },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "symbolKind", "identity"],
+          "properties": {
+            "kind": { "const": "symbol" },
+            "symbolKind": { "enum": ["local", "registered", "well-known"] },
+            "identity": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "message"],
+          "properties": {
+            "kind": { "const": "error" },
+            "name": {
+              "enum": [
+                [69, 114, 114, 111, 114],
+                [84, 121, 112, 101, 69, 114, 114, 111, 114],
+                [82, 97, 110, 103, 101, 69, 114, 114, 111, 114],
+                [82, 101, 102, 101, 114, 101, 110, 99, 101, 69, 114, 114, 111, 114],
+                [83, 121, 110, 116, 97, 120, 69, 114, 114, 111, 114]
+              ]
+            },
+            "message": { "$ref": "#/$defs/codeUnits" }
+          }
+        },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id"], "properties": { "kind": { "const": "ref" }, "id": { "$ref": "#/$defs/id" } } }
+      ]
+    },
+    "propertyKey": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "units"], "properties": { "kind": { "const": "string" }, "units": { "$ref": "#/$defs/codeUnits" } } },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "symbolKind", "identity"],
+          "properties": {
+            "kind": { "const": "symbol" },
+            "symbolKind": { "enum": ["local", "registered", "well-known"] },
+            "identity": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "descriptor": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value", "writable", "enumerable", "configurable"],
+          "properties": {
+            "kind": { "const": "data" },
+            "value": { "$ref": "#/$defs/modelValue" },
+            "writable": { "type": "boolean" },
+            "enumerable": { "type": "boolean" },
+            "configurable": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "get", "set", "enumerable", "configurable"],
+          "properties": {
+            "kind": { "const": "accessor" },
+            "get": { "type": "string" },
+            "set": { "type": "string" },
+            "enumerable": { "type": "boolean" },
+            "configurable": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "scriptEvent": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "units"], "properties": { "kind": { "const": "fixed" }, "units": { "$ref": "#/$defs/codeUnits" } } },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "prefixUnits", "argument", "format"],
+          "properties": {
+            "kind": { "const": "argument" },
+            "prefixUnits": { "$ref": "#/$defs/codeUnits" },
+            "argument": { "type": "integer", "minimum": 0 },
+            "format": { "enum": ["string", "number", "boolean", "bigint", "null", "undefined"] }
+          }
+        }
+      ]
+    },
+    "scriptCompletion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": { "type": { "enum": ["return", "throw"] }, "value": { "$ref": "#/$defs/modelValue" } }
+    },
+    "scriptCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receiver", "events", "completion"],
+      "properties": {
+        "receiver": { "type": "string" },
+        "events": { "type": "array", "maxItems": 1024, "items": { "$ref": "#/$defs/scriptEvent" } },
+        "completion": { "$ref": "#/$defs/scriptCompletion" }
+      }
+    },
+    "script": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["events", "completion", "cases"],
+      "properties": {
+        "events": { "type": "array", "maxItems": 1024, "items": { "$ref": "#/$defs/scriptEvent" } },
+        "completion": { "$ref": "#/$defs/scriptCompletion" },
+        "cases": { "type": "array", "maxItems": 1024, "items": { "$ref": "#/$defs/scriptCase" } }
+      }
+    },
+    "graphProperty": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "descriptor"],
+      "properties": { "key": { "$ref": "#/$defs/propertyKey" }, "descriptor": { "$ref": "#/$defs/descriptor" } }
+    },
+    "graphNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "prototype", "properties", "elements", "script", "scriptArity"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["object", "function", "array", "error"] },
+        "prototype": { "type": "string", "pattern": "^(?:@(?:null|object|function|array)|[a-z][a-z0-9]*(?:-[a-z0-9]+)*)$" },
+        "properties": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/graphProperty" } },
+        "elements": {
+          "type": "array",
+          "maxItems": 65536,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["index", "value"],
+            "properties": { "index": { "type": "integer", "minimum": 0, "maximum": 65535 }, "value": { "$ref": "#/$defs/modelValue" } }
+          }
+        },
+        "script": { "$ref": "#/$defs/script" }
+        ,
+        "scriptArity": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "description": "Mandatory semantic validation caps the aggregate sum of maxIndex + 1 over nonempty array nodes at 65536 cells before materialization.",
+      "additionalProperties": false,
+      "required": ["id", "realm", "nodes", "bindings"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "realm": { "type": "boolean" },
+        "nodes": { "type": "array", "maxItems": 1024, "items": { "$ref": "#/$defs/graphNode" } },
+        "bindings": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "mutable", "value"],
+            "properties": {
+              "name": { "$ref": "#/$defs/id" },
+              "mutable": { "type": "boolean" },
+              "value": { "$ref": "#/$defs/modelValue" }
+            }
+          }
+        }
+      }
+    },
+    "stringDatum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "units"],
+      "properties": {
+        "type": { "const": "string" },
+        "units": {
+          "type": "array",
+          "maxItems": 65536,
+          "items": { "type": "integer", "minimum": 0, "maximum": 65535 }
+        }
+      }
+    },
+    "canonicalDatum": {
+      "description": "Object identities reserve graph extension without changing the primitive completion protocol.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": { "type": { "enum": ["undefined", "null"] } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": { "type": { "const": "boolean" }, "value": { "type": "boolean" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "bits"],
+          "properties": {
+            "type": { "const": "number" },
+            "bits": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "Canonical unsigned-decimal lexical form. Mandatory semantic validation additionally rejects values above 18446744073709551615."
+            }
+          }
+        },
+        { "$ref": "#/$defs/stringDatum" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "decimal"],
+          "properties": {
+            "type": { "const": "bigint" },
+            "decimal": { "type": "string", "pattern": "^(?:0|-?[1-9][0-9]*)$" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "kind", "identity"],
+          "properties": {
+            "type": { "const": "symbol" },
+            "kind": { "enum": ["registered", "well-known", "unique"] },
+            "identity": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "identity", "name", "message"],
+          "properties": {
+            "type": { "const": "error" },
+            "identity": { "type": "string", "minLength": 1 },
+            "name": { "$ref": "#/$defs/stringDatum" },
+            "message": { "$ref": "#/$defs/stringDatum" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "identity"],
+          "properties": {
+            "type": { "const": "object" },
+            "identity": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["completion", "trace"],
+      "properties": {
+        "completion": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": { "enum": ["normal", "throw"] },
+            "value": { "$ref": "#/$defs/canonicalDatum" }
+          }
+        },
+        "trace": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["event", "detail"],
+            "properties": {
+              "event": { "type": "string", "minLength": 1 },
+              "detail": { "$ref": "#/$defs/canonicalDatum" }
+            }
+          }
+        },
+        "roots": { "type": "array", "items": { "$ref": "#/$defs/canonicalDatum" } },
+        "objects": {
+          "type": "array",
+          "description": "Encounter-ordered reachable records from the selected roots.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["identity", "kind", "prototype", "extensible", "properties"],
+            "properties": {
+              "identity": { "type": "string", "minLength": 1 },
+              "kind": { "enum": ["object", "function", "array", "error"] },
+              "prototype": { "$ref": "#/$defs/canonicalDatum" },
+              "extensible": { "type": "boolean" },
+              "properties": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["key", "descriptor"],
+                  "properties": {
+                    "key": { "$ref": "#/$defs/canonicalDatum" },
+                    "descriptor": { "$ref": "#/$defs/canonicalDescriptor" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "canonicalDescriptor": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value", "writable", "enumerable", "configurable"],
+          "properties": {
+            "kind": { "const": "data" },
+            "value": { "$ref": "#/$defs/canonicalDatum" },
+            "writable": { "type": "boolean" },
+            "enumerable": { "type": "boolean" },
+            "configurable": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "get", "set", "enumerable", "configurable"],
+          "properties": {
+            "kind": { "const": "accessor" },
+            "get": { "$ref": "#/$defs/canonicalDatum" },
+            "set": { "$ref": "#/$defs/canonicalDatum" },
+            "enumerable": { "type": "boolean" },
+            "configurable": { "type": "boolean" }
+          }
+        }
+      ]
+    }
+  }
+}

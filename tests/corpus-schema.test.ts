@@ -2,8 +2,8 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { isJsonObject, type JsonValue, validateJsonSchema } from './helpers/json-schema.js';
 
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 type Outcome = { kind: string; value: string };
 type Provenance = { sourceRevision: string; transcript: string; sourceRefs: string[] };
 type Entry = {
@@ -31,164 +31,6 @@ const corpusSource = readFileSync(corpusPath, 'utf8');
 const corpus: Corpus = JSON.parse(corpusSource);
 const corpusDocument: JsonValue = JSON.parse(corpusSource);
 const schema: JsonValue = JSON.parse(readFileSync(schemaPath, 'utf8'));
-
-const supportedSchemaKeywords = new Set([
-  '$defs',
-  '$id',
-  '$ref',
-  '$schema',
-  'additionalProperties',
-  'allOf',
-  'const',
-  'else',
-  'enum',
-  'if',
-  'items',
-  'maxItems',
-  'minItems',
-  'minLength',
-  'not',
-  'pattern',
-  'properties',
-  'required',
-  'then',
-  'title',
-  'type',
-]);
-
-function isObject(value: JsonValue | undefined): value is { [key: string]: JsonValue } {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function sameJson(left: JsonValue, right: JsonValue): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function resolveReference(rootSchema: JsonValue, reference: string): JsonValue | undefined {
-  if (!reference.startsWith('#/')) return undefined;
-  let current: JsonValue | undefined = rootSchema;
-  for (const segment of reference.slice(2).split('/')) {
-    if (!isObject(current)) return undefined;
-    current = current[segment.replaceAll('~1', '/').replaceAll('~0', '~')];
-  }
-  return current;
-}
-
-function validateJsonSchema(
-  value: JsonValue,
-  currentSchema: JsonValue,
-  rootSchema: JsonValue,
-  path: string,
-  errors: string[],
-): void {
-  if (!isObject(currentSchema)) {
-    errors.push(`${path}: schema node must be an object`);
-    return;
-  }
-
-  for (const keyword of Object.keys(currentSchema)) {
-    if (!supportedSchemaKeywords.has(keyword)) errors.push(`${path}: unsupported schema keyword ${keyword}`);
-  }
-
-  const reference = currentSchema.$ref;
-  if (typeof reference === 'string') {
-    const referencedSchema = resolveReference(rootSchema, reference);
-    if (referencedSchema === undefined) errors.push(`${path}: unresolved schema reference ${reference}`);
-    else validateJsonSchema(value, referencedSchema, rootSchema, path, errors);
-  }
-
-  const allOf = currentSchema.allOf;
-  if (Array.isArray(allOf)) {
-    for (const subSchema of allOf) validateJsonSchema(value, subSchema, rootSchema, path, errors);
-  }
-
-  const condition = currentSchema.if;
-  if (condition !== undefined) {
-    const conditionErrors: string[] = [];
-    validateJsonSchema(value, condition, rootSchema, path, conditionErrors);
-    const branch = conditionErrors.length === 0 ? currentSchema.then : currentSchema.else;
-    if (branch !== undefined) validateJsonSchema(value, branch, rootSchema, path, errors);
-  }
-
-  const negatedSchema = currentSchema.not;
-  if (negatedSchema !== undefined) {
-    const negatedErrors: string[] = [];
-    validateJsonSchema(value, negatedSchema, rootSchema, path, negatedErrors);
-    if (negatedErrors.length === 0) errors.push(`${path}: must not match negated schema`);
-  }
-
-  const expectedType = currentSchema.type;
-  if (typeof expectedType === 'string') {
-    const matchesType =
-      expectedType === 'object'
-        ? isObject(value)
-        : expectedType === 'array'
-          ? Array.isArray(value)
-          : expectedType === 'string'
-            ? typeof value === 'string'
-            : expectedType === 'number'
-              ? typeof value === 'number'
-              : expectedType === 'boolean'
-                ? typeof value === 'boolean'
-                : expectedType === 'null'
-                  ? value === null
-                  : false;
-    if (!matchesType) {
-      errors.push(`${path}: expected ${expectedType}`);
-      return;
-    }
-  }
-
-  if (currentSchema.const !== undefined && !sameJson(value, currentSchema.const)) {
-    errors.push(`${path}: does not equal const value`);
-  }
-  const enumValues = currentSchema.enum;
-  if (Array.isArray(enumValues) && !enumValues.some((candidate) => sameJson(value, candidate))) {
-    errors.push(`${path}: is not an allowed enum value`);
-  }
-
-  if (typeof value === 'string') {
-    const minLength = currentSchema.minLength;
-    if (typeof minLength === 'number' && value.length < minLength) errors.push(`${path}: is too short`);
-    const pattern = currentSchema.pattern;
-    if (typeof pattern === 'string' && !new RegExp(pattern, 'u').test(value)) {
-      errors.push(`${path}: does not match ${pattern}`);
-    }
-  }
-
-  if (Array.isArray(value)) {
-    const minItems = currentSchema.minItems;
-    const maxItems = currentSchema.maxItems;
-    if (typeof minItems === 'number' && value.length < minItems) errors.push(`${path}: has too few items`);
-    if (typeof maxItems === 'number' && value.length > maxItems) errors.push(`${path}: has too many items`);
-    if (currentSchema.items !== undefined) {
-      for (const [index, item] of value.entries()) {
-        validateJsonSchema(item, currentSchema.items, rootSchema, `${path}[${index}]`, errors);
-      }
-    }
-  }
-
-  if (isObject(value)) {
-    const required = currentSchema.required;
-    if (Array.isArray(required)) {
-      for (const field of required) {
-        if (typeof field === 'string' && !Object.hasOwn(value, field)) errors.push(`${path}: missing ${field}`);
-      }
-    }
-
-    const properties = currentSchema.properties;
-    if (isObject(properties)) {
-      for (const [field, fieldValue] of Object.entries(value)) {
-        const fieldSchema = properties[field];
-        if (fieldSchema !== undefined) {
-          validateJsonSchema(fieldValue, fieldSchema, rootSchema, `${path}.${field}`, errors);
-        } else if (currentSchema.additionalProperties === false) {
-          errors.push(`${path}.${field}: additional property is not allowed`);
-        }
-      }
-    }
-  }
-}
 
 function collectTestFiles(directory: string): string[] {
   const files: string[] = [];
@@ -237,7 +79,7 @@ const entries = corpus.groups.flatMap((group) => group.entries);
 
 describe('semantic counterexample corpus', () => {
   it('uses a strict draft 2020-12 schema', () => {
-    expect(isObject(schema) && schema.$schema).toBe('https://json-schema.org/draft/2020-12/schema');
+    expect(isJsonObject(schema) && schema.$schema).toBe('https://json-schema.org/draft/2020-12/schema');
   });
 
   it('validates against the complete checked-in JSON Schema', () => {

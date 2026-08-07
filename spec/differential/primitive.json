@@ -1,0 +1,1543 @@
+{
+  "schemaVersion": 1,
+  "suite": "primitive",
+  "registry": [
+    {
+      "id": "add",
+      "arity": 2,
+      "source": "left + right",
+      "domain": "primitive"
+    },
+    {
+      "id": "div",
+      "arity": 2,
+      "source": "left / right",
+      "domain": "primitive"
+    },
+    {
+      "id": "format",
+      "arity": 1,
+      "source": "String(value)",
+      "domain": "primitive"
+    },
+    {
+      "id": "ge",
+      "arity": 2,
+      "source": "left >= right",
+      "domain": "primitive"
+    },
+    {
+      "id": "gt",
+      "arity": 2,
+      "source": "left > right",
+      "domain": "primitive"
+    },
+    {
+      "id": "key",
+      "arity": 1,
+      "source": "Reflect.ownKeys({ [value]: 0 })[0]",
+      "domain": "primitive"
+    },
+    {
+      "id": "le",
+      "arity": 2,
+      "source": "left <= right",
+      "domain": "primitive"
+    },
+    {
+      "id": "loose",
+      "arity": 2,
+      "source": "left == right",
+      "domain": "primitive"
+    },
+    {
+      "id": "lt",
+      "arity": 2,
+      "source": "left < right",
+      "domain": "primitive"
+    },
+    {
+      "id": "mul",
+      "arity": 2,
+      "source": "left * right",
+      "domain": "primitive"
+    },
+    {
+      "id": "number",
+      "arity": 1,
+      "source": "+value",
+      "domain": "primitive"
+    },
+    {
+      "id": "parse",
+      "arity": 1,
+      "source": "Number(value)",
+      "domain": "primitive"
+    },
+    {
+      "id": "rem",
+      "arity": 2,
+      "source": "left % right",
+      "domain": "primitive"
+    },
+    {
+      "id": "string",
+      "arity": 1,
+      "source": "`${value}`",
+      "domain": "primitive"
+    },
+    {
+      "id": "sub",
+      "arity": 2,
+      "source": "left - right",
+      "domain": "primitive"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "parse",
+      "operations": [
+        "parse"
+      ],
+      "vectors": [
+        {
+          "id": "empty",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": ""
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "space",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": " "
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "zero",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "0"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "negative-zero",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "-0"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "positive-zero",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "+0"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "one",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "negative-one",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "-1"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "leading-fraction",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": ".5"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "trailing-point",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1."
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "fraction",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1.25"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "positive-exponent",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1e3"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "negative-exponent",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1E-3"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "positive-infinity",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "+Infinity"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "negative-infinity",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "-Infinity"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "hex",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "0x10"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "large-hex",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "0Xffffffffffffffff"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "octal",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "0o777"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "binary",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "0b101010"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "overflow",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1e309"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "negative-overflow",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "-1e309"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "underflow",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1e-324"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "minimum-subnormal",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "5e-324"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "minimum-normal",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "2.2250738585072014e-308"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "maximum-finite",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1.7976931348623157e308"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "maximum-safe",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "9007199254740991"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "safe-boundary",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "9007199254740992"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "safe-boundary-rounded",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "9007199254740993"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "normal-round-down",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "2.2250738585072011e-308"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "normal-tie",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "2.2250738585072012e-308"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "one-tie",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1.00000000000000011102230246251565404236316680908203125"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "sign-only-plus",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "+"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "sign-only-minus",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "-"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "point-only",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "."
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "signed-point",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "+."
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "missing-exponent",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1e"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "missing-positive-exponent",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1e+"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "missing-negative-exponent",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1e-"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "point-before-exponent",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": ".e1"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "trailing-letter",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1x"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "embedded-space",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1 2"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "infinity-suffix",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "Infinityx"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "nan",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "NaN"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "lowercase-nan",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "nan"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "signed-hex-plus",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "+0x1"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "signed-hex-minus",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "-0x1"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "empty-hex",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "0x"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "invalid-octal",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "0o8"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "invalid-binary",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "0b2"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "hex-float",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "0x1p2"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "separator",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1_0"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "unpaired-high",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "\ud800"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "unpaired-low-suffix",
+          "operation": "parse",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1\udfff"
+            }
+          ],
+          "tags": [
+            "malformed"
+          ],
+          "corpusIds": []
+        }
+      ],
+      "fixtures": [],
+      "generators": [
+        {
+          "algorithm": "trim-code-units-v1",
+          "seed": "none",
+          "count": 50
+        },
+        {
+          "algorithm": "decimal-cases-v1",
+          "seed": "1831565813",
+          "count": 220
+        }
+      ],
+      "expectedCount": 322,
+      "corpusIds": []
+    },
+    {
+      "id": "format",
+      "operations": [
+        "format"
+      ],
+      "vectors": [
+        {
+          "id": "positive-zero",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "0"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "negative-zero",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "9223372036854775808"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "positive-infinity",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "9218868437227405312"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "negative-infinity",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "18442240474082181120"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "canonical-nan",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "9221120237041090560"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "signaling-nan",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "9218868437227405313"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "negative-nan",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "18444492273895866434"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "minimum-subnormal",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "1"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "maximum-subnormal",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "4503599627370495"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "minimum-normal",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "4503599627370496"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "maximum-finite",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "9218868437227405311"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "fixed-threshold-low",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "4502148214488346440"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "fixed-threshold",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "4517329193108106637"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "exponential-threshold-low",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "4906019910204099648"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "exponential-threshold",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "4921056587992461136"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "maximum-safe",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "4845873199050653695"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "safe-boundary",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "4845873199050653696"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "point-one",
+          "operation": "format",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "4591870180066957722"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        }
+      ],
+      "fixtures": [],
+      "generators": [
+        {
+          "algorithm": "finite-binary64-v1",
+          "seed": "1311768467463790320",
+          "count": 260
+        }
+      ],
+      "expectedCount": 278,
+      "corpusIds": []
+    },
+    {
+      "id": "conversion-equality",
+      "operations": [
+        "number",
+        "string",
+        "key",
+        "loose"
+      ],
+      "vectors": [],
+      "fixtures": [
+        {
+          "kind": "undefined"
+        },
+        {
+          "kind": "null"
+        },
+        {
+          "kind": "boolean",
+          "value": false
+        },
+        {
+          "kind": "boolean",
+          "value": true
+        },
+        {
+          "kind": "number",
+          "bits": "0"
+        },
+        {
+          "kind": "number",
+          "bits": "9223372036854775808"
+        },
+        {
+          "kind": "number",
+          "bits": "4607182418800017408"
+        },
+        {
+          "kind": "number",
+          "bits": "4609434218613702656"
+        },
+        {
+          "kind": "number",
+          "bits": "9221120237041090560"
+        },
+        {
+          "kind": "string",
+          "value": ""
+        },
+        {
+          "kind": "string",
+          "value": "0"
+        },
+        {
+          "kind": "string",
+          "value": "1"
+        },
+        {
+          "kind": "string",
+          "value": "0x10"
+        },
+        {
+          "kind": "string",
+          "value": "\ud800"
+        },
+        {
+          "kind": "bigint",
+          "decimal": "0"
+        },
+        {
+          "kind": "bigint",
+          "decimal": "1"
+        },
+        {
+          "kind": "bigint",
+          "decimal": "9007199254740992"
+        },
+        {
+          "kind": "bigint",
+          "decimal": "9007199254740993"
+        },
+        {
+          "kind": "symbol",
+          "identity": "shared"
+        },
+        {
+          "kind": "symbol",
+          "identity": "shared"
+        },
+        {
+          "kind": "symbol",
+          "identity": "other"
+        }
+      ],
+      "generators": [],
+      "expectedCount": 504,
+      "corpusIds": []
+    },
+    {
+      "id": "curated-operators",
+      "operations": [
+        "add",
+        "sub",
+        "mul",
+        "div",
+        "rem",
+        "lt",
+        "le",
+        "gt",
+        "ge"
+      ],
+      "vectors": [
+        {
+          "id": "add-string-number",
+          "operation": "add",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "x"
+            },
+            {
+              "kind": "number",
+              "bits": "4607182418800017408"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "add-boolean-null",
+          "operation": "add",
+          "fixtures": [
+            {
+              "kind": "boolean",
+              "value": true
+            },
+            {
+              "kind": "null"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "add-string-bigint",
+          "operation": "add",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": ""
+            },
+            {
+              "kind": "bigint",
+              "decimal": "42"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "add-bigint",
+          "operation": "add",
+          "fixtures": [
+            {
+              "kind": "bigint",
+              "decimal": "1"
+            },
+            {
+              "kind": "bigint",
+              "decimal": "2"
+            }
+          ],
+          "tags": [
+            "bigint-arithmetic-regression"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "sub-string-boolean",
+          "operation": "sub",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "5"
+            },
+            {
+              "kind": "boolean",
+              "value": true
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "sub-bigint",
+          "operation": "sub",
+          "fixtures": [
+            {
+              "kind": "bigint",
+              "decimal": "-5"
+            },
+            {
+              "kind": "bigint",
+              "decimal": "2"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "mul-negative-zero",
+          "operation": "mul",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "9223372036854775808"
+            },
+            {
+              "kind": "number",
+              "bits": "4613937818241073152"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "mul-bigint",
+          "operation": "mul",
+          "fixtures": [
+            {
+              "kind": "bigint",
+              "decimal": "-5"
+            },
+            {
+              "kind": "bigint",
+              "decimal": "2"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "div-number-zero",
+          "operation": "div",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "4607182418800017408"
+            },
+            {
+              "kind": "number",
+              "bits": "0"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "div-bigint",
+          "operation": "div",
+          "fixtures": [
+            {
+              "kind": "bigint",
+              "decimal": "-5"
+            },
+            {
+              "kind": "bigint",
+              "decimal": "2"
+            }
+          ],
+          "tags": [
+            "bigint-arithmetic-regression"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "div-bigint-zero",
+          "operation": "div",
+          "fixtures": [
+            {
+              "kind": "bigint",
+              "decimal": "1"
+            },
+            {
+              "kind": "bigint",
+              "decimal": "0"
+            }
+          ],
+          "tags": [
+            "bigint-arithmetic-regression"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "rem-number",
+          "operation": "rem",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "13840687554816376832"
+            },
+            {
+              "kind": "number",
+              "bits": "4611686018427387904"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "rem-bigint",
+          "operation": "rem",
+          "fixtures": [
+            {
+              "kind": "bigint",
+              "decimal": "-5"
+            },
+            {
+              "kind": "bigint",
+              "decimal": "2"
+            }
+          ],
+          "tags": [
+            "bigint-arithmetic-regression"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "lt-strings",
+          "operation": "lt",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "a"
+            },
+            {
+              "kind": "string",
+              "value": "b"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "lt-string-number",
+          "operation": "lt",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "2"
+            },
+            {
+              "kind": "number",
+              "bits": "4621819117588971520"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "lt-number-bigint",
+          "operation": "lt",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "4845873199050653696"
+            },
+            {
+              "kind": "bigint",
+              "decimal": "9007199254740993"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "lt-string-bigint",
+          "operation": "lt",
+          "fixtures": [
+            {
+              "kind": "string",
+              "value": "1.5"
+            },
+            {
+              "kind": "bigint",
+              "decimal": "2"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "le-bigint-number",
+          "operation": "le",
+          "fixtures": [
+            {
+              "kind": "bigint",
+              "decimal": "9007199254740992"
+            },
+            {
+              "kind": "number",
+              "bits": "4845873199050653696"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "gt-number-bigint",
+          "operation": "gt",
+          "fixtures": [
+            {
+              "kind": "number",
+              "bits": "4609434218613702656"
+            },
+            {
+              "kind": "bigint",
+              "decimal": "1"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "ge-bigint-number",
+          "operation": "ge",
+          "fixtures": [
+            {
+              "kind": "bigint",
+              "decimal": "-9007199254740993"
+            },
+            {
+              "kind": "number",
+              "bits": "14069245235905429504"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "add-mixed-numeric",
+          "operation": "add",
+          "fixtures": [
+            {
+              "kind": "bigint",
+              "decimal": "1"
+            },
+            {
+              "kind": "number",
+              "bits": "4607182418800017408"
+            }
+          ],
+          "tags": [
+            "bigint-arithmetic-regression"
+          ],
+          "corpusIds": []
+        },
+        {
+          "id": "add-symbol-string",
+          "operation": "add",
+          "fixtures": [
+            {
+              "kind": "symbol",
+              "identity": "one"
+            },
+            {
+              "kind": "string",
+              "value": "x"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        },
+        {
+          "id": "add-symbol-number",
+          "operation": "add",
+          "fixtures": [
+            {
+              "kind": "symbol",
+              "identity": "one"
+            },
+            {
+              "kind": "number",
+              "bits": "4607182418800017408"
+            }
+          ],
+          "tags": [],
+          "corpusIds": []
+        }
+      ],
+      "fixtures": [],
+      "generators": [],
+      "expectedCount": 23,
+      "corpusIds": []
+    },
+    {
+      "id": "seeded-operators",
+      "operations": [
+        "add",
+        "sub",
+        "mul",
+        "div",
+        "rem",
+        "lt",
+        "le",
+        "gt",
+        "ge"
+      ],
+      "vectors": [],
+      "fixtures": [],
+      "generators": [
+        {
+          "algorithm": "primitive-operators-v1",
+          "seed": "11400714819323198485",
+          "count": 6000
+        }
+      ],
+      "expectedCount": 6000,
+      "corpusIds": []
+    }
+  ],
+  "graphs": []
+}

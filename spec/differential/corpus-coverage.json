@@ -1,0 +1,626 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "id": "identity-strict-coercive-equality",
+      "classification": "model-covered",
+      "scenarioIds": [
+        "corpus-model-probes"
+      ]
+    },
+    {
+      "id": "identity-array-reference-equality",
+      "classification": "model-covered",
+      "scenarioIds": [
+        "corpus-model-probes"
+      ]
+    },
+    {
+      "id": "identity-switch-array-case",
+      "classification": "model-pending",
+      "reason": "switch clause evaluation and matching"
+    },
+    {
+      "id": "identity-null-undefined",
+      "classification": "model-covered",
+      "scenarioIds": [
+        "corpus-model-probes"
+      ]
+    },
+    {
+      "id": "operators-short-circuit-assignment",
+      "classification": "model-covered",
+      "scenarioIds": [
+        "corpus-model-probes"
+      ]
+    },
+    {
+      "id": "truthiness-empty-array",
+      "classification": "model-covered",
+      "scenarioIds": [
+        "corpus-model-probes"
+      ]
+    },
+    {
+      "id": "truthiness-nullable-empty-string",
+      "classification": "model-covered",
+      "scenarioIds": [
+        "corpus-model-probes"
+      ]
+    },
+    {
+      "id": "operators-effectful-compound-condition",
+      "classification": "model-covered",
+      "scenarioIds": [
+        "corpus-model-probes"
+      ]
+    },
+    {
+      "id": "operators-exponentiation",
+      "classification": "model-pending",
+      "reason": "Number and BigInt exponentiation"
+    },
+    {
+      "id": "operators-unsigned-shift",
+      "classification": "model-pending",
+      "reason": "32-bit bitwise and Reference update semantics"
+    },
+    {
+      "id": "operators-number-string-addition",
+      "classification": "model-covered",
+      "scenarioIds": [
+        "corpus-model-probes"
+      ]
+    },
+    {
+      "id": "truthiness-generic",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "truthiness-nonboolean-conditions",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "completion-try-finally-return",
+      "classification": "model-covered",
+      "scenarioIds": [
+        "corpus-model-probes"
+      ]
+    },
+    {
+      "id": "completion-try-finally-order",
+      "classification": "model-covered",
+      "scenarioIds": [
+        "corpus-model-probes"
+      ]
+    },
+    {
+      "id": "completion-switch-fallthrough",
+      "classification": "model-pending",
+      "reason": "switch clause evaluation and matching"
+    },
+    {
+      "id": "completion-switch-effectful-scrutinee",
+      "classification": "model-pending",
+      "reason": "switch clause evaluation and matching"
+    },
+    {
+      "id": "completion-switch-dynamic-case",
+      "classification": "model-pending",
+      "reason": "switch clause evaluation and matching"
+    },
+    {
+      "id": "completion-switch-continue",
+      "classification": "model-pending",
+      "reason": "Exact switch selection plus continue targeting requires the missing switch statement evaluator; a hard-coded loop result is not coverage."
+    },
+    {
+      "id": "completion-for-multiple-initializers",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "completion-for-of-existing-binding",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "completion-comma-assignment",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "completion-forof-live-array",
+      "classification": "model-covered",
+      "scenarioIds": [
+        "corpus-model-probes"
+      ]
+    },
+    {
+      "id": "completion-safe-divide-catch-none",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "completion-process-items-forof-erased",
+      "classification": "model-pending",
+      "reason": "Array callback or push semantics"
+    },
+    {
+      "id": "completion-process-items-forof-erased-e2e",
+      "classification": "model-pending",
+      "reason": "Array callback or push semantics"
+    },
+    {
+      "id": "completion-process-items-forof-erased-cli",
+      "classification": "model-pending",
+      "reason": "Array callback or push semantics"
+    },
+    {
+      "id": "completion-nested-forof-erased",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The corpus defect is compiler lowering; the prior vector exercised only a nearby model operation."
+    },
+    {
+      "id": "effects-forward-call",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "effects-parenthesized-call",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "effects-higher-order-exception",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "effects-io-foreach",
+      "classification": "model-pending",
+      "reason": "Array callback or push semantics"
+    },
+    {
+      "id": "effects-nullary-function-value",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "effects-await-value",
+      "classification": "model-pending",
+      "reason": "Promise, async function, and Await semantics"
+    },
+    {
+      "id": "effects-mixed-callback-io",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "effects-destructured-callback",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "effects-callback-reassignment",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "effects-callback-indexing",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "effects-callback-container",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "effects-void",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "effects-foreach-action-discard",
+      "classification": "model-pending",
+      "reason": "Array callback or push semantics"
+    },
+    {
+      "id": "effects-loop-early-return",
+      "classification": "model-pending",
+      "reason": "Exact return propagation from a loop body requires a source-level loop/body composition not represented by Array.find."
+    },
+    {
+      "id": "effects-latent-returned-callback",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "mutation-postfix-result",
+      "classification": "model-pending",
+      "reason": "missing committed semantic operation"
+    },
+    {
+      "id": "mutation-compound-bitwise",
+      "classification": "model-pending",
+      "reason": "32-bit bitwise and Reference update semantics"
+    },
+    {
+      "id": "alias-branch-reassignment",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The corpus defect is compiler alias or mutation lowering; direct heap alias mutation does not exercise the source-level analysis path."
+    },
+    {
+      "id": "alias-field-reference",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The corpus defect is compiler alias or mutation lowering; direct heap alias mutation does not exercise the source-level analysis path."
+    },
+    {
+      "id": "alias-closure-array",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The corpus defect is compiler alias or mutation lowering; direct heap alias mutation does not exercise the source-level analysis path."
+    },
+    {
+      "id": "alias-duplicate-arguments",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The corpus defect is compiler alias or mutation lowering; direct heap alias mutation does not exercise the source-level analysis path."
+    },
+    {
+      "id": "alias-identity-return",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The corpus defect is compiler alias or mutation lowering; direct heap alias mutation does not exercise the source-level analysis path."
+    },
+    {
+      "id": "alias-loop-element",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The corpus defect is compiler alias or mutation lowering; direct heap alias mutation does not exercise the source-level analysis path."
+    },
+    {
+      "id": "alias-shorthand-spread",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The corpus defect is compiler alias or mutation lowering; direct heap alias mutation does not exercise the source-level analysis path."
+    },
+    {
+      "id": "alias-dynamic-index-postfix",
+      "classification": "model-pending",
+      "reason": "missing committed semantic operation"
+    },
+    {
+      "id": "alias-loop-condition-rebinding",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The corpus defect is compiler alias or mutation lowering; direct heap alias mutation does not exercise the source-level analysis path."
+    },
+    {
+      "id": "mutation-module-scalar",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The corpus defect is compiler alias or mutation lowering; direct heap alias mutation does not exercise the source-level analysis path."
+    },
+    {
+      "id": "mutation-captured-scalar",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The corpus defect is compiler alias or mutation lowering; direct heap alias mutation does not exercise the source-level analysis path."
+    },
+    {
+      "id": "mutation-object-spread-order",
+      "classification": "model-covered",
+      "scenarioIds": [
+        "corpus-model-probes"
+      ]
+    },
+    {
+      "id": "alias-wrapped-return",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The corpus defect is compiler alias or mutation lowering; direct heap alias mutation does not exercise the source-level analysis path."
+    },
+    {
+      "id": "mutation-member-write",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The corpus defect is compiler alias or mutation lowering; direct heap alias mutation does not exercise the source-level analysis path."
+    },
+    {
+      "id": "mutation-push-expression-position",
+      "classification": "model-pending",
+      "reason": "Array callback or push semantics"
+    },
+    {
+      "id": "mutation-evaluation-order",
+      "classification": "model-pending",
+      "reason": "Exact Reference evaluation for nested calls and member assignment is not yet represented by the model evaluator."
+    },
+    {
+      "id": "alias-destructuring-assignment",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "classes-instanceof-stub",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The corpus defect is compiler lowering; the prior vector exercised only a nearby model operation."
+    },
+    {
+      "id": "classes-do-constructor-effect",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "globals-shadowed-fetch",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "globals-random",
+      "classification": "model-pending",
+      "reason": "ScriptedPlatform accepts supplied random samples but does not enforce Math.random host mapping or the [0,1) domain."
+    },
+    {
+      "id": "globals-randomuuid-value",
+      "classification": "model-pending",
+      "reason": "crypto.randomUUID host semantics"
+    },
+    {
+      "id": "globals-typeof-stub",
+      "classification": "model-covered",
+      "scenarioIds": [
+        "corpus-model-probes"
+      ]
+    },
+    {
+      "id": "stdlib-parseint",
+      "classification": "model-pending",
+      "reason": "parseInt longest-prefix radix semantics"
+    },
+    {
+      "id": "stdlib-parsefloat",
+      "classification": "model-pending",
+      "reason": "parseFloat longest-prefix semantics"
+    },
+    {
+      "id": "globals-globalthis-fetch",
+      "classification": "model-pending",
+      "reason": "global object and fetch semantics"
+    },
+    {
+      "id": "globals-crypto-destructure",
+      "classification": "model-pending",
+      "reason": "crypto.randomUUID host semantics"
+    },
+    {
+      "id": "globals-console-arity",
+      "classification": "model-pending",
+      "reason": "variadic console formatting"
+    },
+    {
+      "id": "modules-canonical-type-import",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "modules-interface-anonymous-shape",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "modules-imported-arrow-effect",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "modules-custom-root-namespace",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "modules-three-type-cycle",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "modules-mutual-functions",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "objects-anonymous-shorthand-default",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "objects-renamed-shorthand-default",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "scale-if-continuation-exponential",
+      "classification": "scale",
+      "tests": [],
+      "reason": "This entry measures compiler or analysis growth rather than one semantic result."
+    },
+    {
+      "id": "scale-statement-parser-stack",
+      "classification": "scale",
+      "tests": [],
+      "reason": "This entry measures compiler or analysis growth rather than one semantic result."
+    },
+    {
+      "id": "scale-statement-lowering-stack",
+      "classification": "scale",
+      "tests": [],
+      "reason": "This entry measures compiler or analysis growth rather than one semantic result."
+    },
+    {
+      "id": "scale-alias-dag-heap",
+      "classification": "scale",
+      "tests": [],
+      "reason": "This entry measures compiler or analysis growth rather than one semantic result."
+    },
+    {
+      "id": "scale-callback-path-dag",
+      "classification": "scale",
+      "tests": [],
+      "reason": "This entry measures compiler or analysis growth rather than one semantic result."
+    },
+    {
+      "id": "scale-let-balance-quadratic",
+      "classification": "scale",
+      "tests": [],
+      "reason": "This entry measures compiler or analysis growth rather than one semantic result."
+    },
+    {
+      "id": "scale-wide-array-expression",
+      "classification": "scale",
+      "tests": [],
+      "reason": "This entry measures compiler or analysis growth rather than one semantic result."
+    },
+    {
+      "id": "scale-nested-conditional",
+      "classification": "scale",
+      "tests": [],
+      "reason": "This entry measures compiler or analysis growth rather than one semantic result."
+    },
+    {
+      "id": "scale-effect-fixed-point",
+      "classification": "scale",
+      "tests": [],
+      "reason": "This entry measures compiler or analysis growth rather than one semantic result."
+    },
+    {
+      "id": "selfhost-typemap-one-hole",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "proof-jsdoc-injection",
+      "classification": "proof-integrity",
+      "tests": [
+        "tests/js-trust.test.ts"
+      ],
+      "reason": "This is a trust, validation, or filesystem-integrity obligation rather than a JavaScript model execution."
+    },
+    {
+      "id": "proof-untracked-mutual-sorry",
+      "classification": "proof-integrity",
+      "tests": [
+        "tests/js-trust.test.ts"
+      ],
+      "reason": "This is a trust, validation, or filesystem-integrity obligation rather than a JavaScript model execution."
+    },
+    {
+      "id": "proof-project-lowering-sorry",
+      "classification": "proof-integrity",
+      "tests": [
+        "tests/js-trust.test.ts"
+      ],
+      "reason": "This is a trust, validation, or filesystem-integrity obligation rather than a JavaScript model execution."
+    },
+    {
+      "id": "proof-mutable-raw-degradation",
+      "classification": "proof-integrity",
+      "tests": [
+        "tests/js-trust.test.ts"
+      ],
+      "reason": "This is a trust, validation, or filesystem-integrity obligation rather than a JavaScript model execution."
+    },
+    {
+      "id": "proof-source-identifier-sorry",
+      "classification": "proof-integrity",
+      "tests": [
+        "tests/js-trust.test.ts"
+      ],
+      "reason": "This is a trust, validation, or filesystem-integrity obligation rather than a JavaScript model execution."
+    },
+    {
+      "id": "proof-output-symlink-escape",
+      "classification": "proof-integrity",
+      "tests": [
+        "tests/js-trust.test.ts"
+      ],
+      "reason": "This is a trust, validation, or filesystem-integrity obligation rather than a JavaScript model execution."
+    },
+    {
+      "id": "proof-namespace-traversal",
+      "classification": "proof-integrity",
+      "tests": [
+        "tests/js-trust.test.ts"
+      ],
+      "reason": "This is a trust, validation, or filesystem-integrity obligation rather than a JavaScript model execution."
+    },
+    {
+      "id": "proof-raw-placeholder-validation",
+      "classification": "proof-integrity",
+      "tests": [
+        "tests/js-trust.test.ts"
+      ],
+      "reason": "This is a trust, validation, or filesystem-integrity obligation rather than a JavaScript model execution."
+    },
+    {
+      "id": "proof-typescript-diagnostic",
+      "classification": "proof-integrity",
+      "tests": [
+        "tests/js-trust.test.ts"
+      ],
+      "reason": "This is a trust, validation, or filesystem-integrity obligation rather than a JavaScript model execution."
+    },
+    {
+      "id": "proof-duplicated-project-diagnostic",
+      "classification": "proof-integrity",
+      "tests": [
+        "tests/js-trust.test.ts"
+      ],
+      "reason": "This is a trust, validation, or filesystem-integrity obligation rather than a JavaScript model execution."
+    },
+    {
+      "id": "proof-tsconfig-strict-policy",
+      "classification": "proof-integrity",
+      "tests": [
+        "tests/js-trust.test.ts"
+      ],
+      "reason": "This is a trust, validation, or filesystem-integrity obligation rather than a JavaScript model execution."
+    }
+  ]
+}

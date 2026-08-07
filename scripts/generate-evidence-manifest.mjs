@@ -164,6 +164,13 @@ function countAt(counts, path) {
   return value;
 }
 
+function valueAt(value, path, label) {
+  if (typeof path !== 'string' || path.length === 0) fail(`${label} must be a non-empty string`);
+  let result = value;
+  for (const part of path.split('.')) result = object(result, label)[part];
+  return result;
+}
+
 function validateCounts(value, label = 'counts') {
   const record = object(value, label);
   if (Object.keys(record).length === 0) fail(`${label} must not be empty`);
@@ -269,7 +276,13 @@ function validationText(path, revision, label) {
 
 function validateEvidence(input) {
   const validation = object(input.validation, 'validation');
-  exactKeys(validation, ['testFiles', 'todos', 'corpus', 'lineCounts'], 'validation');
+  exactKeys(
+    validation,
+    validation.jsonMetrics === undefined
+      ? ['testFiles', 'todos', 'corpus', 'lineCounts']
+      : ['testFiles', 'todos', 'corpus', 'lineCounts', 'jsonMetrics'],
+    'validation',
+  );
 
   exactKeys(
     validation.testFiles,
@@ -349,6 +362,38 @@ function validateEvidence(input) {
     const actual = lines.filter((line) => line.startsWith(lineCount.prefix)).length;
     const expected = countAt(input.counts, lineCount.countPath);
     if (actual !== expected) fail(`expected ${expected} matching lines in ${lineCount.path}, found ${actual}`);
+  }
+
+  if (validation.jsonMetrics !== undefined) {
+    if (!Array.isArray(validation.jsonMetrics)) fail('validation.jsonMetrics must be an array');
+    for (const [index, metric] of validation.jsonMetrics.entries()) {
+      const label = `validation.jsonMetrics[${index}]`;
+      const expectedKeys =
+        metric.where === undefined
+          ? ['path', 'jsonPath', 'countPath', 'measure']
+          : ['path', 'jsonPath', 'countPath', 'measure', 'where'];
+      exactKeys(metric, expectedKeys, label);
+      if (!['value', 'length', 'count'].includes(metric.measure)) fail(`${label}.measure is invalid`);
+      if (metric.where !== undefined) {
+        exactKeys(metric.where, ['path', 'equals'], `${label}.where`);
+        if (metric.measure !== 'count') fail(`${label}.where requires count measurement`);
+      }
+      const document = JSON.parse(validationText(metric.path, undefined, `${label}.path`));
+      const selected = valueAt(document, metric.jsonPath, `${label}.jsonPath`);
+      let actual;
+      if (metric.measure === 'value') actual = selected;
+      else {
+        if (!Array.isArray(selected)) fail(`${label}.jsonPath must select an array`);
+        actual =
+          metric.measure === 'length'
+            ? selected.length
+            : selected.filter(
+                (entry) => valueAt(entry, metric.where.path, `${label}.where.path`) === metric.where.equals,
+              ).length;
+      }
+      const expected = countAt(input.counts, metric.countPath);
+      if (actual !== expected) fail(`${label} expected ${expected}, found ${String(actual)}`);
+    }
   }
 
   return expectedTodos;

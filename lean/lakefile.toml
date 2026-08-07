@@ -15,12 +15,8 @@ name = "js-array-scale-tests"
 root = "TSLean.JS.ArrayScaleTests"
 
 [[lean_exe]]
-name = "js-primitive-oracle"
-root = "TSLean.JS.PrimitiveOracleTests"
-
-[[lean_exe]]
-name = "js-abstract-operations-oracle"
-root = "TSLean.JS.AbstractOperationsOracleTests"
+name = "js-model-oracle"
+root = "TSLean.JS.Oracle.Main"
 
 # Note: Veil (verse-lab/veil) requires Lean v4.24.0 + Mathlib + lean-smt.
 # Our runtime targets Lean v4.29.0 (no external deps).

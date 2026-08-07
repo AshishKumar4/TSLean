@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase1-abstract-ops-manifest.json",
-  "baseRevision": "3d4da073e94666ff8576b71e80c173420299a58e",
+  "outputPath": "evidence/phase1-differential-manifest.json",
+  "baseRevision": "be709a49dd663bef8c37545a58a80a8403381839",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": {
-      "files": 44,
-      "passed": 1611,
+      "files": 43,
+      "passed": 1632,
       "failed": 0,
       "todo": 8
     },
@@ -19,7 +19,24 @@
       "red": 102
     },
     "auditedTheorems": 199,
-    "differentialScenarios": 97,
+    "differential": {
+      "scenarioGroups": 16,
+      "fixed": 734,
+      "generated": 6530,
+      "comparisons": 7264,
+      "uniqueOperationInputs": 6088,
+      "preservedDuplicates": 1176,
+      "legacyInventoryIds": 97,
+      "coverage": {
+        "total": 102,
+        "modelCovered": 13,
+        "compilerOnly": 43,
+        "modelPending": 26,
+        "proofIntegrity": 11,
+        "scale": 9
+      },
+      "aggregateFixtureBudget": 65536
+    },
     "lint": "passed",
     "build": "passed"
   },
@@ -165,35 +182,123 @@
     "testFiles": {
       "directory": "tests",
       "suffix": ".test.ts",
-      "countPath": "tests.files",
-      "revision": "be709a49dd663bef8c37545a58a80a8403381839"
+      "countPath": "tests.files"
     },
     "todos": {
       "directory": "tests",
       "suffix": ".test.ts",
-      "countPath": "tests.todo",
-      "revision": "be709a49dd663bef8c37545a58a80a8403381839"
+      "countPath": "tests.todo"
     },
     "corpus": {
       "path": "spec/corpus/counterexamples.json",
       "entriesPath": "corpus.entries",
-      "redPath": "corpus.red",
-      "revision": "be709a49dd663bef8c37545a58a80a8403381839"
+      "redPath": "corpus.red"
     },
-    "lineCounts": []
+    "lineCounts": [],
+    "jsonMetrics": [
+      {
+        "path": "spec/differential/manifest.json",
+        "jsonPath": "scenarioCount",
+        "countPath": "differential.scenarioGroups",
+        "measure": "value"
+      },
+      {
+        "path": "spec/differential/manifest.json",
+        "jsonPath": "fixedCount",
+        "countPath": "differential.fixed",
+        "measure": "value"
+      },
+      {
+        "path": "spec/differential/manifest.json",
+        "jsonPath": "generatedCount",
+        "countPath": "differential.generated",
+        "measure": "value"
+      },
+      {
+        "path": "spec/differential/manifest.json",
+        "jsonPath": "comparisonCount",
+        "countPath": "differential.comparisons",
+        "measure": "value"
+      },
+      {
+        "path": "spec/differential/manifest.json",
+        "jsonPath": "uniqueOperationInputCount",
+        "countPath": "differential.uniqueOperationInputs",
+        "measure": "value"
+      },
+      {
+        "path": "spec/differential/manifest.json",
+        "jsonPath": "parityDuplicateCount",
+        "countPath": "differential.preservedDuplicates",
+        "measure": "value"
+      },
+      {
+        "path": "spec/differential/legacy-abstract-inventory.json",
+        "jsonPath": "totalEntries",
+        "countPath": "differential.legacyInventoryIds",
+        "measure": "value"
+      },
+      {
+        "path": "spec/differential/corpus-coverage.json",
+        "jsonPath": "entries",
+        "countPath": "differential.coverage.total",
+        "measure": "length"
+      },
+      {
+        "path": "spec/differential/corpus-coverage.json",
+        "jsonPath": "entries",
+        "countPath": "differential.coverage.modelCovered",
+        "measure": "count",
+        "where": { "path": "classification", "equals": "model-covered" }
+      },
+      {
+        "path": "spec/differential/corpus-coverage.json",
+        "jsonPath": "entries",
+        "countPath": "differential.coverage.compilerOnly",
+        "measure": "count",
+        "where": { "path": "classification", "equals": "compiler-only" }
+      },
+      {
+        "path": "spec/differential/corpus-coverage.json",
+        "jsonPath": "entries",
+        "countPath": "differential.coverage.modelPending",
+        "measure": "count",
+        "where": { "path": "classification", "equals": "model-pending" }
+      },
+      {
+        "path": "spec/differential/corpus-coverage.json",
+        "jsonPath": "entries",
+        "countPath": "differential.coverage.proofIntegrity",
+        "measure": "count",
+        "where": { "path": "classification", "equals": "proof-integrity" }
+      },
+      {
+        "path": "spec/differential/corpus-coverage.json",
+        "jsonPath": "entries",
+        "countPath": "differential.coverage.scale",
+        "measure": "count",
+        "where": { "path": "classification", "equals": "scale" }
+      },
+      {
+        "path": "spec/differential/manifest.json",
+        "jsonPath": "bounds.aggregateDenseArrayCells",
+        "countPath": "differential.aggregateFixtureBudget",
+        "measure": "value"
+      }
+    ]
   },
   "hashGroups": {
     "source": {
-      "paths": ["src"],
-      "revision": "be709a49dd663bef8c37545a58a80a8403381839"
+      "paths": ["src"]
     },
     "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "be709a49dd663bef8c37545a58a80a8403381839"
+      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
     },
     "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "be709a49dd663bef8c37545a58a80a8403381839"
+      "paths": ["spec/corpus"]
+    },
+    "differentialSpec": {
+      "paths": ["spec/differential"]
     },
     "infrastructure": {
       "paths": [
@@ -201,16 +306,19 @@
         "vitest.config.ts",
         "scripts/generate-evidence-manifest.mjs",
         "scripts/check-js-axioms.mjs",
+        "scripts/check-differential-inventory.mjs",
+        "scripts/differential-manifest-lib.d.mts",
+        "scripts/differential-manifest-lib.mjs",
+        "scripts/generate-differential-manifest.mjs",
         "tests/js-trust.test.ts",
-        "tests/js-primitives-differential.test.ts",
-        "tests/js-abstract-operations-differential.test.ts",
-        "tests/lean-fixtures/axiom-audit-synthetic.lean",
+        "tests/js-model-differential.test.ts",
+        "tests/differential",
+        "tests/helpers/json-schema.ts",
+        "tests/corpus-schema.test.ts",
         "tests/package.test.ts",
-        "lean/TSLean/JS/PrimitiveOracleTests.lean",
-        "lean/TSLean/JS/AbstractOperationsOracleTests.lean",
+        "tests/lean-fixtures/axiom-audit-synthetic.lean",
         "lean/lakefile.toml"
-      ],
-      "revision": "be709a49dd663bef8c37545a58a80a8403381839"
+      ]
     }
   }
 }

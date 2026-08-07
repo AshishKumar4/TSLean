@@ -428,3 +428,84 @@ $ git diff --check
 The deliberate manifest tamper changed only the checked source hash, was rejected at that exact line, and was followed by canonical regeneration. `evidence/phase1-primitive-ops-input.json` now resolves every source-derived validation and hash group from immutable revision `3d4da073e94666ff8576b71e80c173420299a58e`; its manifest remains byte-for-byte unchanged at SHA-256 `797332bca03e552b0a19d75043f771ca33966a6c366542a2bbd46d94dc2f10e9`. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target abstract-ops evidence. Explicit baseline, primitives, heap, execution, callable, arrays, and primitive-ops generate/check commands preserve historical reproduction.
 
 The abstract-ops manifest hashes are source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, full JS runtime and barrel `sha256:fe8d344efff4f461715a03a1b508f9f1d3f135cd3534f7b65ad9f030383eed30`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, and infrastructure `sha256:77a09f7cc95d2e58d2d253669d41042757625de0b14990a1c11df2a14128675f`. Infrastructure includes both Node differential tests, both Lean oracle sources, the lake targets, trust and evidence scripts, package verification wiring, the synthetic trust fixture, and package-surface test. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and are not presented as repository-wide soundness.
+
+## 2026-08-07 - Generic model differential harness
+
+This evidence is based on `be709a49dd663bef8c37545a58a80a8403381839` on `rebuild/semantic-core`. The preceding abstract-operations input now resolves its test, todo, corpus, source, runtime, and infrastructure checks from that immutable revision. Its legacy oracle and differential files remain deleted from the current tree; Git objects at `be709a4` preserve their historical validation and hashes. `evidence:abstract-ops:generate` and `evidence:abstract-ops:check` preserve explicit reproduction alongside every earlier historical command. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target `phase1-differential-input.json`.
+
+The generic protocol is newline-delimited JSON. Each request carries an ID, registered operation, and one or two canonical fixtures; each response repeats the correlated ID and contains either a canonical observation or a protocol error. Number values use unsigned decimal binary64 bits, strings use exact UTF-16 code units, BigInts use canonical decimal, and object/error/symbol identities are structural rather than host stringification. Graph observations assign reference identities in encounter order across completion, trace, selected roots, prototypes, and descriptors. The suite stores no expected Node output.
+
+The JavaScript side executes the registered source against materialized fixtures in an actual Node VM with fresh intrinsic objects. The Lean side is the compiled `js-model-oracle` process. One persistent child serves a batch and is also tested across repeated batches, explicit restart, and a fresh process. The harness rejects CR/LF record injection, malformed or excess output, bad response correlation, missing executables, timeouts, and invalid fixture domains. It allows one active batch, uses a 30-second request timeout, a 5-second close timeout, and a 64 KiB stderr limit, waits for write completion and drain before resolving, and kills a failed child before a later clean start.
+
+The generated manifest contains 16 scenario groups, 734 fixed vectors, 6,530 generated vectors, and 7,264 Node/Lean comparisons. There are 6,088 unique operation/input pairs. The remaining 1,176 entries are intentionally preserved duplicates under `preserved-for-v1-parity`; generation does not silently deduplicate or resample them. The deleted abstract harness is anchored by 97 inventory IDs at `be709a4`.
+
+Corpus coverage is classification accounting, not a conformance percentage: all 102 red entries are present exactly once, with 13 model-covered, 43 compiler-only, 26 model-pending, 11 proof-integrity, and 9 scale entries. Only the 13 exact model-covered entries have bidirectional links to committed model vectors. Compiler-only, pending, proof-integrity, and scale entries are not represented as model coverage.
+
+Validation bounds are part of the measured protocol. Strings contain at most 65,536 UTF-16 code units; array indices are at most 65,535; all nonempty arrays in one graph share an aggregate dense-materialization budget of 65,536 cells. Graphs are additionally capped at 1,024 nodes and bindings, 4,096 properties per node, 65,536 elements per node, 1,024 script events and cases, and 1,024 fixture roots. Both JavaScript and Lean reject over-budget fixtures before materialization.
+
+The differential manifest carries forward all 11 formal-debt obligations unchanged: four ordered-property obligations, two heap obligations, one blocked-array-shrink obligation, three hook-conditional preservation obligations, and one effectful-coercion refinement obligation. It also carries the four executable Float assumptions for bit conversion, arithmetic, ordering, and `Float.ofScientific`. The 199 audited declarations, executable comparisons, and invariant checks do not discharge those obligations or turn the Float assumptions into proof theorems.
+
+Commands and results:
+
+```text
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase1-differential-manifest.json
+354abd947b6875df7c87ffa4e3eb0abef95cf55ee5578cf232710c4b79f59194  evidence/phase1-differential-manifest.json
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase1-differential-manifest.json
+354abd947b6875df7c87ffa4e3eb0abef95cf55ee5578cf232710c4b79f59194  evidence/phase1-differential-manifest.json
+
+$ bun run evidence:check
+Cannot generate evidence manifest: evidence/phase1-differential-manifest.json is stale at line 191
+$ bun run evidence:generate
+$ bun run evidence:check
+
+$ bun run evidence:baseline:check
+$ bun run evidence:primitives:check
+$ bun run evidence:heap:check
+$ bun run evidence:execution:check
+$ bun run evidence:callable:check
+$ bun run evidence:arrays:check
+$ bun run evidence:primitive-ops:check
+$ bun run evidence:abstract-ops:check
+
+$ bun run differential:check
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+
+$ bun run js:trust
+JS trust checks passed: 199 elaborated proof declarations
+JS trust gate passed: 199 proof declarations
+
+$ bun scripts/check-js-axioms.mjs --self-test
+synthetic environment audit passed
+
+$ /usr/bin/time -p ./node_modules/.bin/vitest run tests/js-model-differential.test.ts
+Test Files  1 passed (1)
+Tests  29 passed (29)
+Duration  7.67s (tests 7.20s)
+real 8.56
+user 4.97
+sys 0.95
+
+$ /usr/bin/time -p bun run verify
+All matched files use Prettier code style!
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+JS trust checks passed: 199 elaborated proof declarations
+JS trust gate passed: 199 proof declarations
+Test Files  43 passed (43)
+Tests  1632 passed | 8 todo (1640)
+Build completed successfully (172 jobs).
+real 102.74
+user 127.29
+sys 11.64
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 304
+Unpacked size: 7.73MB
+
+$ git diff --check
+```
+
+The deliberate tamper changed only the checked source hash and was rejected at that exact manifest line before canonical regeneration. The manifest hashes source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, full JS runtime and oracle `sha256:a569c99166aaf9a4f7aaa2827cfac2fe3f6dc79f05397d545222b372132e2051`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and generated inventory `sha256:ba957241f80001ed5eb3b3a71410030bd7b1759d4cb29e02babda6424a8c37ed`, and evidence, trust, generator, harness, test, package, Vitest, and lake infrastructure `sha256:eba39a3065cbdee070498d5f59c6dbccc22199d99b6af3f52d89326727d5e9c6`. The full build retains the existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary; none were suppressed or changed.
