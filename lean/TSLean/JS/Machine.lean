@@ -21,6 +21,76 @@ structure EnvironmentRecord where
   parent : Option EnvId
   bindings : Std.HashMap JSString CellId
 
+/-- Realm-owned prototype identities required by primitive wrapper allocation. -/
+structure RealmIntrinsics where
+  objectPrototype : RefId
+  booleanPrototype : RefId
+  numberPrototype : RefId
+  stringPrototype : RefId
+  bigintPrototype : RefId
+  symbolPrototype : RefId
+  deriving DecidableEq
+
+namespace RealmIntrinsics
+
+/-- Selects the realm prototype for a boxable primitive. -/
+def prototypeFor? (intrinsics : RealmIntrinsics) : Primitive → Option RefId
+  | .boolean _ => some intrinsics.booleanPrototype
+  | .number _ => some intrinsics.numberPrototype
+  | .string _ => some intrinsics.stringPrototype
+  | .bigint _ => some intrinsics.bigintPrototype
+  | .symbol _ => some intrinsics.symbolPrototype
+  | .undefined | .null => none
+
+private def hasPrototype (heap : Heap) (ref : RefId) (prototype : Option RefId) : Bool :=
+  match heap.get? ref with
+  | .ok object => object.prototype = prototype
+  | .error _ => false
+
+private def hasKind (heap : Heap) (ref : RefId) (kind : ObjectKind) : Bool :=
+  heap.objectKind? ref = some kind
+
+/-- Validates the stable intrinsic identities and the object kinds/internal slots they denote. -/
+def intrinsicsRefsValid (intrinsics : RealmIntrinsics) (heap : Heap) : Bool :=
+  let primitivePrototypes := [intrinsics.booleanPrototype, intrinsics.numberPrototype,
+    intrinsics.stringPrototype, intrinsics.bigintPrototype, intrinsics.symbolPrototype]
+  (intrinsics.objectPrototype :: primitivePrototypes).Nodup &&
+  hasKind heap intrinsics.objectPrototype .ordinary &&
+  hasKind heap intrinsics.booleanPrototype (.primitiveWrapper ⟨.boolean false⟩) &&
+  hasKind heap intrinsics.numberPrototype
+    (.primitiveWrapper ⟨.number JSNumber.positiveZero⟩) &&
+  hasKind heap intrinsics.stringPrototype
+    (.primitiveWrapper ⟨.string (JSString.ofLeanString "")⟩) &&
+  hasKind heap intrinsics.bigintPrototype .ordinary &&
+  hasKind heap intrinsics.symbolPrototype .ordinary
+
+/-- Validates the exact prototype graph required when a realm is first bootstrapped. -/
+def bootstrapTopologyValid (intrinsics : RealmIntrinsics) (heap : Heap) : Bool :=
+  intrinsics.intrinsicsRefsValid heap &&
+  hasPrototype heap intrinsics.objectPrototype none &&
+  [intrinsics.booleanPrototype, intrinsics.numberPrototype, intrinsics.stringPrototype,
+    intrinsics.bigintPrototype, intrinsics.symbolPrototype].all
+      (hasPrototype heap · (some intrinsics.objectPrototype))
+
+/-- Bootstrap topology includes the complete ongoing intrinsic-reference invariant. -/
+theorem bootstrapTopologyValid_implies_intrinsicsRefsValid (intrinsics : RealmIntrinsics)
+    (heap : Heap) (valid : intrinsics.bootstrapTopologyValid heap = true) :
+    intrinsics.intrinsicsRefsValid heap = true := by
+  simp [bootstrapTopologyValid] at valid
+  exact valid.1.1
+
+/-- Legal prototype mutation preserves intrinsic identities and their object kinds/internal slots. -/
+theorem intrinsicsRefsValid_setPrototypeOf (intrinsics : RealmIntrinsics) (heap next : Heap)
+    (target : RefId) (prototype : Option RefId) (success : Bool)
+    (valid : intrinsics.intrinsicsRefsValid heap = true)
+    (updated : heap.setPrototypeOf target prototype = .ok (success, next)) :
+    intrinsics.intrinsicsRefsValid next = true := by
+  unfold intrinsicsRefsValid hasKind at valid ⊢
+  simp only [Heap.setPrototypeOf_preserves_objectKind heap next target prototype success updated]
+  exact valid
+
+end RealmIntrinsics
+
 /-- Observable execution events, stored in reverse order by `Machine`. -/
 inductive TraceEvent where
   | emitted (message : JSString)
@@ -41,6 +111,8 @@ inductive RuntimeFault where
   | escapingFunctionControl
   | danglingEscapingValue (ref : RefId)
   | unsupportedDerivedConstruction (constructor : RefId)
+  | realmNotInitialized
+  | invalidRealmIntrinsics
   deriving DecidableEq
 
 /-- A total machine with append-only identity arenas and newest-first trace storage. -/
@@ -50,6 +122,7 @@ structure Machine (P : Platform) where
   cells : Array Cell
   environments : Array EnvironmentRecord
   currentEnv : EnvId
+  intrinsics : Option RealmIntrinsics
   platform : P.State
   reverseTrace : List TraceEvent
   fuel : Nat
@@ -58,7 +131,7 @@ namespace Machine
 
 /-- Creates a machine containing one valid global lexical environment at identity zero. -/
 def initial (P : Platform) (fuel : Nat) : Machine P :=
-  .mk Heap.empty #[] #[⟨none, Std.HashMap.emptyWithCapacity⟩] ⟨0⟩ P.initialState [] fuel
+  .mk Heap.empty #[] #[⟨none, Std.HashMap.emptyWithCapacity⟩] ⟨0⟩ none P.initialState [] fuel
 
 /-- Returns the root global environment identity. -/
 def globalEnv (_machine : Machine P) : EnvId := ⟨0⟩
@@ -68,6 +141,23 @@ def trace (machine : Machine P) : List TraceEvent := machine.reverseTrace.revers
 
 /-- Replaces the committed heap. -/
 def setHeap (machine : Machine P) (heap : Heap) : Machine P := { machine with heap }
+
+/-- Installs validated realm prototype identities without changing heap or execution state. -/
+def installRealmIntrinsics (machine : Machine P) (intrinsics : RealmIntrinsics) :
+    Except RuntimeFault (Machine P) :=
+  if intrinsics.bootstrapTopologyValid machine.heap then
+    .ok { machine with intrinsics := some intrinsics }
+  else .error .invalidRealmIntrinsics
+
+/-- Successful realm installation certifies the exact one-time bootstrap topology. -/
+theorem installRealmIntrinsics_requires_bootstrapTopology (machine next : Machine P)
+    (intrinsics : RealmIntrinsics)
+    (installed : machine.installRealmIntrinsics intrinsics = .ok next) :
+    intrinsics.bootstrapTopologyValid machine.heap = true := by
+  unfold installRealmIntrinsics at installed
+  split at installed
+  · assumption
+  · contradiction
 
 /-- Replaces pure platform state. -/
 def setPlatform (machine : Machine P) (platform : P.State) : Machine P := { machine with platform }
@@ -153,6 +243,9 @@ private def cellValid (machine : Machine P) (cell : Cell) : Bool :=
   | .uninitialized => true
   | .initialized value => machine.heap.valueValid value
 
+private def realmValid (machine : Machine P) : Bool :=
+  machine.intrinsics.all (·.intrinsicsRefsValid machine.heap)
+
 /-- Executable complete machine invariant, including heap validity, arena references, acyclic
 environment parents, binding cells, current environment, and every function's captured environment. -/
 def isWellFormed (machine : Machine P) : Bool :=
@@ -160,6 +253,7 @@ def isWellFormed (machine : Machine P) : Bool :=
   machine.currentEnv.value < machine.environments.size &&
   machine.cells.toList.all (cellValid machine) &&
   machine.environments.toList.zipIdx.all (environmentValidAt machine) &&
+  realmValid machine &&
   machine.heap.functionEnvironments.all fun environment =>
     environment.value < machine.environments.size
 
@@ -173,7 +267,7 @@ theorem initial_wellFormed (P : Platform) (fuel : Nat) :
   simp only [WellFormed, isWellFormed, initial]
   rw [heapValid]
   simp [environmentValidAt, environmentTerminates, Heap.functionEnvironments,
-    Heap.functionSlotList, Heap.empty]
+    Heap.functionSlotList, Heap.empty, realmValid]
 
 end Machine
 end TSLean.JS

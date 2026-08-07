@@ -1,4 +1,5 @@
 import TSLean.JS.Instanceof
+import TSLean.JS.RealmTestSupportTests
 
 namespace TSLean.JS.FunctionScaleTests
 
@@ -25,10 +26,12 @@ private def run : IO Unit := do
   let functionValidityMs := (← IO.monoMsNow) - functionValidityStart
   assert! functionValidityMs < 5000
 
-  let machine := Machine.initial platform 0
-  let (objectPrototype, heap) ← match machine.heap.allocate with
-    | .ok result => pure result
-    | .error _ => throw (IO.userError "object prototype allocation failed")
+  let realm ← match RealmTestSupport.bootstrap (Machine.initial platform 0) with
+    | .ok fixture => pure fixture
+    | .error _ => throw (IO.userError "realm bootstrap failed")
+  let machine := realm.machine
+  let objectPrototype := realm.intrinsics.objectPrototype
+  let heap := machine.heap
   let (functionPrototype, heap) ← match heap.allocate (some objectPrototype) with
     | .ok result => pure result
     | .error _ => throw (IO.userError "function prototype allocation failed")
@@ -51,6 +54,7 @@ private def run : IO Unit := do
   let lookupMs := (← IO.monoMsNow) - lookupStart
   let chainValidityStart ← IO.monoMsNow
   assert! heap.isWellFormed
+  assert! (machine.setHeap heap).isWellFormed
   let chainValidityMs := (← IO.monoMsNow) - chainValidityStart
   match result with
   | .done (.normal true) _ => pure ()

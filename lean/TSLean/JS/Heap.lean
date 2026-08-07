@@ -128,6 +128,12 @@ def get? (heap : Heap) (ref : RefId) : Except HeapFault ObjectRecord :=
   | some object => .ok object
   | none => .error (.invalidRef ref)
 
+/-- Reads an object's internal-method kind without exposing its record constructor. -/
+def objectKind? (heap : Heap) (ref : RefId) : Option ObjectKind :=
+  match heap.get? ref with
+  | .ok object => some object.kind
+  | .error _ => none
+
 private def validPrototype (heap : Heap) : Option RefId → Bool
   | none => true
   | some ref => ref.value < heap.size
@@ -179,6 +185,33 @@ private def replace (heap : Heap) (ref : RefId) (object : ObjectRecord) : Except
   if inBounds : ref.value < heap.objects.size then
     .ok (.mk (heap.objects.set ref.value object inBounds) heap.nextFunctionId)
   else .error (.invalidRef ref)
+
+private theorem replace_preserves_objectKind (heap next : Heap) (target ref : RefId)
+    (current replacement : ObjectRecord) (found : heap.get? target = .ok current)
+    (sameKind : replacement.kind = current.kind)
+    (replaced : heap.replace target replacement = .ok next) :
+    next.objectKind? ref = heap.objectKind? ref := by
+  unfold replace at replaced
+  split at replaced
+  · cases replaced
+    unfold objectKind? get?
+    by_cases sameRef : ref = target
+    · subst ref
+      cases lookup : heap.objects[target.value]? with
+      | none => simp [get?, lookup] at found
+      | some object =>
+          have objectEq : object = current := by simpa [get?, lookup] using found
+          subst object
+          simp [sameKind]
+    · have differentIndex : ref.value ≠ target.value := by
+        intro equal
+        apply sameRef
+        cases ref
+        cases target
+        simp_all
+      have reverseIndex : target.value ≠ ref.value := Ne.symm differentIndex
+      simp [reverseIndex]
+  · contradiction
 
 /-- Exact binary64 encoding of a valid array length. This uses integer bit construction rather than
 an unproved bridge through Lean `Float`. -/
@@ -730,6 +763,67 @@ def setPrototypeOf (heap : Heap) (ref : RefId) (prototype : Option RefId) :
             | .ok true => .ok (false, heap)
             | .ok false =>
                 heap.replace ref { object with prototype := some parent } |>.map fun next => (true, next)
+
+/-- Prototype mutation preserves every object's internal-method kind. -/
+theorem setPrototypeOf_preserves_objectKind (heap next : Heap) (target : RefId)
+    (prototype : Option RefId) (success : Bool)
+    (updated : heap.setPrototypeOf target prototype = .ok (success, next)) (ref : RefId) :
+    next.objectKind? ref = heap.objectKind? ref := by
+  unfold setPrototypeOf at updated
+  cases foundEq : heap.get? target with
+  | error fault => simp [foundEq] at updated
+  | ok object =>
+      rw [foundEq] at updated
+      by_cases same : object.prototype = prototype
+      · simp [same] at updated
+        obtain ⟨rfl, rfl⟩ := updated
+        rfl
+      · cases extensibleEq : object.extensible with
+        | false =>
+          simp [same, extensibleEq] at updated
+          obtain ⟨rfl, rfl⟩ := updated
+          rfl
+        | true => cases prototype with
+          | none =>
+              simp [same, extensibleEq] at updated
+              let replacement := { object with prototype := none, extensible := true }
+              cases replaceEq : heap.replace target replacement with
+              | error fault =>
+                  dsimp [replacement] at replaceEq
+                  rw [replaceEq] at updated
+                  contradiction
+              | ok replacedHeap =>
+                  dsimp [replacement] at replaceEq
+                  rw [replaceEq] at updated
+                  change Except.ok (true, replacedHeap) = Except.ok (success, next) at updated
+                  obtain ⟨rfl, rfl⟩ := updated
+                  exact replace_preserves_objectKind heap next target ref object
+                    { object with prototype := none, extensible := true } foundEq rfl replaceEq
+          | some parent =>
+              cases reachEq : heap.reachesWithFuel target (heap.size + 1) parent with
+              | error fault => simp [same, extensibleEq, reachEq] at updated
+              | ok reached =>
+                  cases reached with
+                  | false =>
+                      simp [same, extensibleEq, reachEq] at updated
+                      let replacement := { object with prototype := some parent, extensible := true }
+                      cases replaceEq : heap.replace target replacement with
+                      | error fault =>
+                          dsimp [replacement] at replaceEq
+                          rw [replaceEq] at updated
+                          contradiction
+                      | ok replacedHeap =>
+                          dsimp [replacement] at replaceEq
+                          rw [replaceEq] at updated
+                          change Except.ok (true, replacedHeap) = Except.ok (success, next) at updated
+                          obtain ⟨rfl, rfl⟩ := updated
+                          exact replace_preserves_objectKind heap next target ref object
+                            { object with prototype := some parent, extensible := true }
+                            foundEq rfl replaceEq
+                  | true =>
+                      simp [same, extensibleEq, reachEq] at updated
+                      obtain ⟨rfl, rfl⟩ := updated
+                      rfl
 
 private def callableReferenceValid (heap : Heap) (ref : RefId) : Bool :=
   match heap.isCallable ref with

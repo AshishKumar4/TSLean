@@ -1,4 +1,5 @@
 import TSLean.JS.Copy
+import TSLean.JS.RealmTestSupportTests
 import TSLean.JS.Typeof
 
 namespace TSLean.JS.CopyTests
@@ -42,10 +43,14 @@ private structure Fixture where
   throwingGetter : RefId
   setter : RefId
   nested : RefId
+  intrinsics : RealmIntrinsics
   machine : Machine platform
 
 private def fixture : IO Fixture := do
-  let machine := Machine.initial platform 10000
+  let realm ← match RealmTestSupport.bootstrap (Machine.initial platform 10000) with
+    | .ok fixture => pure fixture
+    | .error _ => throw (IO.userError "realm bootstrap failed")
+  let machine := realm.machine
   let (prototype, heap) ← allocateObject machine.heap
   let heap ← data heap prototype (key "inherited") (bigint 99)
   let (target, heap) ← allocateObject heap
@@ -70,7 +75,8 @@ private def fixture : IO Fixture := do
     set := .present (some setter)
     enumerable := .present true
     configurable := .present true }
-  pure ⟨target, source, getter, throwingGetter, setter, nested, machine.setHeap heap⟩
+  pure ⟨target, source, getter, throwingGetter, setter, nested, realm.intrinsics,
+    machine.setHeap heap⟩
 
 private def hook (fixture : Fixture) : BodyHook platform := fun function receiver arguments =>
   if function = fixture.getter then JSM.returnJS (bigint 7)
@@ -143,7 +149,9 @@ private def testPrimitiveBoxing : IO Unit := do
   match machine.heap.get? boxedRef with
   | .ok object =>
       match object.kind with
-      | .primitiveWrapper slots => assert! slots.value = .boolean true
+      | .primitiveWrapper slots =>
+          assert! slots.value = .boolean true
+          assert! object.prototype = some fixture.intrinsics.booleanPrototype
       | _ => assert! false
   | _ => assert! false
   assert! ownValue machine.heap boxedRef (key "0") =
@@ -153,6 +161,7 @@ private def testPrimitiveBoxing : IO Unit := do
   match Value.typeof machine.heap (.object boxedRef) with
   | .ok .object => pure ()
   | _ => assert! false
+  assert! machine.isWellFormed
 
   let (spread, machine) ← runNormal
     (Copy.objectSpread (hook fixture)

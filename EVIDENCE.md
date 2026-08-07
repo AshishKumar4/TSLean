@@ -368,3 +368,63 @@ $ git diff --check
 A deliberately changed primitive-ops source hash was rejected by `evidence:check` as stale at manifest line 167 before regeneration. `evidence/phase1-arrays-input.json` now resolves all source-derived validations and hash groups from immutable revision `3450468e82ccf70895ba892c636c707d851b4162`; its manifest remains byte-for-byte unchanged at SHA-256 `533cdabb76d201e7e52252c5ee52ca465f74dd6e2bff61da6585e082da82a4f8`. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target primitive-ops evidence. Explicit baseline, primitives, heap, execution, callable, and arrays generate/check commands preserve historical reproduction.
 
 The primitive-ops manifest hashes are source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, full JS runtime `sha256:07a6194373dfe7b3aa30a70eff52e2dc5fe64d824ee21088a62299f0e5d3ed4b`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, and infrastructure `sha256:b2ba80be809c030f0b392ef81bd176f442abdfd12b0e9e35290aa071e59c9097`. Infrastructure includes the evidence and trust generators, Node differential test, Lean oracle source, and lake target definition. The full build retains existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary; they are neither suppressed nor presented as repository-wide soundness.
+
+## 2026-08-06 - Phase 1 value-level abstract operations
+
+This slice is based on `3d4da073e94666ff8576b71e80c173420299a58e` on `rebuild/semantic-core`. The public abstract-operation API adds `PreferredType`; `AbstractOperations.getMethod`, `ordinaryToPrimitive`, `toPrimitive`, `toNumber`, `toString`, `toNumeric`, `toPropertyKey`, and `toObject`; `AbstractEquality.looseEqual`, `add`, `relationalComparison`, `lessThan`, `greaterThan`, `lessThanOrEqual`, and `greaterThanOrEqual`; and `Instanceof.reachesPrototype`, `ordinaryHasInstance`, `functionPrototypeHasInstance`, and `instanceofOperator`. `RealmIntrinsics`, `prototypeFor?`, `intrinsicsRefsValid`, `bootstrapTopologyValid`, and `Machine.installRealmIntrinsics` make primitive-wrapper identities and realm installation explicit.
+
+`GetMethod` performs observable property access, treats `undefined` and `null` as absence, and throws for every other non-callable value. `OrdinaryToPrimitive` reads and calls `valueOf`/`toString` in number/default order or `toString`/`valueOf` in string order. `ToPrimitive` dispatches `Symbol.toPrimitive`, passes the requested hint, requires a primitive result, and otherwise uses the ordinary path. The value-level conversions preserve getter/call effects and abrupt completions. `ToObject` preserves valid object identity, throws for nullish values, reports an uninitialized or invalid realm as a model fault, and allocates non-nullish wrappers with the configured realm prototype.
+
+The checked test bootstrap constructs explicit Object, Boolean, Number, String, BigInt, and Symbol prototype identities and an explicit evaluator registry for represented wrapper builtins. Realm installation requires the exact bootstrap topology, distinct valid intrinsic references, and the required prototype kinds/internal slots. That topology is an installation condition, not a permanent immutability rule: legal later prototype mutation preserves stable intrinsic identity and kind validity, wrappers continue to use the configured intrinsic identity, and individual wrapper prototypes remain mutable. `RealmTestSupport.bootstrap` and its builtin registry are executable test support, not production bootstrap or hidden host behavior.
+
+Abstract equality keeps object/object comparison at reference identity and performs at most one object-to-primitive conversion for primitive/object pairs. Addition converts left then right before string concatenation or same-domain numeric addition. Relational operators retain the specified coercion order and preserve the primitive layer's unordered handling. `instanceof` observes custom `Symbol.hasInstance` getter and call effects, converts its result with Boolean coercion, rejects primitive or non-callable right-hand sides as specified, and otherwise follows the current constructor `prototype` by bounded reference-identity traversal. Getter, method, and user-thrown abrupt completions retain their committed trace and state.
+
+The Node differential test builds `js-abstract-operations-oracle` and compares all 97 deterministic Lean results and traces with Node. The scenarios cover exotic and ordinary primitive conversion, `GetMethod`, getter/call ordering and throws, loose equality, addition and relational operators, custom and ordinary `instanceof`, primitive wrappers and their builtins, copy behavior over primitive sources, intrinsic and wrapper prototype mutation, and deterministic wrapper equality samples. These observations do not establish a general ECMAScript refinement theorem.
+
+The manifest records 199 discovered proof declarations allowlisted against `propext`, `Classical.choice`, and `Quot.sound`; this is not a completeness claim. The exact ten formal-debt obligations from arrays and primitive ops remain unchanged. One additional obligation is recorded because `AbstractOperationTheorems.lean` explicitly marks it: characterize `GetMethod` and effectful coercion hooks with a trace/state refinement relation that preserves getter and call ordering. No other abstract-operation formal debt was inferred. Bound-function exotica remain unrepresented, derived construction remains explicitly unsupported, prototype traversal is executable and heap-size bounded, and general effectful equivalence/refinement remains unproved. The four Lean Float executable assumptions from primitive ops are carried forward unchanged and remain runtime assumptions rather than proof axioms.
+
+Commands and results:
+
+```text
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase1-abstract-ops-manifest.json
+563b457287b300e26aace4d305463f3120e34b00060d1e2ed970de90ce0f9e57  evidence/phase1-abstract-ops-manifest.json
+$ bun run evidence:generate
+$ shasum -a 256 evidence/phase1-abstract-ops-manifest.json
+563b457287b300e26aace4d305463f3120e34b00060d1e2ed970de90ce0f9e57  evidence/phase1-abstract-ops-manifest.json
+
+$ bun run evidence:check
+Cannot generate evidence manifest: evidence/phase1-abstract-ops-manifest.json is stale at line 174
+$ bun run evidence:generate
+$ bun run evidence:check
+
+$ bun run evidence:baseline:check
+$ bun run evidence:primitives:check
+$ bun run evidence:heap:check
+$ bun run evidence:execution:check
+$ bun run evidence:callable:check
+$ bun run evidence:arrays:check
+$ bun run evidence:primitive-ops:check
+
+$ bun run js:trust
+JS trust checks passed: 199 elaborated proof declarations
+JS trust gate passed: 199 proof declarations
+
+$ bun scripts/check-js-axioms.mjs --self-test
+synthetic environment audit passed
+
+$ bun run verify
+Test Files  44 passed (44)
+Tests  1611 passed | 8 todo (1619)
+Build completed successfully (172 jobs).
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 286
+Unpacked size: 2.35MB
+
+$ git diff --check
+```
+
+The deliberate manifest tamper changed only the checked source hash, was rejected at that exact line, and was followed by canonical regeneration. `evidence/phase1-primitive-ops-input.json` now resolves every source-derived validation and hash group from immutable revision `3d4da073e94666ff8576b71e80c173420299a58e`; its manifest remains byte-for-byte unchanged at SHA-256 `797332bca03e552b0a19d75043f771ca33966a6c366542a2bbd46d94dc2f10e9`. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target abstract-ops evidence. Explicit baseline, primitives, heap, execution, callable, arrays, and primitive-ops generate/check commands preserve historical reproduction.
+
+The abstract-ops manifest hashes are source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, full JS runtime and barrel `sha256:fe8d344efff4f461715a03a1b508f9f1d3f135cd3534f7b65ad9f030383eed30`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, and infrastructure `sha256:77a09f7cc95d2e58d2d253669d41042757625de0b14990a1c11df2a14128675f`. Infrastructure includes both Node differential tests, both Lean oracle sources, the lake targets, trust and evidence scripts, package verification wiring, the synthetic trust fixture, and package-surface test. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and are not presented as repository-wide soundness.

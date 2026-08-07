@@ -87,7 +87,9 @@ function readExpectedAuditCount(path) {
     object(input.executableAssumptions, 'evidence input executableAssumptions');
   }
   const counts = object(input.counts, 'counts');
-  exactKeys(counts, ['tests', 'lean', 'corpus', 'auditedTheorems', 'lint', 'build'], 'counts');
+  const countKeys = ['tests', 'lean', 'corpus', 'auditedTheorems', 'lint', 'build'];
+  if (counts.differentialScenarios !== undefined) countKeys.push('differentialScenarios');
+  exactKeys(counts, countKeys, 'counts');
   exactKeys(counts.tests, ['files', 'passed', 'failed', 'todo'], 'counts.tests');
   for (const key of ['files', 'passed', 'failed', 'todo']) nonNegativeInteger(counts.tests[key], `counts.tests.${key}`);
   exactKeys(counts.lean, ['jobs', 'status'], 'counts.lean');
@@ -99,6 +101,9 @@ function readExpectedAuditCount(path) {
   if (counts.corpus.red > counts.corpus.entries) fail('counts.corpus.red must not exceed counts.corpus.entries');
   nonNegativeInteger(counts.auditedTheorems, 'counts.auditedTheorems');
   if (counts.auditedTheorems === 0) fail('counts.auditedTheorems must be positive');
+  if (counts.differentialScenarios !== undefined) {
+    nonNegativeInteger(counts.differentialScenarios, 'counts.differentialScenarios');
+  }
   if (counts.lint !== 'passed') fail('counts.lint must be passed');
   if (counts.build !== 'passed') fail('counts.build must be passed');
   return counts.auditedTheorems;

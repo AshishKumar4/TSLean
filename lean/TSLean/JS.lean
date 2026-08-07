@@ -1,4 +1,7 @@
 import TSLean.JS.Conversion
+import TSLean.JS.AbstractOperations
+import TSLean.JS.AbstractEquality
+import TSLean.JS.AbstractOperationTheorems
 import TSLean.JS.Completion
 import TSLean.JS.Call
 import TSLean.JS.ArrayCopy
@@ -32,5 +35,5 @@ import TSLean.JS.String
 import TSLean.JS.Theorems
 import TSLean.JS.Typeof
 import TSLean.JS.Value
-import TSLean.JS.Instanceof
+import TSLean.JS.HasInstance
 import TSLean.JS.Iterator

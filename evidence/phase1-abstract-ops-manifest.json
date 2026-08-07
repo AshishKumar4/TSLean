@@ -1,24 +1,34 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase1-primitive-ops-manifest.json",
-  "baseRevision": "3450468e82ccf70895ba892c636c707d851b4162",
+  "baseRevision": "3d4da073e94666ff8576b71e80c173420299a58e",
   "branch": "rebuild/semantic-core",
+  "toolchain": {
+    "bun": "1.3.14",
+    "node": "v22.23.1",
+    "typescript": "6.0.3",
+    "vitest": "vitest/4.1.10 darwin-arm64 node-v22.23.1",
+    "prettier": "3.9.6",
+    "eslint": "v10.8.0",
+    "lean": "Lean (version 4.29.0, arm64-apple-darwin24.6.0, commit 98dc76e3c0a9b856c9b98726b713fb04fab16740, Release)",
+    "lake": "Lake version 5.0.0-src+98dc76e (Lean version 4.29.0)"
+  },
   "counts": {
     "tests": {
-      "files": 43,
-      "passed": 1609,
+      "files": 44,
+      "passed": 1611,
       "failed": 0,
       "todo": 8
     },
     "lean": {
-      "jobs": 166,
+      "jobs": 172,
       "status": "passed"
     },
     "corpus": {
       "entries": 102,
       "red": 102
     },
-    "auditedTheorems": 181,
+    "auditedTheorems": 199,
+    "differentialScenarios": 97,
     "lint": "passed",
     "build": "passed"
   },
@@ -65,7 +75,8 @@
       "heap": 2,
       "array": 1,
       "hookConditional": 3,
-      "total": 10
+      "effectfulEquivalence": 1,
+      "total": 11
     },
     "obligations": [
       {
@@ -117,6 +128,11 @@
         "id": "machine-hook-conditional-preservation",
         "area": "hookConditional",
         "statement": "The composed array, copy, and iterator JSM operations preserve Machine.WellFormed under an explicit hook-preservation premise."
+      },
+      {
+        "id": "abstract-effectful-coercion-refinement",
+        "area": "effectfulEquivalence",
+        "statement": "GetMethod and effectful coercion hooks have a trace/state refinement relation that preserves getter and call ordering."
       }
     ]
   },
@@ -126,16 +142,16 @@
       "location": "tests/e2e-v3.test.ts"
     },
     {
-      "id": "completion-process-items-forof-erased",
-      "location": "tests/pipeline-full.test.ts"
-    },
-    {
       "id": "completion-process-items-forof-erased-cli",
       "location": "tests/e2e/cli.test.ts"
     },
     {
       "id": "completion-process-items-forof-erased-e2e",
       "location": "tests/e2e/advanced.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased",
+      "location": "tests/pipeline-full.test.ts"
     },
     {
       "id": "completion-safe-divide-catch-none",
@@ -154,54 +170,10 @@
       "location": "tests/parser-advanced.test.ts"
     }
   ],
-  "validation": {
-    "testFiles": {
-      "directory": "tests",
-      "suffix": ".test.ts",
-      "countPath": "tests.files",
-      "revision": "3d4da073e94666ff8576b71e80c173420299a58e"
-    },
-    "todos": {
-      "directory": "tests",
-      "suffix": ".test.ts",
-      "countPath": "tests.todo",
-      "revision": "3d4da073e94666ff8576b71e80c173420299a58e"
-    },
-    "corpus": {
-      "path": "spec/corpus/counterexamples.json",
-      "entriesPath": "corpus.entries",
-      "redPath": "corpus.red",
-      "revision": "3d4da073e94666ff8576b71e80c173420299a58e"
-    },
-    "lineCounts": []
-  },
-  "hashGroups": {
-    "source": {
-      "paths": ["src"],
-      "revision": "3d4da073e94666ff8576b71e80c173420299a58e"
-    },
-    "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "3d4da073e94666ff8576b71e80c173420299a58e"
-    },
-    "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "3d4da073e94666ff8576b71e80c173420299a58e"
-    },
-    "infrastructure": {
-      "paths": [
-        "package.json",
-        "vitest.config.ts",
-        "scripts/generate-evidence-manifest.mjs",
-        "scripts/check-js-axioms.mjs",
-        "tests/js-trust.test.ts",
-        "tests/js-primitives-differential.test.ts",
-        "tests/lean-fixtures/axiom-audit-synthetic.lean",
-        "tests/package.test.ts",
-        "lean/TSLean/JS/PrimitiveOracleTests.lean",
-        "lean/lakefile.toml"
-      ],
-      "revision": "3d4da073e94666ff8576b71e80c173420299a58e"
-    }
+  "hashes": {
+    "source": "sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3",
+    "jsRuntime": "sha256:fe8d344efff4f461715a03a1b508f9f1d3f135cd3534f7b65ad9f030383eed30",
+    "corpus": "sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec",
+    "infrastructure": "sha256:77a09f7cc95d2e58d2d253669d41042757625de0b14990a1c11df2a14128675f"
   }
 }

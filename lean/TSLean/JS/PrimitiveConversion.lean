@@ -28,9 +28,12 @@ private def message : CoercionFault → String
   | .mixedNumericTypes => "TypeError: cannot mix BigInt and Number"
   | .bigintDivisionByZero => "RangeError: BigInt division by zero"
 
+/-- Returns the catchable JavaScript exception value for a typed coercion failure. -/
+def toThrownValue (fault : CoercionFault) : Value :=
+  .primitive (.string (JSString.ofLeanString fault.message))
+
 /-- Maps a typed coercion failure to its JavaScript thrown completion payload. -/
-def toAbrupt (fault : CoercionFault) : Abrupt :=
-  .thrown (.primitive (.string (JSString.ofLeanString fault.message)))
+def toAbrupt (fault : CoercionFault) : Abrupt := .thrown fault.toThrownValue
 
 end CoercionFault
 

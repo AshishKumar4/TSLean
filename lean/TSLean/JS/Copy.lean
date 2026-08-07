@@ -1,4 +1,4 @@
-import TSLean.JS.ObjectAccess
+import TSLean.JS.AbstractOperations
 
 namespace TSLean.JS
 
@@ -65,25 +65,10 @@ private def assignKeys (hook : BodyHook P) (target source : RefId) :
             ObjectAccess.setStrict hook target key value (.object target)
             assignKeys hook target source rest
 
-private def boxPrimitive (value : Primitive) : JSM P RefId := fun machine =>
-  match machine.heap.allocatePrimitiveWrapper value with
-  | .ok (ref, heap) => .done (.normal ref) (machine.setHeap heap)
-  | .error (.cannotBoxPrimitive _) =>
-      ObjectAccess.throwTypeError "cannot convert nullish value to object" machine
-  | .error fault => .fault (heapFault fault) machine
-
-private def toObject : Value → JSM P RefId
-  | .object ref => do
-      let heap ← JSM.readHeap
-      match heap.get? ref with
-      | .ok _ => pure ref
-      | .error fault => JSM.fail (heapFault fault)
-  | .primitive value => boxPrimitive value
-
 private def assignSource (hook : BodyHook P) (target : RefId) : Value → JSM P Unit
   | .primitive .null | .primitive .undefined => pure ()
   | sourceValue => do
-      let source ← toObject sourceValue
+      let source ← AbstractOperations.toObject sourceValue
       let heap ← JSM.readHeap
       match OrdinaryObject.ownPropertyKeys heap source with
       | .error fault => JSM.fail (heapFault fault)
@@ -97,21 +82,14 @@ private def assignSources (hook : BodyHook P) (target : RefId) : List Value → 
 
 /-- Mutates an object target or a fresh wrapper for a primitive target and returns that same object.
 Nullish targets throw TypeError; nullish sources are skipped and all other primitives are boxed. -/
-def objectAssign (hook : BodyHook P) (target : Value) (sources : List Value) : JSM P Value :=
+def objectAssign (hook : BodyHook P) (target : Value) (sources : List Value) : JSM P Value := do
   match target with
   | .primitive .null | .primitive .undefined =>
       ObjectAccess.throwTypeError "cannot convert nullish target to object"
-  | .primitive primitive => do
-      let targetRef ← boxPrimitive primitive
-      assignSources hook targetRef sources
-      pure (.object targetRef)
-  | .object targetRef => do
-      let heap ← JSM.readHeap
-      match heap.get? targetRef with
-      | .error fault => JSM.fail (heapFault fault)
-      | .ok _ => pure ()
-      assignSources hook targetRef sources
-      pure target
+  | _ => pure ()
+  let targetRef ← AbstractOperations.toObject target
+  assignSources hook targetRef sources
+  pure (.object targetRef)
 
 private def spreadSources (hook : BodyHook P) (target : RefId)
     (exclusions : List PropertyKey) : List Value → JSM P Unit
@@ -119,7 +97,7 @@ private def spreadSources (hook : BodyHook P) (target : RefId)
   | .primitive .null :: rest | .primitive .undefined :: rest =>
       spreadSources hook target exclusions rest
   | sourceValue :: rest => do
-      let source ← toObject sourceValue
+      let source ← AbstractOperations.toObject sourceValue
       copyDataProperties hook target source exclusions
       spreadSources hook target exclusions rest
 

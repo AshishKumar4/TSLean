@@ -1,24 +1,25 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase1-primitive-ops-manifest.json",
-  "baseRevision": "3450468e82ccf70895ba892c636c707d851b4162",
+  "outputPath": "evidence/phase1-abstract-ops-manifest.json",
+  "baseRevision": "3d4da073e94666ff8576b71e80c173420299a58e",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": {
-      "files": 43,
-      "passed": 1609,
+      "files": 44,
+      "passed": 1611,
       "failed": 0,
       "todo": 8
     },
     "lean": {
-      "jobs": 166,
+      "jobs": 172,
       "status": "passed"
     },
     "corpus": {
       "entries": 102,
       "red": 102
     },
-    "auditedTheorems": 181,
+    "auditedTheorems": 199,
+    "differentialScenarios": 97,
     "lint": "passed",
     "build": "passed"
   },
@@ -65,7 +66,8 @@
       "heap": 2,
       "array": 1,
       "hookConditional": 3,
-      "total": 10
+      "effectfulEquivalence": 1,
+      "total": 11
     },
     "obligations": [
       {
@@ -117,6 +119,11 @@
         "id": "machine-hook-conditional-preservation",
         "area": "hookConditional",
         "statement": "The composed array, copy, and iterator JSM operations preserve Machine.WellFormed under an explicit hook-preservation premise."
+      },
+      {
+        "id": "abstract-effectful-coercion-refinement",
+        "area": "effectfulEquivalence",
+        "statement": "GetMethod and effectful coercion hooks have a trace/state refinement relation that preserves getter and call ordering."
       }
     ]
   },
@@ -158,35 +165,29 @@
     "testFiles": {
       "directory": "tests",
       "suffix": ".test.ts",
-      "countPath": "tests.files",
-      "revision": "3d4da073e94666ff8576b71e80c173420299a58e"
+      "countPath": "tests.files"
     },
     "todos": {
       "directory": "tests",
       "suffix": ".test.ts",
-      "countPath": "tests.todo",
-      "revision": "3d4da073e94666ff8576b71e80c173420299a58e"
+      "countPath": "tests.todo"
     },
     "corpus": {
       "path": "spec/corpus/counterexamples.json",
       "entriesPath": "corpus.entries",
-      "redPath": "corpus.red",
-      "revision": "3d4da073e94666ff8576b71e80c173420299a58e"
+      "redPath": "corpus.red"
     },
     "lineCounts": []
   },
   "hashGroups": {
     "source": {
-      "paths": ["src"],
-      "revision": "3d4da073e94666ff8576b71e80c173420299a58e"
+      "paths": ["src"]
     },
     "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "3d4da073e94666ff8576b71e80c173420299a58e"
+      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
     },
     "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "3d4da073e94666ff8576b71e80c173420299a58e"
+      "paths": ["spec/corpus"]
     },
     "infrastructure": {
       "paths": [
@@ -196,12 +197,13 @@
         "scripts/check-js-axioms.mjs",
         "tests/js-trust.test.ts",
         "tests/js-primitives-differential.test.ts",
+        "tests/js-abstract-operations-differential.test.ts",
         "tests/lean-fixtures/axiom-audit-synthetic.lean",
         "tests/package.test.ts",
         "lean/TSLean/JS/PrimitiveOracleTests.lean",
+        "lean/TSLean/JS/AbstractOperationsOracleTests.lean",
         "lean/lakefile.toml"
-      ],
-      "revision": "3d4da073e94666ff8576b71e80c173420299a58e"
+      ]
     }
   }
 }

@@ -25,6 +25,7 @@ import TSLean.Veil.DSL
 import TSLean.Veil.DSLExamples
 import TSLean.Generated.SelfHost.Bootstrap
 import TSLean.JS.AxiomAudit
+import TSLean.JS.AbstractOperationsTests
 import TSLean.JS.ArrayTests
 import TSLean.JS.CopyTests
 import TSLean.JS.ExecutionScaleTests
