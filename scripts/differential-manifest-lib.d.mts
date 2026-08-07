@@ -3,50 +3,68 @@ export type DifferentialSuite = {
   scenarios: Array<{ id: string; operations: string[]; expectedCount: number }>;
 };
 
-export type DifferentialArtifacts = {
+export type DifferentialSummary = {
+  schemaVersion: 2;
+  suite: string;
+  sourceHash: string;
+  operationRegistry: Array<{ id: string; domain: 'primitive' | 'graph'; arity: 1 | 2; sourceHash: string }>;
+  scenarioCount: number;
+  fixedCount: number;
+  generatedCount: number;
+  vectorCount: number;
+  comparisonCount: number;
+  totalCount: number;
+  uniqueOperationInputCount: number;
+  parityDuplicateCount: number;
+  duplicatePolicy: 'preserved-for-v1-parity';
+  scenarioCounts: Record<string, number>;
+  operationCounts: Record<string, number>;
+  regressionTagCounts: Record<string, number>;
+  scenarios: Array<{ id: string; vectorCount: number; vectorHash: string }>;
+  generators: Array<{ scenario: string; algorithm: string; version: number; seed: string; count: number }>;
+  vectorStreamHash: string;
+};
+
+export type DifferentialSuiteArtifacts = {
   suite: DifferentialSuite;
-  manifest: {
-    schemaVersion: 1;
-    suite: string;
-    sourceHash: string;
+  vectors: DifferentialVector[];
+  manifest: DifferentialSummary;
+};
+
+export type DifferentialArtifacts = {
+  suite: { registry: DifferentialSuite['registry'] };
+  vectors: DifferentialVector[];
+  manifest: DifferentialSummary & {
+    schemaHash: string;
     sourceHashes: Record<string, string>;
     corpusCoverageHash: string;
     legacyInventoryHash: string;
-    corpusClassifications: Record<string, number>;
-    operationRegistry: string[];
-    operationDefinitions: DifferentialSuite['registry'];
-    counts: Record<string, number>;
+    legacyInventoryCount: number;
+    classificationCounts: Record<string, number>;
     bounds: { aggregateDenseArrayCells: number };
-    scenarioCount: number;
-    fixedCount: number;
-    generatedCount: number;
-    vectorCount: number;
-    comparisonCount: number;
-    totalCount: number;
-    uniqueOperationInputCount: number;
-    parityDuplicateCount: number;
-    duplicatePolicy: 'preserved-for-v1-parity';
-    vectors: Array<{
-      id: string;
-      scenario: string;
-      operation: string;
-      source: string;
-      fixtures: Array<
-        | { kind: 'undefined' }
-        | { kind: 'null' }
-        | { kind: 'boolean'; value: boolean }
-        | { kind: 'number'; bits: string }
-        | { kind: 'string'; units: number[] }
-        | { kind: 'bigint'; decimal: string }
-        | { kind: 'symbol'; identity: string }
-        | GraphFixture
-      >;
-      tags: string[];
-      corpusIds: string[];
-      replay?: { algorithm: string; seed: string; index: number };
-      inputHash: string;
-    }>;
   };
+  artifacts: Array<[string, DifferentialSuiteArtifacts]>;
+};
+
+export type DifferentialVector = {
+  id: string;
+  scenario: string;
+  operation: string;
+  source: string;
+  fixtures: Array<
+    | { kind: 'undefined' }
+    | { kind: 'null' }
+    | { kind: 'boolean'; value: boolean }
+    | { kind: 'number'; bits: string }
+    | { kind: 'string'; units: number[] }
+    | { kind: 'bigint'; decimal: string }
+    | { kind: 'symbol'; identity: string }
+    | GraphFixture
+  >;
+  tags: string[];
+  corpusIds: string[];
+  replay?: { algorithm: string; seed: string; index: number };
+  inputHash: string;
 };
 
 export type GraphValue =
@@ -96,8 +114,8 @@ export type GraphFixture = {
 
 export function validateFixture(fixture: object): void;
 export function compareCodeUnits(left: string, right: string): number;
-export function buildDifferentialSuite(source: string): DifferentialArtifacts;
-export function loadDifferentialSuite(root: string, suiteName?: string): DifferentialArtifacts;
+export function buildDifferentialSuite(source: string): DifferentialSuiteArtifacts;
+export function loadDifferentialSuite(root: string, suiteName?: string): DifferentialSuiteArtifacts;
 export function loadCombinedDifferential(root: string, suiteNames?: string[]): DifferentialArtifacts;
 export function renderLeanRegistry(suite: DifferentialSuite): string;
 export function renderDifferentialManifest(manifest: object): string;

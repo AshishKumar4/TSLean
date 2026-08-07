@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase1-differential-manifest.json",
-  "baseRevision": "be709a49dd663bef8c37545a58a80a8403381839",
+  "outputPath": "evidence/phase1-differential-compact-manifest.json",
+  "baseRevision": "4e0953fa3a5a81b8db24077b0d28ddbcdb397655",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": {
@@ -45,10 +45,7 @@
     "assumptions": [
       {
         "id": "lean-float-bits",
-        "primitives": {
-          "ofBits": "Float.ofBits",
-          "toBits": "Float.toBits"
-        },
+        "primitives": { "ofBits": "Float.ofBits", "toBits": "Float.toBits" },
         "statement": "Lean's Float bit conversion primitives preserve the intended finite binary64 encodings used by JSNumber."
       },
       {
@@ -63,16 +60,12 @@
       },
       {
         "id": "lean-float-comparison",
-        "primitives": {
-          "lessThan": "LT.lt Float"
-        },
+        "primitives": { "lessThan": "LT.lt Float" },
         "statement": "Lean's executable Float ordering agrees with the finite binary64 ordering used by ECMAScript Number comparison."
       },
       {
         "id": "lean-float-of-scientific",
-        "primitives": {
-          "ofScientific": "Float.ofScientific"
-        },
+        "primitives": { "ofScientific": "Float.ofScientific" },
         "statement": "Lean's Float.ofScientific supplies an executable decimal candidate; exact integer rounding checks and corrects that candidate at binary64 boundaries."
       }
     ]
@@ -233,8 +226,8 @@
         "measure": "value"
       },
       {
-        "path": "spec/differential/legacy-abstract-inventory.json",
-        "jsonPath": "totalEntries",
+        "path": "spec/differential/manifest.json",
+        "jsonPath": "legacyInventoryCount",
         "countPath": "differential.legacyInventoryIds",
         "measure": "value"
       },
@@ -289,20 +282,16 @@
   },
   "hashGroups": {
     "source": {
-      "paths": ["src"],
-      "revision": "4e0953fa3a5a81b8db24077b0d28ddbcdb397655"
+      "paths": ["src"]
     },
     "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "4e0953fa3a5a81b8db24077b0d28ddbcdb397655"
+      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
     },
     "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "4e0953fa3a5a81b8db24077b0d28ddbcdb397655"
+      "paths": ["spec/corpus"]
     },
     "differentialSpec": {
-      "paths": ["spec/differential"],
-      "revision": "4e0953fa3a5a81b8db24077b0d28ddbcdb397655"
+      "paths": ["spec/differential"]
     },
     "infrastructure": {
       "paths": [
@@ -322,8 +311,7 @@
         "tests/package.test.ts",
         "tests/lean-fixtures/axiom-audit-synthetic.lean",
         "lean/lakefile.toml"
-      ],
-      "revision": "4e0953fa3a5a81b8db24077b0d28ddbcdb397655"
+      ]
     }
   }
 }

@@ -17,7 +17,14 @@ import { observationMismatch } from './differential/compare.js';
 import { LeanOracle } from './differential/lean-oracle.js';
 import { materializeFixtures } from './differential/fixture.js';
 import { runNodeVector } from './differential/node-runner.js';
-import type { DifferentialManifest, Fixture, GraphFixture, Observation, OracleRequest } from './differential/types.js';
+import type {
+  DifferentialManifest,
+  DifferentialVector,
+  Fixture,
+  GraphFixture,
+  Observation,
+  OracleRequest,
+} from './differential/types.js';
 import { isJsonObject, type JsonValue, validateJsonSchema } from './helpers/json-schema.js';
 
 const root = resolve(import.meta.dirname, '..');
@@ -27,6 +34,7 @@ const abstractSuiteSource = readFileSync(resolve(root, 'spec/differential/abstra
 const coverageSource = readFileSync(resolve(root, 'spec/differential/corpus-coverage.json'), 'utf8');
 const generated = loadCombinedDifferential(root);
 const suite = generated.suite;
+const vectors: DifferentialVector[] = generated.vectors;
 const manifestSource = readFileSync(resolve(root, 'spec/differential/manifest.json'), 'utf8');
 const checkedManifest: DifferentialManifest = JSON.parse(manifestSource);
 const manifest: DifferentialManifest = generated.manifest;
@@ -52,8 +60,35 @@ function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function request(vector: DifferentialManifest['vectors'][number]): OracleRequest {
+function request(vector: DifferentialVector): OracleRequest {
   return { id: vector.id, operation: vector.operation, fixtures: vector.fixtures };
+}
+
+function vectorHash(selected: DifferentialVector[]): string {
+  const digest = createHash('sha256');
+  for (const vector of selected) {
+    digest.update(JSON.stringify({
+      operation: vector.operation,
+      source: vector.source,
+      fixtures: vector.fixtures,
+      provenance: {
+        id: vector.id,
+        scenario: vector.scenario,
+        corpusIds: vector.corpusIds,
+        ...(vector.replay === undefined ? {} : { replay: vector.replay }),
+      },
+      tags: vector.tags,
+      inputHash: vector.inputHash,
+    }));
+    digest.update('\n');
+  }
+  return digest.digest('hex');
+}
+
+function counts(values: string[]): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (const value of values) result[value] = (result[value] ?? 0) + 1;
+  return Object.fromEntries(Object.entries(result).sort(([left], [right]) => compareCodeUnits(left, right)));
 }
 
 function units(value: string): number[] {
@@ -146,20 +181,24 @@ describe('generic model differential infrastructure', () => {
     expect(renderLeanRegistry(suite)).toBe(registrySource);
     expect(manifest.sourceHashes.primitive).toBe(sha256(suiteSource));
     expect(manifest.sourceHashes['abstract-operations']).toBe(sha256(abstractSuiteSource));
+    expect(manifest.sourceHash).toBe(sha256(JSON.stringify(manifest.sourceHashes)));
     expect(manifest.corpusCoverageHash).toBe(sha256(coverageSource));
     expect(manifest.legacyInventoryHash).toBe(sha256(
       readFileSync(resolve(root, 'spec/differential/legacy-abstract-inventory.json'), 'utf8'),
     ));
-    expect(manifest.corpusClassifications).toEqual({
+    expect(manifest.schemaHash).toBe(sha256(readFileSync(resolve(root, 'spec/differential/schema.json'), 'utf8')));
+    expect(manifest.classificationCounts).toEqual({
       'model-covered': 13,
       'compiler-only': 43,
       'model-pending': 26,
       'proof-integrity': 11,
       scale: 9,
     });
-    expect(manifest.operationRegistry).toEqual(suite.registry.map(({ id }) => id));
-    expect(manifest.operationDefinitions).toEqual(suite.registry);
-    expect([...new Set(manifest.vectors.map(({ operation }) => operation))].sort(compareCodeUnits)).toEqual(manifest.operationRegistry);
+    expect(manifest.operationRegistry).toEqual(suite.registry.map(({ id, domain, arity, source }) => ({
+      id, domain, arity, sourceHash: sha256(source),
+    })));
+    expect([...new Set(vectors.map(({ operation }) => operation))].sort(compareCodeUnits))
+      .toEqual(manifest.operationRegistry.map(({ id }) => id));
     expect(suite.registry.some(({ source }) => /\b(?:process|require|fetch|setTimeout|setInterval)\b/.test(source))).toBe(false);
     expect(manifest.scenarioCount).toBe(16);
     expect(manifest.fixedCount).toBe(734);
@@ -170,7 +209,7 @@ describe('generic model differential infrastructure', () => {
     expect(manifest.uniqueOperationInputCount).toBe(6_088);
     expect(manifest.parityDuplicateCount).toBe(1_176);
     expect(manifest.duplicatePolicy).toBe('preserved-for-v1-parity');
-    expect(manifest.counts).toEqual({
+    expect(manifest.scenarioCounts).toEqual({
       'abstract-coercion-operators': 30,
       'abstract-instanceof': 10,
       'abstract-ordinary-conversion': 8,
@@ -188,14 +227,47 @@ describe('generic model differential infrastructure', () => {
       parse: 322,
       'seeded-operators': 6_000,
     });
-    expect(manifest.vectors.map(({ id }) => id)).toEqual(manifest.vectors.map(({ id }) => id).sort(compareCodeUnits));
-    expect(new Set(manifest.vectors.map(({ id }) => id)).size).toBe(manifest.totalCount);
-    for (const vector of manifest.vectors) {
+    expect(vectors.map(({ id }) => id)).toEqual(vectors.map(({ id }) => id).sort(compareCodeUnits));
+    expect(new Set(vectors.map(({ id }) => id)).size).toBe(manifest.totalCount);
+    const generatedCount = vectors.filter(({ replay }) => replay !== undefined).length;
+    const uniqueOperationInputCount = new Set(vectors.map(({ operation, fixtures }) =>
+      JSON.stringify({ operation, fixtures }))).size;
+    expect(manifest.scenarioCount).toBe(new Set(vectors.map(({ scenario }) => scenario)).size);
+    expect(manifest.generatedCount).toBe(generatedCount);
+    expect(manifest.fixedCount).toBe(vectors.length - generatedCount);
+    expect(manifest.vectorCount).toBe(vectors.length);
+    expect(manifest.comparisonCount).toBe(vectors.length);
+    expect(manifest.totalCount).toBe(vectors.length);
+    expect(manifest.uniqueOperationInputCount).toBe(uniqueOperationInputCount);
+    expect(manifest.parityDuplicateCount).toBe(vectors.length - uniqueOperationInputCount);
+    for (const vector of vectors) {
       expect(vector.inputHash).toBe(sha256(JSON.stringify({ operation: vector.operation, fixtures: vector.fixtures })));
       expect(vector.tags).toEqual([...new Set(vector.tags)].sort(compareCodeUnits));
       if (vector.replay !== undefined) expect(vector.replay.index).toBeGreaterThanOrEqual(0);
     }
-    expect(manifest.vectors.filter(({ tags }) => tags.includes('bigint-arithmetic-regression'))).toHaveLength(5);
+    expect(manifest.operationCounts).toEqual(counts(vectors.map(({ operation }) => operation)));
+    expect(manifest.regressionTagCounts).toEqual({
+      'bigint-arithmetic-regression': 5,
+      'corpus-regression': 14,
+    });
+    expect(manifest.regressionTagCounts).toEqual(counts(
+      vectors.flatMap(({ tags }) => tags.filter((tag) => tag.includes('regression'))),
+    ));
+    expect(manifest.scenarios).toEqual(Object.entries(manifest.scenarioCounts).map(([id, vectorCount]) => ({
+      id,
+      vectorCount,
+      vectorHash: vectorHash(vectors.filter((vector) => vector.scenario === id)),
+    })));
+    expect(manifest.vectorStreamHash).toBe(vectorHash(vectors));
+    expect(manifest.generators).toEqual([
+      { scenario: 'format', algorithm: 'finite-binary64-v1', version: 1, seed: '1311768467463790320', count: 260 },
+      { scenario: 'parse', algorithm: 'decimal-cases-v1', version: 1, seed: '1831565813', count: 220 },
+      { scenario: 'parse', algorithm: 'trim-code-units-v1', version: 1, seed: 'none', count: 50 },
+      { scenario: 'seeded-operators', algorithm: 'primitive-operators-v1', version: 1, seed: '11400714819323198485', count: 6_000 },
+    ]);
+    expect(manifest.legacyInventoryCount).toBe(97);
+    expect(Buffer.byteLength(manifestSource)).toBeLessThan(50 * 1024);
+    expect(Object.hasOwn(checkedManifest, 'vectors')).toBe(false);
   });
 
   it('classifies every corpus entry once with bidirectional model scenario links', () => {
@@ -256,7 +328,7 @@ describe('generic model differential infrastructure', () => {
 
   it('detects tampered manifest and operation registry artifacts', () => {
     const tamperedManifest = structuredClone(checkedManifest);
-    tamperedManifest.vectors[0].inputHash = '0'.repeat(64);
+    tamperedManifest.vectorStreamHash = '0'.repeat(64);
     expect(() => verifyDifferentialArtifacts(root, renderDifferentialManifest(tamperedManifest), registrySource))
       .toThrow('differential manifest is stale');
     expect(() => verifyDifferentialArtifacts(root, manifestSource, `${registrySource}\n`))
@@ -275,6 +347,21 @@ describe('generic model differential infrastructure', () => {
     const extraRegistryField = JSON.parse(suiteSource);
     extraRegistryField.registry[0].extra = true;
     expect(() => buildDifferentialSuite(JSON.stringify(extraRegistryField))).toThrow('must contain exactly');
+
+    const sourceTamper = JSON.parse(suiteSource);
+    sourceTamper.registry[0].source += ' ';
+    expect(buildDifferentialSuite(JSON.stringify(sourceTamper)).manifest.vectorStreamHash)
+      .not.toBe(buildDifferentialSuite(suiteSource).manifest.vectorStreamHash);
+    const vectorTamper = JSON.parse(suiteSource);
+    vectorTamper.scenarios.find((scenario: { id: string }) => scenario.id === 'format').vectors[0].fixtures[0].bits = '1';
+    expect(buildDifferentialSuite(JSON.stringify(vectorTamper)).manifest.vectorStreamHash)
+      .not.toBe(buildDifferentialSuite(suiteSource).manifest.vectorStreamHash);
+    const generatorTamper = JSON.parse(suiteSource);
+    generatorTamper.scenarios.find((scenario: { id: string }) => scenario.id === 'seeded-operators').generators[0].seed = '1';
+    expect(buildDifferentialSuite(JSON.stringify(generatorTamper)).manifest.vectorStreamHash)
+      .not.toBe(buildDifferentialSuite(suiteSource).manifest.vectorStreamHash);
+    const replayed = buildDifferentialSuite(suiteSource).vectors.find(({ replay }) => replay?.index === 42);
+    expect(buildDifferentialSuite(suiteSource).vectors.find(({ id }) => id === replayed?.id)).toEqual(replayed);
   });
 
   it('anchors the 97-entry legacy abstract inventory to be709a4', () => {
@@ -484,7 +571,7 @@ describe('generic model differential infrastructure', () => {
   });
 
   it('canonicalizes selected cyclic graphs without invoking accessors', () => {
-    const vector = manifest.vectors.find(({ id }) => id === 'canonical-graphs-cycle-alias-descriptors');
+    const vector = vectors.find(({ id }) => id === 'canonical-graphs-cycle-alias-descriptors');
     if (vector === undefined) throw new Error('canonical graph vector is missing');
     const observation = runNodeVector(vector, registry, new Canonicalizer());
     expect(observation.trace).toEqual([]);
@@ -502,9 +589,9 @@ describe('generic model differential infrastructure', () => {
   });
 
   it('shares encounter identity across completion, roots, cycles, and intrinsic prototypes', () => {
-    const identityVector = manifest.vectors.find(({ id }) => id === 'canonical-graphs-return-root-repeated-cycle');
-    const intrinsicVector = manifest.vectors.find(({ id }) => id === 'canonical-graphs-intrinsic-prototypes');
-    const realmIntrinsicVector = manifest.vectors.find(({ id }) => id === 'canonical-graphs-intrinsic-prototypes-realm');
+    const identityVector = vectors.find(({ id }) => id === 'canonical-graphs-return-root-repeated-cycle');
+    const intrinsicVector = vectors.find(({ id }) => id === 'canonical-graphs-intrinsic-prototypes');
+    const realmIntrinsicVector = vectors.find(({ id }) => id === 'canonical-graphs-intrinsic-prototypes-realm');
     if (identityVector === undefined || intrinsicVector === undefined || realmIntrinsicVector === undefined) {
       throw new Error('canonical identity vectors are missing');
     }
@@ -532,7 +619,7 @@ describe('generic model differential infrastructure', () => {
 
   it('uses real registered and local symbol semantics', () => {
     const run = (id: string) => {
-      const vector = manifest.vectors.find((candidate) => candidate.id === id);
+      const vector = vectors.find((candidate) => candidate.id === id);
       if (vector === undefined) throw new Error(`missing symbol vector ${id}`);
       return runNodeVector(vector, registry, new Canonicalizer()).completion.value;
     };
@@ -544,7 +631,7 @@ describe('generic model differential infrastructure', () => {
   });
 
   it('enforces registered symbol keys at the Lean protocol boundary', async () => {
-    const vector = manifest.vectors.find(({ id }) => id === 'canonical-symbols-registered-key-for');
+    const vector = vectors.find(({ id }) => id === 'canonical-symbols-registered-key-for');
     if (vector === undefined || vector.fixtures[0].kind !== 'graph') throw new Error('registered symbol vector is missing');
     const empty = structuredClone(vector.fixtures[0]);
     const shared = structuredClone(vector.fixtures[0]);
@@ -569,7 +656,7 @@ describe('generic model differential infrastructure', () => {
 
   it('preserves error, object, and primitive throw identity', () => {
     const run = (id: string) => {
-      const vector = manifest.vectors.find((candidate) => candidate.id === id);
+      const vector = vectors.find((candidate) => candidate.id === id);
       if (vector === undefined) throw new Error(`missing throw vector ${id}`);
       return runNodeVector(vector, registry, new Canonicalizer());
     };
@@ -589,7 +676,7 @@ describe('generic model differential infrastructure', () => {
   });
 
   it('preserves UTF-16 units in graph keys, errors, events, and prefixes', () => {
-    const vector = manifest.vectors.find(({ id }) => id === 'canonical-utf16-surrogate-fields');
+    const vector = vectors.find(({ id }) => id === 'canonical-utf16-surrogate-fields');
     if (vector === undefined) throw new Error('UTF-16 graph vector is missing');
     const observation = runNodeVector(vector, registry, new Canonicalizer());
     expect(observation.trace.map(({ detail }) => detail.type === 'string' ? detail.units : [])).toEqual([
@@ -609,7 +696,7 @@ describe('generic model differential infrastructure', () => {
       ['bigint', units('-2')], ['null', units('null')], ['undefined', units('undefined')],
     ]);
     for (const [format, units_] of expected) {
-      const vector = manifest.vectors.find(({ id }) => id === `canonical-script-formats-${format}`);
+      const vector = vectors.find(({ id }) => id === `canonical-script-formats-${format}`);
       if (vector === undefined) throw new Error(`missing script format vector ${format}`);
       const observation = runNodeVector(vector, registry, new Canonicalizer());
       expect(observation.trace[0]?.detail).toEqual({ type: 'string', units: units_ });
@@ -618,7 +705,7 @@ describe('generic model differential infrastructure', () => {
 
   it('uses the effectful condition callback Boolean result', () => {
     const run = (id: string) => {
-      const vector = manifest.vectors.find((candidate) => candidate.id === id);
+      const vector = vectors.find((candidate) => candidate.id === id);
       if (vector === undefined) throw new Error(`missing effectful condition vector ${id}`);
       return runNodeVector(vector, registry, new Canonicalizer());
     };
@@ -631,7 +718,7 @@ describe('generic model differential infrastructure', () => {
 
   it('returns one correlated response for malformed, unknown, and multiple NDJSON requests', async () => {
     const oracle = new LeanOracle(root);
-    const validVector = manifest.vectors.find(({ operation }) => operation === 'parse');
+    const validVector = vectors.find(({ operation }) => operation === 'parse');
     if (validVector === undefined) throw new Error('manifest has no parse vector');
     const valid = request(validVector);
     const responses = await oracle.exchangeLines([
@@ -676,7 +763,7 @@ describe('generic model differential infrastructure', () => {
   });
 
   it('enforces the aggregate dense-array budget before materialization', async () => {
-    const vector = manifest.vectors.find(({ id }) => id === 'canonical-graphs-cycle-alias-descriptors');
+    const vector = vectors.find(({ id }) => id === 'canonical-graphs-cycle-alias-descriptors');
     if (vector === undefined || vector.fixtures[0].kind !== 'graph') throw new Error('canonical graph fixture is missing');
     const boundary = structuredClone(vector.fixtures[0]);
     const array = boundary.nodes.find(({ kind }) => kind === 'array');
@@ -736,7 +823,7 @@ describe('generic model differential infrastructure', () => {
   });
 
   it('rejects registry-valid operations with the wrong fixture domain', async () => {
-    const graphVector = manifest.vectors.find(({ id }) => id === 'canonical-graphs-cycle-alias-descriptors');
+    const graphVector = vectors.find(({ id }) => id === 'canonical-graphs-cycle-alias-descriptors');
     if (graphVector === undefined) throw new Error('canonical graph vector is missing');
     const oracle = new LeanOracle(root);
     const responses = await oracle.exchangeLines([
@@ -749,7 +836,7 @@ describe('generic model differential infrastructure', () => {
   });
 
   it('rejects malformed expanded graphs at the Lean boundary', async () => {
-    const vector = manifest.vectors.find(({ id }) => id === 'abstract-coercion-operators-add-pair');
+    const vector = vectors.find(({ id }) => id === 'abstract-coercion-operators-add-pair');
     if (vector === undefined || vector.fixtures[0].kind !== 'graph') throw new Error('graph fixture is missing');
     const malformed: Array<[string, (fixture: GraphFixture) => void]> = [
       ['missing-case-receiver', (fixture) => {
@@ -793,7 +880,7 @@ describe('generic model differential infrastructure', () => {
       mutate(fixture);
       return JSON.stringify({ id, operation: vector.operation, fixtures: [fixture] });
     });
-    const rangeVector = manifest.vectors.find(({ id }) => id === 'abstract-coercion-operators-throw-range-error');
+    const rangeVector = vectors.find(({ id }) => id === 'abstract-coercion-operators-throw-range-error');
     if (rangeVector === undefined || rangeVector.fixtures[0].kind !== 'graph') throw new Error('range fixture is missing');
     const invalidError = structuredClone(rangeVector.fixtures[0]);
     const errorCompletion = invalidError.nodes.find(({ kind }) => kind === 'function')?.script.completion.value;
@@ -815,7 +902,7 @@ describe('generic model differential infrastructure', () => {
   });
 
   it('is deterministic across persistent, restarted, and fresh oracle processes', async () => {
-    const requests = manifest.vectors.slice(0, 32).map(request);
+    const requests = vectors.slice(0, 32).map(request);
     const persistent = new LeanOracle(root);
     const first = await persistent.requestBatch(requests);
     const second = await persistent.requestBatch(requests);
@@ -919,11 +1006,11 @@ describe('generic model differential infrastructure', () => {
 
   it('matches Node and Lean for all 7,264 model vectors', async () => {
     const oracle = new LeanOracle(root);
-    const responses = await oracle.requestBatch(manifest.vectors.map(request));
+    const responses = await oracle.requestBatch(vectors.map(request));
     await oracle.close();
     const mismatches: string[] = [];
     responses.forEach((response, index) => {
-      const vector = manifest.vectors[index];
+      const vector = vectors[index];
       if (response.status !== 'ok') {
         mismatches.push(`${vector.id}: protocol error ${response.error.code}: ${response.error.message}`);
         return;

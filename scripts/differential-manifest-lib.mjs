@@ -290,6 +290,87 @@ function hash(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function vectorDigest(vectors) {
+  const digest = createHash('sha256');
+  for (const vector of vectors) {
+    digest.update(
+      JSON.stringify({
+        operation: vector.operation,
+        source: vector.source,
+        fixtures: vector.fixtures,
+        provenance: {
+          id: vector.id,
+          scenario: vector.scenario,
+          corpusIds: vector.corpusIds,
+          ...(vector.replay === undefined ? {} : { replay: vector.replay }),
+        },
+        tags: vector.tags,
+        inputHash: vector.inputHash,
+      }),
+    );
+    digest.update('\n');
+  }
+  return digest.digest('hex');
+}
+
+function countBy(values) {
+  const counts = new Map();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return Object.fromEntries([...counts].sort(([left], [right]) => compareCodeUnits(left, right)));
+}
+
+function generatorMetadata(scenarios) {
+  return scenarios
+    .flatMap((scenario) =>
+      scenario.generators.map((generator) => {
+        const version = /-v([0-9]+)$/.exec(generator.algorithm)?.[1];
+        if (version === undefined) throw new Error(`${generator.algorithm} has no generator version`);
+        return {
+          scenario: scenario.id,
+          algorithm: generator.algorithm,
+          version: Number(version),
+          seed: generator.seed,
+          count: generator.count,
+        };
+      }),
+    )
+    .sort((left, right) =>
+      compareCodeUnits(`${left.scenario}:${left.algorithm}`, `${right.scenario}:${right.algorithm}`),
+    );
+}
+
+function summarizeVectors(vectors, scenarios) {
+  const uniqueOperationInputCount = new Set(
+    vectors.map(({ operation, fixtures }) => JSON.stringify({ operation, fixtures })),
+  ).size;
+  const generators = generatorMetadata(scenarios);
+  const generatedCount = vectors.filter(({ replay }) => replay !== undefined).length;
+  const scenarioSummaries = scenarios
+    .map(({ id }) => {
+      const selected = vectors.filter((vector) => vector.scenario === id);
+      return { id, vectorCount: selected.length, vectorHash: vectorDigest(selected) };
+    })
+    .sort((left, right) => compareCodeUnits(left.id, right.id));
+  const regressionTags = vectors.flatMap(({ tags }) => tags.filter((tag) => tag.includes('regression')));
+  return {
+    scenarioCount: scenarioSummaries.length,
+    fixedCount: vectors.length - generatedCount,
+    generatedCount,
+    vectorCount: vectors.length,
+    comparisonCount: vectors.length,
+    totalCount: vectors.length,
+    uniqueOperationInputCount,
+    parityDuplicateCount: vectors.length - uniqueOperationInputCount,
+    duplicatePolicy: 'preserved-for-v1-parity',
+    scenarioCounts: Object.fromEntries(scenarioSummaries.map(({ id, vectorCount }) => [id, vectorCount])),
+    operationCounts: countBy(vectors.map(({ operation }) => operation)),
+    regressionTagCounts: countBy(regressionTags),
+    scenarios: scenarioSummaries,
+    generators,
+    vectorStreamHash: vectorDigest(vectors),
+  };
+}
+
 function stringFixture(value) {
   return {
     kind: 'string',
@@ -742,22 +823,20 @@ export function buildDifferentialSuite(source) {
     }
     entry.fixtures.forEach(validateFixture);
   }
-  const uniqueOperationInputCount = new Set(
-    vectors.map(({ operation, fixtures }) => JSON.stringify({ operation, fixtures })),
-  ).size;
   return {
     suite,
+    vectors,
     manifest: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       suite: suite.suite,
       sourceHash: hash(source),
-      operationRegistry: registryIds,
-      counts: Object.fromEntries(orderedScenarios.map((scenario) => [scenario.id, scenario.expectedCount])),
-      totalCount: vectors.length,
-      uniqueOperationInputCount,
-      parityDuplicateCount: vectors.length - uniqueOperationInputCount,
-      duplicatePolicy: 'preserved-for-v1-parity',
-      vectors,
+      operationRegistry: suite.registry.map(({ id, domain, arity, source: operationSource }) => ({
+        id,
+        domain,
+        arity,
+        sourceHash: hash(operationSource),
+      })),
+      ...summarizeVectors(vectors, orderedScenarios),
     },
   };
 }
@@ -780,23 +859,17 @@ export function loadCombinedDifferential(root, suiteNames = ['primitive', 'abstr
   }
   const registry = [...definitions.values()].sort((left, right) => compareCodeUnits(left.id, right.id));
   const vectors = artifacts
-    .flatMap(([, artifact]) => artifact.manifest.vectors)
+    .flatMap(([, artifact]) => artifact.vectors)
     .sort((left, right) => compareCodeUnits(left.id, right.id));
   const ids = vectors.map(({ id }) => id);
   if (new Set(ids).size !== ids.length) throw new Error('combined vector IDs must be unique');
-  const counts = Object.fromEntries(
-    artifacts
-      .flatMap(([, artifact]) => Object.entries(artifact.manifest.counts))
-      .sort(([left], [right]) => compareCodeUnits(left, right)),
-  );
   const sourceHashes = Object.fromEntries(artifacts.map(([name, artifact]) => [name, artifact.manifest.sourceHash]));
-  const generatedCount = vectors.filter(({ replay }) => replay !== undefined).length;
-  const uniqueOperationInputCount = new Set(
-    vectors.map(({ operation, fixtures }) => JSON.stringify({ operation, fixtures })),
-  ).size;
+  const scenarios = artifacts.flatMap(([, artifact]) => artifact.suite.scenarios);
+  const schemaSource = readFileSync(resolve(root, 'spec/differential/schema.json'), 'utf8');
   const coverageSource = readFileSync(resolve(root, 'spec/differential/corpus-coverage.json'), 'utf8');
   const inventorySource = readFileSync(resolve(root, 'spec/differential/legacy-abstract-inventory.json'), 'utf8');
   const coverage = JSON.parse(coverageSource);
+  const inventory = JSON.parse(inventorySource);
   const corpusClassifications = Object.fromEntries(
     ['model-covered', 'compiler-only', 'model-pending', 'proof-integrity', 'scale'].map((classification) => [
       classification,
@@ -805,30 +878,27 @@ export function loadCombinedDifferential(root, suiteNames = ['primitive', 'abstr
   );
   return {
     suite: { registry },
+    vectors,
     manifest: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       suite: 'combined',
+      schemaHash: hash(schemaSource),
       sourceHash: hash(JSON.stringify(sourceHashes)),
       sourceHashes,
       corpusCoverageHash: hash(coverageSource),
       legacyInventoryHash: hash(inventorySource),
-      corpusClassifications,
-      operationRegistry: registry.map(({ id }) => id),
-      operationDefinitions: registry,
-      counts,
+      legacyInventoryCount: inventory.totalEntries,
+      classificationCounts: corpusClassifications,
+      operationRegistry: registry.map(({ id, domain, arity, source }) => ({
+        id,
+        domain,
+        arity,
+        sourceHash: hash(source),
+      })),
       bounds: {
         aggregateDenseArrayCells: maximumDenseArrayCells,
       },
-      scenarioCount: Object.keys(counts).length,
-      fixedCount: vectors.length - generatedCount,
-      generatedCount,
-      vectorCount: vectors.length,
-      comparisonCount: vectors.length,
-      totalCount: vectors.length,
-      uniqueOperationInputCount,
-      parityDuplicateCount: vectors.length - uniqueOperationInputCount,
-      duplicatePolicy: 'preserved-for-v1-parity',
-      vectors,
+      ...summarizeVectors(vectors, scenarios),
     },
     artifacts,
   };

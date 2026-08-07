@@ -117,16 +117,17 @@ export type OracleResponse =
   | { id: string | null; status: 'protocol-error'; error: { code: string; message: string } };
 
 export type DifferentialManifest = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   suite: string;
+  schemaHash: string;
   sourceHash: string;
   sourceHashes: Record<string, string>;
   corpusCoverageHash: string;
   legacyInventoryHash: string;
-  corpusClassifications: Record<string, number>;
-  operationRegistry: string[];
-  operationDefinitions: Array<{ id: string; domain: 'primitive' | 'graph'; arity: 1 | 2; source: string }>;
-  counts: Record<string, number>;
+  legacyInventoryCount: number;
+  classificationCounts: Record<string, number>;
+  operationRegistry: Array<{ id: string; domain: 'primitive' | 'graph'; arity: 1 | 2; sourceHash: string }>;
+  bounds: { aggregateDenseArrayCells: number };
   scenarioCount: number;
   fixedCount: number;
   generatedCount: number;
@@ -136,5 +137,10 @@ export type DifferentialManifest = {
   uniqueOperationInputCount: number;
   parityDuplicateCount: number;
   duplicatePolicy: 'preserved-for-v1-parity';
-  vectors: DifferentialVector[];
+  scenarioCounts: Record<string, number>;
+  operationCounts: Record<string, number>;
+  regressionTagCounts: Record<string, number>;
+  scenarios: Array<{ id: string; vectorCount: number; vectorHash: string }>;
+  generators: Array<{ scenario: string; algorithm: string; version: number; seed: string; count: number }>;
+  vectorStreamHash: string;
 };
