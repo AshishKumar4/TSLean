@@ -1,0 +1,51 @@
+evidence/phase1-abstract-ops-input.json
+  s_bbe39cc683b865::t_9583f8ee22574b 1-209
+evidence/phase1-abstract-ops-manifest.json
+  s_3f6988e453bbbd::t_39ea80b7b8425d 1-179
+evidence/phase1-primitive-ops-input.json
+  s_bbe39cc683b865::t_0c4b39e607e838 161-162,167-168,173-174,180-181,184-185,188-189,203-204
+lean/TSLean/JS/AbstractOperationTheorems.lean
+  s_bbe39cc683b865::t_78cdde82385cf7 1-105
+lean/TSLean/JS/AbstractOperations.lean
+  s_bbe39cc683b865::t_105565816d08af 1-125
+lean/TSLean/JS/AbstractOperationsOracleTests.lean
+  s_bbe39cc683b865::t_21b2370a0b8443 1-412
+lean/TSLean/JS/AbstractOperationsTests.lean
+  s_bbe39cc683b865::t_459206fb729193 1-500
+lean/TSLean/JS/Heap.lean
+  s_bbe39cc683b865::t_000f264f459bb8 131-136,189-215,767-827
+lean/TSLean/JS/Instanceof.lean
+  s_bbe39cc683b865::t_8e99a232acb731 1
+lean/TSLean/JS/Machine.lean
+  s_bbe39cc683b865::t_bd52a5628406e8 24-93,114-115,125,134,145-161,246-248,256,270
+lean/TSLean/JS/RealmTestSupportTests.lean
+  s_bbe39cc683b865::t_f76294efa9c163 1-139
+package.json
+  s_bbe39cc683b865::t_2fd116d7417928 30-33,46
+tests/js-abstract-operations-differential.test.ts
+  s_bbe39cc683b865::t_bf6d160449610c 1-373
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "be709a49dd663bef8c37545a58a80a8403381839",
+  "prompts": {},
+  "sessions": {
+    "s_3f6988e453bbbd": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0263cb817ffeiAoeTUB5T9p1Q2",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_bbe39cc683b865": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0267d5238ffeRztp7RJnTCjaTP",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    }
+  }
+}
