@@ -22,6 +22,23 @@ private def prototypeFault : PrototypeFault → ModelFault
 /-- Produces a catchable ECMAScript TypeError completion. -/
 def throwTypeError (message : String) : JSM P α := JSM.throwJS (typeError message)
 
+/-- Type errors preserve machine continuity and carry an intrinsically valid primitive value. -/
+theorem throwTypeError_preservesResults (message : String) :
+    JSM.PreservesResults (fun _ _ => True) (throwTypeError (P := P) message : JSM P α) := by
+  constructor
+  · exact JSM.throwJS_preservesWellFormed _
+  · intro machine valid
+    rfl
+
+/-- Type errors support any normal-result predicate because they never complete normally. -/
+theorem throwTypeError_preservesResultsFor (normalValid : α → Machine P → Prop)
+    (message : String) :
+    JSM.PreservesResults normalValid (throwTypeError (P := P) message : JSM P α) := by
+  constructor
+  · exact JSM.throwJS_preservesWellFormed _
+  · intro machine valid
+    rfl
+
 /-- Produces a catchable ECMAScript RangeError completion. -/
 def throwRangeError (message : String) : JSM P α := JSM.throwJS (rangeError message)
 

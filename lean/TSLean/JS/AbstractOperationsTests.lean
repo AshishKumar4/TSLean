@@ -1,4 +1,5 @@
 import TSLean.JS.AbstractEquality
+import TSLean.JS.CoercionEffectsTests
 import TSLean.JS.Copy
 import TSLean.JS.HasInstance
 import TSLean.JS.RealmTestSupportTests
@@ -486,6 +487,7 @@ private def testPrototypeDepth : IO Unit := do
   assert! result
 
 def run : IO Unit := do
+  CoercionEffectsTests.run
   testOrdinaryToPrimitive
   testExoticToPrimitiveAndConversions
   testGetterThrowsAndGetMethod

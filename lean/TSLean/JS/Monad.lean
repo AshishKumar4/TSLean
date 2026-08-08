@@ -259,6 +259,31 @@ instance : Monad (JSM P) where
   pure := JSM.pure
   bind := JSM.bind
 
+/-- The executable state/completion monad satisfies the monad laws. -/
+instance : LawfulMonad (JSM P) := LawfulMonad.mk' (JSM P)
+  (by
+    intro α action
+    funext machine
+    change JSM.bind action (fun value => JSM.pure (id value)) machine = action machine
+    unfold JSM.bind JSM.pure
+    cases action machine with
+    | done completion next => cases completion <;> rfl
+    | exhausted next => rfl
+    | fault fault next => rfl)
+  (by intros; rfl)
+  (by
+    intro α β γ action next last
+    funext machine
+    change JSM.bind (JSM.bind action next) last machine =
+      JSM.bind action (fun value => JSM.bind (next value) last) machine
+    unfold JSM.bind
+    cases action machine with
+    | done completion nextMachine =>
+        cases completion with
+        | normal value => cases next value nextMachine <;> rename_i result <;> cases result <;> rfl
+        | returned value | thrown value | «break» label | «continue» label => rfl
+    | exhausted nextMachine | fault fault nextMachine => rfl)
+
 /-- Reads the complete machine. -/
 def get : JSM P (Machine P) := fun machine => .done (.normal machine) machine
 

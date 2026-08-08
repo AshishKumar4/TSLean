@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase2-hook-copy-manifest.json",
-  "baseRevision": "533fe9fa986c722ac13f8182a0492b0f1e4d4ff3",
+  "outputPath": "evidence/phase2-zero-debt-manifest.json",
+  "baseRevision": "d68dab44af677733dd23b15c0ca16937ebc3d2ae",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": { "files": 43, "passed": 1633, "failed": 0, "todo": 8 },
-    "lean": { "jobs": 172, "status": "passed" },
+    "lean": { "jobs": 174, "status": "passed" },
     "corpus": { "entries": 102, "red": 102 },
-    "auditedTheorems": 439,
+    "auditedTheorems": 591,
     "differential": {
       "scenarioGroups": 16,
       "fixed": 734,
@@ -59,16 +59,6 @@
       }
     ]
   },
-  "formalDebt": {
-    "counts": { "effectfulEquivalence": 1, "total": 1 },
-    "obligations": [
-      {
-        "id": "abstract-effectful-coercion-refinement",
-        "area": "effectfulEquivalence",
-        "statement": "GetMethod and effectful coercion hooks have a trace/state refinement relation that preserves getter and call ordering."
-      }
-    ]
-  },
   "knownTodos": [
     { "id": "completion-nested-forof-erased", "location": "tests/e2e-v3.test.ts" },
     { "id": "completion-process-items-forof-erased", "location": "tests/pipeline-full.test.ts" },
@@ -80,7 +70,6 @@
     { "id": "selfhost-typemap-one-hole", "location": "tests/parser-advanced.test.ts" }
   ],
   "validation": {
-    "revision": "d68dab44af677733dd23b15c0ca16937ebc3d2ae",
     "testFiles": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.files" },
     "todos": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.todo" },
     "corpus": {
@@ -182,18 +171,9 @@
     ]
   },
   "hashGroups": {
-    "source": {
-      "paths": ["src"],
-      "revision": "d68dab44af677733dd23b15c0ca16937ebc3d2ae"
-    },
-    "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "d68dab44af677733dd23b15c0ca16937ebc3d2ae"
-    },
-    "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "d68dab44af677733dd23b15c0ca16937ebc3d2ae"
-    },
+    "source": { "paths": ["src"] },
+    "jsRuntime": { "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"] },
+    "corpus": { "paths": ["spec/corpus"] },
     "differentialSpecHarness": {
       "paths": [
         "spec/differential",
@@ -203,8 +183,7 @@
         "scripts/generate-differential-manifest.mjs",
         "tests/js-model-differential.test.ts",
         "tests/differential"
-      ],
-      "revision": "d68dab44af677733dd23b15c0ca16937ebc3d2ae"
+      ]
     },
     "proofTestsAudit": {
       "paths": [
@@ -213,8 +192,7 @@
         "tests/js-trust.test.ts",
         "tests/lean-fixtures/axiom-audit-synthetic.lean",
         "tests/lean-fixtures/ordered-props-transitions.lean"
-      ],
-      "revision": "d68dab44af677733dd23b15c0ca16937ebc3d2ae"
+      ]
     },
     "trustEvidenceInfrastructure": {
       "paths": [
@@ -226,8 +204,7 @@
         "tests/corpus-schema.test.ts",
         "tests/package.test.ts",
         "lean/lakefile.toml"
-      ],
-      "revision": "d68dab44af677733dd23b15c0ca16937ebc3d2ae"
+      ]
     }
   }
 }

@@ -10,6 +10,50 @@ inductive PreferredType where
   | number
   deriving DecidableEq
 
+/-- Observable operations required by the effectful coercion algorithms. -/
+structure CoercionEffects (m : Type → Type) [Monad m] where
+  get : RefId → PropertyKey → Value → m Value
+  call : RefId → Value → Array Value → m Value
+  isCallable : RefId → m Bool
+  typeError : String → m Empty
+  throw : Value → m Empty
+
+namespace CoercionEffects
+
+/-- Eliminates a terminal coercion operation at the result type expected by its caller. -/
+@[inline]
+def terminal [Monad m] (operation : m Empty) : m α := operation >>= Empty.elim
+
+/-- Raises a configured type error at any result type. -/
+@[inline]
+def raiseTypeError [Monad m] (effects : CoercionEffects m) (message : String) : m α :=
+  terminal (effects.typeError message)
+
+/-- Supplies coercion effects from the production JavaScript machine and evaluator hook.
+Public specialization requires extensional equality of `JSM` results for every input machine;
+compiled C byte identity is not part of the contract. -/
+@[inline]
+def forJSM (hook : BodyHook P) : CoercionEffects (JSM P) where
+  get := ObjectAccess.get hook
+  call := Call.call hook
+  isCallable ref := do
+    let heap ← JSM.readHeap
+    match heap.isCallable ref with
+    | .error fault => JSM.fail (.runtime (.heap fault))
+    | .ok callable => pure callable
+  typeError := ObjectAccess.throwTypeError
+  throw := JSM.throwJS
+
+/-- Lifts a pure primitive-coercion result into the configured JavaScript throw boundary. -/
+@[inline]
+def fromCoercion [Monad m] (effects : CoercionEffects m)
+    (result : Except CoercionFault α) : m α :=
+  match result with
+  | .ok value => pure value
+  | .error fault => terminal (effects.throw fault.toThrownValue)
+
+end CoercionEffects
+
 namespace AbstractOperations
 
 private def heapFault (fault : HeapFault) : ModelFault := .runtime (.heap fault)
@@ -17,86 +61,121 @@ private def heapFault (fault : HeapFault) : ModelFault := .runtime (.heap fault)
 private def property (name : String) : PropertyKey :=
   .string (JSString.ofLeanString name)
 
-private def coercion (result : Except CoercionFault α) : JSM P α :=
-  match result with
-  | .ok value => pure value
-  | .error fault => JSM.throwJS fault.toThrownValue
-
-/-- Gets a method property. Nullish properties are absent; all other non-callable values throw. -/
-def getMethod (hook : BodyHook P) (ref : RefId) (key : PropertyKey) : JSM P (Option RefId) := do
-  let value ← ObjectAccess.get hook ref key (.object ref)
+/-- Gets a method through generic coercion effects. -/
+def getMethodWith [Monad m] (effects : CoercionEffects m) (ref : RefId)
+    (key : PropertyKey) : m (Option RefId) := do
+  let value ← effects.get ref key (.object ref)
   match value with
   | .primitive .undefined | .primitive .null => pure none
-  | .primitive _ => ObjectAccess.throwTypeError "property is not callable"
+  | .primitive _ => CoercionEffects.raiseTypeError effects "property is not callable"
   | .object method =>
-      let heap ← JSM.readHeap
-      match heap.isCallable method with
-      | .error fault => JSM.fail (heapFault fault)
-      | .ok true => pure (some method)
-      | .ok false => ObjectAccess.throwTypeError "property is not callable"
+      if ← effects.isCallable method then pure (some method)
+       else CoercionEffects.raiseTypeError effects "property is not callable"
 
-private def tryOrdinaryMethod (hook : BodyHook P) (receiver : RefId)
-    (name : String) : JSM P (Option Primitive) := do
-  let methodValue ← ObjectAccess.get hook receiver (property name) (.object receiver)
+/-- Gets a method property. Nullish properties are absent; all other non-callable values throw. -/
+@[inline]
+def getMethod (hook : BodyHook P) (ref : RefId) (key : PropertyKey) : JSM P (Option RefId) :=
+  getMethodWith (CoercionEffects.forJSM hook) ref key
+
+/-- Tries one ordinary primitive-conversion method through generic coercion effects. -/
+def tryOrdinaryMethodWith [Monad m] (effects : CoercionEffects m) (receiver : RefId)
+    (name : String) : m (Option Primitive) := do
+  let methodValue ← effects.get receiver (property name) (.object receiver)
   match methodValue with
   | .primitive _ => pure none
   | .object method =>
-      let heap ← JSM.readHeap
-      match heap.isCallable method with
-      | .error fault => JSM.fail (heapFault fault)
-      | .ok false => pure none
-      | .ok true =>
-          match ← Call.call hook method (.object receiver) #[] with
-          | .primitive primitive => pure (some primitive)
-          | .object _ => pure none
+      if !(← effects.isCallable method) then pure none
+      else
+        match ← effects.call method (.object receiver) #[] with
+        | .primitive primitive => pure (some primitive)
+        | .object _ => pure none
 
-private def tryOrdinaryMethods (hook : BodyHook P) (receiver : RefId) : List String → JSM P Primitive
-  | [] => ObjectAccess.throwTypeError "cannot convert object to primitive value"
+/-- Tries ordinary primitive-conversion methods in order through generic coercion effects. -/
+def tryOrdinaryMethodsWith [Monad m] (effects : CoercionEffects m)
+    (receiver : RefId) : List String → m Primitive
+  | [] => CoercionEffects.raiseTypeError effects "cannot convert object to primitive value"
   | name :: rest => do
-      match ← tryOrdinaryMethod hook receiver name with
+      match ← tryOrdinaryMethodWith effects receiver name with
       | some primitive => pure primitive
-      | none => tryOrdinaryMethods hook receiver rest
+      | none => tryOrdinaryMethodsWith effects receiver rest
+
+/-- OrdinaryToPrimitive through generic coercion effects. -/
+def ordinaryToPrimitiveWith [Monad m] (effects : CoercionEffects m) (receiver : RefId)
+    (hint : PreferredType) : m Primitive :=
+  match hint with
+  | .string => tryOrdinaryMethodsWith effects receiver ["toString", "valueOf"]
+  | .number | .default => tryOrdinaryMethodsWith effects receiver ["valueOf", "toString"]
 
 /-- OrdinaryToPrimitive performs at most two ordered property reads and calls. -/
+@[inline]
 def ordinaryToPrimitive (hook : BodyHook P) (receiver : RefId)
     (hint : PreferredType) : JSM P Primitive :=
-  match hint with
-  | .string => tryOrdinaryMethods hook receiver ["toString", "valueOf"]
-  | .number | .default => tryOrdinaryMethods hook receiver ["valueOf", "toString"]
+  ordinaryToPrimitiveWith (CoercionEffects.forJSM hook) receiver hint
 
-private def hintString : PreferredType → JSString
+/-- The exact string argument passed to an exotic `@@toPrimitive` method. -/
+def hintString : PreferredType → JSString
   | .default => JSString.ofLeanString "default"
   | .string => JSString.ofLeanString "string"
   | .number => JSString.ofLeanString "number"
 
-/-- ECMAScript ToPrimitive, including `Symbol.toPrimitive` dispatch and ordinary fallback. -/
-def toPrimitive (hook : BodyHook P) (value : Value)
-    (hint : PreferredType := .default) : JSM P Primitive :=
+/-- ECMAScript ToPrimitive through generic coercion effects. -/
+def toPrimitiveWith [Monad m] (effects : CoercionEffects m) (value : Value)
+    (hint : PreferredType := .default) : m Primitive :=
   match value with
   | .primitive primitive => pure primitive
   | .object receiver => do
-      match ← getMethod hook receiver (.symbol (.wellKnown .toPrimitive)) with
+      match ← getMethodWith effects receiver (.symbol (.wellKnown .toPrimitive)) with
       | some method =>
-          match ← Call.call hook method value #[.primitive (.string (hintString hint))] with
+          match ← effects.call method value #[.primitive (.string (hintString hint))] with
           | .primitive primitive => pure primitive
-          | .object _ => ObjectAccess.throwTypeError "Symbol.toPrimitive returned an object"
-      | none => ordinaryToPrimitive hook receiver hint
+          | .object _ => CoercionEffects.raiseTypeError effects "Symbol.toPrimitive returned an object"
+      | none => ordinaryToPrimitiveWith effects receiver hint
+
+/-- ECMAScript ToPrimitive, including `Symbol.toPrimitive` dispatch and ordinary fallback. -/
+@[inline]
+def toPrimitive (hook : BodyHook P) (value : Value)
+    (hint : PreferredType := .default) : JSM P Primitive :=
+  toPrimitiveWith (CoercionEffects.forJSM hook) value hint
+
+/-- Value-level ToNumber through generic coercion effects. -/
+@[inline]
+def toNumberWith [Monad m] (effects : CoercionEffects m) (value : Value) : m JSNumber := do
+  CoercionEffects.fromCoercion effects (← toPrimitiveWith effects value .number).toNumber
 
 /-- Value-level ToNumber first performs object coercion, then the committed primitive conversion. -/
-def toNumber (hook : BodyHook P) (value : Value) : JSM P JSNumber := do
-  coercion (← toPrimitive hook value .number).toNumber
+@[inline]
+def toNumber (hook : BodyHook P) (value : Value) : JSM P JSNumber :=
+  toNumberWith (CoercionEffects.forJSM hook) value
+
+/-- Value-level ToString through generic coercion effects. -/
+@[inline]
+def toStringWith [Monad m] (effects : CoercionEffects m) (value : Value) : m JSString := do
+  CoercionEffects.fromCoercion effects (← toPrimitiveWith effects value .string).toString
 
 /-- Value-level ToString first performs object coercion, then the committed primitive conversion. -/
-def toString (hook : BodyHook P) (value : Value) : JSM P JSString := do
-  coercion (← toPrimitive hook value .string).toString
+@[inline]
+def toString (hook : BodyHook P) (value : Value) : JSM P JSString :=
+  toStringWith (CoercionEffects.forJSM hook) value
+
+/-- Value-level ToNumeric through generic coercion effects. -/
+@[inline]
+def toNumericWith [Monad m] (effects : CoercionEffects m) (value : Value) : m Numeric := do
+  CoercionEffects.fromCoercion effects (← toPrimitiveWith effects value .number).toNumeric
 
 /-- Value-level ToNumeric preserves BigInt after object coercion. -/
-def toNumeric (hook : BodyHook P) (value : Value) : JSM P Numeric := do
-  coercion (← toPrimitive hook value .number).toNumeric
+@[inline]
+def toNumeric (hook : BodyHook P) (value : Value) : JSM P Numeric :=
+  toNumericWith (CoercionEffects.forJSM hook) value
+
+/-- Value-level ToPropertyKey through generic coercion effects. -/
+@[inline]
+def toPropertyKeyWith [Monad m] (effects : CoercionEffects m) (value : Value) : m PropertyKey := do
+  CoercionEffects.fromCoercion effects (← toPrimitiveWith effects value .string).toPropertyKey
 
 /-- Value-level ToPropertyKey requests a string-preferred primitive and preserves symbols. -/
-def toPropertyKey (hook : BodyHook P) (value : Value) : JSM P PropertyKey := do
-  coercion (← toPrimitive hook value .string).toPropertyKey
+@[inline]
+def toPropertyKey (hook : BodyHook P) (value : Value) : JSM P PropertyKey :=
+  toPropertyKeyWith (CoercionEffects.forJSM hook) value
 
 /-- ECMAScript ToObject. Existing object identity is retained and non-nullish primitives are boxed. -/
 def toObject (value : Value) : JSM P RefId := fun machine =>

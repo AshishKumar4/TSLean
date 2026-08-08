@@ -68,7 +68,8 @@ theorem getMethod_undefined (hook : BodyHook P) (machine next : Machine P)
       .done (.normal (.primitive .undefined)) next) :
     getMethod hook ref key machine = .done (.normal none) next := by
   unfold getMethod
-  change JSM.bind _ _ machine = _
+  unfold getMethodWith CoercionEffects.forJSM
+  change JSM.bind (ObjectAccess.get hook ref key (.object ref)) _ machine = _
   unfold JSM.bind
   rw [got]
   rfl
@@ -80,7 +81,8 @@ theorem getMethod_null (hook : BodyHook P) (machine next : Machine P)
       .done (.normal (.primitive .null)) next) :
     getMethod hook ref key machine = .done (.normal none) next := by
   unfold getMethod
-  change JSM.bind _ _ machine = _
+  unfold getMethodWith CoercionEffects.forJSM
+  change JSM.bind (ObjectAccess.get hook ref key (.object ref)) _ machine = _
   unfold JSM.bind
   rw [got]
   rfl
@@ -98,8 +100,5 @@ theorem ordinaryHasInstance_primitive (hook : BodyHook P) (machine : Machine P)
   simp [ordinaryHasInstance, callable]
 
 end Instanceof
-
--- TODO(formal-debt): characterize GetMethod and effectful coercion hooks with a trace/state
--- refinement relation. Pointwise equations would hide getter and call ordering obligations.
 
 end TSLean.JS

@@ -18,6 +18,10 @@ root = "TSLean.JS.ArrayScaleTests"
 name = "js-model-oracle"
 root = "TSLean.JS.Oracle.Main"
 
+[[lean_exe]]
+name = "js-coercion-effects-benchmark"
+root = "TSLean.JS.CoercionEffectsBenchmark"
+
 # Note: Veil (verse-lab/veil) requires Lean v4.24.0 + Mathlib + lean-smt.
 # Our runtime targets Lean v4.29.0 (no external deps).
 # We implement the Veil transition-system core natively in TSLean/Veil/

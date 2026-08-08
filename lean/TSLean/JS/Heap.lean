@@ -447,6 +447,22 @@ def valueValid (heap : Heap) : Value → Bool
   | .object ref => ref.value < heap.size
   | .primitive _ => true
 
+/-- A successfully callable reference is a valid object reference. -/
+theorem isCallable_true_valueValid (heap : Heap) (ref : RefId)
+    (callable : heap.isCallable ref = .ok true) : heap.valueValid (.object ref) = true := by
+  unfold isCallable functionSlots? at callable
+  cases found : heap.get? ref with
+  | error fault =>
+      simp [found, Bind.bind, Except.bind] at callable
+  | ok object =>
+      unfold get? at found
+      cases lookup : heap.objects[ref.value]? with
+      | none => simp [lookup] at found
+      | some current =>
+          unfold valueValid size
+          exact decide_eq_true (by
+            simpa using (Array.getElem?_eq_some_iff.mp lookup).choose)
+
 /-- Replacing one object preserves validity of every reference. -/
 theorem valueValid_replace (heap next : Heap) (target : RefId) (object : ObjectRecord)
     (replaced : heap.replace target object = .ok next) (value : Value) :

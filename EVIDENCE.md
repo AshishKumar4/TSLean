@@ -973,3 +973,48 @@ $ git diff --check
 ```
 
 The 439 audited declarations and complete verification gate support only the preservation, continuity, result-validity, and freshness statements above. They do not establish the remaining effectful-coercion refinement, close the iterator semantic feature gap, or add promises or derived `super` support. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and were not suppressed or changed.
+
+## 2026-08-08 - Phase 2 zero formal debt
+
+This snapshot is based on `d68dab44af677733dd23b15c0ca16937ebc3d2ae` on `rebuild/semantic-core`. The hook/copy input now resolves every source-derived validation and hash from that immutable revision. Its manifest remains available through `evidence:hook-copy:generate` and `evidence:hook-copy:check`; all earlier inputs, manifests, ledger entries, and explicit historical commands remain intact. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target `phase2-zero-debt-input.json`.
+
+Review closes the 11 obligations recorded at the start of Phase 2:
+
+- The four OrderedProps obligations are closed by general insertion, deletion, compaction, exact key-correspondence, partition, order, and duplicate-freedom theorems.
+- Heap allocation coverage includes ordinary objects, primitive wrappers, arrays, array-from-array allocation, functions, constructor/prototype pairs, and array iterators, with freshness, validity, and continuity results where applicable.
+- `heap-public-mutation-preservation` is closed by general `defineOwnProperty`, `createDataProperty`, `deleteProperty`, and `preventExtensions` preservation, including successful, rejected, and state-committing branches.
+- `heap-prototype-preservation` is closed by logical/executable acyclicity correspondence, finite prototype-path termination, and complete `setPrototypeOf` preservation.
+- `array-blocked-shrink-general` is closed by separate blocked and unblocked strict-shrink theorems that characterize deletion, blocker, length, writability, ordering, unchanged-object, and final-validity behavior.
+- The three copy, iterator, and machine hook-conditional obligations are closed by the strengthened continuity and escaping-result validity contract, preservation for access/call/control/environment operations, iterator allocation and advancement, and copy/assign/spread/slice composition under preserving hooks.
+- `abstract-effectful-coercion-refinement` is closed by the free `CoercionProgram` specification. Its typed operations retain complete parameters; `Executes` gives exact total big-step execution with soundness, completeness, determinism, trace-prefix/first-event equations, response consumption, and allocation accounting. Interpretation theorems connect the free programs to every production coercion, equality, relational, and `instanceof` entry point. Program-order theorems establish property-get before call, ordinary hint order, left-before-right addition, both relational orders, and custom `@@hasInstance` before ordinary fallback. Production specialization is definitional through `CoercionEffects.forJSM`, and preservation theorems carry the existing machine continuity and result-validity contract through interpreted production execution.
+
+The trust audit reviewed 591 elaborated declarations and accepted only `propext`, `Classical.choice`, and `Quot.sound`. `CoercionProgram` is proof support rather than a second production runtime: production entry points remain the `JSM` specializations, and the production interpretation theorems connect those exact definitions to the free specification. The four Float assumptions remain unchanged executable TCB assumptions rather than proof axioms. The 7,264-comparison differential suite remains unchanged and continues to cover the same 16 groups, 734 fixed vectors, 6,530 generated vectors, 6,088 unique operation inputs, and 1,176 preserved duplicates.
+
+Zero formal debt means that no obligation remains in the scoped Phase 2 ledger. It is not a claim of complete ECMAScript modeling or compiler correctness. Canonical iterable spread (`GetIterator`, custom iterables, allocated iterator-result objects, and `IteratorClose`), promises, and derived `super` remain semantic/model gaps. The corpus still classifies 26 entries as model-pending, and all eight compiler todos remain explicit. The 102 corpus entries remain red evidence, not passing conformance tests. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and are not discharged by this snapshot.
+
+Measured commands and results:
+
+```text
+$ bun run test
+Test Files  43 passed (43)
+Tests  1633 passed | 8 todo (1641)
+
+$ bun run lint
+$ bun run build
+
+$ bun run differential:check
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+
+$ cd lean && lake build
+Build completed successfully (174 jobs).
+
+$ bun run benchmark:coercion-effects
+coercion-specialization public100kMs=7 public1mMs=62 generic100kMs=7 generic1mMs=64
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 307
+Unpacked size: 3.70MB
+```
+
+The optional benchmark is a machine-local smoke measurement, not a performance guarantee. The zero-debt manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:0b40e99e3e07eb37f91190aa6d27d013c4e7d497d87c61bc1d5546f8fa0b0df1`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, proof tests and audit `sha256:f29e2d6f841359a7361d1596d5dc8f94799b76736bd69472880d13415e09dcfe`, and trust/evidence infrastructure `sha256:6c992b11d0d2cbbee42a997ac9fdb997f772990aa8d6438f3fe2abe2f1bbaac4`. The frozen hook/copy manifest SHA-256 is `47f4d9473c30c2b2f2f4a8b685de99cc8d49048f1e4bf09ae1c87a8ad57f303f`; the zero-debt manifest SHA-256 is `b6d417de5073ffe328dec868ac48345bd73089a007be71a38050e54359780f67`.
