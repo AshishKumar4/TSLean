@@ -1,0 +1,19 @@
+evidence/phase3-float-refinement-manifest.json
+  s_eb43e43e97f2f5::t_9566f544177d5f 1-170
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9ae99757dda30d2705bc1e5be513bb1b51431e7a",
+  "prompts": {},
+  "sessions": {
+    "s_eb43e43e97f2f5": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_01eb3a042ffe7gi5hXFtHJKRna",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    }
+  }
+}
