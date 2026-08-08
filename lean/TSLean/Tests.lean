@@ -38,6 +38,7 @@ import TSLean.JS.PrimitiveTests
 import TSLean.JS.Tests
 import TSLean.Refinement.AxiomAudit
 import TSLean.Refinement.Tests.Core
+import TSLean.Refinement.Tests.Float
 import TSLean.Refinement.Tests.Primitive
 import TSLean.Refinement.Tests.String
 

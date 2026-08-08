@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase3-string-refinement-manifest.json",
-  "baseRevision": "50fedc36a2aed89cd59973ac97c0411eeae3fae5",
+  "outputPath": "evidence/phase3-float-refinement-manifest.json",
+  "baseRevision": "c6a87f3b5ee18040056a39225cf25ae5a2b3abce",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": { "files": 43, "passed": 1636, "failed": 0, "todo": 8 },
-    "lean": { "jobs": 185, "status": "passed" },
+    "lean": { "jobs": 187, "status": "passed" },
     "corpus": { "entries": 102, "red": 102 },
     "auditedTheorems": 596,
     "differential": {
@@ -30,37 +30,56 @@
     "build": "passed"
   },
   "refinementProofs": {
-    "audited": 133,
-    "required": 119,
-    "registryHash": "sha256:7ae597b51426aa98c4a3e04d159e41eea312f80ae34abf2bb15f397e39afa4f2"
+    "audited": 155,
+    "required": 140,
+    "registryHash": "sha256:6fbe4d0b6f71b418d3b840b41bb092c3562eadb93792616d1ccf2ec0fb32d2cb"
   },
   "executableAssumptions": {
-    "statement": "These are executable trusted-computing-base assumptions, not proof axioms. No theorem claims that these Lean runtime primitives implement ECMAScript correctly. The String, Bool, and BigInt refinements use no executable assumptions.",
+    "statement": "These eight executable trusted-computing-base assumptions exactly record the Float refinement runtime contracts. They are not proof axioms and introduce no additional runtime contract.",
     "assumptions": [
       {
-        "id": "lean-float-bits",
-        "primitives": { "ofBits": "Float.ofBits", "toBits": "Float.toBits" },
-        "statement": "Lean's Float bit conversion primitives preserve the intended finite binary64 encodings used by JSNumber."
-      },
-      {
-        "id": "lean-float-arithmetic",
+        "id": "83:Canonical re-encoding of Float.ofBits is JSNumber.sameValue to the source JSNumber.:77:Lean Float primitives are executable runtime bridges, not kernel definitions.",
         "primitives": {
-          "add": "Float.add",
-          "subtract": "Float.sub",
-          "multiply": "Float.mul",
-          "divide": "Float.div"
+          "decode": "Float.ofBits",
+          "encode": "Float.toBits",
+          "canonicalize": "JSNumber.ofFloatCanonical"
         },
-        "statement": "Lean's Float arithmetic primitives execute the binary64 operations used by ECMAScript Number arithmetic."
+        "statement": "Canonical re-encoding of Float.ofBits is JSNumber.sameValue to the source JSNumber."
       },
       {
-        "id": "lean-float-comparison",
-        "primitives": { "lessThan": "LT.lt Float" },
-        "statement": "Lean's executable Float ordering agrees with the finite binary64 ordering used by ECMAScript Number comparison."
+        "id": "80:Canonical Float.add encoding is SameValue to JSNumber.add on canonical operands.:45:Float.add is an executable runtime primitive.",
+        "primitives": { "native": "Float.add", "model": "JSNumber.add" },
+        "statement": "Canonical Float.add encoding is SameValue to JSNumber.add on canonical operands."
       },
       {
-        "id": "lean-float-of-scientific",
-        "primitives": { "ofScientific": "Float.ofScientific" },
-        "statement": "Lean's Float.ofScientific supplies an executable decimal candidate; exact integer rounding checks and corrects that candidate at binary64 boundaries."
+        "id": "85:Canonical Float.sub encoding is SameValue to JSNumber.subtract on canonical operands.:45:Float.sub is an executable runtime primitive.",
+        "primitives": { "native": "Float.sub", "model": "JSNumber.subtract" },
+        "statement": "Canonical Float.sub encoding is SameValue to JSNumber.subtract on canonical operands."
+      },
+      {
+        "id": "85:Canonical Float.mul encoding is SameValue to JSNumber.multiply on canonical operands.:45:Float.mul is an executable runtime primitive.",
+        "primitives": { "native": "Float.mul", "model": "JSNumber.multiply" },
+        "statement": "Canonical Float.mul encoding is SameValue to JSNumber.multiply on canonical operands."
+      },
+      {
+        "id": "83:Canonical Float.div encoding is SameValue to JSNumber.divide on canonical operands.:45:Float.div is an executable runtime primitive.",
+        "primitives": { "native": "Float.div", "model": "JSNumber.divide" },
+        "statement": "Canonical Float.div encoding is SameValue to JSNumber.divide on canonical operands."
+      },
+      {
+        "id": "76:Native Float strict ordering equals JSNumber.lessThan on canonical operands.:47:Float.decLt is an executable runtime primitive.",
+        "primitives": { "native": "Float.decLt", "model": "JSNumber.lessThan" },
+        "statement": "Native Float strict ordering equals JSNumber.lessThan on canonical operands."
+      },
+      {
+        "id": "96:Native Float non-strict ordering equals ordered JSNumber not-greater-than on canonical operands.:47:Float.decLe is an executable runtime primitive.",
+        "primitives": { "native": "Float.decLe", "model": "JSNumber.lessThan" },
+        "statement": "Native Float non-strict ordering equals ordered JSNumber not-greater-than on canonical operands."
+      },
+      {
+        "id": "60:Float.beq equals JSNumber.strictEqual on canonical operands.:45:Float.beq is an executable runtime primitive.",
+        "primitives": { "native": "Float.beq", "model": "JSNumber.strictEqual" },
+        "statement": "Float.beq equals JSNumber.strictEqual on canonical operands."
       }
     ]
   },
@@ -75,7 +94,6 @@
     { "id": "selfhost-typemap-one-hole", "location": "tests/parser-advanced.test.ts" }
   ],
   "validation": {
-    "revision": "c6a87f3b5ee18040056a39225cf25ae5a2b3abce",
     "testFiles": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.files" },
     "todos": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.todo" },
     "corpus": {
@@ -177,25 +195,19 @@
     ]
   },
   "hashGroups": {
-    "source": {
-      "paths": ["src"],
-      "revision": "c6a87f3b5ee18040056a39225cf25ae5a2b3abce"
-    },
-    "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "c6a87f3b5ee18040056a39225cf25ae5a2b3abce"
-    },
+    "source": { "paths": ["src"] },
+    "jsRuntime": { "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"] },
     "refinementRuntimeAndBarrel": {
       "paths": [
         "lean/TSLean/Refinement/Core.lean",
         "lean/TSLean/Refinement/Evidence.lean",
         "lean/TSLean/Refinement/Execution.lean",
+        "lean/TSLean/Refinement/Float.lean",
         "lean/TSLean/Refinement/Heap.lean",
         "lean/TSLean/Refinement/Primitive.lean",
         "lean/TSLean/Refinement/String.lean",
         "lean/TSLean/Refinement.lean"
-      ],
-      "revision": "c6a87f3b5ee18040056a39225cf25ae5a2b3abce"
+      ]
     },
     "refinementTestsAuditRegistry": {
       "paths": [
@@ -205,13 +217,9 @@
         "tests/js-trust.test.ts",
         "tests/lean-fixtures/refinement-invalid-guard-receipt.lean",
         "tests/lean-fixtures/refinement-private-constructors.lean"
-      ],
-      "revision": "c6a87f3b5ee18040056a39225cf25ae5a2b3abce"
+      ]
     },
-    "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "c6a87f3b5ee18040056a39225cf25ae5a2b3abce"
-    },
+    "corpus": { "paths": ["spec/corpus"] },
     "differentialSpecHarness": {
       "paths": [
         "spec/differential",
@@ -221,8 +229,7 @@
         "scripts/generate-differential-manifest.mjs",
         "tests/js-model-differential.test.ts",
         "tests/differential"
-      ],
-      "revision": "c6a87f3b5ee18040056a39225cf25ae5a2b3abce"
+      ]
     },
     "trustEvidenceInfrastructure": {
       "paths": [
@@ -236,8 +243,7 @@
         "lean/TSLean.lean",
         "lean/TSLean/Tests.lean",
         "lean/lakefile.toml"
-      ],
-      "revision": "c6a87f3b5ee18040056a39225cf25ae5a2b3abce"
+      ]
     }
   }
 }

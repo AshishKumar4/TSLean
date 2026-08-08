@@ -1164,3 +1164,47 @@ $ git diff --check
 ```
 
 Every evidence check from `evidence:baseline:check` through the current `evidence:string-refinement:check` passed. The String-refinement manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:a1ee6f4de87c9035d609bf3e3d088e63c40beb61ddcee6015d1243fd2b382ffa`, refinement runtime and barrel `sha256:fa4bf03fdc83bc21a3cab433ffc167eb2652c3feaa908f16f466431545fd8412`, refinement tests, audit, and registry `sha256:a2016a8885d00f2a7cce5543c3767b6606f99a0bfeed68eb1c6221cbe79e83f9`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, and trust/evidence infrastructure `sha256:4563325e3f87e4b72c408f911f3f15c1c108a2c35dd4cf38a463a51b5615b7b1`. The manifest SHA-256 is `1e2cba1a786115e9ada050b18f0d448ef76ec76012dd220c645ac89c16cce6c0`.
+
+## 2026-08-08 - Float refinement
+
+This snapshot is based on `c6a87f3b5ee18040056a39225cf25ae5a2b3abce` on `rebuild/semantic-core`. The String-refinement input now resolves every validation and hash group from that immutable revision, while its manifest remains byte-for-byte unchanged at SHA-256 `1e2cba1a786115e9ada050b18f0d448ef76ec76012dd220c645ac89c16cce6c0`. Its explicit commands and every earlier input, manifest, and ledger entry remain intact. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target `phase3-float-refinement-input.json`.
+
+The Float codec is observational. It encodes to a canonical Number primitive, decodes Number primitives through `Float.ofBits`, rejects every other primitive and object with a typed fault, and relates native and modeled values by `JSNumber.sameValue`. `codec_observational_roundtrip` preserves that shared observation across encode and decode; it does not provide `LawfulCodec`, `CodecComplete`, or native Float equality after roundtrip. Remainder uses the committed integer-based `JSNumber.remainder` path and the bridge roundtrip contract, so it adds no executable assumption.
+
+The executable ledger records exactly eight assumed runtime contracts in `Float.runtimeAssumptionRegistry`: canonical bridge roundtrip, addition, subtraction, multiplication, division, strict less-than, non-strict less-than-or-equal, and strict equality. Their deterministic IDs and statements are copied exactly into the manifest. Each `Evidence.assumed` value has no proof payload. The manifest has no `formalDebt` field.
+
+The boundary matrix uses 15 binary64 values: positive and negative zero, positive and negative one, minimum subnormal, maximum subnormal, minimum normal, positive and negative maximum finite, both infinities, and positive and negative signaling and quiet NaN encodings. The seven binary runtime contracts and the derived remainder path execute over all 225 ordered pairs; the bridge contract is checked for every matrix value and operation result. Separate tests cover exact finite/infinite bit roundtrips, NaN canonicalization, typed decode failures, truthiness, SameValue, and SameValueZero. Source review confirmed the theorem premises expose each executable contract rather than proving it, the audited registry contains the intended production statements, and no remainder or codec-completeness assumption was introduced.
+
+This snapshot adds a Float-to-Number refinement boundary, not compiler consumption. No compiler, parser, IR, lowering, representation-selection, or code-generation source changed, and generated output does not use this codec. Array and closed-record codecs remain unclaimed, `TSLean.Refinement.Execution` remains reserved, and the existing model gaps, 26 model-pending corpus entries, and eight compiler todos remain unchanged.
+
+Measured commands and results:
+
+```text
+$ bun run evidence:float-refinement:generate
+$ bun run evidence:float-refinement:check
+$ bun run evidence:string-refinement:check
+
+$ bun run js:trust
+JS trust checks passed: 596 elaborated proof declarations
+JS trust gate passed: 596 proof declarations
+Refinement trust gate passed: 155 audited proof declarations; 140 required production theorems
+
+$ bun run verify
+All matched files use Prettier code style!
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+JS trust checks passed: 596 elaborated proof declarations
+JS trust gate passed: 596 proof declarations
+Refinement trust gate passed: 155 audited proof declarations; 140 required production theorems
+Test Files  43 passed (43)
+Tests  1636 passed | 8 todo (1644)
+Build completed successfully (187 jobs).
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 321
+Unpacked size: 3.85MB
+
+$ git diff --check
+```
+
+Every evidence check from `evidence:baseline:check` through the current `evidence:float-refinement:check` passed. The Float-refinement manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:4fe149ff5f709495e20acca7deb27edfd0aca01c9d1f26b1dcd07cb9d8eb4969`, refinement runtime and barrel `sha256:fef2f61ad99859a0c0eefc4d8773f2266233c70b90cb2f55297dd547b6d839f7`, refinement tests, audit, and registry `sha256:b6e19c994a851d9f904522537bff041fc20f13cd148a3705a9e5187288511617`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, and trust/evidence infrastructure `sha256:ea3629588eeb78366df81c900a4ac0548ca9c54eb532b2fd3133e74e88dc8d1e`. The registry SHA-256 is `6fbe4d0b6f71b418d3b840b41bb092c3562eadb93792616d1ccf2ec0fb32d2cb`. The manifest SHA-256 is `dc61688e170faba957c4993bd78a05b21556137278c092ad2e35d3b5eb23e633`.

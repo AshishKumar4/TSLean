@@ -38,6 +38,23 @@ def Assumption.create (statement reason : String) : Option Assumption :=
   if statement = "" ∨ reason = "" then none
   else some (.mk (deterministicId statement reason) statement reason)
 
+/-- Metadata returned by `Assumption.create` satisfies the assumption invariant. -/
+theorem Assumption.valid_of_create {statement reason : String} {assumption : Assumption}
+    (created : Assumption.create statement reason = some assumption) : assumption.Valid := by
+  unfold Assumption.create at created
+  split at created
+  · contradiction
+  · rename_i nonempty
+    simp only [Option.some.injEq] at created
+    subst assumption
+    exact ⟨fun empty => nonempty (Or.inl empty), fun empty => nonempty (Or.inr empty), rfl⟩
+
+/-- A successful `Assumption.create` result selected with `Option.get` is valid. -/
+theorem Assumption.valid_get_create (statement reason : String)
+    (present : (Assumption.create statement reason).isSome) :
+    (Assumption.create statement reason).get present |>.Valid :=
+  Assumption.valid_of_create (Option.some_get present).symm
+
 /-- A nonempty, valid assumption set with unique IDs. -/
 structure ValidAssumptions where
   private mk ::
@@ -55,6 +72,11 @@ def ValidAssumptions.create (entries : List Assumption) : Option ValidAssumption
       assumption.isValid_iff.mp ((List.all_eq_true.mp accepted.2.1) assumption member),
       accepted.2.2⟩
   else none
+
+/-- Creates a valid singleton requirement set from already validated metadata. -/
+def ValidAssumptions.singleton (assumption : Assumption) (valid : assumption.Valid) :
+    ValidAssumptions :=
+  ⟨[assumption], by simp, by simpa using valid, by simp⟩
 
 private def guardDeterministicId (statement : String) : String :=
   s!"{statement.length}:{statement}"

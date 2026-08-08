@@ -85,13 +85,16 @@ at known binary64 boundaries. Formatting is an integer algorithm and does not ca
 laws to any Float primitive.
 -/
 
-private def ofFloat (value : Float) : JSNumber := ⟨value.toBits⟩
+/-- Encodes a Lean `Float` by its binary64 bits, replacing every NaN encoding by `canonicalNaN`. -/
+def ofFloatCanonical (value : Float) : JSNumber :=
+  let encoded : JSNumber := ⟨value.toBits⟩
+  if encoded.isNaN then canonicalNaN else encoded
 
-private def toFloat (value : JSNumber) : Float := Float.ofBits value.bits
+/-- Decodes exact binary64 bits through Lean's executable `Float.ofBits` bridge. -/
+def toFloat (value : JSNumber) : Float := Float.ofBits value.bits
 
 private def canonicalize (value : Float) : JSNumber :=
-  let result := ofFloat value
-  if result.isNaN then canonicalNaN else result
+  ofFloatCanonical value
 
 /--
 Passes a number through Lean's executable Float representation. NaNs are
@@ -99,7 +102,7 @@ deterministically replaced by `canonicalNaN`; non-NaN preservation is a trusted
 runtime property checked by executable boundary tests, not a theorem.
 -/
 def executableRoundtripCanonicalizingNaN (value : JSNumber) : JSNumber :=
-  if value.isNaN then canonicalNaN else ofFloat value.toFloat
+  if value.isNaN then canonicalNaN else ofFloatCanonical value.toFloat
 
 /--
 Executes addition through Lean's Float primitive. Any NaN input or result is
