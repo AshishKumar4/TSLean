@@ -49,21 +49,40 @@ private def run : IO Unit := do
         heap := nextHeap
     | .error _ => throw (IO.userError "prototype chain allocation failed")
   let chainBuildMs := (← IO.monoMsNow) - chainStart
+  let (detached, heapWithDetached) ← match heap.allocate with
+    | .ok result => pure result
+    | .error _ => throw (IO.userError "detached prototype target allocation failed")
+  let safeSetStart ← IO.monoMsNow
+  let (safeHeap, safeSetMs) ← match heapWithDetached.setPrototypeOf detached (some leaf) with
+    | .ok (true, next) => pure (next, (← IO.monoMsNow) - safeSetStart)
+    | _ => throw (IO.userError "deep safe prototype assignment failed")
+  let cycleStart ← IO.monoMsNow
+  let cycleMs ← match cycleEq : safeHeap.setPrototypeOf prototype (some leaf) with
+  | .ok (false, unchanged) =>
+      have identity : unchanged = safeHeap :=
+        Heap.failed_setPrototypeOf_preserves_heap safeHeap unchanged prototype (some leaf) cycleEq
+      match identity with
+      | rfl => pure ((← IO.monoMsNow) - cycleStart)
+  | _ => throw (IO.userError "deep prototype cycle was not rejected")
   let lookupStart ← IO.monoMsNow
-  let result := Instanceof.ordinaryHasInstance call constructor (.object leaf) (machine.setHeap heap)
+  let result := Instanceof.ordinaryHasInstance call constructor (.object leaf)
+    (machine.setHeap heapWithDetached)
   let lookupMs := (← IO.monoMsNow) - lookupStart
   let chainValidityStart ← IO.monoMsNow
-  assert! heap.isWellFormed
-  assert! (machine.setHeap heap).isWellFormed
+  assert! heapWithDetached.isWellFormed
+  assert! safeHeap.isWellFormed
+  assert! (machine.setHeap heapWithDetached).isWellFormed
   let chainValidityMs := (← IO.monoMsNow) - chainValidityStart
   match result with
   | .done (.normal true) _ => pure ()
   | _ => throw (IO.userError "prototype chain lookup failed")
   assert! chainBuildMs < 3000
+  assert! safeSetMs < 1000
+  assert! cycleMs < 1000
   assert! lookupMs < 1000
   assert! chainValidityMs < 2000
   IO.println s!"function-scale allocations=100000 buildMs={functionMs} validityMs={functionValidityMs}"
-  IO.println s!"prototype-scale depth=10000 buildMs={chainBuildMs} lookupMs={lookupMs} validityMs={chainValidityMs}"
+  IO.println s!"prototype-scale depth=10000 buildMs={chainBuildMs} safeSetMs={safeSetMs} cycleRejectMs={cycleMs} lookupMs={lookupMs} validityMs={chainValidityMs}"
 
 #eval run
 

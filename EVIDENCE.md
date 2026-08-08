@@ -825,3 +825,82 @@ $ git diff --check
 ```
 
 The 262 audited declarations and complete verification gate support only the theorem statements and premises above. They do not discharge prototype mutation, iterator advancement, hook-conditional preservation, or effectful coercion refinement. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and were not suppressed or changed.
+
+## 2026-08-07 - Prototype preservation
+
+This proof snapshot is based on `926e4924a367d40e72f0f4d403efd6e0030d18f6` on `rebuild/semantic-core`. The heap-mutation input now resolves every source-derived validation and hash from that immutable revision. Its manifest remains byte-for-byte unchanged at SHA-256 `d5285178f96b87531c7ccde070ceb12b355152f0de390a13aceebf10e835a895`, and its explicit generate/check commands remain available with all earlier historical commands. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target `phase2-prototype-input.json`.
+
+The audit adds exactly these six declarations under `TSLean.JS.Heap`: `PrototypePath.nil`, `PrototypePath.cons`, `failed_setPrototypeOf_preserves_heap`, `prototypeAcyclic_terminates`, `prototypeGraphAcyclic_iff`, and `setPrototypeOf_preserves_wellFormed`. `prototypeGraphAcyclic_iff` states that, under valid stored prototype references, the executable color checker accepts exactly the logically acyclic prototype graphs. `prototypeAcyclic_terminates` supplies finite-chain termination from reference validity and logical acyclicity. The private `reachesWithFuel_true_iff` and `reachesWithFuel_false_iff` connect the heap-sized executable traversal to logical reachability and non-reachability on well-formed heaps.
+
+`setPrototypeOf_preserves_wellFormed` covers every ordinary returned branch: unchanged same-prototype success, nonextensible rejection, cycle rejection, successful assignment to a valid parent, and successful assignment to `null`. Malformed references and traversal faults remain errors rather than ordinary Boolean results. The concrete witnesses exercise both successful assignments and all three unchanged/rejected branches. `PublicMutationPreservation` now exports the prototype theorem beside the previously approved allocation, define/create, delete, and prevent-extensions preservation theorems.
+
+Review approved removing exactly `heap-prototype-preservation`. The canonical formal debt is now exactly four obligations: `copy-hook-conditional-preservation`, `iterator-hook-conditional-preservation`, `machine-hook-conditional-preservation`, and `abstract-effectful-coercion-refinement`. Iterator advancement and its ordinary `Get` effects remain open, as do copy/assign/spread/slice preservation under preserving hooks, composed machine preservation under preserving hooks, and effectful coercion trace/state refinement. No hook-conditional or effectful-equivalence debt was removed.
+
+The four executable Float assumptions are carried forward unchanged as runtime assumptions, not proof axioms. The measured suite remains 43 files, 1,633 passing tests, 8 todos, 172 Lean jobs, and 102 red corpus entries. Differential evidence remains 16 scenario groups, 734 fixed plus 6,530 generated comparisons for 7,264 total, 6,088 unique operation inputs, 1,176 preserved duplicates, 97 legacy inventory IDs, the unchanged 102-entry coverage partition, and a 65,536-cell aggregate fixture budget.
+
+The 10,000-depth prototype regression performs a safe deep prototype assignment and rejects a deep cycle, checks the resulting heaps remain well-formed, and retains the existing deep `instanceof` lookup. One isolated run measured 4 ms to build the chain, 2 ms for the safe assignment, 2 ms for cycle rejection, 0 ms for lookup, and 187 ms for validity; the complete run took 1.35 seconds real time. The full verification replay measured 5 ms, 2 ms, 3 ms, 0 ms, and 228 ms respectively. These are machine-local regression observations under 1,000 ms assignment, rejection, and lookup limits, not portable performance guarantees or complexity proofs.
+
+The prototype manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:a934f029dbb983df2187922874f69fac6b18eca1f36e76f466a92b0cebf805d6`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, proof tests and audit `sha256:abf9a5876478d1d597353267b09cd914012f594122a80a909622b7b2db40303c`, and trust/evidence infrastructure `sha256:1332dbc26b680a01815acb7e79277fe3d240567b27091e040819d0e49bf500fb`. The manifest SHA-256 is `aecb383818b16b75343b5fbeccce345e7216b5240a5ce1d32008b597e3c62722`.
+
+Commands and results:
+
+```text
+$ bun run evidence:baseline:check
+$ bun run evidence:primitives:check
+$ bun run evidence:heap:check
+$ bun run evidence:execution:check
+$ bun run evidence:callable:check
+$ bun run evidence:arrays:check
+$ bun run evidence:primitive-ops:check
+$ bun run evidence:abstract-ops:check
+$ bun run evidence:differential:check
+$ bun run evidence:differential-compact:check
+$ bun run evidence:ordered-props:check
+$ bun run evidence:heap-allocation:check
+$ bun run evidence:array-shrink:check
+$ bun run evidence:heap-mutation:check
+$ bun run evidence:prototype:check
+
+$ bun run differential:check
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+
+$ bun run js:trust
+JS trust checks passed: 268 elaborated proof declarations
+JS trust gate passed: 268 proof declarations
+
+$ bun scripts/check-js-axioms.mjs --self-test
+synthetic environment audit passed
+
+$ cd lean && /usr/bin/time -p lake env lean TSLean/JS/FunctionScaleTests.lean
+function-scale allocations=100000 buildMs=65 validityMs=683
+prototype-scale depth=10000 buildMs=4 safeSetMs=2 cycleRejectMs=2 lookupMs=0 validityMs=187
+real 1.35
+user 1.19
+sys 0.15
+
+$ /usr/bin/time -p bun run verify
+All matched files use Prettier code style!
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+JS trust checks passed: 268 elaborated proof declarations
+JS trust gate passed: 268 proof declarations
+Test Files  43 passed (43)
+Tests  1633 passed | 8 todo (1641)
+Build completed successfully (172 jobs).
+real 72.53
+user 104.91
+sys 7.57
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 304
+Unpacked size: 3.25MB
+
+$ shasum -a 256 evidence/phase2-heap-mutation-manifest.json evidence/phase2-prototype-manifest.json
+d5285178f96b87531c7ccde070ceb12b355152f0de390a13aceebf10e835a895  evidence/phase2-heap-mutation-manifest.json
+aecb383818b16b75343b5fbeccce345e7216b5240a5ce1d32008b597e3c62722  evidence/phase2-prototype-manifest.json
+
+$ git diff --check
+```
+
+The 268 audited declarations and complete verification gate support only the theorem statements and branches above. They do not discharge iterator advancement, the three hook-conditional obligations, or effectful coercion refinement. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and were not suppressed or changed.

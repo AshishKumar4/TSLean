@@ -1784,6 +1784,43 @@ def preventExtensions (heap : Heap) (ref : RefId) : Except HeapFault Heap :=
       if object.extensible then heap.replace ref { object with extensible := false }
       else .ok heap
 
+/-- A reference belongs to the heap's stable object arena. -/
+def ValidRef (heap : Heap) (ref : RefId) : Prop := ref.value < heap.size
+
+/-- A logical prototype edge between two valid heap references. -/
+def PrototypeEdge (heap : Heap) (child parent : RefId) : Prop :=
+  heap.ValidRef child ∧ heap.ValidRef parent ∧
+    ∃ object, heap.get? child = .ok object ∧ object.prototype = some parent
+
+/-- A finite logical prototype path. The list records one destination per traversed edge. -/
+inductive PrototypePath (heap : Heap) : RefId → List RefId → RefId → Prop where
+  | nil (valid : heap.ValidRef ref) : PrototypePath heap ref [] ref
+  | cons (edge : heap.PrototypeEdge child parent)
+      (rest : PrototypePath heap parent nodes target) :
+      PrototypePath heap child (parent :: nodes) target
+
+/-- Logical reachability through zero or more prototype edges. -/
+def PrototypeReachable (heap : Heap) (start target : RefId) : Prop :=
+  ∃ nodes, PrototypePath heap start nodes target
+
+/-- Logical reachability through at least one prototype edge. -/
+def PrototypeReachableNonempty (heap : Heap) (start target : RefId) : Prop :=
+  ∃ parent nodes, heap.PrototypeEdge start parent ∧ PrototypePath heap parent nodes target
+
+/-- No valid heap reference is reachable from itself through a nonempty prototype path. -/
+def PrototypeAcyclic (heap : Heap) : Prop :=
+  ∀ ref, heap.ValidRef ref → ¬heap.PrototypeReachableNonempty ref ref
+
+/-- Every stored prototype points into the heap's stable object arena. -/
+def PrototypeReferencesValid (heap : Heap) : Prop :=
+  ∀ child object parent, heap.get? child = .ok object →
+    object.prototype = some parent → heap.ValidRef parent
+
+/-- A valid prototype chain terminates at an object whose prototype is null. -/
+def PrototypeTerminates (heap : Heap) (start : RefId) : Prop :=
+  ∃ nodes terminal object, PrototypePath heap start nodes terminal ∧
+    heap.get? terminal = .ok object ∧ object.prototype = none
+
 private def reachesWithFuel (heap : Heap) (target : RefId) : Nat → RefId → Except HeapFault Bool
   | 0, _ => .error .cycleOrFuelExhausted
   | fuel + 1, ref =>
@@ -1795,6 +1832,125 @@ private def reachesWithFuel (heap : Heap) (target : RefId) : Nat → RefId → E
             match object.prototype with
             | none => .ok false
             | some parent => reachesWithFuel heap target fuel parent
+
+private theorem get?_ok_valid (heap : Heap) (ref : RefId) (object : ObjectRecord)
+    (found : heap.get? ref = .ok object) : heap.ValidRef ref := by
+  unfold get? at found
+  unfold ValidRef size
+  cases lookup : heap.objects[ref.value]? with
+  | none => simp [lookup] at found
+  | some current =>
+      exact (Array.getElem?_eq_some_iff.mp lookup).choose
+
+private theorem get?_of_valid (heap : Heap) (ref : RefId) (valid : heap.ValidRef ref) :
+    ∃ object, heap.get? ref = .ok object := by
+  unfold ValidRef size at valid
+  cases found : heap.objects[ref.value]? with
+  | none =>
+      have outOfBounds := Array.getElem?_eq_none_iff.mp found
+      omega
+  | some object => exact ⟨object, by simp [get?, found]⟩
+
+private theorem prototypePath_start_valid (path : PrototypePath heap start nodes target) :
+    heap.ValidRef start := by
+  cases path with
+  | nil valid => exact valid
+  | cons edge rest => exact edge.1
+
+private theorem prototypePath_end_valid (path : PrototypePath heap start nodes target) :
+    heap.ValidRef target := by
+  induction path with
+  | nil valid => exact valid
+  | cons edge rest ih => exact ih
+
+private theorem prototypeEdge_deterministic
+    (left : PrototypeEdge heap child leftParent)
+    (right : PrototypeEdge heap child rightParent) : leftParent = rightParent := by
+  obtain ⟨_, _, leftObject, leftFound, leftPrototype⟩ := left
+  obtain ⟨_, _, rightObject, rightFound, rightPrototype⟩ := right
+  rw [leftFound] at rightFound
+  cases rightFound
+  rw [leftPrototype] at rightPrototype
+  exact Option.some.inj rightPrototype
+
+private theorem prototypeTerminates_of_edge (edge : PrototypeEdge heap child parent)
+    (terminates : PrototypeTerminates heap parent) : PrototypeTerminates heap child := by
+  obtain ⟨nodes, terminal, object, path, found, prototypeEq⟩ := terminates
+  exact ⟨parent :: nodes, terminal, object, .cons edge path, found, prototypeEq⟩
+
+private theorem prototypePath_nonempty
+    (path : PrototypePath heap start (parent :: nodes) target) :
+    PrototypeReachableNonempty heap start target := by
+  cases path with
+  | cons edge rest => exact ⟨_, _, edge, rest⟩
+
+private theorem reachesWithFuel_true_sound
+    (referencesValid : ∀ child object parent,
+      heap.get? child = .ok object → object.prototype = some parent → heap.ValidRef parent)
+    (fuel : Nat) (start target : RefId) (startValid : heap.ValidRef start)
+    (reached : reachesWithFuel heap target fuel start = .ok true) :
+    ∃ nodes, PrototypePath heap start nodes target ∧ nodes.length < fuel := by
+  induction fuel generalizing start with
+  | zero => simp [reachesWithFuel] at reached
+  | succ fuel ih =>
+      rw [reachesWithFuel] at reached
+      by_cases same : start = target
+      · subst target
+        exact ⟨[], .nil startValid, by simp⟩
+      · simp only [if_neg same] at reached
+        cases found : heap.get? start with
+        | error fault => simp [found] at reached
+        | ok object =>
+            simp only [found] at reached
+            cases prototypeEq : object.prototype with
+            | none => simp [prototypeEq] at reached
+            | some parent =>
+                simp only [prototypeEq] at reached
+                obtain ⟨nodes, path, short⟩ := ih parent
+                  (referencesValid start object parent found prototypeEq) reached
+                refine ⟨parent :: nodes, .cons ?_ path, by simp; omega⟩
+                exact ⟨get?_ok_valid heap start object found,
+                  referencesValid start object parent found prototypeEq, object, found, prototypeEq⟩
+
+private theorem reachesWithFuel_path_complete
+    (fuel : Nat) (path : PrototypePath heap start nodes target)
+    (short : nodes.length < fuel) : reachesWithFuel heap target fuel start = .ok true := by
+  induction path generalizing fuel with
+  | nil valid =>
+      cases fuel with
+      | zero => simp at short
+      | succ fuel => simp [reachesWithFuel]
+  | @cons child parent nodes target edge rest ih =>
+      cases fuel with
+      | zero => simp at short
+      | succ fuel =>
+          obtain ⟨_, _, object, found, prototypeEq⟩ := edge
+          by_cases same : child = target
+          · simp [reachesWithFuel, same]
+          · simp only [reachesWithFuel, if_neg same, found, prototypeEq]
+            apply ih
+            simpa using short
+
+private theorem reachesWithFuel_false_sound
+    (fuel : Nat) (start target : RefId)
+    (notReached : reachesWithFuel heap target fuel start = .ok false) :
+    ∀ nodes, PrototypePath heap start nodes target → ¬nodes.length < fuel := by
+  intro nodes path short
+  have reached := reachesWithFuel_path_complete fuel path short
+  rw [notReached] at reached
+  cases reached
+
+private theorem reachesWithFuel_ok_valid (heap : Heap) (target start : RefId) (fuel : Nat)
+    (targetValid : heap.ValidRef target)
+    (result : Bool) (run : reachesWithFuel heap target (fuel + 1) start = .ok result) :
+    heap.ValidRef start := by
+  rw [reachesWithFuel] at run
+  by_cases same : start = target
+  · simpa [same] using targetValid
+  · simp only [if_neg same] at run
+    cases found : heap.get? start with
+    | error fault => simp [found] at run
+    | ok object => exact get?_ok_valid heap start object found
 
 /-- Implements validated `SetPrototypeOf` ordering and cycle prevention. -/
 def setPrototypeOf (heap : Heap) (ref : RefId) (prototype : Option RefId) :
@@ -1870,10 +2026,40 @@ theorem setPrototypeOf_preserves_objectKind (heap next : Heap) (target : RefId)
                           exact replace_preserves_objectKind heap next target ref object
                             { object with prototype := some parent, extensible := true }
                             foundEq rfl replaceEq
-                  | true =>
-                      simp [same, extensibleEq, reachEq] at updated
-                      obtain ⟨rfl, rfl⟩ := updated
-                      rfl
+                   | true =>
+                       simp [same, extensibleEq, reachEq] at updated
+                       obtain ⟨rfl, rfl⟩ := updated
+                       rfl
+
+/-- Every ordinary `false` prototype result is a rejection with heap identity. -/
+theorem failed_setPrototypeOf_preserves_heap (heap next : Heap) (target : RefId)
+    (prototype : Option RefId)
+    (rejected : heap.setPrototypeOf target prototype = .ok (false, next)) : next = heap := by
+  unfold setPrototypeOf at rejected
+  cases found : heap.get? target with
+  | error fault => simp [found] at rejected
+  | ok object =>
+      rw [found] at rejected
+      by_cases same : object.prototype = prototype
+      · simp [same] at rejected
+      · cases extensibleEq : object.extensible with
+        | false => simpa [same, extensibleEq] using rejected.symm
+        | true =>
+            cases prototype with
+            | none =>
+                exact (mappedTrue_ne_false
+                  (heap.replace target { object with prototype := none }) next
+                  (by simpa [same, extensibleEq] using rejected)).elim
+            | some parent =>
+                cases reached : reachesWithFuel heap target (heap.size + 1) parent with
+                | error fault => simp [same, extensibleEq, reached] at rejected
+                | ok reaches =>
+                    cases reaches with
+                    | true => simpa [same, extensibleEq, reached] using rejected.symm
+                    | false =>
+                        exact (mappedTrue_ne_false
+                          (heap.replace target { object with prototype := some parent }) next
+                          (by simpa [same, extensibleEq, reached] using rejected)).elim
 
 private def callableReferenceValid (heap : Heap) (ref : RefId) : Bool :=
   match heap.isCallable ref with
@@ -2196,6 +2382,463 @@ private theorem finishPrototypePath_done (colors : Array PrototypeColor) (path :
           apply ih _ member
           simpa using valid
 
+private theorem prototypePath_append
+    (left : PrototypePath heap start leftNodes middle)
+    (right : PrototypePath heap middle rightNodes target) :
+    PrototypePath heap start (leftNodes ++ rightNodes) target := by
+  induction left with
+  | nil valid => simpa using right
+  | cons edge rest ih => exact .cons edge (ih right)
+
+private theorem prototypePath_reaches_member
+    (path : PrototypePath heap start nodes target) (member : ref ∈ nodes) :
+    PrototypeReachableNonempty heap start ref := by
+  induction path with
+  | nil valid => contradiction
+  | @cons child parent nodes target edge rest ih =>
+      simp only [List.mem_cons] at member
+      cases member with
+      | inl same =>
+          subst ref
+          exact ⟨parent, [], edge, .nil edge.2.1⟩
+      | inr member =>
+          obtain ⟨next, middleNodes, nextEdge, nextRest⟩ := ih member
+          exact ⟨parent, next :: middleNodes, edge, .cons nextEdge nextRest⟩
+
+private theorem prototypePath_nodup (acyclic : PrototypeAcyclic heap)
+    (path : PrototypePath heap start nodes terminal) : (start :: nodes).Nodup := by
+  induction path with
+  | nil valid => simp
+  | @cons child parent nodes terminal edge rest ih =>
+      rw [List.nodup_cons]
+      refine ⟨?_, ih⟩
+      intro member
+      exact acyclic child edge.1 (prototypePath_reaches_member (.cons edge rest) member)
+
+private theorem prototypeTerminates_not_cyclic
+    (terminates : PrototypeTerminates heap start) :
+    ¬PrototypeReachableNonempty heap start start := by
+  obtain ⟨terminalNodes, terminal, terminalObject, terminalPath, terminalFound,
+    terminalPrototype⟩ := terminates
+  induction terminalPath generalizing terminalObject with
+  | nil valid =>
+      rintro ⟨parent, nodes, edge, rest⟩
+      obtain ⟨_, _, edgeObject, edgeFound, edgePrototype⟩ := edge
+      rw [terminalFound] at edgeFound
+      cases edgeFound
+      simp [terminalPrototype] at edgePrototype
+  | @cons child parent nodes target edge rest ih =>
+      rintro ⟨cycleParent, cycleNodes, cycleEdge, cycleRest⟩
+      have sameParent := prototypeEdge_deterministic edge cycleEdge
+      subst cycleParent
+      have childToParent : PrototypePath heap child [parent] parent :=
+        .cons edge (.nil edge.2.1)
+      have parentCyclePath : PrototypePath heap parent (cycleNodes ++ [parent]) parent :=
+        prototypePath_append cycleRest childToParent
+      have nonempty : ∃ head tail, cycleNodes ++ [parent] = head :: tail := by
+        cases cycleNodes with
+        | nil => exact ⟨parent, [], rfl⟩
+        | cons head tail => exact ⟨head, tail ++ [parent], by simp⟩
+      obtain ⟨head, tail, shape⟩ := nonempty
+      rw [shape] at parentCyclePath
+      apply ih terminalObject terminalFound terminalPrototype
+      exact prototypePath_nonempty parentCyclePath
+
+private theorem prototypeTerminates_nodes_nodup
+    (path : PrototypePath heap start nodes terminal)
+    (terminalObject : ObjectRecord) (terminalFound : heap.get? terminal = .ok terminalObject)
+    (terminalPrototype : terminalObject.prototype = none) : (start :: nodes).Nodup := by
+  induction path generalizing terminalObject with
+  | nil valid => simp
+  | @cons child parent nodes target edge rest ih =>
+      rw [List.nodup_cons]
+      refine ⟨?_, ih terminalObject terminalFound terminalPrototype⟩
+      intro member
+      exact prototypeTerminates_not_cyclic
+        ⟨parent :: nodes, target, terminalObject, .cons edge rest,
+          terminalFound, terminalPrototype⟩
+        (prototypePath_reaches_member (.cons edge rest) member)
+
+private theorem nodup_nats_length_le (values : List Nat) (bound : Nat)
+    (nodup : values.Nodup) (bounded : ∀ value ∈ values, value < bound) :
+    values.length ≤ bound := by
+  induction bound generalizing values with
+  | zero =>
+      cases values with
+      | nil => simp
+      | cons value rest => exact (Nat.not_lt_zero value (bounded value (by simp))).elim
+  | succ bound ih =>
+      by_cases top : bound ∈ values
+      · have erasedNodup := nodup.erase bound
+        have erasedBounded : ∀ value ∈ values.erase bound, value < bound := by
+          intro value member
+          have original := List.mem_of_mem_erase member
+          have below := bounded value original
+          have different : value ≠ bound := by
+            exact (nodup.mem_erase_iff.mp member).1
+          omega
+        have shorter := ih (values.erase bound) erasedNodup erasedBounded
+        rw [List.length_erase_of_mem top] at shorter
+        omega
+      · apply Nat.le_trans (ih values nodup ?_) (Nat.le_succ bound)
+        intro value member
+        have below := bounded value member
+        have different : value ≠ bound := by
+          intro same
+          apply top
+          simpa [same] using member
+        omega
+
+private theorem refValues_nodup (refs : List RefId) (nodup : refs.Nodup) :
+    (refs.map RefId.value).Nodup := by
+  induction refs with
+  | nil => simp
+  | cons head tail ih =>
+      simp only [List.nodup_cons] at nodup ⊢
+      constructor
+      · intro value member
+        rw [List.mem_map] at member
+        obtain ⟨ref, refMember, equal⟩ := member
+        intro same
+        have refsEqual : head = ref := by
+          cases head
+          cases ref
+          simp_all
+        exact nodup.1 (by simpa only [refsEqual] using refMember)
+      · exact ih nodup.2
+
+private theorem prototypePath_length_lt_size (acyclic : PrototypeAcyclic heap)
+    (path : PrototypePath heap start nodes terminal) : nodes.length < heap.size := by
+  have refsNodup := prototypePath_nodup acyclic path
+  have valuesNodup := refValues_nodup (start :: nodes) refsNodup
+  have bounded : ∀ value ∈ (start :: nodes).map RefId.value, value < heap.size := by
+    intro value member
+    rw [List.mem_map] at member
+    obtain ⟨ref, refMember, rfl⟩ := member
+    simp only [List.mem_cons] at refMember
+    cases refMember with
+    | inl same => simpa [same, ValidRef] using prototypePath_start_valid path
+    | inr member =>
+        obtain ⟨_, _, firstEdge, remaining⟩ := prototypePath_reaches_member path member
+        simpa [ValidRef] using prototypePath_end_valid (.cons firstEdge remaining)
+  have lengthBound := nodup_nats_length_le ((start :: nodes).map RefId.value) heap.size
+    valuesNodup bounded
+  simp only [List.length_map, List.length_cons] at lengthBound
+  omega
+
+private theorem prototypeTermination_length_le_size
+    (path : PrototypePath heap start nodes terminal)
+    (terminalObject : ObjectRecord) (terminalFound : heap.get? terminal = .ok terminalObject)
+    (terminalPrototype : terminalObject.prototype = none) : nodes.length < heap.size + 1 := by
+  have refsNodup := prototypeTerminates_nodes_nodup path terminalObject terminalFound
+    terminalPrototype
+  have valuesNodup := refValues_nodup (start :: nodes) refsNodup
+  have bounded : ∀ value ∈ (start :: nodes).map RefId.value, value < heap.size := by
+    intro value member
+    rw [List.mem_map] at member
+    obtain ⟨ref, refMember, rfl⟩ := member
+    simp only [List.mem_cons] at refMember
+    cases refMember with
+    | inl same => simpa [same] using prototypePath_start_valid path
+    | inr member =>
+        have reachable := prototypePath_reaches_member path member
+        obtain ⟨_, _, firstEdge, remaining⟩ := reachable
+        simpa [ValidRef] using prototypePath_end_valid (.cons firstEdge remaining)
+  have lengthBound := nodup_nats_length_le ((start :: nodes).map RefId.value) heap.size
+    valuesNodup bounded
+  simp at lengthBound
+  omega
+
+private theorem prototypePath_of_length (referencesValid : PrototypeReferencesValid heap)
+    (notTerminates : ¬PrototypeTerminates heap start) (startValid : heap.ValidRef start) :
+    ∀ length, ∃ nodes terminal,
+      PrototypePath heap start nodes terminal ∧ nodes.length = length := by
+  intro length
+  induction length with
+  | zero => exact ⟨[], start, .nil startValid, rfl⟩
+  | succ length ih =>
+      obtain ⟨nodes, terminal, path, pathLength⟩ := ih
+      obtain ⟨object, found⟩ := get?_of_valid heap terminal (prototypePath_end_valid path)
+      cases prototypeEq : object.prototype with
+      | none =>
+          exact (notTerminates ⟨nodes, terminal, object, path, found, prototypeEq⟩).elim
+      | some parent =>
+          have edge : heap.PrototypeEdge terminal parent :=
+            ⟨get?_ok_valid heap terminal object found,
+              referencesValid terminal object parent found prototypeEq,
+              object, found, prototypeEq⟩
+          let last : PrototypePath heap terminal [parent] parent := .cons edge (.nil edge.2.1)
+          refine ⟨nodes ++ [parent], parent, prototypePath_append path last, ?_⟩
+          simp [pathLength]
+
+/-- In a finite heap, valid prototype references and logical acyclicity force every valid chain to
+terminate at a null prototype. -/
+theorem prototypeAcyclic_terminates (heap : Heap) (referencesValid : heap.PrototypeReferencesValid)
+    (acyclic : heap.PrototypeAcyclic) (ref : RefId) (valid : heap.ValidRef ref) :
+    heap.PrototypeTerminates ref := by
+  apply Classical.byContradiction
+  intro notTerminates
+  obtain ⟨nodes, terminal, path, pathLength⟩ :=
+    prototypePath_of_length referencesValid notTerminates valid heap.size
+  have bounded := prototypePath_length_lt_size acyclic path
+  omega
+
+private theorem prototypeTerminates_of_reachable
+    (reachable : PrototypeReachable heap start target)
+    (terminates : PrototypeTerminates heap target) : PrototypeTerminates heap start := by
+  obtain ⟨leftNodes, leftPath⟩ := reachable
+  obtain ⟨rightNodes, terminal, object, rightPath, found, prototypeEq⟩ := terminates
+  exact ⟨leftNodes ++ rightNodes, terminal, object,
+    prototypePath_append leftPath rightPath, found, prototypeEq⟩
+
+private def DoneReferencesTerminate (heap : Heap) (colors : Array PrototypeColor) : Prop :=
+  ∀ ref, colors[ref.value]? = some .done → heap.PrototypeTerminates ref
+
+private theorem finishPrototypePath_terminates (heap : Heap) (colors : Array PrototypeColor)
+    (path : List RefId) (oldDone : DoneReferencesTerminate heap colors)
+    (pathTerminates : ∀ ref ∈ path, heap.PrototypeTerminates ref) :
+    DoneReferencesTerminate heap (finishPrototypePath colors path) := by
+  unfold finishPrototypePath
+  induction path generalizing colors with
+  | nil => exact oldDone
+  | cons head path ih =>
+      rw [List.foldl_cons]
+      apply ih
+      · intro ref done
+        rw [Array.getElem?_setIfInBounds] at done
+        by_cases same : head.value = ref.value
+        · have equal : head = ref := by
+            cases head
+            cases ref
+            simp_all
+          simpa [equal] using pathTerminates head (by simp)
+        · exact oldDone ref (by simpa [same] using done)
+      · intro ref member
+        exact pathTerminates ref (by simp [member])
+
+private theorem setVisiting_preserves_done (heap : Heap) (colors : Array PrototypeColor)
+    (ref : RefId) (unseen : colors[ref.value]? = some .unseen)
+    (valid : DoneReferencesTerminate heap colors) :
+    DoneReferencesTerminate heap (colors.setIfInBounds ref.value .visiting) := by
+  intro item done
+  rw [Array.getElem?_setIfInBounds] at done
+  by_cases same : ref.value = item.value
+  · simp [same] at unseen done
+  · exact valid item (by simpa [same] using done)
+
+private theorem visitPrototype_terminates (heap : Heap) (fuel : Nat)
+    (colors result : Array PrototypeColor) (path : List RefId) (start : RefId)
+    (referencesValid : ∀ child object parent,
+      heap.get? child = .ok object → object.prototype = some parent → heap.ValidRef parent)
+    (doneTerminates : DoneReferencesTerminate heap colors)
+    (pathReaches : ∀ ref ∈ path, heap.PrototypeReachable ref start)
+    (visited : visitPrototype heap fuel colors path start = some result) :
+    heap.PrototypeTerminates start ∧ DoneReferencesTerminate heap result := by
+  induction fuel generalizing colors result path start with
+  | zero => simp [visitPrototype] at visited
+  | succ fuel ih =>
+      simp only [visitPrototype] at visited
+      cases colorFound : colors[start.value]? with
+      | none => simp [colorFound] at visited
+      | some color =>
+          cases objectFound : heap.objects[start.value]? with
+          | none => simp [colorFound, objectFound] at visited
+          | some object =>
+              simp only [colorFound, objectFound] at visited
+              have found : heap.get? start = .ok object := by simp [get?, objectFound]
+              cases color with
+              | visiting => contradiction
+              | done =>
+                  cases visited
+                  have startTerminates := doneTerminates start colorFound
+                  refine ⟨startTerminates, finishPrototypePath_terminates heap colors path
+                    doneTerminates ?_⟩
+                  intro ref member
+                  exact prototypeTerminates_of_reachable (pathReaches ref member) startTerminates
+              | unseen =>
+                  cases prototypeEq : object.prototype with
+                  | none =>
+                      simp [prototypeEq] at visited
+                      cases visited
+                      have startTerminates : heap.PrototypeTerminates start :=
+                        ⟨[], start, object, .nil (get?_ok_valid heap start object found),
+                          found, prototypeEq⟩
+                      refine ⟨startTerminates, finishPrototypePath_terminates heap _
+                        (start :: path) (setVisiting_preserves_done heap colors start colorFound
+                          doneTerminates) ?_⟩
+                      intro ref member
+                      simp only [List.mem_cons] at member
+                      cases member with
+                      | inl same => simpa [same] using startTerminates
+                      | inr member =>
+                          exact prototypeTerminates_of_reachable (pathReaches ref member)
+                            startTerminates
+                  | some parent =>
+                      simp [prototypeEq] at visited
+                      have edge : heap.PrototypeEdge start parent :=
+                        ⟨get?_ok_valid heap start object found,
+                          referencesValid start object parent found prototypeEq,
+                          object, found, prototypeEq⟩
+                      have startToParent : heap.PrototypeReachable start parent :=
+                        ⟨[parent], .cons edge (.nil edge.2.1)⟩
+                      have startPath : heap.PrototypePath start [parent] parent :=
+                        .cons edge (.nil edge.2.1)
+                      have nextPathReaches : ∀ ref ∈ start :: path,
+                          heap.PrototypeReachable ref parent := by
+                        intro ref member
+                        simp only [List.mem_cons] at member
+                        cases member with
+                        | inl same => simpa [same] using startToParent
+                        | inr member =>
+                            obtain ⟨nodes, refToStart⟩ := pathReaches ref member
+                            exact ⟨nodes ++ [parent],
+                              prototypePath_append refToStart startPath⟩
+                      have recursive := ih
+                        (colors.setIfInBounds start.value .visiting) result (start :: path) parent
+                        (setVisiting_preserves_done heap colors start colorFound doneTerminates)
+                        nextPathReaches visited
+                      exact ⟨prototypeTerminates_of_edge edge recursive.1, recursive.2⟩
+
+private def VisitingInPath (colors : Array PrototypeColor) (path : List RefId) : Prop :=
+  ∀ (ref : RefId), colors[ref.value]? = some .visiting → ref ∈ path
+
+private theorem finishPrototypePath_no_visiting (colors : Array PrototypeColor) (path : List RefId)
+    (visiting : VisitingInPath colors path) :
+    ∀ (ref : RefId), (finishPrototypePath colors path)[ref.value]? ≠ some .visiting := by
+  unfold finishPrototypePath
+  induction path generalizing colors with
+  | nil =>
+      intro ref found
+      simpa using visiting ref found
+  | cons head path ih =>
+      rw [List.foldl_cons]
+      apply ih
+      intro ref found
+      rw [Array.getElem?_setIfInBounds] at found
+      by_cases same : head.value = ref.value
+      · simp [same] at found
+      · have old : colors[ref.value]? = some .visiting := by simpa [same] using found
+        have member := visiting ref old
+        simp only [List.mem_cons] at member
+        cases member with
+        | inl equal =>
+            exact (same (by rw [equal])).elim
+        | inr member => exact member
+
+private theorem setVisiting_in_path (colors : Array PrototypeColor) (path : List RefId)
+    (start : RefId) (visiting : VisitingInPath colors path) :
+    VisitingInPath (colors.setIfInBounds start.value .visiting) (start :: path) := by
+  intro ref found
+  rw [Array.getElem?_setIfInBounds] at found
+  by_cases same : start.value = ref.value
+  · have equal : start = ref := by
+      cases start
+      cases ref
+      simp_all
+    simp [equal]
+  · right
+    exact visiting ref (by simpa [same] using found)
+
+private theorem visitPrototype_of_terminates (heap : Heap)
+    (terminalPath : PrototypePath heap start nodes terminal)
+    (terminalObject : ObjectRecord) (terminalFound : heap.get? terminal = .ok terminalObject)
+    (terminalPrototype : terminalObject.prototype = none)
+    (fuel : Nat) (short : nodes.length < fuel) (colors : Array PrototypeColor)
+    (colorsSize : colors.size = heap.size) (path : List RefId)
+    (visiting : VisitingInPath colors path)
+    (pathCycles : ∀ ref ∈ path, heap.PrototypeReachableNonempty ref start) :
+    ∃ result, visitPrototype heap fuel colors path start = some result ∧
+      (∀ (ref : RefId), result[ref.value]? ≠ some .visiting) := by
+  induction terminalPath generalizing fuel colors path with
+  | @nil ref startValid =>
+      cases fuel with
+      | zero => simp at short
+      | succ fuel =>
+          have colorSome : ∃ color, colors[ref.value]? = some color := by
+            cases found : colors[ref.value]? with
+            | none =>
+                have out := Array.getElem?_eq_none_iff.mp found
+                unfold ValidRef at startValid
+                omega
+            | some color => exact ⟨color, rfl⟩
+          obtain ⟨color, colorFound⟩ := colorSome
+          have objectFound : heap.objects[ref.value]? = some terminalObject := by
+            unfold get? at terminalFound
+            cases found : heap.objects[ref.value]? with
+            | none => simp [found] at terminalFound
+            | some object =>
+                have same : object = terminalObject := by simpa [found] using terminalFound
+                simpa [same] using found
+          cases color with
+          | visiting =>
+              have member := visiting ref colorFound
+              exact (prototypeTerminates_not_cyclic
+                ⟨[], ref, terminalObject, .nil startValid, terminalFound, terminalPrototype⟩
+                (pathCycles ref member)).elim
+          | done =>
+              refine ⟨finishPrototypePath colors path, by simp [visitPrototype, colorFound,
+                objectFound], finishPrototypePath_no_visiting colors path visiting⟩
+          | unseen =>
+              let nextColors := colors.setIfInBounds ref.value .visiting
+              refine ⟨finishPrototypePath nextColors (ref :: path), ?_, ?_⟩
+              · simp [visitPrototype, colorFound, objectFound, terminalPrototype, nextColors]
+              · exact finishPrototypePath_no_visiting nextColors (ref :: path)
+                  (setVisiting_in_path colors path ref visiting)
+  | @cons child parent nodes target edge rest ih =>
+      cases fuel with
+      | zero => simp at short
+      | succ fuel =>
+          have childValid := edge.1
+          have colorSome : ∃ color, colors[child.value]? = some color := by
+            cases found : colors[child.value]? with
+            | none =>
+                have out := Array.getElem?_eq_none_iff.mp found
+                unfold ValidRef at childValid
+                omega
+            | some color => exact ⟨color, rfl⟩
+          obtain ⟨color, colorFound⟩ := colorSome
+          have edgeCopy := edge
+          obtain ⟨_, _, childObject, childFound, childPrototype⟩ := edgeCopy
+          have objectFound : heap.objects[child.value]? = some childObject := by
+            unfold get? at childFound
+            cases found : heap.objects[child.value]? with
+            | none => simp [found] at childFound
+            | some object => simpa [found] using childFound
+          have childTerminates : heap.PrototypeTerminates child :=
+            ⟨parent :: nodes, target, terminalObject, .cons edge rest,
+              terminalFound, terminalPrototype⟩
+          cases color with
+          | visiting =>
+              have member := visiting child colorFound
+              exact (prototypeTerminates_not_cyclic childTerminates
+                (pathCycles child member)).elim
+          | done =>
+              refine ⟨finishPrototypePath colors path, by simp [visitPrototype, colorFound,
+                objectFound], finishPrototypePath_no_visiting colors path visiting⟩
+          | unseen =>
+              have nextVisiting := setVisiting_in_path colors path child visiting
+              have childToParent : heap.PrototypeReachableNonempty child parent :=
+                ⟨parent, [], edge, .nil edge.2.1⟩
+              have nextPathCycles : ∀ ref ∈ child :: path,
+                  heap.PrototypeReachableNonempty ref parent := by
+                intro ref member
+                simp only [List.mem_cons] at member
+                cases member with
+                | inl same => simpa [same] using childToParent
+                | inr member =>
+                    obtain ⟨middle, middleNodes, firstEdge, prefixRest⟩ := pathCycles ref member
+                    let firstPath : PrototypePath heap ref (middle :: middleNodes) child :=
+                      .cons firstEdge prefixRest
+                    let lastPath : PrototypePath heap child [parent] parent :=
+                      .cons edge (.nil edge.2.1)
+                    exact prototypePath_nonempty (prototypePath_append firstPath lastPath)
+              have recursive := ih terminalFound fuel
+                (by simpa using short) (colors.setIfInBounds child.value .visiting)
+                (by simpa using colorsSize) (child :: path) nextVisiting nextPathCycles
+              obtain ⟨result, visited, noVisiting⟩ := recursive
+              refine ⟨result, ?_, noVisiting⟩
+              simp [visitPrototype, colorFound, objectFound, childPrototype, visited]
+
 private theorem visitPrototype_preserves_done (heap : Heap) (fuel : Nat)
     (colors result : Array PrototypeColor) (path : List RefId) (start ref : RefId)
     (done : colors[ref.value]? = some .done)
@@ -2348,6 +2991,130 @@ private theorem visitPrototype_size (heap : Heap) (fuel : Nat) (colors result : 
                       have sizeEq := ih (colors.setIfInBounds ref.value .visiting) result
                         (ref :: path) parent visited
                       simpa using sizeEq
+
+private theorem validatePrototypeGraphAux_terminates (heap : Heap)
+    (remaining index : Nat) (colors : Array PrototypeColor)
+    (referencesValid : ∀ child object parent,
+      heap.get? child = .ok object → object.prototype = some parent → heap.ValidRef parent)
+    (colorsSize : colors.size = heap.size)
+    (doneBefore : ∀ i < index, colors[i]? = some .done)
+    (doneTerminates : DoneReferencesTerminate heap colors)
+    (valid : validatePrototypeGraphAux heap remaining index colors = true) :
+    ∀ ref, heap.ValidRef ref → heap.PrototypeTerminates ref := by
+  induction remaining generalizing index colors with
+  | zero =>
+      simp only [validatePrototypeGraphAux] at valid
+      have indexEq : index = heap.size := by simpa using valid
+      intro ref refValid
+      apply doneTerminates ref
+      exact doneBefore ref.value (by simpa [indexEq, ValidRef] using refValid)
+  | succ remaining ih =>
+      rw [validatePrototypeGraphAux] at valid
+      cases colorFound : colors[index]? with
+      | none =>
+          have indexEq : index = heap.size := by simpa [colorFound] using valid
+          intro ref refValid
+          apply doneTerminates ref
+          exact doneBefore ref.value (by simpa [indexEq, ValidRef] using refValid)
+      | some color =>
+          simp only [colorFound] at valid
+          cases color with
+          | done =>
+              apply ih (index := index + 1) (colors := colors) colorsSize
+              · intro i before
+                by_cases same : i = index
+                · simpa [same] using colorFound
+                · exact doneBefore i (by omega)
+              · exact doneTerminates
+              · exact valid
+          | visiting | unseen =>
+              cases visited : visitPrototype heap (heap.size + 1) colors [] ⟨index⟩ with
+              | none => simp [visited] at valid
+              | some nextColors =>
+                  simp only [visited] at valid
+                  have semantic := visitPrototype_terminates heap (heap.size + 1) colors nextColors
+                    [] ⟨index⟩ referencesValid doneTerminates (by simp) visited
+                  apply ih (index := index + 1) (colors := nextColors)
+                  · exact (visitPrototype_size heap (heap.size + 1) colors nextColors [] ⟨index⟩
+                      visited).trans colorsSize
+                  · intro i before
+                    by_cases same : i = index
+                    · subst i
+                      apply visitPrototype_marks_path_done heap (heap.size + 1) colors nextColors
+                        [] ⟨index⟩ ⟨index⟩
+                      · intro child object found
+                        cases prototypeEq : object.prototype with
+                        | none => rfl
+                        | some parent =>
+                            have getFound : heap.get? ⟨child⟩ = .ok object := by
+                              simp only [get?, found]
+                            have parentValid := referencesValid ⟨child⟩ object parent getFound prototypeEq
+                            simpa [ValidRef] using parentValid
+                      · exact colorsSize
+                      · have bound := (Array.getElem?_eq_some_iff.mp colorFound).choose
+                        simpa [colorsSize, ValidRef] using bound
+                      · simp
+                      · exact Or.inl rfl
+                      · exact visited
+                    · exact visitPrototype_preserves_done heap (heap.size + 1) colors nextColors
+                        [] ⟨index⟩ ⟨i⟩ (doneBefore i (by omega)) visited
+                  · exact semantic.2
+                  · exact valid
+
+private theorem validatePrototypeGraphAux_of_terminates (heap : Heap)
+    (remaining index : Nat) (colors : Array PrototypeColor)
+    (colorsSize : colors.size = heap.size)
+    (noVisiting : ∀ (ref : RefId), colors[ref.value]? ≠ some .visiting)
+    (terminates : ∀ ref, heap.ValidRef ref → heap.PrototypeTerminates ref)
+    (coverage : index + remaining = heap.size) :
+    validatePrototypeGraphAux heap remaining index colors = true := by
+  induction remaining generalizing index colors with
+  | zero => simpa [validatePrototypeGraphAux] using coverage
+  | succ remaining ih =>
+      rw [validatePrototypeGraphAux]
+      cases colorFound : colors[index]? with
+      | none =>
+          have indexEq : index = heap.size := by
+            have out := Array.getElem?_eq_none_iff.mp colorFound
+            omega
+          simp [colorFound, indexEq]
+      | some color =>
+          have indexValid : heap.ValidRef ⟨index⟩ := by
+            unfold ValidRef
+            have bound := (Array.getElem?_eq_some_iff.mp colorFound).choose
+            simpa using (show index < heap.size by omega)
+          cases color with
+          | visiting => exact (noVisiting ⟨index⟩ colorFound).elim
+          | done =>
+              exact ih (index := index + 1) (colors := colors) colorsSize noVisiting (by omega)
+          | unseen =>
+              obtain ⟨nodes, terminal, object, path, found, prototypeEq⟩ :=
+                terminates ⟨index⟩ indexValid
+              have short := prototypeTermination_length_le_size path object found prototypeEq
+              obtain ⟨nextColors, visited, nextNoVisiting⟩ :=
+                visitPrototype_of_terminates heap path object found prototypeEq (heap.size + 1)
+                  short colors colorsSize []
+                  (by intro ref found; exact (noVisiting ref found).elim)
+                  (by intro ref member; contradiction)
+              change (match visitPrototype heap (heap.size + 1) colors [] ⟨index⟩ with
+                | none => false
+                | some next => validatePrototypeGraphAux heap remaining (index + 1) next) = true
+              rw [visited]
+              exact ih (index := index + 1) (colors := nextColors)
+                ((visitPrototype_size heap (heap.size + 1) colors nextColors [] ⟨index⟩
+                  visited).trans colorsSize) nextNoVisiting (by omega)
+
+private theorem prototypeGraphAcyclic_of_terminates (heap : Heap)
+    (terminates : ∀ ref, heap.ValidRef ref → heap.PrototypeTerminates ref) :
+    heap.prototypeGraphAcyclic = true := by
+  unfold prototypeGraphAcyclic
+  apply validatePrototypeGraphAux_of_terminates heap heap.size 0
+    (Array.replicate heap.size .unseen) (by simp)
+  · intro ref found
+    rw [Array.getElem?_replicate] at found
+    split at found <;> simp_all
+  · exact terminates
+  · omega
 
 private theorem validatePrototypeGraphAux_push_end (heap : Heap) (newObject : ObjectRecord)
     (nextFunctionId remaining : Nat) (colors : Array PrototypeColor)
@@ -2728,6 +3495,137 @@ def isWellFormed (heap : Heap) : Bool :=
 
 /-- Complete heap validity represented by its executable checker. -/
 def WellFormed (heap : Heap) : Prop := heap.isWellFormed = true
+
+private theorem wellFormed_prototype_valid (heap : Heap) (valid : heap.WellFormed)
+    (child : RefId) (object : ObjectRecord) (parent : RefId)
+    (found : heap.get? child = .ok object) (prototypeEq : object.prototype = some parent) :
+    heap.ValidRef parent := by
+  unfold WellFormed isWellFormed at valid
+  simp only [Bool.and_eq_true] at valid
+  have objectsValid := List.all_eq_true.mp valid.1.1.1
+  have member : object ∈ heap.objects.toList := by
+    rw [Array.mem_toList_iff]
+    unfold get? at found
+    cases lookup : heap.objects[child.value]? with
+    | none => simp [lookup] at found
+    | some current =>
+        simp [lookup] at found
+        simpa [found] using Array.mem_of_getElem? lookup
+  have references := objectsValid object member
+  unfold objectReferencesValid at references
+  simp only [Bool.and_eq_true] at references
+  simpa [prototypeEq, ValidRef] using references.1.2
+
+/-- With valid stored prototype references, the executable color checker is equivalent to logical
+prototype acyclicity. -/
+theorem prototypeGraphAcyclic_iff (heap : Heap) (referencesValid : heap.PrototypeReferencesValid) :
+    heap.prototypeGraphAcyclic = true ↔ heap.PrototypeAcyclic := by
+  constructor
+  · intro graphValid
+    have doneTerminates : DoneReferencesTerminate heap
+        (Array.replicate heap.size PrototypeColor.unseen) := by
+      intro ref done
+      rw [Array.getElem?_replicate] at done
+      split at done <;> simp_all
+    have terminates := validatePrototypeGraphAux_terminates heap heap.size 0
+      (Array.replicate heap.size PrototypeColor.unseen) referencesValid (by simp) (by simp)
+      doneTerminates graphValid
+    intro ref refValid cyclic
+    exact prototypeTerminates_not_cyclic (terminates ref refValid) cyclic
+  · intro acyclic
+    apply prototypeGraphAcyclic_of_terminates
+    exact prototypeAcyclic_terminates heap referencesValid acyclic
+
+private theorem wellFormed_prototype_terminates (heap : Heap) (valid : heap.WellFormed) :
+    ∀ ref, heap.ValidRef ref → heap.PrototypeTerminates ref := by
+  have referencesValid : heap.PrototypeReferencesValid :=
+    fun child object parent found prototypeEq =>
+      wellFormed_prototype_valid heap valid child object parent found prototypeEq
+  have graphValid : validatePrototypeGraphAux heap heap.size 0
+      (Array.replicate heap.size .unseen) = true := by
+    unfold WellFormed isWellFormed at valid
+    simp only [Bool.and_eq_true] at valid
+    exact valid.2
+  exact prototypeAcyclic_terminates heap referencesValid
+    ((prototypeGraphAcyclic_iff heap referencesValid).mp graphValid)
+
+private theorem reachesWithFuel_termination_false
+    (path : PrototypePath heap start nodes terminal) (terminalObject : ObjectRecord)
+    (terminalFound : heap.get? terminal = .ok terminalObject)
+    (terminalPrototype : terminalObject.prototype = none) (target : RefId) (fuel : Nat)
+    (short : nodes.length < fuel) (notReachable : ¬heap.PrototypeReachable start target) :
+    reachesWithFuel heap target fuel start = .ok false := by
+  induction path generalizing fuel with
+  | @nil ref valid =>
+      cases fuel with
+      | zero => simp at short
+      | succ fuel =>
+          have different : ref ≠ target := by
+            intro same
+            subst target
+            apply notReachable
+            exact ⟨[], .nil valid⟩
+          simp [reachesWithFuel, different, terminalFound, terminalPrototype]
+  | @cons child parent nodes terminal edge rest ih =>
+      cases fuel with
+      | zero => simp at short
+      | succ fuel =>
+          have different : child ≠ target := by
+            intro same
+            subst target
+            apply notReachable
+            exact ⟨[], .nil edge.1⟩
+          have edgeCopy := edge
+          obtain ⟨_, _, object, found, prototypeEq⟩ := edgeCopy
+          simp only [reachesWithFuel, if_neg different, found, prototypeEq]
+          apply ih terminalFound
+          · simpa using short
+          · intro reachable
+            obtain ⟨suffix, suffixPath⟩ := reachable
+            exact notReachable ⟨parent :: suffix, .cons edge suffixPath⟩
+
+/-- With the heap-sized bound, successful reach detection is equivalent to a logical path on a
+well-formed heap. -/
+private theorem reachesWithFuel_true_iff (heap : Heap) (start target : RefId)
+    (valid : heap.WellFormed) (startValid : heap.ValidRef start) :
+    reachesWithFuel heap target (heap.size + 1) start = .ok true ↔
+      heap.PrototypeReachable start target := by
+  constructor
+  · intro reached
+    obtain ⟨nodes, path, _⟩ := reachesWithFuel_true_sound
+      (wellFormed_prototype_valid heap valid) (heap.size + 1) start target startValid reached
+    exact ⟨nodes, path⟩
+  · rintro ⟨nodes, path⟩
+    obtain ⟨tail, terminal, object, tailPath, found, prototypeEq⟩ :=
+      wellFormed_prototype_terminates heap valid target (prototypePath_end_valid path)
+    have complete := prototypePath_append path tailPath
+    have completeBound := prototypeTermination_length_le_size complete object found prototypeEq
+    apply reachesWithFuel_path_complete (heap := heap) (heap.size + 1) path
+    simp only [List.length_append] at completeBound
+    omega
+
+/-- With the heap-sized bound, a `false` reach result is equivalent to logical non-reachability on
+a well-formed heap. Fuel exhaustion and malformed references remain separate errors. -/
+private theorem reachesWithFuel_false_iff (heap : Heap) (start target : RefId)
+    (valid : heap.WellFormed) (startValid : heap.ValidRef start) :
+    reachesWithFuel heap target (heap.size + 1) start = .ok false ↔
+      ¬heap.PrototypeReachable start target := by
+  constructor
+  · intro notReached
+    rintro ⟨nodes, path⟩
+    obtain ⟨tail, terminal, object, tailPath, found, prototypeEq⟩ :=
+      wellFormed_prototype_terminates heap valid target (prototypePath_end_valid path)
+    have completeBound := prototypeTermination_length_le_size
+      (prototypePath_append path tailPath) object found prototypeEq
+    apply reachesWithFuel_false_sound (heap := heap) (heap.size + 1) start target
+      notReached nodes path
+    simp only [List.length_append] at completeBound
+    omega
+  · intro notReachable
+    obtain ⟨nodes, terminal, object, path, found, prototypeEq⟩ :=
+      wellFormed_prototype_terminates heap valid start startValid
+    exact reachesWithFuel_termination_false path object found prototypeEq target (heap.size + 1)
+      (prototypeTermination_length_le_size path object found prototypeEq) notReachable
 
 private theorem functionIdsSequential_append (expected : Nat) (slots : List FunctionSlots)
     (newSlots : FunctionSlots) (valid : functionIdsSequential expected slots = true)
@@ -3136,14 +4034,12 @@ private theorem functionSlotList_replace (heap next : Heap) (target : RefId)
     simpa [project] using go heap.objects.toList index atIndex
   · contradiction
 
-/-- Replacing one object with a valid record of the same kind and prototype preserves the complete
-heap invariant. -/
-theorem replace_preserves_wellFormed (heap next : Heap) (target : RefId)
+private theorem replace_preserves_wellFormed_with_graph (heap next : Heap) (target : RefId)
     (current replacement : ObjectRecord) (valid : heap.WellFormed)
     (found : heap.get? target = .ok current) (sameKind : replacement.kind = current.kind)
-    (samePrototype : replacement.prototype = current.prototype)
     (replaced : heap.replace target replacement = .ok next)
-    (replacementValid : objectReferencesValid next replacement = true) : next.WellFormed := by
+    (replacementValid : objectReferencesValid next replacement = true)
+    (graphValid : next.prototypeGraphAcyclic = true) : next.WellFormed := by
   unfold WellFormed isWellFormed at valid ⊢
   simp only [Bool.and_eq_true] at valid ⊢
   have slotsEqual := functionSlotList_replace heap next target current replacement found sameKind replaced
@@ -3200,8 +4096,22 @@ theorem replace_preserves_wellFormed (heap next : Heap) (target : RefId)
     exact valid.1.1.2
   · rw [slotsEqual, replace_functionCount heap next target replacement replaced]
     exact valid.1.2
-  · rw [prototypeGraphAcyclic_replace heap next target current replacement found samePrototype replaced]
-    exact valid.2
+  · exact graphValid
+
+/-- Replacing one object with a valid record of the same kind and prototype preserves the complete
+heap invariant. -/
+theorem replace_preserves_wellFormed (heap next : Heap) (target : RefId)
+    (current replacement : ObjectRecord) (valid : heap.WellFormed)
+    (found : heap.get? target = .ok current) (sameKind : replacement.kind = current.kind)
+    (samePrototype : replacement.prototype = current.prototype)
+    (replaced : heap.replace target replacement = .ok next)
+    (replacementValid : objectReferencesValid next replacement = true) : next.WellFormed := by
+  apply replace_preserves_wellFormed_with_graph heap next target current replacement valid found
+    sameKind replaced replacementValid
+  rw [prototypeGraphAcyclic_replace heap next target current replacement found samePrototype replaced]
+  unfold WellFormed isWellFormed at valid
+  simp only [Bool.and_eq_true] at valid
+  exact valid.2
 
 private theorem wellFormed_object (heap : Heap) (ref : RefId) (object : ObjectRecord)
     (valid : heap.WellFormed) (found : heap.get? ref = .ok object) :
@@ -3217,6 +4127,208 @@ private theorem wellFormed_object (heap : Heap) (ref : RefId) (object : ObjectRe
       simp [get?, lookup] at found
       subst current
       exact Array.mem_of_getElem? lookup
+
+private theorem prototypeReplacement_referencesValid (heap next : Heap) (target : RefId)
+    (object : ObjectRecord) (prototype : Option RefId) (valid : heap.WellFormed)
+    (found : heap.get? target = .ok object)
+    (prototypeValid : prototype.all (fun ref => ref.value < heap.size) = true)
+    (replaced : heap.replace target { object with prototype := prototype } = .ok next) :
+    objectReferencesValid next { object with prototype := prototype } = true := by
+  have oldValid := wellFormed_object heap target object valid found
+  have carried := objectReferencesValid_replace_heap heap next target object
+    { object with prototype := prototype } object found (by rfl) replaced oldValid
+  unfold objectReferencesValid at carried ⊢
+  simp only [Bool.and_eq_true] at carried ⊢
+  refine ⟨⟨carried.1.1, ?_⟩, carried.2⟩
+  rw [replace_size heap next target { object with prototype := prototype } replaced]
+  exact prototypeValid
+
+private theorem prototypeEdge_replace_ne (heap next : Heap) (target child parent : RefId)
+    (replacement : ObjectRecord) (different : child ≠ target)
+    (replaced : heap.replace target replacement = .ok next)
+    (edge : heap.PrototypeEdge child parent) : next.PrototypeEdge child parent := by
+  obtain ⟨childValid, parentValid, object, found, prototypeEq⟩ := edge
+  refine ⟨?_, ?_, object, ?_, prototypeEq⟩
+  · unfold ValidRef at childValid ⊢
+    rw [replace_size heap next target replacement replaced]
+    exact childValid
+  · unfold ValidRef at parentValid ⊢
+    rw [replace_size heap next target replacement replaced]
+    exact parentValid
+  · rw [get?_replace_ne heap next target child replacement different replaced]
+    exact found
+
+private theorem prototypeTerminates_replace (heap next : Heap) (target : RefId)
+    (replacement : ObjectRecord) (replaced : heap.replace target replacement = .ok next)
+    (targetTerminates : next.PrototypeTerminates target)
+    (terminates : heap.PrototypeTerminates start) : next.PrototypeTerminates start := by
+  obtain ⟨nodes, terminal, object, path, found, prototypeEq⟩ := terminates
+  induction path with
+  | @nil ref valid =>
+      by_cases same : ref = target
+      · simpa [same] using targetTerminates
+      · refine ⟨[], ref, object, .nil ?_, ?_, prototypeEq⟩
+        · unfold ValidRef at valid ⊢
+          rw [replace_size heap next target replacement replaced]
+          exact valid
+        · rw [get?_replace_ne heap next target ref replacement same replaced]
+          exact found
+  | @cons child parent nodes terminal edge rest ih =>
+      by_cases same : child = target
+      · simpa [same] using targetTerminates
+      · exact prototypeTerminates_of_edge
+          (prototypeEdge_replace_ne heap next target child parent replacement same replaced edge)
+          (ih found)
+
+private theorem prototypeTerminates_replace_avoiding (heap next : Heap) (target : RefId)
+    (replacement : ObjectRecord) (replaced : heap.replace target replacement = .ok next)
+    (notReachable : ¬heap.PrototypeReachable start target)
+    (terminates : heap.PrototypeTerminates start) : next.PrototypeTerminates start := by
+  obtain ⟨nodes, terminal, object, path, found, prototypeEq⟩ := terminates
+  induction path with
+  | @nil ref valid =>
+      have different : ref ≠ target := by
+        intro same
+        apply notReachable
+        simpa [same] using (show heap.PrototypeReachable ref ref from ⟨[], .nil valid⟩)
+      refine ⟨[], ref, object, .nil ?_, ?_, prototypeEq⟩
+      · unfold ValidRef at valid ⊢
+        rw [replace_size heap next target replacement replaced]
+        exact valid
+      · rw [get?_replace_ne heap next target ref replacement different replaced]
+        exact found
+  | @cons child parent nodes terminal edge rest ih =>
+      have different : child ≠ target := by
+        intro same
+        apply notReachable
+        have self : heap.PrototypeReachable child child := ⟨[], .nil edge.1⟩
+        simpa [same] using self
+      have parentAvoids : ¬heap.PrototypeReachable parent target := by
+        intro reachable
+        obtain ⟨suffix, suffixPath⟩ := reachable
+        apply notReachable
+        exact ⟨parent :: suffix, .cons edge suffixPath⟩
+      exact prototypeTerminates_of_edge
+        (prototypeEdge_replace_ne heap next target child parent replacement different replaced edge)
+        (ih parentAvoids found)
+
+private theorem prototypeGraphAcyclic_replace_prototype (heap next : Heap) (target : RefId)
+    (object : ObjectRecord) (prototype : Option RefId) (valid : heap.WellFormed)
+    (found : heap.get? target = .ok object)
+    (prototypeValid : prototype.all (fun ref => ref.value < heap.size) = true)
+    (cycleFree : ∀ parent, prototype = some parent →
+      ¬heap.PrototypeReachable parent target)
+    (replaced : heap.replace target { object with prototype := prototype } = .ok next) :
+    next.prototypeGraphAcyclic = true := by
+  let replacement := { object with prototype := prototype }
+  have oldTerminates := wellFormed_prototype_terminates heap valid
+  have targetValid : next.ValidRef target := by
+    unfold ValidRef
+    rw [replace_size heap next target replacement replaced]
+    exact get?_ok_valid heap target object found
+  have targetFound : next.get? target = .ok replacement :=
+    get?_replace_same heap next target replacement replaced
+  have targetTerminates : next.PrototypeTerminates target := by
+    cases prototypeEq : prototype with
+    | none => exact ⟨[], target, replacement, .nil targetValid, targetFound, by simp [replacement,
+        prototypeEq]⟩
+    | some parent =>
+        have parentValid : heap.ValidRef parent := by
+          simpa [prototypeEq, ValidRef] using prototypeValid
+        have parentOldTerminates := oldTerminates parent parentValid
+        have parentNextTerminates := prototypeTerminates_replace_avoiding heap next target replacement
+          replaced (cycleFree parent prototypeEq) parentOldTerminates
+        have parentNextValid : next.ValidRef parent := by
+          unfold ValidRef at parentValid ⊢
+          rw [replace_size heap next target replacement replaced]
+          exact parentValid
+        have edge : next.PrototypeEdge target parent :=
+          ⟨targetValid, parentNextValid, replacement, targetFound, by simp [replacement, prototypeEq]⟩
+        exact prototypeTerminates_of_edge edge parentNextTerminates
+  apply prototypeGraphAcyclic_of_terminates
+  intro ref refValid
+  have oldRefValid : heap.ValidRef ref := by
+    unfold ValidRef at refValid ⊢
+    rw [replace_size heap next target replacement replaced] at refValid
+    exact refValid
+  exact prototypeTerminates_replace heap next target replacement replaced targetTerminates
+    (oldTerminates ref oldRefValid)
+
+/-- Every ordinary result of `SetPrototypeOf`, successful or rejected, preserves complete heap
+validity. Malformed references and exhausted cyclic traversals remain faults rather than results. -/
+theorem setPrototypeOf_preserves_wellFormed (heap next : Heap) (target : RefId)
+    (prototype : Option RefId) (success : Bool) (valid : heap.WellFormed)
+    (updated : heap.setPrototypeOf target prototype = .ok (success, next)) : next.WellFormed := by
+  unfold setPrototypeOf at updated
+  cases found : heap.get? target with
+  | error fault => simp [found] at updated
+  | ok object =>
+      rw [found] at updated
+      by_cases same : object.prototype = prototype
+      · simp [same] at updated
+        obtain ⟨rfl, rfl⟩ := updated
+        exact valid
+      · cases extensibleEq : object.extensible with
+        | false =>
+            simp [same, extensibleEq] at updated
+            obtain ⟨rfl, rfl⟩ := updated
+            exact valid
+        | true =>
+            cases prototype with
+            | none =>
+                simp [same, extensibleEq] at updated
+                cases replaced : heap.replace target
+                    { object with prototype := none, extensible := true } with
+                | error fault => rw [replaced] at updated; contradiction
+                | ok replacedHeap =>
+                    rw [replaced] at updated
+                    obtain ⟨rfl, rfl⟩ := updated
+                    have replaced' : heap.replace target { object with prototype := none } =
+                        .ok next := by simpa [extensibleEq] using replaced
+                    apply replace_preserves_wellFormed_with_graph heap next target object
+                      { object with prototype := none, extensible := true } valid found (by rfl) replaced
+                    · simpa [extensibleEq] using
+                        (prototypeReplacement_referencesValid heap next target object none valid
+                          found (by simp) replaced')
+                    · exact prototypeGraphAcyclic_replace_prototype heap next target object none valid
+                        found (by simp) (by simp) replaced'
+            | some parent =>
+                cases reached : reachesWithFuel heap target (heap.size + 1) parent with
+                | error fault => simp [same, extensibleEq, reached] at updated
+                | ok reaches =>
+                    cases reaches with
+                    | true =>
+                        simp [same, extensibleEq, reached] at updated
+                        obtain ⟨rfl, rfl⟩ := updated
+                        exact valid
+                    | false =>
+                        simp [same, extensibleEq, reached] at updated
+                        cases replaced : heap.replace target
+                            { object with prototype := some parent, extensible := true } with
+                        | error fault => rw [replaced] at updated; contradiction
+                        | ok replacedHeap =>
+                            rw [replaced] at updated
+                            obtain ⟨rfl, rfl⟩ := updated
+                            have replaced' : heap.replace target
+                                { object with prototype := some parent } = .ok next := by
+                              simpa [extensibleEq] using replaced
+                            have targetValid := get?_ok_valid heap target object found
+                            have parentValid := reachesWithFuel_ok_valid heap target parent heap.size
+                              targetValid false reached
+                            have prototypeValid : (some parent).all
+                                (fun ref => ref.value < heap.size) = true := by
+                              simpa [ValidRef] using parentValid
+                            have noCycle :=
+                              (reachesWithFuel_false_iff heap parent target valid parentValid).mp reached
+                            apply replace_preserves_wellFormed_with_graph heap next target object
+                              { object with prototype := some parent, extensible := true } valid found (by rfl)
+                              replaced
+                            · simpa [extensibleEq] using
+                                (prototypeReplacement_referencesValid heap next target object
+                                  (some parent) valid found prototypeValid replaced')
+                            · exact prototypeGraphAcyclic_replace_prototype heap next target object
+                                (some parent) valid found prototypeValid
+                                (by intro candidate equal; cases equal; exact noCycle) replaced'
 
 private theorem replaceArrayRecord_preserves_wellFormed (heap next : Heap) (target : RefId)
     (oldProperties newProperties : OrderedProps) (prototype : Option RefId) (extensible : Bool)
@@ -5378,11 +6490,44 @@ private theorem defineOwnProperty_blocked_false_preservation_nonvacuous :
       cases success with
       | true => simp [blockedShrinkFixtureSucceeds, run] at succeeds
       | false =>
-          exact ⟨next, rfl, defineOwnProperty_preserves_wellFormed _ _ _ _ _ _
-            (by unfold WellFormed; native_decide) run⟩
+           exact ⟨next, rfl, defineOwnProperty_preserves_wellFormed _ _ _ _ _ _
+             (by unfold WellFormed; native_decide) run⟩
 
--- Registry of proved allocation, property-definition, deletion, and extensibility preservation
--- theorems. Iterator advancement and prototype mutation remain explicit obligations below.
+private def prototypeFixtureObject (prototype : Option RefId) (extensible : Bool := true) :
+    ObjectRecord := .mk OrderedProps.empty prototype extensible .ordinary
+
+private def prototypeFixtureHeap : Heap :=
+  .mk #[prototypeFixtureObject none, prototypeFixtureObject none] 0
+
+private def prototypeLinkedFixtureHeap : Heap :=
+  .mk #[prototypeFixtureObject none, prototypeFixtureObject (some ⟨0⟩)] 0
+
+private def prototypeSetFixtureHeap : Heap :=
+  .mk #[prototypeFixtureObject (some ⟨1⟩), prototypeFixtureObject none] 0
+
+private def prototypeFixedFixtureHeap : Heap :=
+  .mk #[prototypeFixtureObject none false, prototypeFixtureObject none] 0
+
+/-- Concrete witnesses cover successful parent and null assignment. -/
+private theorem setPrototypeOf_success_nonvacuous :
+    prototypeFixtureHeap.setPrototypeOf ⟨0⟩ (some ⟨1⟩) =
+        .ok (true, prototypeSetFixtureHeap) ∧ prototypeSetFixtureHeap.WellFormed ∧
+      prototypeLinkedFixtureHeap.setPrototypeOf ⟨1⟩ none =
+        .ok (true, prototypeFixtureHeap) ∧ prototypeFixtureHeap.WellFormed := by
+  refine ⟨rfl, by unfold WellFormed; native_decide, rfl, by unfold WellFormed; native_decide⟩
+
+/-- Concrete witnesses cover unchanged success, nonextensible rejection, and cycle rejection. -/
+private theorem setPrototypeOf_branch_nonvacuous :
+    prototypeLinkedFixtureHeap.setPrototypeOf ⟨1⟩ (some ⟨0⟩) =
+        .ok (true, prototypeLinkedFixtureHeap) ∧
+      prototypeFixedFixtureHeap.setPrototypeOf ⟨0⟩ (some ⟨1⟩) =
+        .ok (false, prototypeFixedFixtureHeap) ∧
+      prototypeLinkedFixtureHeap.setPrototypeOf ⟨0⟩ (some ⟨1⟩) =
+        .ok (false, prototypeLinkedFixtureHeap) := by
+  exact ⟨rfl, rfl, rfl⟩
+
+-- Registry of proved allocation, property-definition, deletion, extensibility, and prototype
+-- preservation theorems. Iterator advancement remains an explicit obligation below.
 namespace PublicMutationPreservation
 
 export Heap (allocate_preserves_wellFormed allocatePrimitiveWrapper_preserves_wellFormed
@@ -5390,11 +6535,11 @@ export Heap (allocate_preserves_wellFormed allocatePrimitiveWrapper_preserves_we
   allocateFunction_preserves_wellFormed allocateConstructorPair_preserves_wellFormed
   allocateArrayIterator_preserves_wellFormed defineOwnProperty_preserves_wellFormed
   createDataProperty_preserves_wellFormed deleteProperty_preserves_wellFormed
-  preventExtensions_preserves_wellFormed)
+  preventExtensions_preserves_wellFormed setPrototypeOf_preserves_wellFormed)
 
 end PublicMutationPreservation
 
--- TODO(theorem): prove iterator advancement and `setPrototypeOf` preserve `WellFormed`.
+-- TODO(theorem): prove iterator advancement preserves `WellFormed`.
 
 end Heap
 end TSLean.JS
