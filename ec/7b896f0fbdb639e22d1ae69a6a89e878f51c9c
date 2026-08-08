@@ -1,0 +1,29 @@
+evidence/phase2-array-shrink-manifest.json
+  s_a2046ceb2c7724::t_8557c483a0a671 1-171
+lean/TSLean/JS/OrderedProps.lean
+  s_4d44abf13c0d3b::t_702a3353aacc02 2732-2755
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "ec7b896f0fbdb639e22d1ae69a6a89e878f51c9c",
+  "prompts": {},
+  "sessions": {
+    "s_4d44abf13c0d3b": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_05dc528e0ffevO0MDl5xsFVln1",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_a2046ceb2c7724": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_02147b66dffeluGE5Xk5v1l5GY",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    }
+  }
+}
