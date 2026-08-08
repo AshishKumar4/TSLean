@@ -39,6 +39,7 @@ import TSLean.JS.Tests
 import TSLean.Refinement.AxiomAudit
 import TSLean.Refinement.Tests.Core
 import TSLean.Refinement.Tests.Primitive
+import TSLean.Refinement.Tests.String
 
 open TSLean TSLean.Stdlib.HashMap TSLean.DO
 

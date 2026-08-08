@@ -166,5 +166,203 @@ theorem equal_symm (left right : JSString) : equal left right = equal right left
   simp only [decide_eq_true_eq]
   exact eq_comm
 
+private theorem decodeCodeUnits_encodeScalar (character : Char) (units : List UInt16)
+    (decoded : decodeCodeUnits units = some characters) :
+    decodeCodeUnits (encodeScalar character ++ units) = some (character :: characters) := by
+  have valid : character.toNat.isValidChar := by
+    simpa [Char.toNat, UInt32.isValidChar] using character.valid
+  by_cases bmp : character.toNat ≤ 0xffff
+  · have scalarLt : character.toNat < 0x10000 := by omega
+    have notHigh : ¬(0xd800 ≤ character.toNat ∧ character.toNat ≤ 0xdbff) := by
+      rcases valid with valid | valid <;> omega
+    have notLow : ¬(0xdc00 ≤ character.toNat ∧ character.toNat ≤ 0xdfff) := by
+      rcases valid with valid | valid <;> omega
+    have scalarToNat : (UInt16.ofNat character.toNat).toNat = character.toNat := by
+      simp [UInt16.ofNat, UInt16.toNat, BitVec.toNat_ofNat, Nat.mod_eq_of_lt scalarLt]
+    simp only [encodeScalar, bmp, if_pos, List.singleton_append]
+    rw [decodeCodeUnits.eq_def]
+    simp [scalarToNat, notHigh, notLow, decoded, Char.ofNat_toNat]
+  · have scalarGt : 0xffff < character.toNat := by omega
+    have scalarLt : character.toNat < 0x110000 := by
+      rcases valid with valid | valid <;> omega
+    let offset := character.toNat - 0x10000
+    have offsetEq : character.toNat = 0x10000 + offset := by
+      simp only [offset]
+      omega
+    have offsetLt : offset < 0x100000 := by
+      simp only [offset]
+      omega
+    have offsetDivLt : offset / 0x400 < 0x400 := by
+      apply Nat.div_lt_iff_lt_mul (by omega : 0 < (0x400 : Nat)) |>.2
+      simpa using offsetLt
+    have highLt : 0xd800 + offset / 0x400 < 0x10000 := by
+      have := offsetDivLt
+      omega
+    have lowLt : 0xdc00 + offset % 0x400 < 0x10000 := by
+      have := Nat.mod_lt offset (by omega : 0 < (0x400 : Nat))
+      omega
+    have highRange : 0xd800 ≤ 0xd800 + offset / 0x400 ∧
+        0xd800 + offset / 0x400 ≤ 0xdbff := by
+      have := offsetDivLt
+      omega
+    have lowRange : 0xdc00 ≤ 0xdc00 + offset % 0x400 ∧
+        0xdc00 + offset % 0x400 ≤ 0xdfff := by
+      have := Nat.mod_lt offset (by omega : 0 < (0x400 : Nat))
+      omega
+    have highToNat : (UInt16.ofNat (0xd800 + offset / 0x400)).toNat =
+        0xd800 + offset / 0x400 := by
+      simp [UInt16.ofNat, UInt16.toNat, BitVec.toNat_ofNat, Nat.mod_eq_of_lt highLt]
+    have lowToNat : (UInt16.ofNat (0xdc00 + offset % 0x400)).toNat =
+        0xdc00 + offset % 0x400 := by
+      simp [UInt16.ofNat, UInt16.toNat, BitVec.toNat_ofNat, Nat.mod_eq_of_lt lowLt]
+    have recombineSimple :
+        0x10000 + offset / 0x400 * 0x400 + offset % 0x400 = character.toNat := by
+      omega
+    unfold encodeScalar
+    rw [if_neg bmp]
+    change decodeCodeUnits
+      ([UInt16.ofNat (0xd800 + offset / 0x400),
+        UInt16.ofNat (0xdc00 + offset % 0x400)] ++ units) =
+        some (character :: characters)
+    simp only [List.cons_append, List.nil_append]
+    rw [decodeCodeUnits.eq_def]
+    simp only [highToNat, lowToNat]
+    simp [highRange, lowRange, decoded]
+    rw [recombineSimple, Char.ofNat_toNat]
+
+private theorem decodeCodeUnits_encodeList (characters : List Char) :
+    decodeCodeUnits (characters.flatMap encodeScalar) = some characters := by
+  induction characters with
+  | nil => rfl
+  | cons character rest ih =>
+      rw [List.flatMap_cons]
+      exact decodeCodeUnits_encodeScalar character _ ih
+
+/-- Encoding a Lean scalar string and decoding its UTF-16 representation returns the input. -/
+theorem toLeanString?_ofLeanString (value : String) :
+    (ofLeanString value).toLeanString? = some value := by
+  simp [ofLeanString, toLeanString?, decodeCodeUnits_encodeList]
+
+/-- UTF-16 encoding of Lean scalar strings is injective. -/
+theorem ofLeanString_injective : Function.Injective ofLeanString := by
+  intro left right equal
+  have decoded := congrArg toLeanString? equal
+  simpa [toLeanString?_ofLeanString] using decoded
+
+/-- UTF-16 encoding commutes with Lean string append. -/
+theorem ofLeanString_append (left right : String) :
+    ofLeanString (left ++ right) = (ofLeanString left).append (ofLeanString right) := by
+  congr
+  simp [ofLeanString, append, List.flatMap_append]
+
+private theorem flatMap_encodeScalar_of_bmp (characters : List Char)
+    (bmp : ∀ character, character ∈ characters → character.toNat ≤ 0xffff) :
+    characters.flatMap encodeScalar = characters.map (UInt16.ofNat ∘ Char.toNat) := by
+  induction characters with
+  | nil => rfl
+  | cons character rest ih =>
+      rw [List.flatMap_cons, List.map_cons]
+      simp only [encodeScalar, bmp character List.mem_cons_self, if_pos,
+        List.singleton_append, Function.comp_apply]
+      congr
+      exact ih fun current member => bmp current (List.mem_cons_of_mem character member)
+
+/-- BMP-only encoding emits exactly one code unit for each Lean character. -/
+theorem ofLeanString_codeUnits_of_bmp (value : String)
+    (bmp : ∀ character, character ∈ value.toList → character.toNat ≤ 0xffff) :
+    (ofLeanString value).codeUnits = value.toList.map (UInt16.ofNat ∘ Char.toNat) := by
+  exact flatMap_encodeScalar_of_bmp value.toList bmp
+
+private theorem encodeScalar_of_bmpUnit (unit : UInt16)
+    (notHigh : ¬(0xd800 ≤ unit.toNat ∧ unit.toNat ≤ 0xdbff))
+    (notLow : ¬(0xdc00 ≤ unit.toNat ∧ unit.toNat ≤ 0xdfff)) :
+    encodeScalar (Char.ofNat unit.toNat) = [unit] := by
+  have scalarLt : unit.toNat < 0x10000 := UInt16.toNat_lt unit
+  have valid : unit.toNat.isValidChar := by
+    simp only [Nat.isValidChar]
+    omega
+  have charToNat : (Char.ofNat unit.toNat).toNat = unit.toNat := by
+    unfold Char.ofNat
+    rw [dif_pos valid]
+    rfl
+  have scalarLe : unit.toNat ≤ 0xffff := by omega
+  simp [encodeScalar, charToNat, scalarLe, UInt16.ofNat_toNat]
+
+private theorem encodeScalar_of_surrogates (high low : UInt16)
+    (highRange : 0xd800 ≤ high.toNat ∧ high.toNat ≤ 0xdbff)
+    (lowRange : 0xdc00 ≤ low.toNat ∧ low.toNat ≤ 0xdfff) :
+    encodeScalar (Char.ofNat
+      (0x10000 + (high.toNat - 0xd800) * 0x400 + (low.toNat - 0xdc00))) = [high, low] := by
+  let scalar := 0x10000 + (high.toNat - 0xd800) * 0x400 + (low.toNat - 0xdc00)
+  have scalarRange : 0x10000 ≤ scalar ∧ scalar < 0x110000 := by
+    simp only [scalar]
+    omega
+  have valid : scalar.isValidChar := by
+    simp only [Nat.isValidChar]
+    omega
+  have charToNat : (Char.ofNat scalar).toNat = scalar := by
+    unfold Char.ofNat
+    rw [dif_pos valid]
+    rfl
+  have offsetEq : scalar - 0x10000 =
+      (high.toNat - 0xd800) * 0x400 + (low.toNat - 0xdc00) := by
+    simp only [scalar]
+    omega
+  have highEq : 0xd800 + (scalar - 0x10000) / 0x400 = high.toNat := by
+    rw [offsetEq]
+    omega
+  have lowEq : 0xdc00 + (scalar - 0x10000) % 0x400 = low.toNat := by
+    rw [offsetEq]
+    omega
+  unfold encodeScalar
+  rw [charToNat, if_neg (by omega)]
+  change [UInt16.ofNat (0xd800 + (scalar - 0x10000) / 0x400),
+    UInt16.ofNat (0xdc00 + (scalar - 0x10000) % 0x400)] = [high, low]
+  rw [highEq, lowEq, UInt16.ofNat_toNat, UInt16.ofNat_toNat]
+
+private theorem encodeList_decodeCodeUnits (units : List UInt16) (characters : List Char)
+    (decoded : decodeCodeUnits units = some characters) :
+    characters.flatMap encodeScalar = units := by
+  cases units with
+  | nil =>
+      simp [decodeCodeUnits.eq_def] at decoded
+      subst characters
+      rfl
+  | cons unit rest =>
+      by_cases high : 0xd800 ≤ unit.toNat ∧ unit.toNat ≤ 0xdbff
+      · cases rest with
+        | nil => simp [decodeCodeUnits.eq_def, high] at decoded
+        | cons second tail =>
+            by_cases low : 0xdc00 ≤ second.toNat ∧ second.toNat ≤ 0xdfff
+            · rw [decodeCodeUnits.eq_def] at decoded
+              simp only [high, decide_true, Bool.true_and, if_pos, low] at decoded
+              obtain ⟨tailCharacters, tailDecoded, rfl⟩ :=
+                Option.map_eq_some_iff.mp decoded
+              rw [List.flatMap_cons, encodeScalar_of_surrogates unit second high low,
+                List.cons_append, List.cons_append, List.nil_append]
+              congr
+              exact encodeList_decodeCodeUnits tail tailCharacters tailDecoded
+            · simp [decodeCodeUnits.eq_def, high, low] at decoded
+      · by_cases low : 0xdc00 ≤ unit.toNat ∧ unit.toNat ≤ 0xdfff
+        · simp [decodeCodeUnits.eq_def, high, low] at decoded
+        · rw [decodeCodeUnits.eq_def] at decoded
+          simp [high, low] at decoded
+          obtain ⟨restCharacters, restDecoded, rfl⟩ := decoded
+          rw [List.flatMap_cons, encodeScalar_of_bmpUnit unit high low,
+            List.singleton_append]
+          congr
+          exact encodeList_decodeCodeUnits rest restCharacters restDecoded
+termination_by units.length
+
+/-- Decoding valid UTF-16 and re-encoding the result preserves every code unit exactly. -/
+theorem ofLeanString_toLeanString? {value : JSString} {native : String}
+    (decoded : value.toLeanString? = some native) : ofLeanString native = value := by
+  cases value with
+  | mk units =>
+      simp only [toLeanString?, Option.map_eq_some_iff] at decoded
+      obtain ⟨characters, charactersDecoded, rfl⟩ := decoded
+      congr
+      simpa [ofLeanString] using encodeList_decodeCodeUnits units characters charactersDecoded
+
 end JSString
 end TSLean.JS

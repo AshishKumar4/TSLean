@@ -30,6 +30,8 @@ describe('JS elaborated-environment trust audit', () => {
     });
     expect(output).toContain('TSLean.Refinement.Heap.ExactExtension.trans');
     expect(output).toContain('TSLean.Refinement.EvidenceKind.join_assoc');
+    expect(output).toContain('TSLean.Refinement.String.codec_roundtrip');
+    expect(output).toContain('TSLean.Refinement.String.bmp_codeUnit_at');
   }, 30_000);
 
   it('rejects symlinks during recursive refinement discovery', (context) => {

@@ -1120,3 +1120,47 @@ $ git diff --check
 ```
 
 Every evidence check from `evidence:baseline:check` through `evidence:refinement-core:check` and the current `evidence:primitive-refinements:check` passed. The primitive-refinements manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:0b40e99e3e07eb37f91190aa6d27d013c4e7d497d87c61bc1d5546f8fa0b0df1`, refinement runtime and barrel `sha256:60b4916485c382924729d93865cc8a72c1539216224236dc563f5c3a723da030`, refinement tests, audit, and registry `sha256:733a74e422c5726fe43c381f792eea6d0a2a9b13d4acdf7aaee7f8e04b5973c6`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, and trust/evidence infrastructure `sha256:9650b8b60a6301b5c5469f26bffc6a46fd72dbce4585f66cc6e579465c1661c3`. The manifest SHA-256 is `205267d456c3f9a827b4bbaee08fc01108ff77b0565d69da1fb648bfc50ee91c`.
+
+## 2026-08-08 - String refinement
+
+This snapshot is based on `50fedc36a2aed89cd59973ac97c0411eeae3fae5` on `rebuild/semantic-core`. The primitive-refinements input now resolves every validation and hash group from that immutable revision; its manifest remains byte-for-byte unchanged at SHA-256 `205267d456c3f9a827b4bbaee08fc01108ff77b0565d69da1fb648bfc50ee91c`. Its explicit commands and every earlier input, manifest, and ledger entry remain intact. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target `phase3-string-refinement-input.json`.
+
+The String codec encodes Lean Unicode scalar strings as exact ECMAScript UTF-16 primitives without changing the heap. Decoding accepts only string primitives whose code units decode without unpaired surrogates and reports typed non-string and invalid-UTF-16 faults. The proved contracts cover scalar/UTF-16 roundtrips and injectivity, exact codec roundtrip, append and string addition, equality variants, truthiness, and primitive `ToString`.
+
+The `validUTF16Guard` accepts exactly when the strict UTF-16 decoder returns a Lean scalar string; its evidence proves that some native string exactly refines the accepted code units, and append preserves acceptance. The separate `bmpStringGuard` accepts Lean strings only when every scalar is at most `0xffff`. Code-unit length equals Lean character length, and code-unit indexing matches Lean character indexing, only under that BMP premise. Astral scalars remain supported by the codec but encode as surrogate pairs, so those length and indexing claims do not apply globally.
+
+Review found 596 elaborated JS proof declarations and 133 refinement proof declarations, with 119 exact production theorem names required by registry SHA-256 `7ae597b51426aa98c4a3e04d159e41eea312f80ae34abf2bb15f397e39afa4f2`. The String, Bool, and BigInt refinements introduce no `Evidence.assumed` authority and no primitive-specific executable assumptions. The four existing Float executable assumptions remain global and unchanged. There is no `formalDebt` field.
+
+Review approval is scoped to the String refinement, its strict UTF-16 and BMP guards, the supporting JSString roundtrip theorems, tests, audit coverage, and registry entries. It does not claim compiler consumption or global Lean-string/code-unit length equivalence. The compiler, IR, lowering, representation selection, and generated output remain unchanged and do not consume the codec. Array and closed-record codecs remain unclaimed, `TSLean.Refinement.Execution` remains reserved, and the 26 model-pending corpus entries and eight compiler todos remain unchanged.
+
+Measured commands and results:
+
+```text
+$ bun run evidence:string-refinement:generate
+$ bun run evidence:string-refinement:check
+$ bun run evidence:primitive-refinements:check
+
+$ bun run js:trust
+JS trust checks passed: 596 elaborated proof declarations
+JS trust gate passed: 596 proof declarations
+Refinement trust gate passed: 133 audited proof declarations; 119 required production theorems
+
+$ bun run verify
+All matched files use Prettier code style!
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+JS trust checks passed: 596 elaborated proof declarations
+JS trust gate passed: 596 proof declarations
+Refinement trust gate passed: 133 audited proof declarations; 119 required production theorems
+Test Files  43 passed (43)
+Tests  1636 passed | 8 todo (1644)
+Build completed successfully (185 jobs).
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 319
+Unpacked size: 3.82MB
+
+$ git diff --check
+```
+
+Every evidence check from `evidence:baseline:check` through the current `evidence:string-refinement:check` passed. The String-refinement manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:a1ee6f4de87c9035d609bf3e3d088e63c40beb61ddcee6015d1243fd2b382ffa`, refinement runtime and barrel `sha256:fa4bf03fdc83bc21a3cab433ffc167eb2652c3feaa908f16f466431545fd8412`, refinement tests, audit, and registry `sha256:a2016a8885d00f2a7cce5543c3767b6606f99a0bfeed68eb1c6221cbe79e83f9`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, and trust/evidence infrastructure `sha256:4563325e3f87e4b72c408f911f3f15c1c108a2c35dd4cf38a463a51b5615b7b1`. The manifest SHA-256 is `1e2cba1a786115e9ada050b18f0d448ef76ec76012dd220c645ac89c16cce6c0`.

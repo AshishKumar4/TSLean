@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase3-primitive-refinements-manifest.json",
-  "baseRevision": "e0665cdb7f2fae5e9092ba3dacb96ae26edf2227",
+  "outputPath": "evidence/phase3-string-refinement-manifest.json",
+  "baseRevision": "50fedc36a2aed89cd59973ac97c0411eeae3fae5",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": { "files": 43, "passed": 1636, "failed": 0, "todo": 8 },
-    "lean": { "jobs": 183, "status": "passed" },
+    "lean": { "jobs": 185, "status": "passed" },
     "corpus": { "entries": 102, "red": 102 },
-    "auditedTheorems": 591,
+    "auditedTheorems": 596,
     "differential": {
       "scenarioGroups": 16,
       "fixed": 734,
@@ -30,12 +30,12 @@
     "build": "passed"
   },
   "refinementProofs": {
-    "audited": 102,
-    "required": 89,
-    "registryHash": "sha256:5741008959cf36417907c55f7777d7ab9c1c59265e6a90d1367c57efa67b94ed"
+    "audited": 133,
+    "required": 119,
+    "registryHash": "sha256:7ae597b51426aa98c4a3e04d159e41eea312f80ae34abf2bb15f397e39afa4f2"
   },
   "executableAssumptions": {
-    "statement": "These are executable trusted-computing-base assumptions, not proof axioms. No theorem claims that these Lean runtime primitives implement ECMAScript correctly. The Bool and BigInt refinements use no executable assumptions.",
+    "statement": "These are executable trusted-computing-base assumptions, not proof axioms. No theorem claims that these Lean runtime primitives implement ECMAScript correctly. The String, Bool, and BigInt refinements use no executable assumptions.",
     "assumptions": [
       {
         "id": "lean-float-bits",
@@ -75,7 +75,6 @@
     { "id": "selfhost-typemap-one-hole", "location": "tests/parser-advanced.test.ts" }
   ],
   "validation": {
-    "revision": "50fedc36a2aed89cd59973ac97c0411eeae3fae5",
     "testFiles": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.files" },
     "todos": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.todo" },
     "corpus": {
@@ -177,14 +176,8 @@
     ]
   },
   "hashGroups": {
-    "source": {
-      "paths": ["src"],
-      "revision": "50fedc36a2aed89cd59973ac97c0411eeae3fae5"
-    },
-    "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "50fedc36a2aed89cd59973ac97c0411eeae3fae5"
-    },
+    "source": { "paths": ["src"] },
+    "jsRuntime": { "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"] },
     "refinementRuntimeAndBarrel": {
       "paths": [
         "lean/TSLean/Refinement/Core.lean",
@@ -192,9 +185,9 @@
         "lean/TSLean/Refinement/Execution.lean",
         "lean/TSLean/Refinement/Heap.lean",
         "lean/TSLean/Refinement/Primitive.lean",
+        "lean/TSLean/Refinement/String.lean",
         "lean/TSLean/Refinement.lean"
-      ],
-      "revision": "50fedc36a2aed89cd59973ac97c0411eeae3fae5"
+      ]
     },
     "refinementTestsAuditRegistry": {
       "paths": [
@@ -204,13 +197,9 @@
         "tests/js-trust.test.ts",
         "tests/lean-fixtures/refinement-invalid-guard-receipt.lean",
         "tests/lean-fixtures/refinement-private-constructors.lean"
-      ],
-      "revision": "50fedc36a2aed89cd59973ac97c0411eeae3fae5"
+      ]
     },
-    "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "50fedc36a2aed89cd59973ac97c0411eeae3fae5"
-    },
+    "corpus": { "paths": ["spec/corpus"] },
     "differentialSpecHarness": {
       "paths": [
         "spec/differential",
@@ -220,8 +209,7 @@
         "scripts/generate-differential-manifest.mjs",
         "tests/js-model-differential.test.ts",
         "tests/differential"
-      ],
-      "revision": "50fedc36a2aed89cd59973ac97c0411eeae3fae5"
+      ]
     },
     "trustEvidenceInfrastructure": {
       "paths": [
@@ -235,8 +223,7 @@
         "lean/TSLean.lean",
         "lean/TSLean/Tests.lean",
         "lean/lakefile.toml"
-      ],
-      "revision": "50fedc36a2aed89cd59973ac97c0411eeae3fae5"
+      ]
     }
   }
 }
