@@ -375,6 +375,32 @@ private theorem applyValidatedDescriptor_some_okSatisfies (update : DescriptorUp
   simpa only [validatedResult] using
     validatedResult_okSatisfies update current kind predicate sameValid transitionValid
 
+/-- A successful data-to-data descriptor application computes writability from the update field. -/
+theorem applyValidatedDescriptor_data_writable (update : DescriptorUpdate)
+    (current final : DataDescriptor) (extensible : Bool) (kind : DescriptorKind)
+    (applied : update.applyValidatedDescriptor (some (.data current)) extensible kind =
+      .ok (.data final)) :
+    final.writable = update.writable.apply current.writable := by
+  cases kind <;> simp only [applyValidatedDescriptor] at applied
+  all_goals
+    simp only [Bind.bind, Except.bind, Pure.pure, Except.pure] at applied
+    repeat first
+      | split at applied
+      | cases update.configurable <;> simp_all
+      | cases update.writable <;> simp_all
+      | contradiction
+  all_goals
+    simp_all [applySameKind, FieldUpdate.apply]
+  all_goals
+    repeat first
+      | split at applied
+      | cases update.writable <;> simp_all
+      | contradiction
+  all_goals
+    try simp only [Except.ok.injEq, PropertyDescriptor.data.injEq] at applied
+    cases applied
+    try simp_all
+
 /-- Successful validated descriptor application preserves all supplied reference-validity policies. -/
 theorem applyValidatedDescriptor_referencesValid (update : DescriptorUpdate)
     (current : Option PropertyDescriptor) (extensible : Bool) (kind : DescriptorKind)

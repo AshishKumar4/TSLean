@@ -2729,6 +2729,30 @@ theorem keysAll_delete (properties : OrderedProps) (key : PropertyKey)
         exact current (entry.1, oldEntry)
           (Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr oldFound)
 
+/-- A key predicate holds globally when it holds for every successful descriptor lookup. -/
+theorem keysAll_of_lookup (properties : OrderedProps) (predicate : PropertyKey → Bool)
+    (holds : ∀ key descriptor, properties.lookup key = some descriptor → predicate key = true) :
+    properties.keysAll predicate = true := by
+  unfold keysAll
+  rw [List.all_eq_true]
+  intro entry member
+  have found := Std.HashMap.mem_toList_iff_getElem?_eq_some.mp member
+  apply holds entry.1 entry.2.descriptor
+  exact congrArg (Option.map (·.descriptor)) found
+
+/-- A successful lookup inherits every predicate satisfied by all stored keys. -/
+theorem key_of_lookup_satisfies (properties : OrderedProps) (predicate : PropertyKey → Bool)
+    (current : properties.keysAll predicate = true) (key : PropertyKey)
+    (descriptor : PropertyDescriptor) (found : properties.lookup key = some descriptor) :
+    predicate key = true := by
+  unfold keysAll at current
+  rw [List.all_eq_true] at current
+  have rawSome : ∃ stored, properties.rep.entries.get? key = some stored ∧
+      stored.descriptor = descriptor := by
+    simpa [lookup] using found
+  rcases rawSome with ⟨stored, storedFound, _⟩
+  exact current (key, stored) (Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr storedFound)
+
 /-- Insertion installs the supplied descriptor at the inserted key. -/
 theorem lookup_insert_same (properties : OrderedProps) (key : PropertyKey)
     (descriptor : PropertyDescriptor) :

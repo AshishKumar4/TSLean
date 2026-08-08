@@ -607,23 +607,1016 @@ private def arrayIndexOfKey? : PropertyKey → Option Nat
 private def arrayIndexEntry? (key : PropertyKey) : Option (Nat × PropertyKey) :=
   (arrayIndexOfKey? key).map (·, key)
 
+private def arrayIndexEntries (properties : OrderedProps) : List (Nat × PropertyKey) :=
+  properties.ownKeys.filterMap arrayIndexEntry?
+
+private theorem arrayIndexEntries_eq (properties : OrderedProps) :
+    arrayIndexEntries properties = properties.arrayIndices.map fun index =>
+      (index, .string (PropertyKey.arrayIndexString index)) := by
+  unfold arrayIndexEntries OrderedProps.arrayIndices
+  induction properties.ownKeys with
+  | nil => rfl
+  | cons key keys ih =>
+      simp only [List.filterMap_cons]
+      cases key with
+      | symbol symbol => simpa [arrayIndexEntry?, arrayIndexOfKey?] using ih
+      | string stringKey =>
+          cases parsed : PropertyKey.arrayIndex? stringKey with
+          | none => simpa [arrayIndexEntry?, arrayIndexOfKey?, parsed] using ih
+          | some index =>
+              have canonical := PropertyKey.arrayIndex?_sound parsed
+              subst stringKey
+              simpa [arrayIndexEntry?, arrayIndexOfKey?, parsed] using ih
+
+private def deleteArrayIndexStep (newLength : Nat)
+    (state : Option Nat × OrderedProps) (entry : Nat × PropertyKey) :
+    Option Nat × OrderedProps :=
+  match state.1 with
+  | some _ => state
+  | none =>
+      let index := entry.1
+      let key := entry.2
+      if index < newLength then state
+      else
+        match state.2.lookup key with
+        | some (.data descriptor) =>
+            if descriptor.configurable then (none, state.2.delete key) else (some index, state.2)
+        | some (.accessor descriptor) =>
+            if descriptor.configurable then (none, state.2.delete key) else (some index, state.2)
+        | none => state
+
 private def deleteArrayIndicesFrom (properties : OrderedProps) (newLength : Nat) :
     Option Nat × OrderedProps :=
-  let descending := properties.ownKeys.filterMap arrayIndexEntry? |>.reverse
-  descending.foldl (fun state entry =>
-    match state.1 with
-    | some _ => state
-    | none =>
-        let index := entry.1
-        let key := entry.2
-        if index < newLength then state
-        else
-          match state.2.lookup key with
-          | some (.data descriptor) =>
-              if descriptor.configurable then (none, state.2.delete key) else (some index, state.2)
-          | some (.accessor descriptor) =>
-              if descriptor.configurable then (none, state.2.delete key) else (some index, state.2)
-          | none => state) (none, properties)
+  let descending := (arrayIndexEntries properties).reverse
+  descending.foldl (deleteArrayIndexStep newLength) (none, properties)
+
+private theorem deleteArrayIndicesFold_wellFormed (entries : List (Nat × PropertyKey))
+    (newLength : Nat) (blocked : Option Nat) (properties : OrderedProps)
+    (valid : properties.WellFormed) :
+    (entries.foldl (deleteArrayIndexStep newLength) (blocked, properties)).2.WellFormed := by
+  induction entries generalizing blocked properties with
+  | nil => exact valid
+  | cons entry entries ih =>
+      simp only [List.foldl_cons]
+      cases blocked with
+      | some blocked => exact ih _ _ valid
+      | none =>
+          by_cases below : entry.1 < newLength
+          · simpa [deleteArrayIndexStep, below] using ih none properties valid
+          · cases found : properties.lookup entry.2 with
+            | none => simpa [deleteArrayIndexStep, below, found] using ih none properties valid
+            | some descriptor =>
+                cases descriptor with
+                | data descriptor =>
+                    cases configurable : descriptor.configurable with
+                    | false =>
+                        simpa [deleteArrayIndexStep, below, found, configurable] using
+                          (ih (some entry.1) properties valid)
+                    | true =>
+                        simpa [deleteArrayIndexStep, below, found, configurable] using
+                          (ih none (properties.delete entry.2)
+                            (OrderedProps.delete_wellFormed properties entry.2 valid))
+                | accessor descriptor =>
+                    cases configurable : descriptor.configurable with
+                    | false =>
+                        simpa [deleteArrayIndexStep, below, found, configurable] using
+                          (ih (some entry.1) properties valid)
+                    | true =>
+                        simpa [deleteArrayIndexStep, below, found, configurable] using
+                          (ih none (properties.delete entry.2)
+                            (OrderedProps.delete_wellFormed properties entry.2 valid))
+
+private theorem deleteArrayIndicesFold_descriptors_all (entries : List (Nat × PropertyKey))
+    (newLength : Nat) (blocked : Option Nat) (properties : OrderedProps)
+    (predicate : PropertyDescriptor → Bool) (valid : properties.WellFormed)
+    (current : properties.descriptors.all predicate = true) :
+    (entries.foldl (deleteArrayIndexStep newLength)
+      (blocked, properties)).2.descriptors.all predicate = true := by
+  induction entries generalizing blocked properties with
+  | nil => exact current
+  | cons entry entries ih =>
+      simp only [List.foldl_cons]
+      cases blocked with
+      | some blocked => exact ih _ _ valid current
+      | none =>
+          by_cases below : entry.1 < newLength
+          · simpa [deleteArrayIndexStep, below] using
+              (ih none properties valid current)
+          · cases found : properties.lookup entry.2 with
+            | none =>
+                simpa [deleteArrayIndexStep, below, found] using
+                  (ih none properties valid current)
+            | some descriptor =>
+                cases descriptor with
+                | data data =>
+                    cases configurable : data.configurable with
+                    | false =>
+                        simpa [deleteArrayIndexStep, below, found, configurable] using
+                          (ih (some entry.1) properties valid current)
+                    | true =>
+                        have nextValid := OrderedProps.delete_wellFormed properties entry.2 valid
+                        have nextCurrent := OrderedProps.descriptors_all_delete properties entry.2
+                          predicate valid current
+                        simpa [deleteArrayIndexStep, below, found, configurable] using
+                          (ih none (properties.delete entry.2) nextValid nextCurrent)
+                | accessor accessor =>
+                    cases configurable : accessor.configurable with
+                    | false =>
+                        simpa [deleteArrayIndexStep, below, found, configurable] using
+                          (ih (some entry.1) properties valid current)
+                    | true =>
+                        have nextValid := OrderedProps.delete_wellFormed properties entry.2 valid
+                        have nextCurrent := OrderedProps.descriptors_all_delete properties entry.2
+                          predicate valid current
+                        simpa [deleteArrayIndexStep, below, found, configurable] using
+                          (ih none (properties.delete entry.2) nextValid nextCurrent)
+
+private theorem deleteArrayIndicesFold_lookup_ne (entries : List (Nat × PropertyKey))
+    (newLength : Nat) (blocked : Option Nat) (properties : OrderedProps) (query : PropertyKey)
+    (valid : properties.WellFormed)
+    (different : ∀ entry ∈ entries, ¬entry.1 < newLength → entry.2 ≠ query) :
+    (entries.foldl (deleteArrayIndexStep newLength) (blocked, properties)).2.lookup query =
+      properties.lookup query := by
+  induction entries generalizing blocked properties with
+  | nil => rfl
+  | cons entry entries ih =>
+      simp only [List.foldl_cons]
+      have tailDifferent : ∀ tail ∈ entries, ¬tail.1 < newLength → tail.2 ≠ query :=
+        fun tail tailMember => different tail (by simp [tailMember])
+      cases blocked with
+      | some blocked => exact ih _ _ valid tailDifferent
+      | none =>
+          by_cases below : entry.1 < newLength
+          · simpa [deleteArrayIndexStep, below] using ih none properties valid tailDifferent
+          · cases found : properties.lookup entry.2 with
+            | none =>
+                simpa [deleteArrayIndexStep, below, found] using
+                  ih none properties valid tailDifferent
+            | some descriptor =>
+                cases descriptor with
+                | data descriptor =>
+                    cases configurable : descriptor.configurable with
+                    | false =>
+                        simpa [deleteArrayIndexStep, below, found, configurable] using
+                          ih (some entry.1) properties valid tailDifferent
+                    | true =>
+                        rw [show deleteArrayIndexStep newLength (none, properties) entry =
+                          (none, properties.delete entry.2) by
+                            simp [deleteArrayIndexStep, below, found, configurable]]
+                        rw [ih none (properties.delete entry.2)
+                          (OrderedProps.delete_wellFormed properties entry.2 valid) tailDifferent]
+                        exact OrderedProps.lookup_delete_ne properties entry.2 query
+                          (different entry (by simp) below) valid
+                | accessor descriptor =>
+                    cases configurable : descriptor.configurable with
+                    | false =>
+                        simpa [deleteArrayIndexStep, below, found, configurable] using
+                          ih (some entry.1) properties valid tailDifferent
+                    | true =>
+                        rw [show deleteArrayIndexStep newLength (none, properties) entry =
+                          (none, properties.delete entry.2) by
+                            simp [deleteArrayIndexStep, below, found, configurable]]
+                        rw [ih none (properties.delete entry.2)
+                          (OrderedProps.delete_wellFormed properties entry.2 valid) tailDifferent]
+                        exact OrderedProps.lookup_delete_ne properties entry.2 query
+                          (different entry (by simp) below) valid
+
+private theorem deleteArrayIndicesFold_lookup_some (entries : List (Nat × PropertyKey))
+    (newLength : Nat) (blocked : Option Nat) (properties : OrderedProps)
+    (valid : properties.WellFormed) (query : PropertyKey) (descriptor : PropertyDescriptor)
+    (found : (entries.foldl (deleteArrayIndexStep newLength)
+      (blocked, properties)).2.lookup query = some descriptor) :
+    properties.lookup query = some descriptor := by
+  induction entries generalizing blocked properties with
+  | nil => exact found
+  | cons entry entries ih =>
+      simp only [List.foldl_cons] at found
+      cases blocked with
+      | some blocked => exact ih _ _ valid found
+      | none =>
+          by_cases below : entry.1 < newLength
+          · exact ih none properties valid (by
+              simpa [deleteArrayIndexStep, below] using found)
+          · cases entryFound : properties.lookup entry.2 with
+            | none => exact ih none properties valid (by
+                simpa [deleteArrayIndexStep, below, entryFound] using found)
+            | some entryDescriptor =>
+                cases entryDescriptor with
+                | data data =>
+                    cases configurable : data.configurable with
+                    | false => exact ih (some entry.1) properties valid (by
+                        simpa [deleteArrayIndexStep, below, entryFound, configurable] using found)
+                    | true =>
+                        have recursive := ih none (properties.delete entry.2)
+                          (OrderedProps.delete_wellFormed properties entry.2 valid) (by
+                            simpa [deleteArrayIndexStep, below, entryFound, configurable] using found)
+                        by_cases equal : entry.2 = query
+                        · subst query
+                          rw [OrderedProps.lookup_delete_same properties entry.2 valid] at recursive
+                          contradiction
+                        · rwa [OrderedProps.lookup_delete_ne properties entry.2 query equal valid] at recursive
+                | accessor accessor =>
+                    cases configurable : accessor.configurable with
+                    | false => exact ih (some entry.1) properties valid (by
+                        simpa [deleteArrayIndexStep, below, entryFound, configurable] using found)
+                    | true =>
+                        have recursive := ih none (properties.delete entry.2)
+                          (OrderedProps.delete_wellFormed properties entry.2 valid) (by
+                            simpa [deleteArrayIndexStep, below, entryFound, configurable] using found)
+                        by_cases equal : entry.2 = query
+                        · subst query
+                          rw [OrderedProps.lookup_delete_same properties entry.2 valid] at recursive
+                          contradiction
+                        · rwa [OrderedProps.lookup_delete_ne properties entry.2 query equal valid] at recursive
+private theorem arrayIndexEntry?_parsed {key : PropertyKey} {entry : Nat × PropertyKey}
+    (mapped : arrayIndexEntry? key = some entry) :
+    arrayIndexOfKey? entry.2 = some entry.1 := by
+  unfold arrayIndexEntry? at mapped
+  cases parsed : arrayIndexOfKey? key with
+  | none => simp [parsed] at mapped
+  | some index =>
+      simp [parsed] at mapped
+      cases mapped
+      exact parsed
+
+private theorem deleteArrayIndicesFrom_lookup_below (properties : OrderedProps) (newLength : Nat)
+    (query : PropertyKey) (index : Nat) (valid : properties.WellFormed)
+    (parsed : arrayIndexOfKey? query = some index) (below : index < newLength) :
+    (deleteArrayIndicesFrom properties newLength).2.lookup query = properties.lookup query := by
+  apply deleteArrayIndicesFold_lookup_ne _ newLength none properties query valid
+  intro entry member notBelow equal
+  subst query
+  rw [List.mem_reverse] at member
+  change entry ∈ properties.ownKeys.filterMap arrayIndexEntry? at member
+  rw [List.mem_filterMap] at member
+  rcases member with ⟨key, keyMember, mapped⟩
+  have entryParsed := arrayIndexEntry?_parsed mapped
+  rw [parsed] at entryParsed
+  have indicesEqual := Option.some.inj entryParsed
+  subst index
+  exact notBelow below
+
+private theorem deleteArrayIndicesFold_stopped (entries : List (Nat × PropertyKey))
+    (newLength blocked : Nat) (properties : OrderedProps) :
+    entries.foldl (deleteArrayIndexStep newLength) (some blocked, properties) =
+      (some blocked, properties) := by
+  induction entries with
+  | nil => rfl
+  | cons entry entries ih =>
+      simpa [deleteArrayIndexStep] using ih
+
+private theorem deleteArrayIndicesFold_blocked (indices : List Nat) (newLength blocked : Nat)
+    (properties next : OrderedProps) (valid : properties.WellFormed)
+    (nodup : indices.Nodup)
+    (parsed : ∀ index ∈ indices,
+      PropertyKey.arrayIndex? (PropertyKey.arrayIndexString index) = some index)
+    (present : ∀ index ∈ indices,
+      (properties.lookup (.string (PropertyKey.arrayIndexString index))).isSome)
+    (result : (indices.map fun index =>
+      (index, .string (PropertyKey.arrayIndexString index))).foldl
+        (deleteArrayIndexStep newLength) (none, properties) = (some blocked, next)) :
+    newLength ≤ blocked ∧ blocked ∈ indices ∧
+      ∃ descriptor,
+        properties.lookup (.string (PropertyKey.arrayIndexString blocked)) = some descriptor ∧
+        match descriptor with
+        | .data data => data.configurable = false
+        | .accessor accessor => accessor.configurable = false := by
+  induction indices generalizing properties with
+  | nil => simp at result
+  | cons index indices ih =>
+      have nodupParts := List.nodup_cons.mp nodup
+      have tailParsed : ∀ candidate ∈ indices,
+          PropertyKey.arrayIndex? (PropertyKey.arrayIndexString candidate) = some candidate :=
+        fun candidate member => parsed candidate (by simp [member])
+      have tailPresent : ∀ candidate ∈ indices,
+          (properties.lookup (.string (PropertyKey.arrayIndexString candidate))).isSome :=
+        fun candidate member => present candidate (by simp [member])
+      simp only [List.map_cons, List.foldl_cons] at result
+      by_cases below : index < newLength
+      · have recursive := ih properties valid nodupParts.2 tailParsed tailPresent (by
+          simpa [deleteArrayIndexStep, below] using result)
+        exact ⟨recursive.1, by simp [recursive.2.1], recursive.2.2⟩
+      · let key : PropertyKey := .string (PropertyKey.arrayIndexString index)
+        have headPresent := present index (by simp)
+        cases found : properties.lookup key with
+        | none => simp [key, found] at headPresent
+        | some descriptor =>
+            cases descriptor with
+            | data descriptor =>
+                cases configurable : descriptor.configurable with
+                | false =>
+                    have stopped := deleteArrayIndicesFold_stopped
+                      (indices.map fun candidate =>
+                        (candidate, .string (PropertyKey.arrayIndexString candidate)))
+                      newLength index properties
+                    simp [deleteArrayIndexStep, below, key, found, configurable, stopped] at result
+                    obtain ⟨rfl, rfl⟩ := result
+                    exact ⟨by omega, by simp, ⟨.data descriptor, found, configurable⟩⟩
+                | true =>
+                    have nextValid := OrderedProps.delete_wellFormed properties key valid
+                    have nextPresent : ∀ candidate ∈ indices,
+                        ((properties.delete key).lookup
+                          (.string (PropertyKey.arrayIndexString candidate))).isSome := by
+                      intro candidate member
+                      have indicesNe : index ≠ candidate := fun equal =>
+                        nodupParts.1 (by simpa [equal] using member)
+                      have keysNe : key ≠ .string (PropertyKey.arrayIndexString candidate) := by
+                        intro equal
+                        have stringEqual := PropertyKey.string.inj equal
+                        have parsedHead := parsed index (by simp)
+                        have parsedTail := tailParsed candidate member
+                        rw [stringEqual] at parsedHead
+                        exact indicesNe (Option.some.inj (parsedHead.symm.trans parsedTail))
+                      rw [OrderedProps.lookup_delete_ne properties key _ keysNe valid]
+                      exact tailPresent candidate member
+                    have recursive := ih (properties.delete key) nextValid nodupParts.2 tailParsed
+                      nextPresent (by
+                        simpa [deleteArrayIndexStep, below, key, found, configurable] using result)
+                    rcases recursive with ⟨blockedBound, blockedMember, descriptorFound⟩
+                    refine ⟨blockedBound, by simp [blockedMember], ?_⟩
+                    rcases descriptorFound with ⟨blockedDescriptor, blockedFound, blockedFixed⟩
+                    have indicesNe : index ≠ blocked := fun equal =>
+                      nodupParts.1 (by simpa [equal] using blockedMember)
+                    have keysNe : key ≠ .string (PropertyKey.arrayIndexString blocked) := by
+                      intro equal
+                      have stringEqual := PropertyKey.string.inj equal
+                      have parsedHead := parsed index (by simp)
+                      have parsedBlocked := tailParsed blocked blockedMember
+                      rw [stringEqual] at parsedHead
+                      exact indicesNe (Option.some.inj (parsedHead.symm.trans parsedBlocked))
+                    rw [OrderedProps.lookup_delete_ne properties key _ keysNe valid] at blockedFound
+                    exact ⟨blockedDescriptor, blockedFound, blockedFixed⟩
+
+            | accessor descriptor =>
+                cases configurable : descriptor.configurable with
+                | false =>
+                    have stopped := deleteArrayIndicesFold_stopped
+                      (indices.map fun candidate =>
+                        (candidate, .string (PropertyKey.arrayIndexString candidate)))
+                      newLength index properties
+                    simp [deleteArrayIndexStep, below, key, found, configurable, stopped] at result
+                    obtain ⟨rfl, rfl⟩ := result
+                    exact ⟨by omega, by simp, ⟨.accessor descriptor, found, configurable⟩⟩
+                | true =>
+                    have nextValid := OrderedProps.delete_wellFormed properties key valid
+                    have nextPresent : ∀ candidate ∈ indices,
+                        ((properties.delete key).lookup
+                          (.string (PropertyKey.arrayIndexString candidate))).isSome := by
+                      intro candidate member
+                      have indicesNe : index ≠ candidate := fun equal =>
+                        nodupParts.1 (by simpa [equal] using member)
+                      have keysNe : key ≠ .string (PropertyKey.arrayIndexString candidate) := by
+                        intro equal
+                        have stringEqual := PropertyKey.string.inj equal
+                        have parsedHead := parsed index (by simp)
+                        have parsedTail := tailParsed candidate member
+                        rw [stringEqual] at parsedHead
+                        exact indicesNe (Option.some.inj (parsedHead.symm.trans parsedTail))
+                      rw [OrderedProps.lookup_delete_ne properties key _ keysNe valid]
+                      exact tailPresent candidate member
+                    have recursive := ih (properties.delete key) nextValid nodupParts.2 tailParsed
+                      nextPresent (by
+                        simpa [deleteArrayIndexStep, below, key, found, configurable] using result)
+                    rcases recursive with ⟨blockedBound, blockedMember, descriptorFound⟩
+                    refine ⟨blockedBound, by simp [blockedMember], ?_⟩
+                    rcases descriptorFound with ⟨blockedDescriptor, blockedFound, blockedFixed⟩
+                    have indicesNe : index ≠ blocked := fun equal =>
+                      nodupParts.1 (by simpa [equal] using blockedMember)
+                    have keysNe : key ≠ .string (PropertyKey.arrayIndexString blocked) := by
+                      intro equal
+                      have stringEqual := PropertyKey.string.inj equal
+                      have parsedHead := parsed index (by simp)
+                      have parsedBlocked := tailParsed blocked blockedMember
+                      rw [stringEqual] at parsedHead
+                      exact indicesNe (Option.some.inj (parsedHead.symm.trans parsedBlocked))
+                    rw [OrderedProps.lookup_delete_ne properties key _ keysNe valid] at blockedFound
+                    exact ⟨blockedDescriptor, blockedFound, blockedFixed⟩
+
+private theorem arrayIndices_canonical_parse (properties : OrderedProps) (index : Nat)
+    (member : index ∈ properties.arrayIndices) :
+    PropertyKey.arrayIndex? (PropertyKey.arrayIndexString index) = some index := by
+  unfold OrderedProps.arrayIndices at member
+  rcases List.mem_filterMap.mp member with ⟨key, keyMember, keyParsed⟩
+  cases key with
+  | symbol symbol => simp at keyParsed
+  | string stringKey =>
+      rw [← PropertyKey.arrayIndex?_sound keyParsed]
+      exact keyParsed
+
+private theorem arrayIndices_lookup_present (properties : OrderedProps) (index : Nat)
+    (valid : properties.WellFormed) (member : index ∈ properties.arrayIndices) :
+    (properties.lookup (.string (PropertyKey.arrayIndexString index))).isSome := by
+  unfold OrderedProps.arrayIndices at member
+  rcases List.mem_filterMap.mp member with ⟨key, keyMember, keyParsed⟩
+  cases key with
+  | symbol symbol => simp at keyParsed
+  | string stringKey =>
+      have canonical := PropertyKey.arrayIndex?_sound keyParsed
+      subst stringKey
+      exact (OrderedProps.mem_ownKeys_iff_lookup_isSome properties _ valid).mp keyMember
+
+private theorem deleteArrayIndicesFrom_blocked (properties next : OrderedProps)
+    (newLength blocked : Nat) (valid : properties.WellFormed)
+    (result : deleteArrayIndicesFrom properties newLength = (some blocked, next)) :
+    newLength ≤ blocked ∧
+      PropertyKey.arrayIndex? (PropertyKey.arrayIndexString blocked) = some blocked ∧
+      ∃ descriptor,
+        properties.lookup (.string (PropertyKey.arrayIndexString blocked)) = some descriptor ∧
+        match descriptor with
+        | .data data => data.configurable = false
+        | .accessor accessor => accessor.configurable = false := by
+  have characterized := deleteArrayIndicesFold_blocked properties.arrayIndices.reverse
+    newLength blocked properties next valid
+    ((List.reverse_perm properties.arrayIndices).nodup_iff.mpr
+      (OrderedProps.arrayIndices_nodup properties valid))
+    (fun index member => arrayIndices_canonical_parse properties index
+      (List.mem_reverse.mp member))
+    (fun index member => arrayIndices_lookup_present properties index valid
+      (List.mem_reverse.mp member)) (by
+        unfold deleteArrayIndicesFrom at result
+        rw [arrayIndexEntries_eq] at result
+        simpa only [List.map_reverse] using result)
+  exact ⟨characterized.1,
+    arrayIndices_canonical_parse properties blocked (List.mem_reverse.mp characterized.2.1),
+    characterized.2.2⟩
+
+private theorem deleteArrayIndicesFrom_lookup_nonIndex (properties : OrderedProps)
+    (newLength : Nat) (query : PropertyKey) (valid : properties.WellFormed)
+    (nonIndex : arrayIndexOfKey? query = none) :
+    (deleteArrayIndicesFrom properties newLength).2.lookup query = properties.lookup query := by
+  apply deleteArrayIndicesFold_lookup_ne _ newLength none properties query valid
+  intro entry member notBelow equal
+  subst query
+  rw [List.mem_reverse] at member
+  change entry ∈ properties.ownKeys.filterMap arrayIndexEntry? at member
+  rw [List.mem_filterMap] at member
+  rcases member with ⟨key, keyMember, mapped⟩
+  have entryParsed := arrayIndexEntry?_parsed mapped
+  rw [nonIndex] at entryParsed
+  contradiction
+
+private theorem orderedKeys_delete_index (properties : OrderedProps) (key : PropertyKey)
+    (index : Nat) (valid : properties.WellFormed) (parsed : arrayIndexOfKey? key = some index) :
+    (properties.delete key).stringKeys = properties.stringKeys ∧
+      (properties.delete key).symbolKeys = properties.symbolKeys := by
+  have ordered := OrderedProps.orderedKeys_delete properties key valid
+  have stringAbsent : key ∉ properties.stringKeys := by
+    intro member
+    unfold OrderedProps.stringKeys at member
+    rcases List.mem_filter.mp member with ⟨keyMember, classification⟩
+    cases key with
+    | symbol symbol => simp at classification
+    | string stringKey =>
+        change PropertyKey.arrayIndex? stringKey = some index at parsed
+        change (PropertyKey.arrayIndex? stringKey).isNone = true at classification
+        rw [parsed] at classification
+        contradiction
+  have symbolAbsent : key ∉ properties.symbolKeys := by
+    intro member
+    unfold OrderedProps.symbolKeys at member
+    rcases List.mem_filter.mp member with ⟨keyMember, classification⟩
+    cases key with
+    | string stringKey => simp at classification
+    | symbol symbol => simp [arrayIndexOfKey?] at parsed
+  simpa [List.erase_eq_self_iff.mpr stringAbsent,
+    List.erase_eq_self_iff.mpr symbolAbsent] using ordered
+
+private theorem deleteArrayIndicesFold_order (entries : List (Nat × PropertyKey))
+    (newLength : Nat) (blocked : Option Nat) (properties : OrderedProps)
+    (valid : properties.WellFormed)
+    (parsed : ∀ entry ∈ entries, arrayIndexOfKey? entry.2 = some entry.1) :
+    let next := (entries.foldl (deleteArrayIndexStep newLength) (blocked, properties)).2
+    next.stringKeys = properties.stringKeys ∧ next.symbolKeys = properties.symbolKeys := by
+  induction entries generalizing blocked properties with
+  | nil => exact ⟨rfl, rfl⟩
+  | cons entry entries ih =>
+      simp only [List.foldl_cons]
+      have tailParsed : ∀ tail ∈ entries, arrayIndexOfKey? tail.2 = some tail.1 :=
+        fun tail member => parsed tail (by simp [member])
+      cases blocked with
+      | some blocked => exact ih _ _ valid tailParsed
+      | none =>
+          by_cases below : entry.1 < newLength
+          · simpa [deleteArrayIndexStep, below] using ih none properties valid tailParsed
+          · cases found : properties.lookup entry.2 with
+            | none =>
+                simpa [deleteArrayIndexStep, below, found] using
+                  ih none properties valid tailParsed
+            | some descriptor =>
+                cases descriptor with
+                | data descriptor =>
+                    cases configurable : descriptor.configurable with
+                    | false =>
+                        simpa [deleteArrayIndexStep, below, found, configurable] using
+                          ih (some entry.1) properties valid tailParsed
+                    | true =>
+                        have deletedOrder := orderedKeys_delete_index properties entry.2 entry.1 valid
+                          (parsed entry (by simp))
+                        have recursive := ih none (properties.delete entry.2)
+                          (OrderedProps.delete_wellFormed properties entry.2 valid) tailParsed
+                        simpa [deleteArrayIndexStep, below, found, configurable,
+                          deletedOrder.1, deletedOrder.2] using recursive
+                | accessor descriptor =>
+                    cases configurable : descriptor.configurable with
+                    | false =>
+                        simpa [deleteArrayIndexStep, below, found, configurable] using
+                          ih (some entry.1) properties valid tailParsed
+                    | true =>
+                        have deletedOrder := orderedKeys_delete_index properties entry.2 entry.1 valid
+                          (parsed entry (by simp))
+                        have recursive := ih none (properties.delete entry.2)
+                          (OrderedProps.delete_wellFormed properties entry.2 valid) tailParsed
+                        simpa [deleteArrayIndexStep, below, found, configurable,
+                          deletedOrder.1, deletedOrder.2] using recursive
+
+private theorem deleteArrayIndicesFrom_order (properties : OrderedProps) (newLength : Nat)
+    (valid : properties.WellFormed) :
+    let next := (deleteArrayIndicesFrom properties newLength).2
+    next.stringKeys = properties.stringKeys ∧ next.symbolKeys = properties.symbolKeys := by
+  apply deleteArrayIndicesFold_order _ newLength none properties valid
+  intro entry member
+  rw [List.mem_reverse] at member
+  change entry ∈ properties.ownKeys.filterMap arrayIndexEntry? at member
+  rw [List.mem_filterMap] at member
+  rcases member with ⟨key, keyMember, mapped⟩
+  exact arrayIndexEntry?_parsed mapped
+
+private theorem deleteArrayIndicesFold_unblocked (indices : List Nat) (newLength : Nat)
+    (properties next : OrderedProps) (valid : properties.WellFormed)
+    (nodup : indices.Nodup)
+    (parsed : ∀ index ∈ indices,
+      PropertyKey.arrayIndex? (PropertyKey.arrayIndexString index) = some index)
+    (present : ∀ index ∈ indices,
+      (properties.lookup (.string (PropertyKey.arrayIndexString index))).isSome)
+    (result : (indices.map fun index =>
+      (index, .string (PropertyKey.arrayIndexString index))).foldl
+        (deleteArrayIndexStep newLength) (none, properties) = (none, next)) :
+    ∀ index ∈ indices, newLength ≤ index →
+      ∃ descriptor,
+        properties.lookup (.string (PropertyKey.arrayIndexString index)) = some descriptor ∧
+        (match descriptor with
+          | .data data => data.configurable = true
+          | .accessor accessor => accessor.configurable = true) ∧
+        next.lookup (.string (PropertyKey.arrayIndexString index)) = none := by
+  induction indices generalizing properties with
+  | nil => simp
+  | cons head indices ih =>
+      have nodupParts := List.nodup_cons.mp nodup
+      have tailParsed : ∀ candidate ∈ indices,
+          PropertyKey.arrayIndex? (PropertyKey.arrayIndexString candidate) = some candidate :=
+        fun candidate member => parsed candidate (by simp [member])
+      have tailPresent : ∀ candidate ∈ indices,
+          (properties.lookup (.string (PropertyKey.arrayIndexString candidate))).isSome :=
+        fun candidate member => present candidate (by simp [member])
+      simp only [List.map_cons, List.foldl_cons] at result
+      by_cases below : head < newLength
+      · have recursive := ih properties valid nodupParts.2 tailParsed tailPresent (by
+          simpa [deleteArrayIndexStep, below] using result)
+        intro index member atLeast
+        rcases List.mem_cons.mp member with equal | tailMember
+        · subst index
+          omega
+        · exact recursive index tailMember atLeast
+      · let key : PropertyKey := .string (PropertyKey.arrayIndexString head)
+        have headPresent := present head (by simp)
+        cases found : properties.lookup key with
+        | none => simp [key, found] at headPresent
+        | some descriptor =>
+            cases descriptor with
+            | data descriptor =>
+                cases configurable : descriptor.configurable with
+                | false =>
+                    have stopped := deleteArrayIndicesFold_stopped
+                      (indices.map fun candidate =>
+                        (candidate, .string (PropertyKey.arrayIndexString candidate)))
+                      newLength head properties
+                    simp [deleteArrayIndexStep, below, key, found, configurable, stopped] at result
+                | true =>
+                    have nextValid := OrderedProps.delete_wellFormed properties key valid
+                    have nextPresent : ∀ candidate ∈ indices,
+                        ((properties.delete key).lookup
+                          (.string (PropertyKey.arrayIndexString candidate))).isSome := by
+                      intro candidate member
+                      have indicesNe : head ≠ candidate := fun equal =>
+                        nodupParts.1 (by simpa [equal] using member)
+                      have keysNe : key ≠ .string (PropertyKey.arrayIndexString candidate) := by
+                        intro equal
+                        have stringEqual := PropertyKey.string.inj equal
+                        have parsedHead := parsed head (by simp)
+                        have parsedTail := tailParsed candidate member
+                        rw [stringEqual] at parsedHead
+                        exact indicesNe (Option.some.inj (parsedHead.symm.trans parsedTail))
+                      rw [OrderedProps.lookup_delete_ne properties key _ keysNe valid]
+                      exact tailPresent candidate member
+                    have recursiveResult :
+                        (indices.map fun candidate =>
+                          (candidate, .string (PropertyKey.arrayIndexString candidate))).foldl
+                            (deleteArrayIndexStep newLength) (none, properties.delete key) =
+                              (none, next) := by
+                      simpa [deleteArrayIndexStep, below, key, found, configurable] using result
+                    have recursive := ih (properties.delete key) nextValid nodupParts.2 tailParsed
+                      nextPresent recursiveResult
+                    intro index member atLeast
+                    rcases List.mem_cons.mp member with equal | tailMember
+                    · subst index
+                      refine ⟨.data descriptor, found, configurable, ?_⟩
+                      have preserved := deleteArrayIndicesFold_lookup_ne
+                        (indices.map fun candidate =>
+                          (candidate, .string (PropertyKey.arrayIndexString candidate)))
+                        newLength none (properties.delete key) key nextValid (by
+                          intro entry entryMember active equal
+                          rcases List.mem_map.mp entryMember with ⟨candidate, candidateMember, pairEqual⟩
+                          cases pairEqual
+                          have indicesNe : head ≠ candidate := fun indicesEqual =>
+                            nodupParts.1 (by simpa [indicesEqual] using candidateMember)
+                          apply indicesNe
+                          have stringEqual := PropertyKey.string.inj equal.symm
+                          have parsedHead := parsed head (by simp)
+                          have parsedTail := tailParsed candidate candidateMember
+                          rw [stringEqual] at parsedHead
+                          exact Option.some.inj (parsedHead.symm.trans parsedTail))
+                      rw [recursiveResult] at preserved
+                      simpa [OrderedProps.lookup_delete_same properties key valid] using preserved
+                    · rcases recursive index tailMember atLeast with
+                        ⟨oldDescriptor, oldFound, oldConfigurable, finalAbsent⟩
+                      have keysNe : key ≠ .string (PropertyKey.arrayIndexString index) := by
+                        intro equal
+                        have stringEqual := PropertyKey.string.inj equal
+                        have parsedHead := parsed head (by simp)
+                        have parsedTail := tailParsed index tailMember
+                        rw [stringEqual] at parsedHead
+                        exact nodupParts.1 (by
+                          have := Option.some.inj (parsedHead.symm.trans parsedTail)
+                          simpa [this] using tailMember)
+                      rw [OrderedProps.lookup_delete_ne properties key _ keysNe valid] at oldFound
+                      exact ⟨oldDescriptor, oldFound, oldConfigurable, finalAbsent⟩
+
+            | accessor descriptor =>
+                cases configurable : descriptor.configurable with
+                | false =>
+                    have stopped := deleteArrayIndicesFold_stopped
+                      (indices.map fun candidate =>
+                        (candidate, .string (PropertyKey.arrayIndexString candidate)))
+                      newLength head properties
+                    simp [deleteArrayIndexStep, below, key, found, configurable, stopped] at result
+                | true =>
+                    have nextValid := OrderedProps.delete_wellFormed properties key valid
+                    have nextPresent : ∀ candidate ∈ indices,
+                        ((properties.delete key).lookup
+                          (.string (PropertyKey.arrayIndexString candidate))).isSome := by
+                      intro candidate member
+                      have indicesNe : head ≠ candidate := fun equal =>
+                        nodupParts.1 (by simpa [equal] using member)
+                      have keysNe : key ≠ .string (PropertyKey.arrayIndexString candidate) := by
+                        intro equal
+                        have stringEqual := PropertyKey.string.inj equal
+                        have parsedHead := parsed head (by simp)
+                        have parsedTail := tailParsed candidate member
+                        rw [stringEqual] at parsedHead
+                        exact indicesNe (Option.some.inj (parsedHead.symm.trans parsedTail))
+                      rw [OrderedProps.lookup_delete_ne properties key _ keysNe valid]
+                      exact tailPresent candidate member
+                    have recursiveResult :
+                        (indices.map fun candidate =>
+                          (candidate, .string (PropertyKey.arrayIndexString candidate))).foldl
+                            (deleteArrayIndexStep newLength) (none, properties.delete key) =
+                              (none, next) := by
+                      simpa [deleteArrayIndexStep, below, key, found, configurable] using result
+                    have recursive := ih (properties.delete key) nextValid nodupParts.2 tailParsed
+                      nextPresent recursiveResult
+                    intro index member atLeast
+                    rcases List.mem_cons.mp member with equal | tailMember
+                    · subst index
+                      refine ⟨.accessor descriptor, found, configurable, ?_⟩
+                      have preserved := deleteArrayIndicesFold_lookup_ne
+                        (indices.map fun candidate =>
+                          (candidate, .string (PropertyKey.arrayIndexString candidate)))
+                        newLength none (properties.delete key) key nextValid (by
+                          intro entry entryMember active equal
+                          rcases List.mem_map.mp entryMember with ⟨candidate, candidateMember, pairEqual⟩
+                          cases pairEqual
+                          have indicesNe : head ≠ candidate := fun indicesEqual =>
+                            nodupParts.1 (by simpa [indicesEqual] using candidateMember)
+                          apply indicesNe
+                          have stringEqual := PropertyKey.string.inj equal.symm
+                          have parsedHead := parsed head (by simp)
+                          have parsedTail := tailParsed candidate candidateMember
+                          rw [stringEqual] at parsedHead
+                          exact Option.some.inj (parsedHead.symm.trans parsedTail))
+                      rw [recursiveResult] at preserved
+                      simpa [OrderedProps.lookup_delete_same properties key valid] using preserved
+                    · rcases recursive index tailMember atLeast with
+                        ⟨oldDescriptor, oldFound, oldConfigurable, finalAbsent⟩
+                      have keysNe : key ≠ .string (PropertyKey.arrayIndexString index) := by
+                        intro equal
+                        have stringEqual := PropertyKey.string.inj equal
+                        have parsedHead := parsed head (by simp)
+                        have parsedTail := tailParsed index tailMember
+                        rw [stringEqual] at parsedHead
+                        exact nodupParts.1 (by
+                          have := Option.some.inj (parsedHead.symm.trans parsedTail)
+                          simpa [this] using tailMember)
+                      rw [OrderedProps.lookup_delete_ne properties key _ keysNe valid] at oldFound
+                      exact ⟨oldDescriptor, oldFound, oldConfigurable, finalAbsent⟩
+
+private theorem deleteArrayIndicesFrom_unblocked (properties next : OrderedProps)
+    (newLength : Nat) (valid : properties.WellFormed)
+    (result : deleteArrayIndicesFrom properties newLength = (none, next)) :
+    ∀ key index descriptor,
+      arrayIndexOfKey? key = some index →
+      properties.lookup key = some descriptor → newLength ≤ index →
+      (match descriptor with
+        | .data data => data.configurable = true
+        | .accessor accessor => accessor.configurable = true) ∧
+      next.lookup key = none := by
+  have sweep := deleteArrayIndicesFold_unblocked properties.arrayIndices.reverse newLength
+    properties next valid
+    ((List.reverse_perm properties.arrayIndices).nodup_iff.mpr
+      (OrderedProps.arrayIndices_nodup properties valid))
+    (fun index member => arrayIndices_canonical_parse properties index
+      (List.mem_reverse.mp member))
+    (fun index member => arrayIndices_lookup_present properties index valid
+      (List.mem_reverse.mp member)) (by
+        unfold deleteArrayIndicesFrom at result
+        rw [arrayIndexEntries_eq] at result
+        simpa only [List.map_reverse] using result)
+  intro key index descriptor parsed found atLeast
+  cases key with
+  | symbol symbol => simp [arrayIndexOfKey?] at parsed
+  | string stringKey =>
+      have canonical := PropertyKey.arrayIndex?_sound parsed
+      subst stringKey
+      have keyMember := (OrderedProps.mem_ownKeys_iff_lookup_isSome properties _ valid).mpr (by
+        rw [found]
+        rfl)
+      have indexMember : index ∈ properties.arrayIndices := by
+        unfold OrderedProps.arrayIndices
+        apply List.mem_filterMap.mpr
+        exact ⟨.string (PropertyKey.arrayIndexString index), keyMember, parsed⟩
+      rcases sweep index (List.mem_reverse.mpr indexMember) atLeast with
+        ⟨observed, observedFound, configurable, absent⟩
+      rw [found] at observedFound
+      cases observedFound
+      exact ⟨configurable, absent⟩
+
+private theorem deleteArrayIndicesFold_blocked_split (indices : List Nat) (newLength blocked : Nat)
+    (properties next : OrderedProps) (valid : properties.WellFormed)
+    (nodup : indices.Nodup)
+    (parsed : ∀ index ∈ indices,
+      PropertyKey.arrayIndex? (PropertyKey.arrayIndexString index) = some index)
+    (present : ∀ index ∈ indices,
+      (properties.lookup (.string (PropertyKey.arrayIndexString index))).isSome)
+    (result : (indices.map fun index =>
+      (index, .string (PropertyKey.arrayIndexString index))).foldl
+        (deleteArrayIndexStep newLength) (none, properties) = (some blocked, next)) :
+    ∃ before after current descriptor,
+      indices = before ++ blocked :: after ∧
+      (before.map fun index =>
+        (index, .string (PropertyKey.arrayIndexString index))).foldl
+          (deleteArrayIndexStep newLength) (none, properties) = (none, current) ∧
+      current.lookup (.string (PropertyKey.arrayIndexString blocked)) = some descriptor ∧
+      (match descriptor with
+        | .data data => data.configurable = false
+        | .accessor accessor => accessor.configurable = false) ∧ next = current := by
+  induction indices generalizing properties with
+  | nil => simp at result
+  | cons index indices ih =>
+      have nodupParts := List.nodup_cons.mp nodup
+      have tailParsed : ∀ candidate ∈ indices,
+          PropertyKey.arrayIndex? (PropertyKey.arrayIndexString candidate) = some candidate :=
+        fun candidate member => parsed candidate (by simp [member])
+      have tailPresent : ∀ candidate ∈ indices,
+          (properties.lookup (.string (PropertyKey.arrayIndexString candidate))).isSome :=
+        fun candidate member => present candidate (by simp [member])
+      simp only [List.map_cons, List.foldl_cons] at result
+      by_cases below : index < newLength
+      · rcases ih properties valid nodupParts.2 tailParsed tailPresent (by
+          simpa [deleteArrayIndexStep, below] using result) with
+          ⟨before, after, current, descriptor, split, swept, found, fixed, final⟩
+        exact ⟨index :: before, after, current, descriptor, by simp [split], by
+          simpa [deleteArrayIndexStep, below] using swept, found, fixed, final⟩
+      · let key : PropertyKey := .string (PropertyKey.arrayIndexString index)
+        have headPresent := present index (by simp)
+        cases found : properties.lookup key with
+        | none => simp [key, found] at headPresent
+        | some descriptor =>
+            cases descriptor with
+            | data descriptor =>
+                cases configurable : descriptor.configurable with
+                | false =>
+                    have stopped := deleteArrayIndicesFold_stopped
+                      (indices.map fun candidate =>
+                        (candidate, .string (PropertyKey.arrayIndexString candidate)))
+                      newLength index properties
+                    simp [deleteArrayIndexStep, below, key, found, configurable, stopped] at result
+                    obtain ⟨rfl, rfl⟩ := result
+                    exact ⟨[], indices, properties, .data descriptor, rfl, rfl, found,
+                      configurable, rfl⟩
+                | true =>
+                    have deletedValid := OrderedProps.delete_wellFormed properties key valid
+                    have deletedPresent : ∀ candidate ∈ indices,
+                        ((properties.delete key).lookup
+                          (.string (PropertyKey.arrayIndexString candidate))).isSome := by
+                      intro candidate member
+                      by_cases equal : key = .string (PropertyKey.arrayIndexString candidate)
+                      · have stringEqual := PropertyKey.string.inj equal
+                        have parsedHead := parsed index (by simp)
+                        have parsedTail := tailParsed candidate member
+                        rw [stringEqual] at parsedHead
+                        exact False.elim (nodupParts.1 (by
+                          have := Option.some.inj (parsedHead.symm.trans parsedTail)
+                          simpa [this] using member))
+                      · rw [OrderedProps.lookup_delete_ne properties key _ equal valid]
+                        exact tailPresent candidate member
+                    rcases ih (properties.delete key) deletedValid nodupParts.2 tailParsed deletedPresent (by
+                      simpa [deleteArrayIndexStep, below, key, found, configurable] using result) with
+                      ⟨before, after, current, blockedDescriptor, split, swept, blockedFound,
+                        blockedFixed, final⟩
+                    exact ⟨index :: before, after, current, blockedDescriptor, by simp [split], by
+                      simpa [deleteArrayIndexStep, below, key, found, configurable] using swept,
+                      blockedFound, blockedFixed, final⟩
+            | accessor descriptor =>
+                cases configurable : descriptor.configurable with
+                | false =>
+                    have stopped := deleteArrayIndicesFold_stopped
+                      (indices.map fun candidate =>
+                        (candidate, .string (PropertyKey.arrayIndexString candidate)))
+                      newLength index properties
+                    simp [deleteArrayIndexStep, below, key, found, configurable, stopped] at result
+                    obtain ⟨rfl, rfl⟩ := result
+                    exact ⟨[], indices, properties, .accessor descriptor, rfl, rfl, found,
+                      configurable, rfl⟩
+                | true =>
+                    have deletedValid := OrderedProps.delete_wellFormed properties key valid
+                    have deletedPresent : ∀ candidate ∈ indices,
+                        ((properties.delete key).lookup
+                          (.string (PropertyKey.arrayIndexString candidate))).isSome := by
+                      intro candidate member
+                      by_cases equal : key = .string (PropertyKey.arrayIndexString candidate)
+                      · have stringEqual := PropertyKey.string.inj equal
+                        have parsedHead := parsed index (by simp)
+                        have parsedTail := tailParsed candidate member
+                        rw [stringEqual] at parsedHead
+                        exact False.elim (nodupParts.1 (by
+                          have := Option.some.inj (parsedHead.symm.trans parsedTail)
+                          simpa [this] using member))
+                      · rw [OrderedProps.lookup_delete_ne properties key _ equal valid]
+                        exact tailPresent candidate member
+                    rcases ih (properties.delete key) deletedValid nodupParts.2 tailParsed deletedPresent (by
+                      simpa [deleteArrayIndexStep, below, key, found, configurable] using result) with
+                      ⟨before, after, current, blockedDescriptor, split, swept, blockedFound,
+                        blockedFixed, final⟩
+                    exact ⟨index :: before, after, current, blockedDescriptor, by simp [split], by
+                      simpa [deleteArrayIndexStep, below, key, found, configurable] using swept,
+                      blockedFound, blockedFixed, final⟩
+
+private theorem pairwise_split_before_gt (before after : List Nat) (blocked : Nat)
+    (sorted : (before ++ blocked :: after).Pairwise fun left right => right ≤ left)
+    (nodup : (before ++ blocked :: after).Nodup) :
+    ∀ index ∈ before, blocked < index := by
+  induction before with
+  | nil => simp
+  | cons head before ih =>
+      have sortedParts := List.pairwise_cons.mp sorted
+      have nodupParts := List.nodup_cons.mp nodup
+      have blockedLe : blocked ≤ head := sortedParts.1 blocked (by simp)
+      have headNe : head ≠ blocked := by
+        intro equal
+        apply nodupParts.1
+        simp [equal]
+      intro index member
+      rcases List.mem_cons.mp member with rfl | tailMember
+      · omega
+      · exact ih sortedParts.2 nodupParts.2 index tailMember
+
+private theorem pairwise_split_after_le (before after : List Nat) (blocked : Nat)
+    (sorted : (before ++ blocked :: after).Pairwise fun left right => right ≤ left) :
+    ∀ index ∈ after, index ≤ blocked := by
+  induction before with
+  | nil =>
+      have parts := List.pairwise_cons.mp sorted
+      exact parts.1
+  | cons head before ih =>
+      exact ih (List.pairwise_cons.mp sorted).2
+
+private theorem deleteArrayIndicesFrom_blocked_lookups (properties next : OrderedProps)
+    (newLength blocked : Nat) (valid : properties.WellFormed)
+    (result : deleteArrayIndicesFrom properties newLength = (some blocked, next)) :
+    (∀ key index descriptor, arrayIndexOfKey? key = some index →
+      properties.lookup key = some descriptor → blocked < index →
+      (match descriptor with
+        | .data data => data.configurable = true
+        | .accessor accessor => accessor.configurable = true) ∧ next.lookup key = none) ∧
+    (∀ key index, arrayIndexOfKey? key = some index → index ≤ blocked →
+      next.lookup key = properties.lookup key) := by
+  let indices := properties.arrayIndices.reverse
+  have nodup : indices.Nodup :=
+    (List.reverse_perm properties.arrayIndices).nodup_iff.mpr
+      (OrderedProps.arrayIndices_nodup properties valid)
+  have parsed : ∀ index ∈ indices,
+      PropertyKey.arrayIndex? (PropertyKey.arrayIndexString index) = some index :=
+    fun index member => arrayIndices_canonical_parse properties index (List.mem_reverse.mp member)
+  have present : ∀ index ∈ indices,
+      (properties.lookup (.string (PropertyKey.arrayIndexString index))).isSome :=
+    fun index member => arrayIndices_lookup_present properties index valid (List.mem_reverse.mp member)
+  have foldResult : (indices.map fun index =>
+      (index, .string (PropertyKey.arrayIndexString index))).foldl
+        (deleteArrayIndexStep newLength) (none, properties) = (some blocked, next) := by
+    unfold indices
+    unfold deleteArrayIndicesFrom at result
+    rw [arrayIndexEntries_eq] at result
+    simpa only [List.map_reverse] using result
+  rcases deleteArrayIndicesFold_blocked_split indices newLength blocked properties next valid
+      nodup parsed present foldResult with
+    ⟨before, after, current, blockedDescriptor, split, swept, blockedFound, blockedFixed, final⟩
+  have ascending := OrderedProps.ownKeys_indices_ascending properties valid
+  change properties.arrayIndices.Pairwise (· ≤ ·) at ascending
+  have descending : indices.Pairwise fun left right => right ≤ left := by
+    exact List.pairwise_reverse.mpr ascending
+  rw [split] at descending nodup
+  have beforeGt := pairwise_split_before_gt before after blocked descending nodup
+  have afterLe := pairwise_split_after_le before after blocked descending
+  have beforeValid : before.Nodup := (List.nodup_append.mp nodup).1
+  have beforeParsed : ∀ index ∈ before,
+      PropertyKey.arrayIndex? (PropertyKey.arrayIndexString index) = some index := by
+    intro index member
+    apply parsed index
+    rw [split]
+    simp [member]
+  have beforePresent : ∀ index ∈ before,
+      (properties.lookup (.string (PropertyKey.arrayIndexString index))).isSome := by
+    intro index member
+    apply present index
+    rw [split]
+    simp [member]
+  have deleted := deleteArrayIndicesFold_unblocked before newLength properties current valid
+    beforeValid beforeParsed beforePresent swept
+  constructor
+  · intro key index descriptor keyParsed found above
+    cases key with
+    | symbol symbol => simp [arrayIndexOfKey?] at keyParsed
+    | string stringKey =>
+        have canonical := PropertyKey.arrayIndex?_sound keyParsed
+        subst stringKey
+        have keyMember := (OrderedProps.mem_ownKeys_iff_lookup_isSome properties _ valid).mpr (by
+          rw [found]
+          rfl)
+        have indexMember : index ∈ properties.arrayIndices := by
+          unfold OrderedProps.arrayIndices
+          exact List.mem_filterMap.mpr
+            ⟨.string (PropertyKey.arrayIndexString index), keyMember, keyParsed⟩
+        have descendingMember : index ∈ before ++ blocked :: after := by
+          rw [← split]
+          exact List.mem_reverse.mpr indexMember
+        have beforeMember : index ∈ before := by
+          rcases List.mem_append.mp descendingMember with member | member
+          · exact member
+          · rcases List.mem_cons.mp member with equal | afterMember
+            · omega
+            · have := afterLe index afterMember
+              omega
+        rcases deleted index beforeMember (by
+          have bound := (deleteArrayIndicesFrom_blocked properties next newLength blocked valid result).1
+          omega) with ⟨observed, observedFound, configurable, absent⟩
+        rw [found] at observedFound
+        cases observedFound
+        rw [final]
+        exact ⟨configurable, absent⟩
+  · intro key index keyParsed atMost
+    have preserved := deleteArrayIndicesFold_lookup_ne
+      (before.map fun candidate =>
+        (candidate, .string (PropertyKey.arrayIndexString candidate)))
+      newLength none properties key valid (by
+        intro entry member active equal
+        rcases List.mem_map.mp member with ⟨candidate, candidateMember, pairEqual⟩
+        cases pairEqual
+        have candidateGt := beforeGt candidate candidateMember
+        subst key
+        have candidateParsed := beforeParsed candidate candidateMember
+        change PropertyKey.arrayIndex? (PropertyKey.arrayIndexString candidate) = some index at keyParsed
+        rw [keyParsed] at candidateParsed
+        have := Option.some.inj candidateParsed
+        omega)
+    rw [swept] at preserved
+    rw [final]
+    exact preserved
+
+private theorem deleteArrayIndicesFrom_wellFormed (properties : OrderedProps) (newLength : Nat)
+    (valid : properties.WellFormed) :
+    (deleteArrayIndicesFrom properties newLength).2.WellFormed := by
+  exact deleteArrayIndicesFold_wellFormed _ newLength none properties valid
+
+private theorem deleteArrayIndicesFrom_descriptors_all (properties : OrderedProps)
+    (newLength : Nat) (predicate : PropertyDescriptor → Bool) (valid : properties.WellFormed)
+    (current : properties.descriptors.all predicate = true) :
+    (deleteArrayIndicesFrom properties newLength).2.descriptors.all predicate = true := by
+  exact deleteArrayIndicesFold_descriptors_all _ newLength none properties predicate valid current
+
+private theorem deleteArrayIndicesFrom_lookup_some (properties : OrderedProps) (newLength : Nat)
+    (valid : properties.WellFormed) (query : PropertyKey) (descriptor : PropertyDescriptor)
+    (found : (deleteArrayIndicesFrom properties newLength).2.lookup query = some descriptor) :
+    properties.lookup query = some descriptor := by
+  exact deleteArrayIndicesFold_lookup_some _ newLength none properties valid query descriptor found
 
 private def defineArrayLength (heap : Heap) (ref : RefId) (object : ObjectRecord)
     (slots : ArraySlots) (update : DescriptorUpdate) (kind : DescriptorKind) :
@@ -756,6 +1749,11 @@ def deleteProperty (heap : Heap) (ref : RefId) (key : PropertyKey) :
 
 private theorem mappedTrue_ne_false (result : Except ε α) (next : α) :
     result.map (fun value => (true, value)) ≠ .ok (false, next) := by
+  intro equal
+  cases result <;> cases equal
+
+private theorem mappedFalse_ne_true (result : Except ε α) (next : α) :
+    result.map (fun value => (false, value)) ≠ .ok (true, next) := by
   intro equal
   cases result <;> cases equal
 
@@ -2220,6 +3218,395 @@ private theorem wellFormed_object (heap : Heap) (ref : RefId) (object : ObjectRe
       subst current
       exact Array.mem_of_getElem? lookup
 
+/-- Replacing an array's slots while preserving its stored properties and object metadata preserves
+the complete heap invariant when the replacement slots satisfy the full array constraint. -/
+theorem replaceArray_preserves_wellFormed (heap next : Heap) (target : RefId)
+    (properties : OrderedProps) (prototype : Option RefId) (extensible : Bool)
+    (oldSlots newSlots : ArraySlots) (valid : heap.WellFormed)
+    (found : heap.get? target = .ok (.mk properties prototype extensible (.array oldSlots)))
+    (replaced : heap.replace target (.mk properties prototype extensible (.array newSlots)) =
+      .ok next)
+    (slotsValid : arraySlotsValid
+      (.mk properties prototype extensible (.array newSlots)) newSlots = true) :
+    next.WellFormed := by
+  let current : ObjectRecord := .mk properties prototype extensible (.array oldSlots)
+  let replacement : ObjectRecord := .mk properties prototype extensible (.array newSlots)
+  have sourceValid := wellFormed_object heap target current valid found
+  have callablePreserved : ∀ ref,
+      callableReferenceValid next ref = callableReferenceValid heap ref := by
+    intro ref
+    unfold callableReferenceValid isCallable functionSlots?
+    by_cases same : ref = target
+    · subst ref
+      rw [get?_replace_same heap next target replacement replaced, found]
+      rfl
+    · rw [get?_replace_ne heap next target ref replacement same replaced]
+  have descriptorPreserved : ∀ descriptor,
+      descriptorReferencesValid next descriptor = descriptorReferencesValid heap descriptor := by
+    intro descriptor
+    cases descriptor with
+    | data descriptor => exact valueValid_replace heap next target replacement replaced descriptor.value
+    | accessor descriptor =>
+        unfold descriptorReferencesValid
+        cases descriptor with
+        | mk getter setter enumerable configurable =>
+            cases getter <;> cases setter <;> simp [callablePreserved]
+  have preserveOld : ∀ object, objectReferencesValid heap object = true →
+      objectReferencesValid next object = true := by
+    intro object objectValid
+    unfold objectReferencesValid at objectValid ⊢
+    simp only [Bool.and_eq_true] at objectValid ⊢
+    refine ⟨⟨⟨objectValid.1.1.1, ?_⟩, ?_⟩, ?_⟩
+    · rw [List.all_eq_true] at objectValid ⊢
+      intro descriptor member
+      rw [descriptorPreserved]
+      exact objectValid.1.1.2 descriptor member
+    · simpa [replace_size heap next target replacement replaced] using objectValid.1.2
+    · cases kindEq : object.kind with
+      | ordinary => simpa [kindEq] using objectValid.2
+      | function slots =>
+          simp only [kindEq] at objectValid ⊢
+          rw [functionSlotsValid_replace heap next target replacement replaced slots]
+          exact objectValid.2
+      | array slots => simpa [kindEq] using objectValid.2
+      | primitiveWrapper slots => simpa [kindEq] using objectValid.2
+      | arrayIterator slots =>
+          simp only [kindEq, arrayIteratorSlotsValid] at objectValid ⊢
+          by_cases same : slots.target = target
+          · subst target
+            have currentFound : heap.objects[slots.target.value]? = some current := by
+              cases lookup : heap.objects[slots.target.value]? with
+              | none => simp [get?, lookup] at found
+              | some foundObject =>
+                  simp [get?, lookup] at found
+                  subst foundObject
+                  simpa [current] using lookup
+            unfold replace at replaced
+            split at replaced
+            · cases replaced
+              simp [currentFound, replacement]
+            · contradiction
+          · have differentIndex : slots.target.value ≠ target.value := by
+              intro equal
+              apply same
+              cases slots with
+              | mk iteratorTarget nextIndex done =>
+                  cases iteratorTarget
+                  cases target
+                  simp_all
+            unfold replace at replaced
+            split at replaced
+            · cases replaced
+              simpa [Ne.symm differentIndex] using objectValid.2
+            · contradiction
+  have replacementValid : objectReferencesValid next replacement = true := by
+    dsimp [current] at sourceValid
+    dsimp [replacement]
+    unfold objectReferencesValid at sourceValid ⊢
+    simp only [Bool.and_eq_true] at sourceValid ⊢
+    refine ⟨⟨⟨sourceValid.1.1.1, ?_⟩, ?_⟩, slotsValid⟩
+    · rw [List.all_eq_true] at sourceValid ⊢
+      intro descriptor member
+      rw [descriptorPreserved]
+      exact sourceValid.1.1.2 descriptor member
+    · simpa [replace_size heap next target replacement replaced] using sourceValid.1.2
+  have slotsEqual : next.functionSlotList = heap.functionSlotList := by
+    unfold replace at replaced
+    split at replaced
+    · cases replaced
+      unfold functionSlotList
+      rw [Array.toList_set]
+      have atTarget : heap.objects.toList[target.value]? = some current := by
+        cases lookup : heap.objects[target.value]? with
+        | none => simp [get?, lookup] at found
+        | some object =>
+            simp [get?, lookup] at found
+            simpa [found] using lookup
+      let project : ObjectRecord → Option FunctionSlots := fun object => match object.kind with
+        | .ordinary | .array _ | .arrayIterator _ | .primitiveWrapper _ => none
+        | .function slots => some slots
+      have go : ∀ (objects : List ObjectRecord) (index : Nat),
+          objects[index]? = some current →
+          List.filterMap project (objects.set index replacement) = List.filterMap project objects := by
+        intro objects index atIndex
+        induction objects generalizing index with
+        | nil => simp at atIndex
+        | cons head tail ih =>
+            cases index with
+            | zero =>
+                simp at atIndex
+                subst head
+                simp [project, current, replacement]
+            | succ index =>
+                simp only [List.getElem?_cons_succ] at atIndex
+                simp only [List.set, List.filterMap_cons]
+                rw [ih index atIndex]
+      exact go heap.objects.toList target.value atTarget
+    · contradiction
+  unfold WellFormed isWellFormed at valid ⊢
+  simp only [Bool.and_eq_true] at valid ⊢
+  refine ⟨⟨⟨?_, ?_⟩, ?_⟩, ?_⟩
+  · unfold replace at replaced
+    split at replaced
+    · cases replaced
+      rw [Array.toList_set]
+      let concrete : Heap :=
+        { objects := heap.objects.set target.value replacement ‹_›,
+          nextFunctionId := heap.nextFunctionId }
+      have atTarget : heap.objects.toList[target.value]? = some current := by
+        cases lookup : heap.objects[target.value]? with
+        | none => simp [get?, lookup] at found
+        | some object =>
+            simp [get?, lookup] at found
+            simpa [found] using lookup
+      have go : ∀ (objects : List ObjectRecord) (index : Nat),
+          objects[index]? = some current →
+          objects.all (objectReferencesValid heap) = true →
+          (objects.set index replacement).all (objectReferencesValid concrete) = true := by
+        intro objects index atIndex objectsValid
+        induction objects generalizing index with
+        | nil => simp at atIndex
+        | cons head tail ih =>
+            rw [List.all_cons] at objectsValid
+            have validParts : objectReferencesValid heap head = true ∧
+                tail.all (objectReferencesValid heap) = true := by
+              simpa only [Bool.and_eq_true] using objectsValid
+            cases index with
+            | zero =>
+                simp at atIndex
+                subst head
+                rw [List.set, List.all_cons]
+                simpa only [Bool.and_eq_true] using And.intro replacementValid
+                  (List.all_eq_true.mpr fun object member =>
+                    preserveOld object (List.all_eq_true.mp validParts.2 object member))
+            | succ index =>
+                simp only [List.getElem?_cons_succ] at atIndex
+                rw [List.set, List.all_cons]
+                simpa only [Bool.and_eq_true] using And.intro (preserveOld head validParts.1)
+                  (ih index atIndex validParts.2)
+      exact go heap.objects.toList target.value atTarget valid.1.1.1
+    · contradiction
+  · rw [slotsEqual]
+    exact valid.1.1.2
+  · rw [slotsEqual, replace_functionCount heap next target replacement replaced]
+    exact valid.1.2
+  · rw [prototypeGraphAcyclic_replace heap next target current replacement found rfl replaced]
+    exact valid.2
+
+private theorem replaceArrayPropertiesAndSlots_preserves_wellFormed
+    (heap next : Heap) (target : RefId) (oldProperties newProperties : OrderedProps)
+    (prototype : Option RefId) (extensible : Bool) (oldSlots newSlots : ArraySlots)
+    (valid : heap.WellFormed)
+    (found : heap.get? target = .ok (.mk oldProperties prototype extensible (.array oldSlots)))
+    (propertiesValid : newProperties.WellFormed)
+    (descriptorsValid : newProperties.descriptors.all (descriptorReferencesValid heap) = true)
+    (oldSlotsValid : arraySlotsValid
+      (.mk newProperties prototype extensible (.array oldSlots)) oldSlots = true)
+    (newSlotsValid : arraySlotsValid
+      (.mk newProperties prototype extensible (.array newSlots)) newSlots = true)
+    (replaced : heap.replace target
+      (.mk newProperties prototype extensible (.array newSlots)) = .ok next) :
+    next.WellFormed := by
+  let middleRecord : ObjectRecord :=
+    .mk newProperties prototype extensible (.array oldSlots)
+  let finalRecord : ObjectRecord :=
+    .mk newProperties prototype extensible (.array newSlots)
+  unfold replace at replaced
+  split at replaced
+  · rename_i inBounds
+    cases replaced
+    let middle : Heap := .mk (heap.objects.set target.value middleRecord inBounds)
+      heap.nextFunctionId
+    have middleReplaced : heap.replace target middleRecord = .ok middle := by
+      unfold replace
+      simp [middle, inBounds]
+    have middleFound : middle.get? target = .ok middleRecord :=
+      get?_replace_same heap middle target middleRecord middleReplaced
+    have finalReplaced : middle.replace target finalRecord =
+        .ok (.mk (heap.objects.set target.value finalRecord inBounds) heap.nextFunctionId) := by
+      unfold replace
+      have middleBound : target.value < middle.objects.size := by
+        simpa [middle] using inBounds
+      simp [middleBound, middle, finalRecord, Array.set_set, inBounds]
+    have middleValid : middle.WellFormed := by
+      apply replace_preserves_wellFormed heap middle target
+        (.mk oldProperties prototype extensible (.array oldSlots)) middleRecord valid found rfl rfl
+        middleReplaced
+      have sourceValid := wellFormed_object heap target
+        (.mk oldProperties prototype extensible (.array oldSlots)) valid found
+      unfold objectReferencesValid at sourceValid ⊢
+      simp only [Bool.and_eq_true] at sourceValid ⊢
+      refine ⟨⟨⟨propertiesValid, ?_⟩, ?_⟩, oldSlotsValid⟩
+      · rw [List.all_eq_true] at descriptorsValid ⊢
+        intro descriptor member
+        rw [descriptorReferencesValid_replace heap middle target
+          (.mk oldProperties prototype extensible (.array oldSlots)) middleRecord found rfl
+          middleReplaced]
+        exact descriptorsValid descriptor member
+      · simpa [replace_size heap middle target middleRecord middleReplaced] using sourceValid.1.2
+    exact replaceArray_preserves_wellFormed middle
+      (.mk (heap.objects.set target.value finalRecord inBounds) heap.nextFunctionId) target
+      newProperties prototype extensible oldSlots newSlots middleValid middleFound finalReplaced
+      newSlotsValid
+  · contradiction
+
+private theorem blockedArrayShrinkReplacement_preserves_wellFormed
+    (heap next : Heap) (target : RefId) (object : ObjectRecord) (oldSlots : ArraySlots)
+    (newLength blocked : Nat) (properties : OrderedProps) (lengthWritable : Bool)
+    (valid : heap.WellFormed) (found : heap.get? target = .ok object)
+    (arrayKind : object.kind = .array oldSlots)
+    (swept : deleteArrayIndicesFrom object.properties newLength = (some blocked, properties))
+    (replaced : heap.replace target
+      (.mk properties object.prototype object.extensible
+        (.array ⟨blocked + 1, lengthWritable⟩)) = .ok next) : next.WellFormed := by
+  have sourceValid := wellFormed_object heap target object valid found
+  unfold objectReferencesValid at sourceValid
+  simp only [Bool.and_eq_true] at sourceValid
+  have oldPropertiesValid : object.properties.WellFormed := sourceValid.1.1.1
+  have propertiesValid := deleteArrayIndicesFrom_wellFormed object.properties newLength
+    oldPropertiesValid
+  rw [swept] at propertiesValid
+  have descriptorsValid := deleteArrayIndicesFrom_descriptors_all object.properties newLength
+    (descriptorReferencesValid heap) oldPropertiesValid sourceValid.1.1.2
+  rw [swept] at descriptorsValid
+  have oldArrayValid : arraySlotsValid object oldSlots = true := by
+    simpa [arrayKind] using sourceValid.2
+  unfold arraySlotsValid at oldArrayValid
+  simp only [Bool.and_eq_true] at oldArrayValid
+  have lookupSpec := deleteArrayIndicesFrom_blocked_lookups object.properties properties
+    newLength blocked oldPropertiesValid swept
+  have blockedSpec := deleteArrayIndicesFrom_blocked object.properties properties
+    newLength blocked oldPropertiesValid swept
+  have blockedFound := blockedSpec.2.2.choose_spec.1
+  have blockedOldBound := OrderedProps.key_of_lookup_satisfies object.properties
+    (fun key => match arrayIndexOfKey? key with
+      | some index => index < oldSlots.length
+      | none => key != lengthPropertyKey)
+    oldArrayValid.2 (.string (PropertyKey.arrayIndexString blocked)) _ blockedFound
+  change (match PropertyKey.arrayIndex? (PropertyKey.arrayIndexString blocked) with
+    | some index => index < oldSlots.length
+    | none => PropertyKey.string (PropertyKey.arrayIndexString blocked) != lengthPropertyKey) = true
+    at blockedOldBound
+  rw [blockedSpec.2.1] at blockedOldBound
+  simp only at blockedOldBound
+  have blockedLt : blocked < oldSlots.length := by simpa using blockedOldBound
+  have oldLengthBound : oldSlots.length ≤ maxArrayLength := by simpa using oldArrayValid.1
+  have oldSlotsForProperties : arraySlotsValid
+      (.mk properties object.prototype object.extensible (.array oldSlots)) oldSlots = true := by
+    unfold arraySlotsValid
+    simp only [Bool.and_eq_true]
+    refine ⟨oldArrayValid.1, OrderedProps.keysAll_of_lookup properties _ ?_⟩
+    intro key descriptor finalFound
+    have oldFound := deleteArrayIndicesFrom_lookup_some object.properties newLength
+      oldPropertiesValid key descriptor (by rw [swept]; exact finalFound)
+    exact OrderedProps.key_of_lookup_satisfies object.properties _ oldArrayValid.2 key descriptor oldFound
+  have newSlotsValid : arraySlotsValid
+      (.mk properties object.prototype object.extensible
+        (.array ⟨blocked + 1, lengthWritable⟩)) ⟨blocked + 1, lengthWritable⟩ = true := by
+    unfold arraySlotsValid
+    simp only [Bool.and_eq_true]
+    refine ⟨by simp; omega, OrderedProps.keysAll_of_lookup properties _ ?_⟩
+    intro key descriptor finalFound
+    cases parsed : arrayIndexOfKey? key with
+    | none =>
+        have oldFound := deleteArrayIndicesFrom_lookup_some object.properties newLength
+          oldPropertiesValid key descriptor (by rw [swept]; exact finalFound)
+        simpa [parsed] using OrderedProps.key_of_lookup_satisfies object.properties _
+          oldArrayValid.2 key descriptor oldFound
+    | some index =>
+        by_cases above : blocked < index
+        · have oldFound := deleteArrayIndicesFrom_lookup_some object.properties newLength
+            oldPropertiesValid key descriptor (by rw [swept]; exact finalFound)
+          have absent := (lookupSpec.1 key index descriptor parsed oldFound above).2
+          rw [finalFound] at absent
+          contradiction
+        · simp [parsed]
+          omega
+  apply replaceArrayPropertiesAndSlots_preserves_wellFormed heap next target object.properties
+    properties object.prototype object.extensible oldSlots ⟨blocked + 1, lengthWritable⟩ valid
+  · have objectEq : ObjectRecord.mk object.properties object.prototype object.extensible
+        (.array oldSlots) = object := by
+      cases object
+      simp_all
+    rw [objectEq]
+    exact found
+  · exact propertiesValid
+  · exact descriptorsValid
+  · exact oldSlotsForProperties
+  · exact newSlotsValid
+  · exact replaced
+
+private theorem unblockedArrayShrinkReplacement_preserves_wellFormed
+    (heap next : Heap) (target : RefId) (object : ObjectRecord) (oldSlots : ArraySlots)
+    (newLength : Nat) (properties : OrderedProps) (lengthWritable : Bool)
+    (valid : heap.WellFormed) (found : heap.get? target = .ok object)
+    (arrayKind : object.kind = .array oldSlots)
+    (shrink : newLength < oldSlots.length)
+    (swept : deleteArrayIndicesFrom object.properties newLength = (none, properties))
+    (replaced : heap.replace target
+      (.mk properties object.prototype object.extensible
+        (.array ⟨newLength, lengthWritable⟩)) = .ok next) : next.WellFormed := by
+  have sourceValid := wellFormed_object heap target object valid found
+  unfold objectReferencesValid at sourceValid
+  simp only [Bool.and_eq_true] at sourceValid
+  have oldPropertiesValid : object.properties.WellFormed := sourceValid.1.1.1
+  have propertiesValid := deleteArrayIndicesFrom_wellFormed object.properties newLength
+    oldPropertiesValid
+  rw [swept] at propertiesValid
+  have descriptorsValid := deleteArrayIndicesFrom_descriptors_all object.properties newLength
+    (descriptorReferencesValid heap) oldPropertiesValid sourceValid.1.1.2
+  rw [swept] at descriptorsValid
+  have oldArrayValid : arraySlotsValid object oldSlots = true := by
+    simpa [arrayKind] using sourceValid.2
+  unfold arraySlotsValid at oldArrayValid
+  simp only [Bool.and_eq_true] at oldArrayValid
+  have oldLengthBound : oldSlots.length ≤ maxArrayLength := by simpa using oldArrayValid.1
+  have oldSlotsForProperties : arraySlotsValid
+      (.mk properties object.prototype object.extensible (.array oldSlots)) oldSlots = true := by
+    unfold arraySlotsValid
+    simp only [Bool.and_eq_true]
+    refine ⟨oldArrayValid.1, OrderedProps.keysAll_of_lookup properties _ ?_⟩
+    intro key descriptor finalFound
+    have oldFound := deleteArrayIndicesFrom_lookup_some object.properties newLength
+      oldPropertiesValid key descriptor (by rw [swept]; exact finalFound)
+    exact OrderedProps.key_of_lookup_satisfies object.properties _ oldArrayValid.2 key descriptor oldFound
+  have newSlotsValid : arraySlotsValid
+      (.mk properties object.prototype object.extensible
+        (.array ⟨newLength, lengthWritable⟩)) ⟨newLength, lengthWritable⟩ = true := by
+    unfold arraySlotsValid
+    simp only [Bool.and_eq_true]
+    refine ⟨by simp; omega, OrderedProps.keysAll_of_lookup properties _ ?_⟩
+    intro key descriptor finalFound
+    cases parsed : arrayIndexOfKey? key with
+    | none =>
+        have oldFound := deleteArrayIndicesFrom_lookup_some object.properties newLength
+          oldPropertiesValid key descriptor (by rw [swept]; exact finalFound)
+        simpa [parsed] using OrderedProps.key_of_lookup_satisfies object.properties _
+          oldArrayValid.2 key descriptor oldFound
+    | some index =>
+        by_cases atLeast : newLength ≤ index
+        · have oldFound := deleteArrayIndicesFrom_lookup_some object.properties newLength
+            oldPropertiesValid key descriptor (by rw [swept]; exact finalFound)
+          have absent := (deleteArrayIndicesFrom_unblocked object.properties properties newLength
+            oldPropertiesValid swept key index descriptor parsed oldFound atLeast).2
+          rw [finalFound] at absent
+          contradiction
+        · simp [parsed]
+          omega
+  apply replaceArrayPropertiesAndSlots_preserves_wellFormed heap next target object.properties
+    properties object.prototype object.extensible oldSlots ⟨newLength, lengthWritable⟩ valid
+  · have objectEq : ObjectRecord.mk object.properties object.prototype object.extensible
+        (.array oldSlots) = object := by
+      cases object
+      simp_all
+    rw [objectEq]
+    exact found
+  · exact propertiesValid
+  · exact descriptorsValid
+  · exact oldSlotsForProperties
+  · exact newSlotsValid
+  · exact replaced
+
 /-- Making an object nonextensible preserves the complete heap invariant. -/
 theorem preventExtensions_preserves_wellFormed (heap next : Heap) (ref : RefId)
     (valid : heap.WellFormed) (updated : heap.preventExtensions ref = .ok next) :
@@ -2624,6 +4011,15 @@ theorem allocateArray_preserves_wellFormed (heap next : Heap)
                 (by simpa using ‹¬elements.length > maxArrayLength›) (by simpa)
               simpa using arrayInvalidFold_none_valuesValid heap elements invalid
 
+/-- Every successful array-input allocation preserves the complete heap invariant. -/
+theorem allocateArrayFromArray_preserves_wellFormed (heap next : Heap)
+    (elements : Array (Option Value)) (prototype : Option RefId) (ref : RefId)
+    (valid : heap.WellFormed)
+    (allocated : heap.allocateArrayFromArray elements prototype = .ok (ref, next)) :
+    next.WellFormed := by
+  apply allocateArray_preserves_wellFormed heap next elements.toList prototype ref valid
+  simpa [allocateArray] using allocated
+
 private theorem validateOptionalRef_valid (heap : Heap) (ref : Option RefId) (unit : Unit)
     (checked : validateOptionalRef heap ref = .ok unit) :
     ref.all (fun value => value.value < heap.size) = true := by
@@ -2900,9 +4296,387 @@ theorem allocateArrayIterator_preserves_wellFormed (heap next : Heap) (target : 
                     simp only [Bool.and_eq_true] at valid
                     simpa [functionCount] using valid.1.2
 
--- TODO(theorem): prove general successful `defineOwnProperty`, `createDataProperty`,
--- iterator advancement, and `setPrototypeOf` preserve
--- `WellFormed`; blocked array shrink requires its separate partial-commit characterization.
+/-- A rejected normalized array-length shrink exposes the first descending nonconfigurable index,
+commits all higher configurable deletions and the accepted writability, and changes no other object. -/
+theorem defineOwnProperty_blocked_array_shrink
+    (heap next : Heap) (target : RefId) (object : ObjectRecord) (slots : ArraySlots)
+    (update normalizedUpdate : DescriptorUpdate) (kind : DescriptorKind) (number : JSNumber)
+    (newLength : Nat) (lengthDescriptor : DataDescriptor)
+    (valid : heap.WellFormed) (found : heap.get? target = .ok object)
+    (arrayKind : object.kind = .array slots)
+    (syntaxValid : update.validateSyntax = .ok kind)
+    (valueField : update.value = .present (.primitive (.number number)))
+    (decoded : validArrayLength? number = some newLength)
+    (normalized : normalizedUpdate = { update with
+      value := .present (.primitive (.number (arrayLengthNumber newLength))) })
+    (accepted : normalizedUpdate.applyValidatedDescriptor
+      (some (.data ⟨.primitive (.number (arrayLengthNumber slots.length)),
+        slots.lengthWritable, false, false⟩)) true kind =
+        Except.ok (.data lengthDescriptor))
+    (shrink : newLength < slots.length) (writable : slots.lengthWritable = true)
+    (defined : heap.defineOwnProperty target lengthPropertyKey update = .ok (false, next)) :
+    ∃ blocked finalProperties finalObject,
+      newLength ≤ blocked ∧
+      (∃ descriptor,
+        object.properties.lookup (.string (PropertyKey.arrayIndexString blocked)) = some descriptor ∧
+        match descriptor with
+        | .data data => data.configurable = false
+        | .accessor accessor => accessor.configurable = false) ∧
+      (∀ stringKey index descriptor, PropertyKey.arrayIndex? stringKey = some index →
+        object.properties.lookup (.string stringKey) = some descriptor → blocked < index →
+        (match descriptor with
+          | .data data => data.configurable = true
+          | .accessor accessor => accessor.configurable = true) ∧
+        finalProperties.lookup (.string stringKey) = none) ∧
+      (∀ stringKey index, PropertyKey.arrayIndex? stringKey = some index → index ≤ blocked →
+        finalProperties.lookup (.string stringKey) = object.properties.lookup (.string stringKey)) ∧
+      (∀ stringKey, PropertyKey.arrayIndex? stringKey = none →
+        finalProperties.lookup (.string stringKey) = object.properties.lookup (.string stringKey)) ∧
+      (∀ symbolKey, finalProperties.lookup (.symbol symbolKey) =
+        object.properties.lookup (.symbol symbolKey)) ∧
+      finalProperties.stringKeys = object.properties.stringKeys ∧
+      finalProperties.symbolKeys = object.properties.symbolKeys ∧
+      next.get? target = .ok finalObject ∧
+      finalObject.properties = finalProperties ∧
+      finalObject.prototype = object.prototype ∧
+      finalObject.extensible = object.extensible ∧
+      finalObject.kind = .array ⟨blocked + 1, lengthDescriptor.writable⟩ ∧
+      next.getOwnProperty target lengthPropertyKey = .ok (some (.data
+        ⟨.primitive (.number (arrayLengthNumber (blocked + 1))),
+          lengthDescriptor.writable, false, false⟩)) ∧
+      (∀ ref, ref ≠ target → next.get? ref = heap.get? ref) ∧
+      lengthDescriptor.writable = normalizedUpdate.writable.apply slots.lengthWritable ∧
+      (update.writable = .present false → lengthDescriptor.writable = false) ∧
+      next.WellFormed := by
+  unfold defineOwnProperty at defined
+  rw [found, syntaxValid] at defined
+  cases references : validateDescriptorReferences heap update with
+  | error fault => simp [references] at defined
+  | ok unit =>
+      cases unit
+      simp [references, arrayKind] at defined
+      unfold defineArrayLength at defined
+      unfold syntheticLengthDescriptor at defined
+      have writableResult := DescriptorUpdate.applyValidatedDescriptor_data_writable
+        normalizedUpdate
+        ⟨.primitive (.number (arrayLengthNumber slots.length)), slots.lengthWritable,
+          false, false⟩ lengthDescriptor true kind accepted
+      rw [valueField] at defined
+      simp [decoded] at defined
+      rw [← normalized, accepted] at defined
+      have notGrow : ¬slots.length < newLength := by omega
+      have notEqual : slots.length ≠ newLength := by omega
+      simp [notGrow, notEqual, writable] at defined
+      cases swept : deleteArrayIndicesFrom object.properties newLength with
+      | mk blocked properties =>
+          cases blocked with
+          | none =>
+              exact False.elim (mappedTrue_ne_false _ next (by simpa [swept] using defined))
+          | some blocked =>
+              simp only [swept] at defined
+              cases replaced : heap.replace target
+                (.mk properties object.prototype object.extensible
+                  (.array ⟨blocked + 1, lengthDescriptor.writable⟩)) with
+              | error fault =>
+                  rw [replaced] at defined
+                  change Except.error (DefinePropertyFault.heap fault) =
+                    Except.ok (false, next) at defined
+                  contradiction
+              | ok replacedHeap =>
+                  rw [replaced] at defined
+                  change Except.ok (false, replacedHeap) = Except.ok (false, next) at defined
+                  cases defined
+                  have oldPropertiesValid := wellFormed_object heap target object valid found
+                  unfold objectReferencesValid at oldPropertiesValid
+                  simp only [Bool.and_eq_true] at oldPropertiesValid
+                  have blockedSpec := deleteArrayIndicesFrom_blocked object.properties properties
+                    newLength blocked oldPropertiesValid.1.1.1 swept
+                  have lookupSpec := deleteArrayIndicesFrom_blocked_lookups object.properties properties
+                    newLength blocked oldPropertiesValid.1.1.1 swept
+                  have nonIndex := deleteArrayIndicesFrom_lookup_nonIndex object.properties
+                    newLength
+                  have order := deleteArrayIndicesFrom_order object.properties newLength
+                    oldPropertiesValid.1.1.1
+                  have targetFound := get?_replace_same heap next target _ replaced
+                  refine ⟨blocked, properties,
+                    (.mk properties object.prototype object.extensible
+                      (.array ⟨blocked + 1, lengthDescriptor.writable⟩)),
+                    blockedSpec.1, blockedSpec.2.2,
+                    ?_, ?_, ?_, ?_, ?_, ?_, targetFound, rfl, rfl, rfl, rfl, ?_, ?_,
+                    writableResult, ?_, ?_⟩
+                  · intro stringKey index descriptor parsed oldFound above
+                    exact lookupSpec.1 (.string stringKey) index descriptor parsed oldFound above
+                  · intro stringKey index parsed below
+                    exact lookupSpec.2 (.string stringKey) index parsed below
+                  · intro stringKey keyNonIndex
+                    have preserved := nonIndex (.string stringKey)
+                      oldPropertiesValid.1.1.1 keyNonIndex
+                    rw [swept] at preserved
+                    exact preserved
+                  · intro symbolKey
+                    have preserved := nonIndex (.symbol symbolKey)
+                      oldPropertiesValid.1.1.1 rfl
+                    rw [swept] at preserved
+                    exact preserved
+                  · simpa [swept] using order.1
+                  · simpa [swept] using order.2
+                  · unfold getOwnProperty
+                    rw [targetFound]
+                    rfl
+                  · intro ref different
+                    exact get?_replace_ne heap next target ref _ different replaced
+                  · intro requested
+                    have normalizedWritable : normalizedUpdate.writable = update.writable := by
+                      rw [normalized]
+                    rw [writableResult, normalizedWritable, requested]
+                    rfl
+                  · exact blockedArrayShrinkReplacement_preserves_wellFormed heap next target object
+                      slots newLength blocked properties lengthDescriptor.writable valid found arrayKind
+                      swept replaced
+
+/-- A successful normalized array-length shrink deletes every old configurable index at or above
+the new length, preserves lower and non-index properties exactly, and changes no other object. -/
+theorem defineOwnProperty_unblocked_array_shrink
+    (heap next : Heap) (target : RefId) (object : ObjectRecord) (slots : ArraySlots)
+    (update normalizedUpdate : DescriptorUpdate) (kind : DescriptorKind) (number : JSNumber)
+    (newLength : Nat) (lengthDescriptor : DataDescriptor)
+    (valid : heap.WellFormed) (found : heap.get? target = .ok object)
+    (arrayKind : object.kind = .array slots)
+    (syntaxValid : update.validateSyntax = .ok kind)
+    (valueField : update.value = .present (.primitive (.number number)))
+    (decoded : validArrayLength? number = some newLength)
+    (normalized : normalizedUpdate = { update with
+      value := .present (.primitive (.number (arrayLengthNumber newLength))) })
+    (accepted : normalizedUpdate.applyValidatedDescriptor
+      (some (.data ⟨.primitive (.number (arrayLengthNumber slots.length)),
+        slots.lengthWritable, false, false⟩)) true kind = Except.ok (.data lengthDescriptor))
+    (shrink : newLength < slots.length) (writable : slots.lengthWritable = true)
+    (defined : heap.defineOwnProperty target lengthPropertyKey update = .ok (true, next)) :
+    ∃ finalProperties finalObject,
+      (∀ stringKey index descriptor, PropertyKey.arrayIndex? stringKey = some index →
+        object.properties.lookup (.string stringKey) = some descriptor → newLength ≤ index →
+        (match descriptor with
+          | .data data => data.configurable = true
+          | .accessor accessor => accessor.configurable = true) ∧
+        finalProperties.lookup (.string stringKey) = none) ∧
+      (∀ stringKey index, PropertyKey.arrayIndex? stringKey = some index → index < newLength →
+        finalProperties.lookup (.string stringKey) = object.properties.lookup (.string stringKey)) ∧
+      (∀ stringKey, PropertyKey.arrayIndex? stringKey = none →
+        finalProperties.lookup (.string stringKey) = object.properties.lookup (.string stringKey)) ∧
+      (∀ symbolKey, finalProperties.lookup (.symbol symbolKey) =
+        object.properties.lookup (.symbol symbolKey)) ∧
+      finalProperties.stringKeys = object.properties.stringKeys ∧
+      finalProperties.symbolKeys = object.properties.symbolKeys ∧
+      next.get? target = .ok finalObject ∧
+      finalObject.properties = finalProperties ∧
+      finalObject.prototype = object.prototype ∧
+      finalObject.extensible = object.extensible ∧
+      finalObject.kind = .array ⟨newLength, lengthDescriptor.writable⟩ ∧
+      next.getOwnProperty target lengthPropertyKey = .ok (some (.data
+        ⟨.primitive (.number (arrayLengthNumber newLength)),
+          lengthDescriptor.writable, false, false⟩)) ∧
+      (∀ ref, ref ≠ target → next.get? ref = heap.get? ref) ∧
+      lengthDescriptor.writable = normalizedUpdate.writable.apply slots.lengthWritable ∧
+      (update.writable = .present false → lengthDescriptor.writable = false) ∧
+      next.WellFormed := by
+  unfold defineOwnProperty at defined
+  rw [found, syntaxValid] at defined
+  cases references : validateDescriptorReferences heap update with
+  | error fault => simp [references] at defined
+  | ok unit =>
+      cases unit
+      simp [references, arrayKind] at defined
+      unfold defineArrayLength at defined
+      unfold syntheticLengthDescriptor at defined
+      have writableResult := DescriptorUpdate.applyValidatedDescriptor_data_writable
+        normalizedUpdate
+        ⟨.primitive (.number (arrayLengthNumber slots.length)), slots.lengthWritable,
+          false, false⟩ lengthDescriptor true kind accepted
+      rw [valueField] at defined
+      simp [decoded] at defined
+      rw [← normalized, accepted] at defined
+      have notGrow : ¬slots.length < newLength := by omega
+      have notEqual : slots.length ≠ newLength := by omega
+      simp [notGrow, notEqual, writable] at defined
+      cases swept : deleteArrayIndicesFrom object.properties newLength with
+      | mk blocked properties =>
+          cases blocked with
+          | some blocked =>
+              exact False.elim (mappedFalse_ne_true _ next (by simpa [swept] using defined))
+          | none =>
+              cases replaced : heap.replace target
+                (.mk properties object.prototype object.extensible
+                  (.array ⟨newLength, lengthDescriptor.writable⟩)) with
+              | error fault =>
+                  rw [swept, replaced] at defined
+                  change Except.error (DefinePropertyFault.heap fault) =
+                    Except.ok (true, next) at defined
+                  contradiction
+              | ok replacedHeap =>
+                  rw [swept, replaced] at defined
+                  change Except.ok (true, replacedHeap) = Except.ok (true, next) at defined
+                  cases defined
+                  have oldPropertiesValid := wellFormed_object heap target object valid found
+                  unfold objectReferencesValid at oldPropertiesValid
+                  simp only [Bool.and_eq_true] at oldPropertiesValid
+                  have deleted := deleteArrayIndicesFrom_unblocked object.properties properties
+                    newLength oldPropertiesValid.1.1.1 swept
+                  have nonIndex := deleteArrayIndicesFrom_lookup_nonIndex object.properties newLength
+                  have order := deleteArrayIndicesFrom_order object.properties newLength
+                    oldPropertiesValid.1.1.1
+                  have targetFound := get?_replace_same heap next target _ replaced
+                  refine ⟨properties,
+                    (.mk properties object.prototype object.extensible
+                      (.array ⟨newLength, lengthDescriptor.writable⟩)),
+                    ?_, ?_, ?_, ?_, ?_, ?_, targetFound, rfl, rfl, rfl, rfl, ?_, ?_,
+                    writableResult, ?_, ?_⟩
+                  · intro stringKey index descriptor parsed oldFound atLeast
+                    exact deleted (.string stringKey) index descriptor parsed oldFound atLeast
+                  · intro stringKey index parsed below
+                    have preserved := deleteArrayIndicesFrom_lookup_below object.properties newLength
+                      (.string stringKey) index oldPropertiesValid.1.1.1 parsed below
+                    rw [swept] at preserved
+                    exact preserved
+                  · intro stringKey keyNonIndex
+                    have preserved := nonIndex (.string stringKey)
+                      oldPropertiesValid.1.1.1 keyNonIndex
+                    rw [swept] at preserved
+                    exact preserved
+                  · intro symbolKey
+                    have preserved := nonIndex (.symbol symbolKey)
+                      oldPropertiesValid.1.1.1 rfl
+                    rw [swept] at preserved
+                    exact preserved
+                  · simpa [swept] using order.1
+                  · simpa [swept] using order.2
+                  · unfold getOwnProperty
+                    rw [targetFound]
+                    rfl
+                  · intro ref different
+                    exact get?_replace_ne heap next target ref _ different replaced
+                  · intro requested
+                    have normalizedWritable : normalizedUpdate.writable = update.writable := by
+                      rw [normalized]
+                    rw [writableResult, normalizedWritable, requested]
+                    rfl
+                  · exact unblockedArrayShrinkReplacement_preserves_wellFormed heap next target object
+                      slots newLength properties lengthDescriptor.writable valid found arrayKind shrink
+                      swept replaced
+
+private def shrinkFixtureDescriptor (index : Nat) (configurable : Bool) : PropertyDescriptor :=
+  .data ⟨.primitive (.bigint index), true, true, configurable⟩
+
+private def blockedShrinkFixtureProperties : OrderedProps :=
+  OrderedProps.empty
+    |>.insert (.string (PropertyKey.arrayIndexString 0)) (shrinkFixtureDescriptor 0 true)
+    |>.insert (.string (PropertyKey.arrayIndexString 1)) (shrinkFixtureDescriptor 1 true)
+    |>.insert (.string (PropertyKey.arrayIndexString 2)) (shrinkFixtureDescriptor 2 false)
+    |>.insert (.string (PropertyKey.arrayIndexString 3)) (shrinkFixtureDescriptor 3 true)
+
+private def unblockedShrinkFixtureProperties : OrderedProps :=
+  OrderedProps.empty
+    |>.insert (.string (PropertyKey.arrayIndexString 0)) (shrinkFixtureDescriptor 0 true)
+    |>.insert (.string (PropertyKey.arrayIndexString 1)) (shrinkFixtureDescriptor 1 true)
+    |>.insert (.string (PropertyKey.arrayIndexString 2)) (shrinkFixtureDescriptor 2 true)
+
+private def blockedShrinkFixtureObject : ObjectRecord :=
+  .mk blockedShrinkFixtureProperties none true (.array ⟨4, true⟩)
+
+private def unblockedShrinkFixtureObject : ObjectRecord :=
+  .mk unblockedShrinkFixtureProperties none true (.array ⟨3, true⟩)
+
+private def blockedShrinkFixtureHeap : Heap := .mk #[blockedShrinkFixtureObject] 0
+private def unblockedShrinkFixtureHeap : Heap := .mk #[unblockedShrinkFixtureObject] 0
+
+private def shrinkFixtureUpdate : DescriptorUpdate := {
+  value := .present (.primitive (.number (arrayLengthNumber 1)))
+  writable := .present false
+}
+
+private def blockedShrinkFixtureSucceeds : Bool :=
+  match blockedShrinkFixtureHeap.defineOwnProperty ⟨0⟩ lengthPropertyKey shrinkFixtureUpdate with
+  | .ok (false, _) => true
+  | _ => false
+
+private def unblockedShrinkFixtureSucceeds : Bool :=
+  match unblockedShrinkFixtureHeap.defineOwnProperty ⟨0⟩ lengthPropertyKey shrinkFixtureUpdate with
+  | .ok (true, _) => true
+  | _ => false
+
+/-- The public blocked-shrink theorem has a concrete writable-to-nonwritable witness. -/
+private theorem defineOwnProperty_blocked_array_shrink_nonvacuous :
+    ∃ next blocked,
+      blockedShrinkFixtureHeap.defineOwnProperty ⟨0⟩ lengthPropertyKey shrinkFixtureUpdate =
+        .ok (false, next) ∧
+      next.arrayLength ⟨0⟩ = .ok (blocked + 1) ∧
+      next.getOwnProperty ⟨0⟩ lengthPropertyKey = .ok (some (.data
+        ⟨.primitive (.number (arrayLengthNumber (blocked + 1))), false, false, false⟩)) ∧
+      next.WellFormed := by
+  set_option maxRecDepth 100000 in
+    have succeeds : blockedShrinkFixtureSucceeds = true := by native_decide
+    cases run : blockedShrinkFixtureHeap.defineOwnProperty ⟨0⟩ lengthPropertyKey
+        shrinkFixtureUpdate with
+    | error fault => simp [blockedShrinkFixtureSucceeds, run] at succeeds
+    | ok result =>
+        rcases result with ⟨success, next⟩
+        cases success with
+        | true => simp [blockedShrinkFixtureSucceeds, run] at succeeds
+        | false =>
+            have lifted := defineOwnProperty_blocked_array_shrink
+              blockedShrinkFixtureHeap next ⟨0⟩ blockedShrinkFixtureObject ⟨4, true⟩
+              shrinkFixtureUpdate shrinkFixtureUpdate .data (arrayLengthNumber 1) 1
+              ⟨.primitive (.number (arrayLengthNumber 1)), false, false, false⟩
+              (by unfold WellFormed; native_decide) (by rfl) (by rfl) (by rfl) (by rfl)
+              (by rfl) (by rfl) (by rfl) (by decide) (by rfl) run
+            rcases lifted with
+              ⟨blocked, properties, finalObject, bound, blocker, higher, lower, strings, symbols,
+                stringOrder, symbolOrder, targetFound, propertiesEq, prototypeEq, extensibleEq,
+                kindEq, lengthFound, otherObjects, writableExact, writableFalse, finalValid⟩
+            have lengthResult : next.arrayLength ⟨0⟩ = .ok (blocked + 1) := by
+              unfold arrayLength
+              simp only [Bind.bind, Except.bind, targetFound]
+              rw [kindEq]
+              rfl
+            exact ⟨next, blocked, rfl, lengthResult, lengthFound, finalValid⟩
+
+/-- The public unblocked-shrink theorem has a concrete successful nonwritable witness. -/
+private theorem defineOwnProperty_unblocked_array_shrink_nonvacuous :
+    ∃ next,
+      unblockedShrinkFixtureHeap.defineOwnProperty ⟨0⟩ lengthPropertyKey shrinkFixtureUpdate =
+        .ok (true, next) ∧
+      next.arrayLength ⟨0⟩ = .ok 1 ∧
+      next.getOwnProperty ⟨0⟩ lengthPropertyKey = .ok (some (.data
+        ⟨.primitive (.number (arrayLengthNumber 1)), false, false, false⟩)) ∧
+      next.WellFormed := by
+  set_option maxRecDepth 100000 in
+    have succeeds : unblockedShrinkFixtureSucceeds = true := by native_decide
+    cases run : unblockedShrinkFixtureHeap.defineOwnProperty ⟨0⟩ lengthPropertyKey
+        shrinkFixtureUpdate with
+    | error fault => simp [unblockedShrinkFixtureSucceeds, run] at succeeds
+    | ok result =>
+        rcases result with ⟨success, next⟩
+        cases success with
+        | false => simp [unblockedShrinkFixtureSucceeds, run] at succeeds
+        | true =>
+            have lifted := defineOwnProperty_unblocked_array_shrink
+              unblockedShrinkFixtureHeap next ⟨0⟩ unblockedShrinkFixtureObject ⟨3, true⟩
+              shrinkFixtureUpdate shrinkFixtureUpdate .data (arrayLengthNumber 1) 1
+              ⟨.primitive (.number (arrayLengthNumber 1)), false, false, false⟩
+              (by unfold WellFormed; native_decide) (by rfl) (by rfl) (by rfl) (by rfl)
+              (by rfl) (by rfl) (by rfl) (by decide) (by rfl) run
+            rcases lifted with
+              ⟨properties, finalObject, deleted, lower, strings, symbols, stringOrder, symbolOrder,
+                targetFound, propertiesEq, prototypeEq, extensibleEq, kindEq, lengthFound,
+                otherObjects, writableExact, writableFalse, finalValid⟩
+            have lengthResult : next.arrayLength ⟨0⟩ = .ok 1 := by
+              unfold arrayLength
+              simp only [Bind.bind, Except.bind, targetFound]
+              rw [kindEq]
+              rfl
+            exact ⟨next, rfl, lengthResult, lengthFound, finalValid⟩
+
+-- TODO(theorem): prove general successful `createDataProperty`, iterator advancement, and
+-- `setPrototypeOf` preserve `WellFormed`.
 
 end Heap
 end TSLean.JS

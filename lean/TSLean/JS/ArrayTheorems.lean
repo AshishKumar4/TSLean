@@ -87,9 +87,6 @@ private abbrev assignReturnsTargetCheck : Bool :=
 theorem Copy.objectAssign_returns_target : assignReturnsTargetCheck = true := by
   decide
 
--- TODO(theorem): generalize the executable blocked-shrink property test: descending configurable
--- deletions are preserved, the first blocked index becomes `length - 1`, writability transitions
--- are committed, and all lower descriptors are unchanged.
 -- TODO(theorem): lift the executable copy/slice/spread fresh-top-level and shared-nested-reference
 -- checks to general preservation theorems over valid heaps and effectful getter traces.
 -- TODO(theorem): generalize executable `isWellFormed` preservation checks for array index

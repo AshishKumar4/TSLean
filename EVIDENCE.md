@@ -673,3 +673,77 @@ $ git diff --check
 ```
 
 The deliberate tamper changed only the checked source hash and was rejected at that exact manifest line before canonical regeneration. The 252 audited declarations and complete verification gate support only the theorem statements and premises above. They do not discharge the remaining define/create, prototype, blocked-array-shrink, hook-conditional, or effectful-refinement obligations. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and were not suppressed or changed.
+
+## 2026-08-07 - Array shrink closure
+
+This proof snapshot is based on `ac8ad990e39863a9eedb3ffdcd61b8b2c663aade` on `rebuild/semantic-core`. The heap-allocation input now resolves every source-derived validation and hash from that immutable revision. Its manifest remains byte-for-byte unchanged at SHA-256 `580fb1a872b2884e94a4f320c55af237546a2e5dd7f7c1faf2996595706ead27`, and its explicit generate/check commands remain available with all earlier historical commands. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target `phase2-array-shrink-input.json`.
+
+Review approved these exact public closure theorems under `TSLean.JS.Heap`:
+
+- `defineOwnProperty_blocked_array_shrink`: a well-formed array, a valid normalized and accepted length descriptor, a strict shrink from a writable length, and `defineOwnProperty ... = .ok (false, next)` expose a blocker at or above the requested length. The old blocker is nonconfigurable; every higher old index is configurable and absent from the final properties; indices at or below the blocker, non-index strings, symbols, and both key-order projections are unchanged; the target keeps its prototype and extensibility and receives length `blocked + 1`; every other object is unchanged; accepted writability is exact, including a requested `false`; and `next.WellFormed`.
+- `defineOwnProperty_unblocked_array_shrink`: under the same well-formedness, normalization, acceptance, strict-shrink, and writable-length premises, `defineOwnProperty ... = .ok (true, next)` deletes every old configurable index at or above the requested length. Lower indices, non-index strings, symbols, and both key-order projections are unchanged; the target keeps its prototype and extensibility and receives the requested length; every other object is unchanged; accepted writability is exact, including a requested `false`; and `next.WellFormed`.
+
+`DescriptorUpdate.applyValidatedDescriptor_data_writable` supplies the shared derived fact used by both closure theorems: every successful data-to-data `applyValidatedDescriptor` result satisfies `final.writable = update.writable.apply current.writable`. The private theorems `defineOwnProperty_blocked_array_shrink_nonvacuous` and `defineOwnProperty_unblocked_array_shrink_nonvacuous` provide concrete writable-to-nonwritable witnesses. The blocked fixture returns `false`, commits length `blocked + 1`, exposes a nonwritable synthetic length descriptor, and remains well-formed; the unblocked fixture returns `true`, commits length `1` with a nonwritable synthetic length descriptor, and remains well-formed.
+
+Allocation/delete/prevent preservation remains approved subprogress toward the broader heap obligation. `allocateArrayFromArray_preserves_wellFormed` now covers successful array-input allocation directly, alongside the six previously approved allocation families. `deleteProperty_preserves_wellFormed` covers both returned success values, and `preventExtensions_preserves_wellFormed` covers successful prevention. These results do not close general successful `defineOwnProperty` or `createDataProperty`, so `heap-public-mutation-preservation` remains open. General `setPrototypeOf` preservation and prototype-graph validity remain open under `heap-prototype-preservation`.
+
+Review approved removing exactly `array-blocked-shrink-general`. The canonical formal debt is now exactly six obligations: `heap-public-mutation-preservation`, `heap-prototype-preservation`, `copy-hook-conditional-preservation`, `iterator-hook-conditional-preservation`, `machine-hook-conditional-preservation`, and `abstract-effectful-coercion-refinement`. No prototype, hook-conditional, or effectful-refinement debt was removed. The four executable Float assumptions and all differential metrics are carried forward unchanged as runtime evidence, not proof axioms.
+
+The array-shrink manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:8fc060cf7c23bf15fa7c3b4dd205634b3d973adade5dca050c62a76d106cd8b6`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, proof tests and audit `sha256:abf9a5876478d1d597353267b09cd914012f594122a80a909622b7b2db40303c`, and trust/evidence infrastructure `sha256:941cf23075dd9109bd50a567201224cec01616f12de2ae5881a9f54aee91d05c`. The manifest SHA-256 is `3ce23701f655186504c498bfcdfc901f2ca8adebac5bd6cfad769987cbf960f4`.
+
+Commands and results:
+
+```text
+$ bun run evidence:generate
+$ bun run evidence:check
+
+$ bun run evidence:baseline:check
+$ bun run evidence:primitives:check
+$ bun run evidence:heap:check
+$ bun run evidence:execution:check
+$ bun run evidence:callable:check
+$ bun run evidence:arrays:check
+$ bun run evidence:primitive-ops:check
+$ bun run evidence:abstract-ops:check
+$ bun run evidence:differential:check
+$ bun run evidence:differential-compact:check
+$ bun run evidence:ordered-props:check
+$ bun run evidence:heap-allocation:check
+$ bun run evidence:array-shrink:check
+
+$ bun run differential:check
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+
+$ bun run js:trust
+JS trust checks passed: 259 elaborated proof declarations
+JS trust gate passed: 259 proof declarations
+
+$ bun scripts/check-js-axioms.mjs --self-test
+synthetic environment audit passed
+
+$ /usr/bin/time -p bun run verify
+All matched files use Prettier code style!
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+JS trust checks passed: 259 elaborated proof declarations
+JS trust gate passed: 259 proof declarations
+Test Files  43 passed (43)
+Tests  1633 passed | 8 todo (1641)
+Build completed successfully (172 jobs).
+real 86.91
+user 110.32
+sys 8.42
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 304
+Unpacked size: 3.14MB
+
+$ shasum -a 256 evidence/phase2-heap-allocation-manifest.json evidence/phase2-array-shrink-manifest.json
+580fb1a872b2884e94a4f320c55af237546a2e5dd7f7c1faf2996595706ead27  evidence/phase2-heap-allocation-manifest.json
+3ce23701f655186504c498bfcdfc901f2ca8adebac5bd6cfad769987cbf960f4  evidence/phase2-array-shrink-manifest.json
+
+$ git diff --check
+```
+
+The 259 audited declarations and complete verification gate support only the theorem statements and premises above. They do not discharge general define/create preservation, prototype preservation, any hook-conditional obligation, or effectful coercion refinement. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and were not suppressed or changed.

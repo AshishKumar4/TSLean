@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase2-heap-allocation-manifest.json",
-  "baseRevision": "54ca2aac56c74745a496f23f34176fe521c1c5e3",
+  "outputPath": "evidence/phase2-array-shrink-manifest.json",
+  "baseRevision": "ac8ad990e39863a9eedb3ffdcd61b8b2c663aade",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": { "files": 43, "passed": 1633, "failed": 0, "todo": 8 },
     "lean": { "jobs": 172, "status": "passed" },
     "corpus": { "entries": 102, "red": 102 },
-    "auditedTheorems": 252,
+    "auditedTheorems": 259,
     "differential": {
       "scenarioGroups": 16,
       "fixed": 734,
@@ -60,7 +60,7 @@
     ]
   },
   "formalDebt": {
-    "counts": { "heap": 2, "array": 1, "hookConditional": 3, "effectfulEquivalence": 1, "total": 7 },
+    "counts": { "heap": 2, "hookConditional": 3, "effectfulEquivalence": 1, "total": 6 },
     "obligations": [
       {
         "id": "heap-public-mutation-preservation",
@@ -71,11 +71,6 @@
         "id": "heap-prototype-preservation",
         "area": "heap",
         "statement": "Successful prototype mutation preserves complete Heap.WellFormed and prototype-graph validity."
-      },
-      {
-        "id": "array-blocked-shrink-general",
-        "area": "array",
-        "statement": "Blocked array shrink preserves the required descending deletions, commits the first blocked length and writability transition, and leaves lower descriptors unchanged."
       },
       {
         "id": "copy-hook-conditional-preservation",
@@ -110,7 +105,6 @@
     { "id": "selfhost-typemap-one-hole", "location": "tests/parser-advanced.test.ts" }
   ],
   "validation": {
-    "revision": "ac8ad990e39863a9eedb3ffdcd61b8b2c663aade",
     "testFiles": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.files" },
     "todos": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.todo" },
     "corpus": {
@@ -212,18 +206,9 @@
     ]
   },
   "hashGroups": {
-    "source": {
-      "paths": ["src"],
-      "revision": "ac8ad990e39863a9eedb3ffdcd61b8b2c663aade"
-    },
-    "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "ac8ad990e39863a9eedb3ffdcd61b8b2c663aade"
-    },
-    "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "ac8ad990e39863a9eedb3ffdcd61b8b2c663aade"
-    },
+    "source": { "paths": ["src"] },
+    "jsRuntime": { "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"] },
+    "corpus": { "paths": ["spec/corpus"] },
     "differentialSpecHarness": {
       "paths": [
         "spec/differential",
@@ -233,8 +218,7 @@
         "scripts/generate-differential-manifest.mjs",
         "tests/js-model-differential.test.ts",
         "tests/differential"
-      ],
-      "revision": "ac8ad990e39863a9eedb3ffdcd61b8b2c663aade"
+      ]
     },
     "proofTestsAudit": {
       "paths": [
@@ -243,8 +227,7 @@
         "tests/js-trust.test.ts",
         "tests/lean-fixtures/axiom-audit-synthetic.lean",
         "tests/lean-fixtures/ordered-props-transitions.lean"
-      ],
-      "revision": "ac8ad990e39863a9eedb3ffdcd61b8b2c663aade"
+      ]
     },
     "trustEvidenceInfrastructure": {
       "paths": [
@@ -256,8 +239,7 @@
         "tests/corpus-schema.test.ts",
         "tests/package.test.ts",
         "lean/lakefile.toml"
-      ],
-      "revision": "ac8ad990e39863a9eedb3ffdcd61b8b2c663aade"
+      ]
     }
   }
 }
