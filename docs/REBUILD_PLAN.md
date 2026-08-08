@@ -107,6 +107,11 @@ Compiler             TS AST -> IR -> LeanAST -> printed Lean          [structura
 tslean-cloudflare    Workers / DO / RPC models (separate Lake package)
 ```
 
+The native refinement package is a consumer of `TSLean.JS`: its relations interpret native Lean
+values against the JS heap and value model without changing that model. It does not select a Lean
+representation from TypeScript declarations yet, and no compiler or type-mapping behavior depends
+on it. That selection remains future compiler work requiring explicit refinement evidence.
+
 The core stays domain-neutral. No Gatekeeper, approval-queue, credential or Workshop
 concepts enter it. Cloudflare semantics live in their own package; Gatekeeper policy lives
 further downstream and is out of scope here.

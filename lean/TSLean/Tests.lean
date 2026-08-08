@@ -36,6 +36,8 @@ import TSLean.JS.HeapTests
 import TSLean.JS.PrimitiveScaleTests
 import TSLean.JS.PrimitiveTests
 import TSLean.JS.Tests
+import TSLean.Refinement.AxiomAudit
+import TSLean.Refinement.Tests.Core
 
 open TSLean TSLean.Stdlib.HashMap TSLean.DO
 

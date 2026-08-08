@@ -2,6 +2,7 @@
 
 -- Isolated ECMAScript semantic core
 import TSLean.JS
+import TSLean.Refinement
 
 -- Runtime
 import TSLean.Runtime.Basic

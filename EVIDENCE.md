@@ -1018,3 +1018,57 @@ Unpacked size: 3.70MB
 ```
 
 The optional benchmark is a machine-local smoke measurement, not a performance guarantee. The zero-debt manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:0b40e99e3e07eb37f91190aa6d27d013c4e7d497d87c61bc1d5546f8fa0b0df1`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, proof tests and audit `sha256:f29e2d6f841359a7361d1596d5dc8f94799b76736bd69472880d13415e09dcfe`, and trust/evidence infrastructure `sha256:6c992b11d0d2cbbee42a997ac9fdb997f772990aa8d6438f3fe2abe2f1bbaac4`. The frozen hook/copy manifest SHA-256 is `47f4d9473c30c2b2f2f4a8b685de99cc8d49048f1e4bf09ae1c87a8ad57f303f`; the zero-debt manifest SHA-256 is `b6d417de5073ffe328dec868ac48345bd73089a007be71a38050e54359780f67`.
+
+## 2026-08-08 - Refinement core
+
+This snapshot is based on `6c1a0861651059f44ebfa99ef2cb8e082d419bbc` on `rebuild/semantic-core`. The zero-debt input now resolves its validations and every hash group from that immutable revision, while its manifest remains byte-for-byte unchanged at SHA-256 `b6d417de5073ffe328dec868ac48345bd73089a007be71a38050e54359780f67`. Its explicit generate/check commands and all earlier inputs, manifests, ledger entries, and historical commands remain intact. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target `phase3-refinement-core-input.json`.
+
+The exact public core APIs are `Refinement` with `Rel`, `valueValid`, and exact-extension `stable`; `Refinement.UniqueDecode`; `Codec` with typed `encode` and `decode` faults plus `encode_sound` and `decode_sound`; and `LawfulCodec` with `encode_total` and `complete`. `LawfulCodec.roundtrip` follows from those laws. `LawfulCodec.not_of_encode_always_errors` rules out a vacuous codec that obtains soundness only by rejecting every native value. No concrete Float, String, Bool, Array, or closed-record codec is claimed by this snapshot.
+
+The evidence authority model exposes `Evidence.proved`, `Evidence.ofGuard`, and `Evidence.assumed`. Proved and guarded evidence contain a proof; assumed evidence deliberately returns `ProofStatus.none`. `Assumption.create` derives stable IDs and rejects empty metadata. `ValidAssumptions.create` requires a nonempty, valid set with unique IDs. `Guard.create` binds an executable check to its soundness theorem, and `GuardReceipt` is indexed by the guard and checked value. `Evidence.kind`, `metadata`, `proof?`, `and`, and `map` preserve the distinction between authority and canonical proof-free provenance. Assumption, guard, receipt, metadata, and evidence constructors are private, so callers cannot fabricate authority or invalid metadata.
+
+`Heap.ExactExtension` requires both heaps to be well formed, monotone size, and exact preservation of every old object record. It is reflexive and transitive, implies the existing JS heap continuity relation, preserves old value validity, and frames old own-property reads, own-key enumeration, object kind, and prototype. Exact-extension theorems cover all append-only allocator families: ordinary objects, primitive wrappers, list- and array-input arrays, functions, constructor/prototype pairs, and array iterators.
+
+The refinement trust review recursively scans the refinement tree without following symlinks, rejects forbidden declaration tokens, legacy runtime imports, non-semantic imports into semantic modules, and namespace-prefix bypasses, then audits the elaborated environment against only `propext`, `Classical.choice`, and `Quot.sound`. It found 61 refinement proof declarations. The separately maintained production registry requires 48 exact declaration names and has source digest `sha256:11f1002061e9fdcda0aa87ab475dad53400ead9992642a9338fa14635349a2b7`. Current evidence pins the audited count, required count, and digest; the trust gate validates all three. Inputs that predate this optional `refinementProofs` field remain valid and frozen.
+
+This is a refinement foundation, not compiler consumption. `TSLean.Refinement.Execution` remains an explicitly empty reservation until both sides and their observation boundary exist. The compiler, IR, lowering, representation selection, and generated output do not consume these APIs yet. Canonical iterables and `IteratorClose`, promises, derived `super`, the 26 model-pending corpus entries, and all eight compiler todos remain semantic gaps. The four Float executable assumptions are carried forward unchanged. There is no `formalDebt` field in this snapshot.
+
+Measured commands and results:
+
+```text
+$ bun run evidence:generate
+$ bun run evidence:check
+
+$ bun run evidence:check
+Cannot generate evidence manifest: evidence/phase3-refinement-core-manifest.json is stale at line 129
+-     "source": "sha256:0a74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3",
++     "source": "sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3",
+
+$ bun run js:trust
+JS trust checks passed: 591 elaborated proof declarations
+JS trust gate passed: 591 proof declarations
+Refinement trust gate passed: 61 audited proof declarations; 48 required production theorems
+
+$ bun run test
+Test Files  43 passed (43)
+Tests  1636 passed | 8 todo (1644)
+
+$ bun run verify
+All matched files use Prettier code style!
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+JS trust checks passed: 591 elaborated proof declarations
+JS trust gate passed: 591 proof declarations
+Refinement trust gate passed: 61 audited proof declarations; 48 required production theorems
+Test Files  43 passed (43)
+Tests  1636 passed | 8 todo (1644)
+Build completed successfully (181 jobs).
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 315
+Unpacked size: 3.76MB
+
+$ git diff --check
+```
+
+Every historical evidence check from `evidence:baseline:check` through `evidence:zero-debt:check` and the current `evidence:refinement-core:check` passed. A separately tampered registry digest was rejected with the measured digest above before restoration. The refinement-core manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:0b40e99e3e07eb37f91190aa6d27d013c4e7d497d87c61bc1d5546f8fa0b0df1`, refinement runtime and barrel `sha256:645fafc4af75e614d0bb8692ec85ef0b7a629ca7f1c16c75c81c101f2f533f10`, refinement tests, audit, and registry `sha256:6b99c7438e1f6664470b52838ab09a6ee618150f9ef0ed07d6e667308a3c2c59`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, and trust/evidence infrastructure `sha256:1297fba5bfffc9ea635948fb9dd149a219de66aa7325eb7f768878b3026d3bdb`. The manifest SHA-256 is `c3e2016e2383e28d0dfa9b94d1602f5b66792ad46638839b1ea211f28446ce9b`.

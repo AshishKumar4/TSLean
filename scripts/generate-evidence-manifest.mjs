@@ -250,6 +250,22 @@ function validateExecutableAssumptions(value) {
   }
 }
 
+function validateRefinementProofs(value) {
+  const proofs = object(value, 'refinementProofs');
+  exactKeys(proofs, ['audited', 'required', 'registryHash'], 'refinementProofs');
+  for (const key of ['audited', 'required']) {
+    if (!Number.isSafeInteger(proofs[key]) || proofs[key] <= 0) {
+      fail(`refinementProofs.${key} must be a positive integer`);
+    }
+  }
+  if (proofs.required > proofs.audited) {
+    fail('refinementProofs.required must not exceed refinementProofs.audited');
+  }
+  if (typeof proofs.registryHash !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(proofs.registryHash)) {
+    fail('refinementProofs.registryHash must be a lowercase SHA-256 digest');
+  }
+}
+
 function selectedFiles(config, label) {
   const directory = repositoryPath(config.directory, `${label}.directory`);
   if (typeof config.suffix !== 'string' || config.suffix.length === 0) fail(`${label}.suffix must be non-empty`);
@@ -434,6 +450,7 @@ const expectedKeys = [
 ];
 if (input.formalDebt !== undefined) expectedKeys.push('formalDebt');
 if (input.executableAssumptions !== undefined) expectedKeys.push('executableAssumptions');
+if (input.refinementProofs !== undefined) expectedKeys.push('refinementProofs');
 exactKeys(input, expectedKeys, 'input');
 if (input.schemaVersion !== 1) fail('unsupported evidence input schema');
 if (typeof input[revisionKey] !== 'string' || input[revisionKey].length === 0) fail(`${revisionKey} must be non-empty`);
@@ -442,6 +459,7 @@ if (!Array.isArray(input.knownTodos)) fail('knownTodos must be an array');
 validateCounts(input.counts);
 if (input.formalDebt !== undefined) validateFormalDebt(input.formalDebt);
 if (input.executableAssumptions !== undefined) validateExecutableAssumptions(input.executableAssumptions);
+if (input.refinementProofs !== undefined) validateRefinementProofs(input.refinementProofs);
 
 const branch = textCommand('git', ['branch', '--show-current']);
 if (branch !== input.branch) fail(`expected branch ${input.branch}, found ${branch || '<detached HEAD>'}`);
@@ -466,6 +484,7 @@ const manifest = {
     lake: textCommand('lake', ['--version'], join(root, 'lean')),
   },
   counts: input.counts,
+  ...(input.refinementProofs === undefined ? {} : { refinementProofs: input.refinementProofs }),
   ...(input.executableAssumptions === undefined ? {} : { executableAssumptions: input.executableAssumptions }),
   ...(input.formalDebt === undefined ? {} : { formalDebt: input.formalDebt }),
   knownTodos,

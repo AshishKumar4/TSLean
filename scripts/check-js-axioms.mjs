@@ -1,8 +1,11 @@
 import { spawnSync } from 'node:child_process';
-import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { argv, stdout } from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { refinementProofRegistry } from './refinement-proof-registry.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const allowedAxioms = new Set(['propext', 'Classical.choice', 'Quot.sound']);
@@ -81,6 +84,7 @@ function readExpectedAuditCount(path) {
   ];
   if (input.formalDebt !== undefined) expectedKeys.push('formalDebt');
   if (input.executableAssumptions !== undefined) expectedKeys.push('executableAssumptions');
+  if (input.refinementProofs !== undefined) expectedKeys.push('refinementProofs');
   exactKeys(input, expectedKeys, 'evidence input');
   if (input.schemaVersion !== 1) fail('unsupported evidence input schema');
   for (const key of ['outputPath', 'baseRevision', 'branch']) {
@@ -92,6 +96,24 @@ function readExpectedAuditCount(path) {
   if (input.formalDebt !== undefined) object(input.formalDebt, 'evidence input formalDebt');
   if (input.executableAssumptions !== undefined) {
     object(input.executableAssumptions, 'evidence input executableAssumptions');
+  }
+  let refinementProofs;
+  if (input.refinementProofs !== undefined) {
+    refinementProofs = object(input.refinementProofs, 'evidence input refinementProofs');
+    exactKeys(refinementProofs, ['audited', 'required', 'registryHash'], 'evidence input refinementProofs');
+    for (const key of ['audited', 'required']) {
+      nonNegativeInteger(refinementProofs[key], `refinementProofs.${key}`);
+      if (refinementProofs[key] === 0) fail(`refinementProofs.${key} must be positive`);
+    }
+    if (refinementProofs.required > refinementProofs.audited) {
+      fail('refinementProofs.required must not exceed refinementProofs.audited');
+    }
+    if (
+      typeof refinementProofs.registryHash !== 'string' ||
+      !/^sha256:[0-9a-f]{64}$/.test(refinementProofs.registryHash)
+    ) {
+      fail('refinementProofs.registryHash must be a lowercase SHA-256 digest');
+    }
   }
   const counts = object(input.counts, 'counts');
   const countKeys = ['tests', 'lean', 'corpus', 'auditedTheorems', 'lint', 'build'];
@@ -115,7 +137,12 @@ function readExpectedAuditCount(path) {
   if (counts.differential !== undefined) countObject(counts.differential, 'counts.differential');
   if (counts.lint !== 'passed') fail('counts.lint must be passed');
   if (counts.build !== 'passed') fail('counts.build must be passed');
-  return counts.auditedTheorems;
+  return { js: counts.auditedTheorems, refinement: refinementProofs };
+}
+
+function refinementRegistryHash() {
+  const source = readFileSync(join(root, 'scripts/refinement-proof-registry.mjs'));
+  return `sha256:${createHash('sha256').update(source).digest('hex')}`;
 }
 
 export function parseEnvironmentAudit(output) {
@@ -172,9 +199,15 @@ function stripLeanComments(source) {
 
 function moduleRole(name) {
   const stem = name.endsWith('.lean') ? name.slice(0, -'.lean'.length) : name;
-  if (stem.split('.').includes('Oracle')) return 'oracle';
-  const leaf = stem.split('.').at(-1);
+  const segments = stem.split('.');
+  if (segments.includes('Oracle')) return 'oracle';
+  if (segments.includes('Tests')) return 'support';
+  const leaf = segments.at(-1);
   return /(?:Tests|Audit|Meta)$/.test(leaf) ? 'support' : 'semantic';
+}
+
+function inNamespace(name, namespace) {
+  return name === namespace || name.startsWith(`${namespace}.`);
 }
 
 function sourceImports(source) {
@@ -200,11 +233,55 @@ function validateProductionBarrel(source) {
   validateSemanticSource('JS.lean', source);
 }
 
+function validateRefinementSource(file, source, semantic = true) {
+  const forbidden = /\b(sorry|admit|axiom|opaque|partial|unsafe|noncomputable)\b/;
+  const stripped = stripLeanComments(source);
+  const violation = stripped.split('\n').find((line) => forbidden.test(line));
+  if (violation) fail(`${file} contains forbidden declaration token: ${violation.trim()}`);
+  for (const imported of sourceImports(source)) {
+    if (inNamespace(imported, 'TSLean.Runtime')) {
+      fail(`${file} imports legacy runtime module ${imported}`);
+    }
+    if (semantic && inNamespace(imported, 'TSLean.Refinement') && moduleRole(imported) !== 'semantic') {
+      fail(`${file} imports non-semantic refinement module ${imported}`);
+    }
+    if (semantic && inNamespace(imported, 'TSLean.JS') && moduleRole(imported) !== 'semantic') {
+      fail(`${file} imports non-semantic JS module ${imported}`);
+    }
+    if (
+      !inNamespace(imported, 'TSLean.Refinement') &&
+      !inNamespace(imported, 'TSLean.JS') &&
+      !inNamespace(imported, 'Init') &&
+      !inNamespace(imported, 'Std')
+    ) {
+      fail(`${file} imports non-isolated module ${imported}`);
+    }
+  }
+}
+
+export function leanFilesRecursively(directory) {
+  const files = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isSymbolicLink()) fail(`refinement source tree contains symlink: ${path}`);
+    else if (entry.isDirectory()) files.push(...leanFilesRecursively(path));
+    else if (entry.isFile() && entry.name.endsWith('.lean')) files.push(path);
+  }
+  return files;
+}
+
 function checkSources() {
   const jsDirectory = join(root, 'lean/TSLean/JS');
   const files = readdirSync(jsDirectory).filter((name) => name.endsWith('.lean') && moduleRole(name) === 'semantic');
   for (const name of files) validateSemanticSource(name, readFileSync(join(jsDirectory, name), 'utf8'));
   validateProductionBarrel(readFileSync(join(root, 'lean/TSLean/JS.lean'), 'utf8'));
+  const refinementDirectory = join(root, 'lean/TSLean/Refinement');
+  for (const file of leanFilesRecursively(refinementDirectory)) {
+    const relative = file.slice(refinementDirectory.length + 1);
+    const module = `TSLean.Refinement.${relative.slice(0, -'.lean'.length).split(sep).join('.')}`;
+    validateRefinementSource(relative, readFileSync(file, 'utf8'), moduleRole(module) === 'semantic');
+  }
+  validateRefinementSource('Refinement.lean', readFileSync(join(root, 'lean/TSLean/Refinement.lean'), 'utf8'));
   const heap = readFileSync(join(jsDirectory, 'Heap.lean'), 'utf8');
   const orderedProps = readFileSync(join(jsDirectory, 'OrderedProps.lean'), 'utf8');
   if (!/structure OrderedProps where\s+private mk ::/.test(orderedProps)) fail('OrderedProps constructor is public');
@@ -214,6 +291,35 @@ function checkSources() {
     fail('OrderedProps mutation is public');
   }
   if (/\bdef (setProperties|setExtensible)\b/.test(heap)) fail('raw heap mutation is public');
+}
+
+function readRefinementRegistry(registry = refinementProofRegistry) {
+  exactKeys(registry, ['schemaVersion', 'requiredDeclarations'], 'refinement proof registry');
+  if (registry.schemaVersion !== 1) fail('unsupported refinement proof registry schema');
+  if (!Array.isArray(registry.requiredDeclarations) || registry.requiredDeclarations.length === 0) {
+    fail('refinement proof registry requiredDeclarations must be nonempty');
+  }
+  const sorted = [...registry.requiredDeclarations].sort();
+  if (JSON.stringify(registry.requiredDeclarations) !== JSON.stringify(sorted)) {
+    fail('refinement proof registry requiredDeclarations must be sorted');
+  }
+  const required = new Set();
+  for (const declaration of registry.requiredDeclarations) {
+    if (typeof declaration !== 'string' || !inNamespace(declaration, 'TSLean.Refinement')) {
+      fail('refinement proof registry contains an invalid declaration name');
+    }
+    if (required.has(declaration)) fail(`duplicate refinement proof registry declaration: ${declaration}`);
+    required.add(declaration);
+  }
+  return required;
+}
+
+function enforceRefinementRegistry(records, registry = refinementProofRegistry) {
+  const required = readRefinementRegistry(registry);
+  for (const declaration of required) {
+    if (!records.has(declaration)) fail(`required refinement proof declaration is missing: ${declaration}`);
+  }
+  return required.size;
 }
 
 function runLeanAudit(file, allowDiagnostics = false) {
@@ -230,6 +336,30 @@ function runLeanAudit(file, allowDiagnostics = false) {
         .join('\n')
     : result.stdout;
   return { records: parseEnvironmentAudit(output), stderr: result.stderr };
+}
+
+function runRefinementAudit() {
+  const refinementDirectory = join(root, 'lean/TSLean/Refinement');
+  const discovered = leanFilesRecursively(refinementDirectory)
+    .map((file) => file.slice(refinementDirectory.length + 1))
+    .filter((relative) => relative !== 'AxiomAudit.lean')
+    .map((relative) => `TSLean.Refinement.${relative.slice(0, -'.lean'.length).split(sep).join('.')}`);
+  const imports = [
+    'TSLean.Refinement',
+    ...discovered.filter((name) => moduleRole(name) === 'semantic').sort(),
+    ...discovered.filter((name) => moduleRole(name) !== 'semantic').sort(),
+  ];
+  const directory = mkdtempSync(join(tmpdir(), 'tslean-refinement-audit-'));
+  const file = join(directory, 'RefinementAudit.lean');
+  try {
+    writeFileSync(
+      file,
+      `import TSLean.JS.AxiomAuditMeta\n${imports.map((name) => `import ${name}`).join('\n')}\n#audit_proofs TSLean.Refinement\n`,
+    );
+    return runLeanAudit(file);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 function selfTest() {
@@ -252,6 +382,10 @@ function selfTest() {
   };
   expectDisallowed('TSLean.AuditSynthetic.sorryTheorem', 'sorryAx');
   expectDisallowed('TSLean.AuditSynthetic.customAxiom', 'TSLean.AuditSynthetic.customAxiom');
+  const recursiveRefinementFiles = leanFilesRecursively(join(root, 'lean/TSLean/Refinement'));
+  if (!recursiveRefinementFiles.some((file) => file.endsWith(join('Tests', 'Core.lean')))) {
+    fail('recursive refinement source discovery omitted nested test module');
+  }
   const expectSourceFailure = (label, check, expected) => {
     try {
       check();
@@ -261,10 +395,37 @@ function selfTest() {
     }
     fail(`synthetic ${label} was accepted`);
   };
+  const requiredProofs = refinementProofRegistry.requiredDeclarations;
+  const completeProofRecords = new Map(requiredProofs.map((name) => [name, []]));
+  enforceRefinementRegistry(completeProofRecords);
+  const deletedProofRecords = new Map(completeProofRecords);
+  deletedProofRecords.delete(requiredProofs[0]);
+  expectSourceFailure(
+    'refinement registry deletion',
+    () => enforceRefinementRegistry(deletedProofRecords),
+    `required refinement proof declaration is missing: ${requiredProofs[0]}`,
+  );
+  const substitutedProofRecords = new Map(deletedProofRecords);
+  substitutedProofRecords.set('TSLean.Refinement.SubstitutedTheorem', []);
+  expectSourceFailure(
+    'refinement registry substitution',
+    () => enforceRefinementRegistry(substitutedProofRecords),
+    `required refinement proof declaration is missing: ${requiredProofs[0]}`,
+  );
   expectSourceFailure(
     'production test import',
     () => validateProductionBarrel('import TSLean.JS.ExecutionTests\n'),
     'imports non-semantic JS module TSLean.JS.ExecutionTests',
+  );
+  expectSourceFailure(
+    'refinement prefix bypass',
+    () => validateRefinementSource('Core.lean', 'import TSLean.RefinementBackdoor.Core\n'),
+    'imports non-isolated module TSLean.RefinementBackdoor.Core',
+  );
+  expectSourceFailure(
+    'JS prefix bypass',
+    () => validateRefinementSource('Core.lean', 'import TSLean.JSBackdoor.Value\n'),
+    'imports non-isolated module TSLean.JSBackdoor.Value',
   );
   expectSourceFailure(
     'indented production test import',
@@ -292,6 +453,23 @@ function selfTest() {
     'imports non-semantic JS module TSLean.JS.Oracle.Protocol',
   );
   validateProductionBarrel('  import TSLean.JS.Value\n');
+  expectSourceFailure(
+    'refinement legacy runtime import',
+    () => validateRefinementSource('Core.lean', 'import TSLean.Runtime.Basic\n'),
+    'imports legacy runtime module TSLean.Runtime.Basic',
+  );
+  expectSourceFailure(
+    'refinement test import',
+    () => validateRefinementSource('Refinement.lean', 'import TSLean.Refinement.Tests.Core\n'),
+    'imports non-semantic refinement module TSLean.Refinement.Tests.Core',
+  );
+  expectSourceFailure(
+    'nested refinement test import',
+    () => validateRefinementSource('Refinement.lean', 'import TSLean.Refinement.Nested.Tests.Core\n'),
+    'imports non-semantic refinement module TSLean.Refinement.Nested.Tests.Core',
+  );
+  validateRefinementSource('Refinement.lean', 'import TSLean.Refinement.Core\n');
+  validateRefinementSource('Support.lean', 'import TSLean.Refinement.Tests.Core\n', false);
   validateProductionBarrel(`
     -- import TSLean.JS.ExecutionTests
     /- import TSLean.JS.AxiomAuditMeta -/
@@ -310,16 +488,44 @@ function selfTest() {
 function main() {
   const args = parseArgs(argv.slice(2));
   if (args.selfTest) return selfTest();
-  const expectedCount = readExpectedAuditCount(args.evidence);
+  const expected = readExpectedAuditCount(args.evidence);
   checkSources();
   const { records, stderr } = runLeanAudit('TSLean/JS/AxiomAudit.lean');
   if (stderr.trim().length > 0) fail(`unexpected Lean audit stderr: ${stderr.trim()}`);
   enforceAllowlist(records);
   stdout.write(`JS trust checks passed: ${records.size} elaborated proof declarations\n`);
-  if (records.size !== expectedCount) {
-    fail(`expected ${expectedCount} audited proof declarations, found ${records.size}`);
+  if (records.size !== expected.js) {
+    fail(`expected ${expected.js} audited proof declarations, found ${records.size}`);
   }
   stdout.write(`JS trust gate passed: ${records.size} proof declarations\n`);
+  const refinementAudit = runRefinementAudit();
+  if (refinementAudit.stderr.trim().length > 0) {
+    fail(`unexpected refinement audit stderr: ${refinementAudit.stderr.trim()}`);
+  }
+  enforceAllowlist(refinementAudit.records);
+  const requiredRefinementProofs = enforceRefinementRegistry(refinementAudit.records);
+  if (expected.refinement !== undefined) {
+    if (refinementAudit.records.size !== expected.refinement.audited) {
+      fail(
+        `expected ${expected.refinement.audited} audited refinement proof declarations, ` +
+          `found ${refinementAudit.records.size}`,
+      );
+    }
+    if (requiredRefinementProofs !== expected.refinement.required) {
+      fail(
+        `expected ${expected.refinement.required} required refinement proof declarations, ` +
+          `found ${requiredRefinementProofs}`,
+      );
+    }
+    const registryHash = refinementRegistryHash();
+    if (registryHash !== expected.refinement.registryHash) {
+      fail(`expected refinement registry ${expected.refinement.registryHash}, found ${registryHash}`);
+    }
+  }
+  stdout.write(
+    `Refinement trust gate passed: ${refinementAudit.records.size} audited proof declarations; ` +
+      `${requiredRefinementProofs} required production theorems\n`,
+  );
 }
 
 if (import.meta.main) main();

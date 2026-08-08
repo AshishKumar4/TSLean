@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase2-zero-debt-manifest.json",
-  "baseRevision": "d68dab44af677733dd23b15c0ca16937ebc3d2ae",
+  "outputPath": "evidence/phase3-refinement-core-manifest.json",
+  "baseRevision": "6c1a0861651059f44ebfa99ef2cb8e082d419bbc",
   "branch": "rebuild/semantic-core",
   "counts": {
-    "tests": { "files": 43, "passed": 1633, "failed": 0, "todo": 8 },
-    "lean": { "jobs": 174, "status": "passed" },
+    "tests": { "files": 43, "passed": 1636, "failed": 0, "todo": 8 },
+    "lean": { "jobs": 181, "status": "passed" },
     "corpus": { "entries": 102, "red": 102 },
     "auditedTheorems": 591,
     "differential": {
@@ -28,6 +28,11 @@
     },
     "lint": "passed",
     "build": "passed"
+  },
+  "refinementProofs": {
+    "audited": 61,
+    "required": 48,
+    "registryHash": "sha256:11f1002061e9fdcda0aa87ab475dad53400ead9992642a9338fa14635349a2b7"
   },
   "executableAssumptions": {
     "statement": "These are executable trusted-computing-base assumptions, not proof axioms. No theorem claims that these Lean runtime primitives implement ECMAScript correctly.",
@@ -70,7 +75,6 @@
     { "id": "selfhost-typemap-one-hole", "location": "tests/parser-advanced.test.ts" }
   ],
   "validation": {
-    "revision": "6c1a0861651059f44ebfa99ef2cb8e082d419bbc",
     "testFiles": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.files" },
     "todos": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.todo" },
     "corpus": {
@@ -172,15 +176,28 @@
     ]
   },
   "hashGroups": {
-    "source": { "paths": ["src"], "revision": "6c1a0861651059f44ebfa99ef2cb8e082d419bbc" },
-    "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "6c1a0861651059f44ebfa99ef2cb8e082d419bbc"
+    "source": { "paths": ["src"] },
+    "jsRuntime": { "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"] },
+    "refinementRuntimeAndBarrel": {
+      "paths": [
+        "lean/TSLean/Refinement/Core.lean",
+        "lean/TSLean/Refinement/Evidence.lean",
+        "lean/TSLean/Refinement/Execution.lean",
+        "lean/TSLean/Refinement/Heap.lean",
+        "lean/TSLean/Refinement.lean"
+      ]
     },
-    "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "6c1a0861651059f44ebfa99ef2cb8e082d419bbc"
+    "refinementTestsAuditRegistry": {
+      "paths": [
+        "lean/TSLean/Refinement/Tests",
+        "lean/TSLean/Refinement/AxiomAudit.lean",
+        "scripts/refinement-proof-registry.mjs",
+        "tests/js-trust.test.ts",
+        "tests/lean-fixtures/refinement-invalid-guard-receipt.lean",
+        "tests/lean-fixtures/refinement-private-constructors.lean"
+      ]
     },
+    "corpus": { "paths": ["spec/corpus"] },
     "differentialSpecHarness": {
       "paths": [
         "spec/differential",
@@ -190,18 +207,7 @@
         "scripts/generate-differential-manifest.mjs",
         "tests/js-model-differential.test.ts",
         "tests/differential"
-      ],
-      "revision": "6c1a0861651059f44ebfa99ef2cb8e082d419bbc"
-    },
-    "proofTestsAudit": {
-      "paths": [
-        "lean/TSLean/JS/AxiomAudit.lean",
-        "lean/TSLean/JS/AxiomAuditMeta.lean",
-        "tests/js-trust.test.ts",
-        "tests/lean-fixtures/axiom-audit-synthetic.lean",
-        "tests/lean-fixtures/ordered-props-transitions.lean"
-      ],
-      "revision": "6c1a0861651059f44ebfa99ef2cb8e082d419bbc"
+      ]
     },
     "trustEvidenceInfrastructure": {
       "paths": [
@@ -212,9 +218,10 @@
         "tests/helpers/json-schema.ts",
         "tests/corpus-schema.test.ts",
         "tests/package.test.ts",
+        "lean/TSLean.lean",
+        "lean/TSLean/Tests.lean",
         "lean/lakefile.toml"
-      ],
-      "revision": "6c1a0861651059f44ebfa99ef2cb8e082d419bbc"
+      ]
     }
   }
 }
