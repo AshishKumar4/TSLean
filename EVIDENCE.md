@@ -1072,3 +1072,51 @@ $ git diff --check
 ```
 
 Every historical evidence check from `evidence:baseline:check` through `evidence:zero-debt:check` and the current `evidence:refinement-core:check` passed. A separately tampered registry digest was rejected with the measured digest above before restoration. The refinement-core manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:0b40e99e3e07eb37f91190aa6d27d013c4e7d497d87c61bc1d5546f8fa0b0df1`, refinement runtime and barrel `sha256:645fafc4af75e614d0bb8692ec85ef0b7a629ca7f1c16c75c81c101f2f533f10`, refinement tests, audit, and registry `sha256:6b99c7438e1f6664470b52838ab09a6ee618150f9ef0ed07d6e667308a3c2c59`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, and trust/evidence infrastructure `sha256:1297fba5bfffc9ea635948fb9dd149a219de66aa7325eb7f768878b3026d3bdb`. The manifest SHA-256 is `c3e2016e2383e28d0dfa9b94d1602f5b66792ad46638839b1ea211f28446ce9b`.
+
+## 2026-08-08 - Primitive refinements
+
+This snapshot is based on `e0665cdb7f2fae5e9092ba3dacb96ae26edf2227` on `rebuild/semantic-core`. The refinement-core input now resolves its validations and every hash group from that immutable revision, while its manifest remains byte-for-byte unchanged at SHA-256 `c3e2016e2383e28d0dfa9b94d1602f5b66792ad46638839b1ea211f28446ce9b`. Its explicit generate/check commands and all earlier inputs, manifests, ledger entries, and historical commands remain intact. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target `phase3-primitive-refinements-input.json`.
+
+`TSLean.Refinement.Bool` exposes the typed `DecodeFault.expectedBoolean`, exact heap-independent `refinement`, heap-neutral `encode`, domain-checking `decode`, and `codec`. Its proved laws establish exact relation and unique decoding, exact encode/decode behavior, rejection of non-Boolean primitives and objects, `LawfulCodec`, exact heap-neutral roundtrip, and commutation for truthiness, strict equality, SameValue, SameValueZero, loose equality, logical negation, and conditional selection.
+
+`TSLean.Refinement.BigInt` exposes the typed `DecodeFault.expectedBigInt`, exact heap-independent `refinement`, heap-neutral `encode`, domain-checking `decode`, and `codec`. Its proved laws establish exact relation and unique decoding, exact encode/decode behavior, rejection of non-BigInt primitives and objects, `LawfulCodec`, exact heap-neutral roundtrip, and commutation for truthiness, strict equality, SameValue, SameValueZero, loose equality, decimal string conversion, addition, subtraction, multiplication, all four relational operators, truncating division and remainder, and both zero-divisor faults. `TSLean.Refinement.Primitive.jsm_pure_neutral` proves that lifting a pure result leaves the complete machine unchanged.
+
+The refinement trust review found 102 elaborated proof declarations and required 89 exact production theorem names. The registry source digest is `sha256:5741008959cf36417907c55f7777d7ab9c1c59265e6a90d1367c57efa67b94ed`; the current trust gate validates the audited count, required count, and digest. The Bool and BigInt evidence is theorem-backed: it introduces no `Evidence.assumed` authority and no primitive-specific executable assumption. The four existing Float executable assumptions remain global and unchanged. There is no `formalDebt` field.
+
+This snapshot adds proof-carrying primitive refinements, not compiler consumption. The compiler, IR, lowering, representation selection, and generated output do not import or use the Bool or BigInt codecs or commutation laws. No compiler source was changed. Float, String, Array, and closed-record codecs remain unclaimed, and `TSLean.Refinement.Execution` remains reserved. The existing model gaps, 26 model-pending corpus entries, and eight compiler todos remain unchanged.
+
+Measured commands and results:
+
+```text
+$ bun run evidence:generate
+$ bun run evidence:check
+$ bun run evidence:refinement-core:check
+
+$ bun run js:trust
+JS trust checks passed: 591 elaborated proof declarations
+JS trust gate passed: 591 proof declarations
+Refinement trust gate passed: 102 audited proof declarations; 89 required production theorems
+
+$ bun run test
+Test Files  43 passed (43)
+Tests  1636 passed | 8 todo (1644)
+
+$ bun run verify
+All matched files use Prettier code style!
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+JS trust checks passed: 591 elaborated proof declarations
+JS trust gate passed: 591 proof declarations
+Refinement trust gate passed: 102 audited proof declarations; 89 required production theorems
+Test Files  43 passed (43)
+Tests  1636 passed | 8 todo (1644)
+Build completed successfully (183 jobs).
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 317
+Unpacked size: 3.78MB
+
+$ git diff --check
+```
+
+Every evidence check from `evidence:baseline:check` through `evidence:refinement-core:check` and the current `evidence:primitive-refinements:check` passed. The primitive-refinements manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:0b40e99e3e07eb37f91190aa6d27d013c4e7d497d87c61bc1d5546f8fa0b0df1`, refinement runtime and barrel `sha256:60b4916485c382924729d93865cc8a72c1539216224236dc563f5c3a723da030`, refinement tests, audit, and registry `sha256:733a74e422c5726fe43c381f792eea6d0a2a9b13d4acdf7aaee7f8e04b5973c6`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, and trust/evidence infrastructure `sha256:9650b8b60a6301b5c5469f26bffc6a46fd72dbce4585f66cc6e579465c1661c3`. The manifest SHA-256 is `205267d456c3f9a827b4bbaee08fc01108ff77b0565d69da1fb648bfc50ee91c`.
