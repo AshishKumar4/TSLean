@@ -1,5 +1,6 @@
 import TSLean.JS.ArrayCopy
 import TSLean.JS.Copy
+import TSLean.JS.Control
 
 namespace TSLean.JS
 
@@ -58,6 +59,29 @@ private abbrev arrayIteratorTargetIdentityCheck : Bool :=
 theorem Heap.array_iterator_target_identity : arrayIteratorTargetIdentityCheck = true := by
   decide
 
+private abbrev arrayIteratorPreservationBranchesCheck : Bool :=
+  match Heap.empty.allocateArray [some (.primitive .undefined)] with
+  | .error _ => false
+  | .ok (target, heap) =>
+      match heap.allocateArrayIterator target with
+      | .error _ => false
+      | .ok (iterator, heap) =>
+          match heap.advanceArrayIterator iterator with
+          | .ok (some (observedTarget, 0), incremented) =>
+              observedTarget == target && incremented.isWellFormed &&
+              match incremented.advanceArrayIterator iterator with
+              | .ok (none, completed) => completed.isWellFormed &&
+                  match completed.advanceArrayIterator iterator with
+                  | .ok (none, unchanged) => unchanged.isWellFormed && unchanged.size == completed.size
+                  | _ => false
+              | _ => false
+          | _ => false
+
+/-- Concrete witnesses cover cursor increment, current-length completion, and already-done identity. -/
+private theorem array_iterator_preservation_branches_nonvacuous :
+    arrayIteratorPreservationBranchesCheck = true := by
+  native_decide
+
 /-- Exact array-length encoding roundtrips both index and length upper boundaries. -/
 theorem Heap.array_length_boundary_roundtrips :
     validArrayLength? (arrayLengthNumber 4294967294) = some 4294967294 ∧
@@ -74,6 +98,565 @@ private abbrev proofPlatform : Platform :=
 
 private abbrev proofHook : BodyHook proofPlatform := fun _ _ _ => pure ()
 
+private abbrev throwingProofHook : BodyHook proofPlatform := fun _ _ _ =>
+  JSM.throwJS (.primitive .undefined)
+
+private def allocateClosure (environment : EnvId) : JSM proofPlatform Unit := fun machine =>
+  if environment.value < machine.environments.size then
+    match machine.heap.allocateFunction environment .ordinary false none with
+    | .ok (_, heap) => .done (.normal ()) (machine.setHeap heap)
+    | .error fault => .fault (.runtime (.heap fault)) machine
+  else .fault (.runtime (.invalidEnvironment environment)) machine
+
+private theorem allocateClosure_preservesResults (environment : EnvId) :
+    JSM.PreservesResults (fun (_ : Unit) (_ : Machine proofPlatform) => True)
+      (allocateClosure environment) := by
+  constructor
+  · intro machine valid
+    unfold allocateClosure
+    split
+    next environmentValid =>
+      cases allocated : machine.heap.allocateFunction environment .ordinary false none with
+      | error fault => exact ⟨valid, machine.continuesFrom_refl⟩
+      | ok result =>
+          obtain ⟨ref, heap⟩ := result
+          exact Machine.allocateFunction_preserves_machine machine heap environment .ordinary
+            false none none .base none ref valid environmentValid allocated
+    next invalid => exact ⟨valid, machine.continuesFrom_refl⟩
+  · intro machine valid
+    unfold allocateClosure
+    split
+    · cases machine.heap.allocateFunction environment .ordinary false none <;> trivial
+    · trivial
+
+private def activationWorkflow (root : EnvId) (receiver argument : Value) :
+    JSM proofPlatform Unit := do
+  let activation ← Environment.allocateChild root
+  let thisCell ← Environment.declare activation (JSString.ofLeanString "this") false
+  Environment.initialize thisCell receiver
+  let parameterCell ← Environment.declare activation (JSString.ofLeanString "argument0") false
+  Environment.initialize parameterCell argument
+  Environment.withEnvironment activation (allocateClosure activation)
+
+private theorem activationWorkflow_preservesResults (root : EnvId) (receiver argument : Value) :
+    JSM.PreservesResultsWhen
+      (fun machine => machine.heap.valueValid receiver = true ∧
+        machine.heap.valueValid argument = true)
+      (fun (_ : Unit) (_ : Machine proofPlatform) => True)
+      (activationWorkflow root receiver argument) := by
+  let pre := fun machine : Machine proofPlatform =>
+    machine.heap.valueValid receiver = true ∧ machine.heap.valueValid argument = true
+  have stable : ∀ initial final : Machine proofPlatform, initial.ContinuesFrom final →
+      pre initial → pre final := by
+    intro initial final continued values
+    exact ⟨continued.1.preserves_valueValid receiver values.1,
+      continued.1.preserves_valueValid argument values.2⟩
+  have childStep := JSM.preservesResults_carryPrecondition
+    (Environment.allocateChild root) (Environment.allocateChild_preservesResults root) pre stable
+  unfold activationWorkflow
+  apply JSM.bind_preservesResultsWhen (Environment.allocateChild root) _ childStep
+  intro activation machine machineValid childResult
+  have finalAction : JSM.PreservesResults (fun (_ : Unit) (_ : Machine proofPlatform) => True)
+      (Environment.withEnvironment activation (allocateClosure activation)) := by
+    exact Environment.withEnvironment_preservesUnitResults activation _
+      (allocateClosure_preservesResults activation)
+  let childPre := fun current : Machine proofPlatform =>
+    current.ValidEnvId activation ∧ pre current
+  have childStable : ∀ initial final : Machine proofPlatform, initial.ContinuesFrom final →
+      childPre initial → childPre final := by
+    intro initial final continued premise
+    exact ⟨Nat.lt_of_lt_of_le premise.1 continued.2.2.1,
+      stable initial final continued premise.2⟩
+  have rest : JSM.PreservesResultsWhen childPre
+      (fun (_ : Unit) (_ : Machine proofPlatform) => True) (do
+        let thisCell ← Environment.declare activation (JSString.ofLeanString "this") false
+        Environment.initialize thisCell receiver
+        let parameterCell ← Environment.declare activation
+          (JSString.ofLeanString "argument0") false
+        Environment.initialize parameterCell argument
+        Environment.withEnvironment activation (allocateClosure activation)) := by
+    have declareThis := JSM.preservesResults_carryPrecondition
+      (Environment.declare activation (JSString.ofLeanString "this") false)
+      (Environment.declare_preservesResults activation (JSString.ofLeanString "this") false)
+      childPre childStable
+    apply JSM.bind_preservesResultsWhen _ _ declareThis
+    intro thisCell afterDeclare afterDeclareValid thisResult
+    let thisPre := fun current : Machine proofPlatform =>
+      current.ValidCellId thisCell ∧ childPre current
+    have thisStable : ∀ initial final : Machine proofPlatform, initial.ContinuesFrom final →
+        thisPre initial → thisPre final := by
+      intro initial final continued premise
+      exact ⟨Nat.lt_of_lt_of_le premise.1 continued.2.1,
+        childStable initial final continued premise.2⟩
+    have initializeThis := JSM.preservesResultsWhen_mono
+      (Environment.initialize thisCell receiver)
+      (Environment.initialize_preservesResults thisCell receiver)
+      (fun current (premise : thisPre current) => premise.2.2.1)
+    have afterThis : JSM.PreservesResultsWhen thisPre
+        (fun (_ : Unit) final => True ∧ thisPre final)
+        (Environment.initialize thisCell receiver) :=
+      JSM.preservesResultsWhen_carryPrecondition _ initializeThis thisStable
+    have afterThisRest : JSM.PreservesResultsWhen thisPre
+        (fun (_ : Unit) (_ : Machine proofPlatform) => True) (do
+          Environment.initialize thisCell receiver
+          let parameterCell ← Environment.declare activation
+            (JSString.ofLeanString "argument0") false
+          Environment.initialize parameterCell argument
+          Environment.withEnvironment activation (allocateClosure activation)) := by
+      apply JSM.bind_preservesResultsWhen _ _ afterThis
+      intro _ afterInitialize afterInitializeValid initializeResult
+      have declareParameter := JSM.preservesResults_carryPrecondition
+        (Environment.declare activation (JSString.ofLeanString "argument0") false)
+        (Environment.declare_preservesResults activation (JSString.ofLeanString "argument0") false)
+        childPre childStable
+      have afterParameter : JSM.PreservesResultsWhen childPre
+          (fun (_ : Unit) (_ : Machine proofPlatform) => True) (do
+            let parameterCell ← Environment.declare activation
+              (JSString.ofLeanString "argument0") false
+            Environment.initialize parameterCell argument
+            Environment.withEnvironment activation (allocateClosure activation)) := by
+        apply JSM.bind_preservesResultsWhen _ _ declareParameter
+        intro parameterCell afterDeclareParameter afterDeclareParameterValid parameterResult
+        let parameterPre := fun current : Machine proofPlatform =>
+          current.ValidCellId parameterCell ∧ childPre current
+        have parameterStable : ∀ initial final : Machine proofPlatform,
+            initial.ContinuesFrom final → parameterPre initial → parameterPre final := by
+          intro initial final continued premise
+          exact ⟨Nat.lt_of_lt_of_le premise.1 continued.2.1,
+            childStable initial final continued premise.2⟩
+        have initializeParameter := JSM.preservesResultsWhen_mono
+          (Environment.initialize parameterCell argument)
+          (Environment.initialize_preservesResults parameterCell argument)
+          (fun current (premise : parameterPre current) => premise.2.2.2)
+        have parameterInitialized := JSM.preservesResultsWhen_carryPrecondition _
+          initializeParameter parameterStable
+        have finalStep : JSM.PreservesResultsWhen parameterPre
+            (fun (_ : Unit) (_ : Machine proofPlatform) => True) (do
+              Environment.initialize parameterCell argument
+              Environment.withEnvironment activation (allocateClosure activation)) := by
+          apply JSM.bind_preservesResultsWhen _ _ parameterInitialized
+          intro _ final finalValid resultValid
+          exact ⟨finalAction.1 final finalValid, finalAction.2 final finalValid⟩
+        exact ⟨finalStep.1 afterDeclareParameter afterDeclareParameterValid parameterResult,
+          finalStep.2 afterDeclareParameter afterDeclareParameterValid parameterResult⟩
+      exact ⟨afterParameter.1 afterInitialize afterInitializeValid initializeResult.2.2,
+        afterParameter.2 afterInitialize afterInitializeValid initializeResult.2.2⟩
+    exact ⟨afterThisRest.1 afterDeclare afterDeclareValid thisResult,
+      afterThisRest.2 afterDeclare afterDeclareValid thisResult⟩
+  exact ⟨rest.1 machine machineValid childResult,
+    rest.2 machine machineValid childResult⟩
+
+/-- Normal and throwing evaluator fixtures witness that the hook premise is satisfiable. -/
+theorem BodyHookPreservesWellFormed_nonvacuous :
+    BodyHookPreservesWellFormed proofHook ∧
+      BodyHookPreservesWellFormed throwingProofHook := by
+  constructor
+  · intro ref receiver arguments
+    constructor
+    · intro machine valid inputs
+      exact JSM.pure_preservesWellFormed () machine valid
+    · intro machine valid inputs
+      trivial
+  · intro ref receiver arguments
+    constructor
+    · intro machine valid inputs
+      exact JSM.throwJS_preservesWellFormed (.primitive .undefined) machine valid
+    · intro machine valid inputs
+      rfl
+
+private def composedProofHook : BodyHook proofPlatform := fun ref receiver arguments => do
+  let environment ← Environment.allocateGlobal
+  let _ ← Environment.withEnvironment environment
+    (Control.tryCatchFinally
+      (Call.call proofHook ref receiver arguments)
+      (fun thrown => pure thrown)
+      (JSM.emit (.emitted (JSString.ofLeanString "body-finalized"))))
+  pure ()
+
+/-- Environment allocation/restoration, call normalization, catch/finally control, and trace
+emission compose into the strengthened evaluator-hook contract. -/
+theorem BodyHookPreservesWellFormed_composed :
+    BodyHookPreservesWellFormed composedProofHook := by
+  intro ref receiver arguments
+  let valueValid := fun value (machine : Machine proofPlatform) =>
+    machine.heap.valueValid value = true
+  have callValid : JSM.PreservesResults valueValid
+      (Call.call proofHook ref receiver arguments) :=
+    Call.call_preservesResults proofHook ref receiver arguments
+      BodyHookPreservesWellFormed_nonvacuous.1
+  have controlledValid : JSM.PreservesResults valueValid
+      (Control.tryCatchFinally
+        (Call.call proofHook ref receiver arguments)
+        (fun thrown => pure thrown)
+        (JSM.emit (.emitted (JSString.ofLeanString "body-finalized")))) := by
+    apply Control.tryCatchFinally_preservesResults
+    · exact callValid
+    · intro thrown machine machineValid thrownValid
+      exact ⟨JSM.pure_preservesWellFormed thrown machine machineValid, thrownValid⟩
+    · exact JSM.emit_preservesResults (.emitted (JSString.ofLeanString "body-finalized"))
+    · intro value first final continued valueIsValid
+      exact continued.1.preserves_valueValid value valueIsValid
+  have scopedValid : ∀ environment, JSM.PreservesResults valueValid
+      (Environment.withEnvironment environment
+        (Control.tryCatchFinally
+          (Call.call proofHook ref receiver arguments)
+          (fun thrown => pure thrown)
+          (JSM.emit (.emitted (JSString.ofLeanString "body-finalized"))))) := by
+    intro environment
+    exact Environment.withEnvironment_preservesResults environment _ controlledValid
+  unfold composedProofHook
+  have composedValid : JSM.PreservesResults (fun (_ : Unit) (_ : Machine proofPlatform) => True)
+      (JSM.bind Environment.allocateGlobal (fun environment => do
+        let _ ← Environment.withEnvironment environment
+          (Control.tryCatchFinally
+            (Call.call proofHook ref receiver arguments)
+            (fun thrown => pure thrown)
+            (JSM.emit (.emitted (JSString.ofLeanString "body-finalized"))))
+        pure ())) := by
+    apply JSM.bind_preservesResults
+    · exact Environment.allocateGlobal_preservesResults
+    · intro environment machine machineValid environmentValid
+      have inner : JSM.PreservesResults (fun (_ : Unit) (_ : Machine proofPlatform) => True) _ :=
+        JSM.bind_preservesResults
+        (Environment.withEnvironment environment
+          (Control.tryCatchFinally
+            (Call.call proofHook ref receiver arguments)
+            (fun thrown => pure thrown)
+            (JSM.emit (.emitted (JSString.ofLeanString "body-finalized")))))
+        (fun _ => pure ()) (scopedValid environment) (by
+          intro result final finalValid resultValid
+          exact ⟨JSM.pure_preservesWellFormed () final finalValid, trivial⟩)
+      exact ⟨inner.1 machine machineValid, inner.2 machine machineValid⟩
+  exact ⟨fun machine valid inputs => composedValid.1 machine valid,
+    fun machine valid inputs => composedValid.2 machine valid⟩
+
+private def argumentZero (arguments : Array Value) : Value :=
+  arguments[0]?.getD (.primitive .undefined)
+
+private theorem argumentZero_valid (machine : Machine proofPlatform) (arguments : Array Value)
+    (valid : arguments.toList.all machine.heap.valueValid = true) :
+    machine.heap.valueValid (argumentZero arguments) = true := by
+  unfold argumentZero
+  cases found : arguments[0]? with
+  | none => rfl
+  | some value =>
+      have member : value ∈ arguments.toList :=
+        Array.mem_toList_iff.mpr (Array.mem_of_getElem? found)
+      exact List.all_eq_true.mp valid value member
+
+private def realisticProofHook : BodyHook proofPlatform := fun ref receiver arguments machine =>
+  match machine.heap.functionSlots? ref with
+  | .ok (some slots) => activationWorkflow slots.environment receiver (argumentZero arguments) machine
+  | .ok none => .fault (.runtime (.heap .invalidFunctionMetadata)) machine
+  | .error fault => .fault (.runtime (.heap fault)) machine
+
+/-- A body hook can inspect captured function metadata, allocate and initialize an activation,
+execute under it, allocate a closure capturing it, and restore the caller environment. -/
+theorem BodyHookPreservesWellFormed_realistic :
+    BodyHookPreservesWellFormed realisticProofHook := by
+  intro ref receiver arguments
+  constructor <;> intro machine machineValid inputsValid
+  · unfold realisticProofHook
+    cases found : machine.heap.functionSlots? ref with
+    | error fault =>
+        obtain ⟨⟨slots, callable⟩, receiverValid, argumentsValid⟩ := inputsValid
+        rw [found] at callable
+        contradiction
+    | ok result =>
+        cases result with
+        | none =>
+            obtain ⟨⟨slots, callable⟩, receiverValid, argumentsValid⟩ := inputsValid
+            rw [found] at callable
+            cases callable
+        | some slots =>
+            exact (activationWorkflow_preservesResults slots.environment receiver
+              (argumentZero arguments)).1 machine machineValid
+                ⟨inputsValid.2.1, argumentZero_valid machine arguments inputsValid.2.2⟩
+  · unfold realisticProofHook
+    cases found : machine.heap.functionSlots? ref with
+    | error fault => trivial
+    | ok result =>
+        cases result with
+        | none => trivial
+        | some slots =>
+            exact (activationWorkflow_preservesResults slots.environment receiver
+              (argumentZero arguments)).2 machine machineValid
+                ⟨inputsValid.2.1, argumentZero_valid machine arguments inputsValid.2.2⟩
+
+/-- The iterator JSM preservation theorems instantiate with both normal and throwing hooks. -/
+theorem Iterator.preservation_nonvacuous :
+    JSM.PreservesWellFormed (Iterator.arrayValues (P := proofPlatform) ⟨0⟩) ∧
+      JSM.PreservesWellFormed (Iterator.next proofHook ⟨0⟩) ∧
+      JSM.PreservesWellFormed (Iterator.next throwingProofHook ⟨0⟩) := by
+  exact ⟨Iterator.arrayValues_preservesWellFormed ⟨0⟩,
+    Iterator.next_preservesWellFormed proofHook ⟨0⟩ BodyHookPreservesWellFormed_nonvacuous.1,
+    Iterator.next_preservesWellFormed throwingProofHook ⟨0⟩
+      BodyHookPreservesWellFormed_nonvacuous.2⟩
+
+/-- Normal and throwing setter hooks compose with ordinary and strict assignment preservation. -/
+theorem ObjectAccess.setter_preservation_nonvacuous (ref : RefId) (key : PropertyKey)
+    (value receiver : Value) :
+    JSM.PreservesWellFormed (ObjectAccess.set proofHook ref key value receiver) ∧
+      JSM.PreservesWellFormed (ObjectAccess.set throwingProofHook ref key value receiver) ∧
+      JSM.PreservesWellFormed (ObjectAccess.setStrict proofHook ref key value receiver) ∧
+      JSM.PreservesWellFormed (ObjectAccess.setStrict throwingProofHook ref key value receiver) := by
+  exact ⟨ObjectAccess.set_preservesWellFormed proofHook ref key value receiver
+      BodyHookPreservesWellFormed_nonvacuous.1,
+    ObjectAccess.set_preservesWellFormed throwingProofHook ref key value receiver
+      BodyHookPreservesWellFormed_nonvacuous.2,
+    ObjectAccess.setStrict_preservesWellFormed proofHook ref key value receiver
+      BodyHookPreservesWellFormed_nonvacuous.1,
+    ObjectAccess.setStrict_preservesWellFormed throwingProofHook ref key value receiver
+      BodyHookPreservesWellFormed_nonvacuous.2⟩
+
+/-- Canonical copy operations instantiate with both normal and throwing accessor hooks. -/
+theorem Copy.preservation_nonvacuous (target source : RefId) (sources : List Value) :
+    JSM.PreservesWellFormed (Copy.copyDataProperties proofHook target source) ∧
+      JSM.PreservesWellFormed (Copy.copyDataProperties throwingProofHook target source) ∧
+      JSM.PreservesWellFormed (Copy.objectAssign proofHook (.object target) sources) ∧
+      JSM.PreservesWellFormed (Copy.objectAssign throwingProofHook (.object target) sources) ∧
+      JSM.PreservesWellFormed (Copy.objectSpread proofHook sources) ∧
+      JSM.PreservesWellFormed (Copy.objectSpread throwingProofHook sources) := by
+  exact ⟨(Copy.copyDataProperties_preservesResults proofHook target source []
+      BodyHookPreservesWellFormed_nonvacuous.1).1,
+    (Copy.copyDataProperties_preservesResults throwingProofHook target source []
+      BodyHookPreservesWellFormed_nonvacuous.2).1,
+    (Copy.objectAssign_preservesResults proofHook (.object target) sources
+      BodyHookPreservesWellFormed_nonvacuous.1).1,
+    (Copy.objectAssign_preservesResults throwingProofHook (.object target) sources
+      BodyHookPreservesWellFormed_nonvacuous.2).1,
+    (Copy.objectSpread_preservesResults proofHook sources []
+      BodyHookPreservesWellFormed_nonvacuous.1).1,
+    (Copy.objectSpread_preservesResults throwingProofHook sources []
+      BodyHookPreservesWellFormed_nonvacuous.2).1⟩
+
+/-- Internal array-values slice/spread operations instantiate with normal and throwing getter hooks. -/
+theorem ArrayCopy.preservation_nonvacuous (source : RefId) :
+    JSM.PreservesWellFormed (ArrayCopy.slice proofHook source) ∧
+      JSM.PreservesWellFormed (ArrayCopy.slice throwingProofHook source) ∧
+      JSM.PreservesWellFormed (ArrayCopy.spread proofHook source) ∧
+      JSM.PreservesWellFormed (ArrayCopy.spread throwingProofHook source) := by
+  exact ⟨(ArrayCopy.slice_preservesResults proofHook source 0 none
+      BodyHookPreservesWellFormed_nonvacuous.1).1,
+    (ArrayCopy.slice_preservesResults throwingProofHook source 0 none
+      BodyHookPreservesWellFormed_nonvacuous.2).1,
+    (ArrayCopy.spread_preservesResults proofHook source
+      BodyHookPreservesWellFormed_nonvacuous.1).1,
+    (ArrayCopy.spread_preservesResults throwingProofHook source
+      BodyHookPreservesWellFormed_nonvacuous.2).1⟩
+
+private abbrev freshResultRelationsCheck : Bool :=
+  let initial := Machine.initial proofPlatform 100
+  let spreadValid := match Copy.objectSpread proofHook [] [] initial with
+    | .done (.normal ref) final =>
+        initial.heap.size ≤ ref.value &&
+        final.heap.objectKind? ref == some .ordinary &&
+        final.heap.valueValid (.object ref)
+    | _ => false
+  let arrayResultsValid := match initial.heap.allocateArray [] with
+    | .error _ => false
+    | .ok (source, heap) =>
+        let machine := initial.setHeap heap
+        let sliceValid := match ArrayCopy.slice proofHook source 0 none machine with
+          | .done (.normal ref) final =>
+              machine.heap.size ≤ ref.value &&
+              (match final.heap.objectKind? ref with | some (.array _) => true | _ => false) &&
+              final.heap.valueValid (.object ref)
+          | _ => false
+        let iteratorSpreadValid := match ArrayCopy.spread throwingProofHook source machine with
+          | .done (.normal ref) final =>
+              machine.heap.size ≤ ref.value &&
+              (match final.heap.objectKind? ref with | some (.array _) => true | _ => false) &&
+              final.heap.valueValid (.object ref)
+          | _ => false
+        sliceValid && iteratorSpreadValid
+  spreadValid && arrayResultsValid
+
+/-- Concrete normal runs witness fresh ordinary, slice-array, and modeled spread-array results. -/
+private theorem fresh_result_relations_nonvacuous : freshResultRelationsCheck = true := by
+  native_decide
+
+private def malformedProofMachine : Machine proofPlatform :=
+  match Heap.empty.allocateFunction ⟨999⟩ .ordinary false none with
+  | .ok (_, heap) => (Machine.initial proofPlatform 10).setHeap heap
+  | .error _ => Machine.initial proofPlatform 10
+
+private def nonpreservingProofHook : BodyHook proofPlatform := fun _ _ _ =>
+  JSM.set malformedProofMachine
+
+private def validHookSource : Machine proofPlatform :=
+  let machine := Machine.initial proofPlatform 10
+  match machine.heap.allocateFunction machine.currentEnv .ordinary false none with
+  | .ok (_, heap) => machine.setHeap heap
+  | .error _ => machine
+
+private theorem validHookSource_inputsValid : BodyHookInputsValid validHookSource ⟨0⟩
+    (.primitive .undefined) #[] := by
+  refine ⟨⟨⟨⟨0⟩, ⟨0⟩, .ordinary, false, .base, none, none⟩, ?_⟩, rfl, rfl⟩
+  rfl
+
+private theorem BodyHookPreservesWellFormed_premise_necessary :
+    ¬BodyHookPreservesWellFormed nonpreservingProofHook := by
+  intro preserves
+  have sourceValid : validHookSource.WellFormed := by
+    unfold Machine.WellFormed
+    native_decide
+  have inputsValid := validHookSource_inputsValid
+  have invalid := (preserves ⟨0⟩ (.primitive .undefined) #[]).1
+    validHookSource sourceValid inputsValid
+  have malformed : malformedProofMachine.isWellFormed = false := by native_decide
+  change malformedProofMachine.WellFormed ∧ _ at invalid
+  unfold Machine.WellFormed at invalid
+  exact Bool.false_ne_true (malformed.symm ▸ invalid.1)
+
+/-- A malicious evaluator hook that replaces execution with an unrelated valid machine. -/
+def continuityBreakingProofHook : BodyHook proofPlatform := fun _ _ _ =>
+  JSM.set (Machine.initial proofPlatform 10)
+
+private def validResetSource : Machine proofPlatform :=
+  validHookSource
+
+/-- The former well-formedness-only hook contract admitted an unrelated valid-machine reset. -/
+private theorem validResetProofHook_satisfies_old_contract :
+    ∀ ref receiver arguments machine, machine.WellFormed →
+      (continuityBreakingProofHook ref receiver arguments machine).AllMachines Machine.WellFormed := by
+  intro ref receiver arguments machine valid
+  change (Machine.initial proofPlatform 10).WellFormed
+  exact Machine.initial_wellFormed proofPlatform 10
+
+/-- Identity continuity rejects the malicious valid reset admitted by well-formedness alone. -/
+theorem continuityBreakingProofHook_rejected (ref : RefId) (receiver : Value)
+    (arguments : Array Value) (machine : Machine proofPlatform)
+    (valid : machine.WellFormed)
+    (inputs : BodyHookInputsValid machine ref receiver arguments)
+    (notContinuous : ¬machine.ContinuesFrom (Machine.initial proofPlatform 10)) :
+    ¬BodyHookPreservesWellFormed continuityBreakingProofHook := by
+  intro preserves
+  exact notContinuous ((preserves ref receiver arguments).1 machine valid inputs).2
+
+private theorem BodyHookPreservesWellFormed_continuity_necessary :
+    ¬BodyHookPreservesWellFormed continuityBreakingProofHook := by
+  intro preserves
+  have sourceValid : validResetSource.WellFormed := by
+    unfold Machine.WellFormed
+    native_decide
+  have result := (preserves ⟨0⟩ (.primitive .undefined) #[]).1 validResetSource sourceValid
+    validHookSource_inputsValid
+  change (Machine.initial proofPlatform 10).WellFormed ∧
+    validResetSource.ContinuesFrom (Machine.initial proofPlatform 10) at result
+  have notContinuous : ¬validResetSource.ContinuesFrom (Machine.initial proofPlatform 10) := by
+    intro continuous
+    have sizeDecrease : ¬validResetSource.heap.size ≤
+        (Machine.initial proofPlatform 10).heap.size := by native_decide
+    exact sizeDecrease continuous.1.1
+  exact notContinuous result.2
+
+private abbrev danglingReceiverRejectedCheck : Bool :=
+  match Call.call proofHook ⟨0⟩ (.object ⟨99⟩) #[] validHookSource with
+  | .fault (.runtime (.danglingEscapingValue ⟨99⟩)) final =>
+      final.reverseTrace == validHookSource.reverseTrace
+  | _ => false
+
+private abbrev danglingArgumentRejectedCheck : Bool :=
+  match Call.call proofHook ⟨0⟩ (.primitive .undefined) #[.object ⟨99⟩] validHookSource with
+  | .fault (.runtime (.danglingEscapingValue ⟨99⟩)) final =>
+      final.reverseTrace == validHookSource.reverseTrace
+  | _ => false
+
+/-- Checked call rejects a dangling receiver before evaluator entry. -/
+private theorem Call.dangling_receiver_rejected : danglingReceiverRejectedCheck = true := by
+  native_decide
+
+/-- Checked call rejects a dangling argument before evaluator entry. -/
+private theorem Call.dangling_argument_rejected : danglingArgumentRejectedCheck = true := by
+  native_decide
+
+private def mutableSource : Machine proofPlatform :=
+  (Machine.initial proofPlatform 10).allocateCell ⟨.uninitialized, true⟩ |>.2
+
+private def mutableReset : Machine proofPlatform :=
+  match mutableSource.setCell ⟨0⟩ ⟨.uninitialized, false⟩ with
+  | .ok next => next
+  | .error _ => mutableSource
+
+private theorem mutable_reset_rejected : ¬mutableSource.ContinuesFrom mutableReset := by
+  intro continued
+  have oldFound : mutableSource.cells[0]? = some ⟨.uninitialized, true⟩ := by native_decide
+  obtain ⟨nextCell, nextFound, mutableEq⟩ :=
+    continued.2.2.2.2.2.1 0 ⟨.uninitialized, true⟩ oldFound
+  have newFound : mutableReset.cells[0]? = some ⟨.uninitialized, false⟩ := by native_decide
+  rw [newFound] at nextFound
+  simp at nextFound
+  subst nextCell
+  contradiction
+
+private def parentSource : Machine proofPlatform :=
+  let machine := Machine.initial proofPlatform 10
+  match machine.allocateEnvironment (some machine.currentEnv) with
+  | .ok (_, next) => next
+  | .error _ => machine
+
+private def parentReset : Machine proofPlatform :=
+  match parentSource.setEnvironment ⟨1⟩ ⟨none, Std.HashMap.emptyWithCapacity⟩ with
+  | .ok next => next
+  | .error _ => parentSource
+
+private theorem parent_reset_rejected : ¬parentSource.ContinuesFrom parentReset := by
+  intro continued
+  have oldFound : parentSource.environments[1]? =
+      some ⟨some ⟨0⟩, Std.HashMap.emptyWithCapacity⟩ := by rfl
+  obtain ⟨nextEnvironment, nextFound, parentEq, bindings⟩ :=
+    continued.2.2.2.2.2.2 1 ⟨some ⟨0⟩, Std.HashMap.emptyWithCapacity⟩ oldFound
+  have newFound : parentReset.environments[1]? =
+      some ⟨none, Std.HashMap.emptyWithCapacity⟩ := by rfl
+  rw [newFound] at nextFound
+  simp at nextFound
+  subst nextEnvironment
+  contradiction
+
+private def bindingSource : Machine proofPlatform :=
+  let machine := Machine.initial proofPlatform 10
+  match Environment.declare machine.currentEnv (JSString.ofLeanString "kept") true machine with
+  | .done (.normal _) next => next
+  | _ => machine
+
+private def bindingReset : Machine proofPlatform :=
+  match bindingSource.setEnvironment ⟨0⟩ ⟨none, Std.HashMap.emptyWithCapacity⟩ with
+  | .ok next => next
+  | .error _ => bindingSource
+
+private theorem binding_removal_rejected : ¬bindingSource.ContinuesFrom bindingReset := by
+  intro continued
+  have oldFound : ∃ record, bindingSource.environments[0]? = some record ∧
+      record.bindings[JSString.ofLeanString "kept"]? = some ⟨0⟩ := by
+    native_decide
+  obtain ⟨record, environmentFound, bindingFound⟩ := oldFound
+  obtain ⟨nextEnvironment, nextFound, parentEq, bindings⟩ :=
+    continued.2.2.2.2.2.2 0 record environmentFound
+  have newFound : bindingReset.environments[0]? =
+      some ⟨none, Std.HashMap.emptyWithCapacity⟩ := by
+    have inBounds : 0 < bindingSource.environments.size :=
+      (Array.getElem?_eq_some_iff.mp environmentFound).choose
+    have resetBy : bindingSource.setEnvironment ⟨0⟩
+        ⟨none, Std.HashMap.emptyWithCapacity⟩ = .ok bindingReset := by
+      unfold bindingReset
+      cases updated : bindingSource.setEnvironment ⟨0⟩
+          ⟨none, Std.HashMap.emptyWithCapacity⟩ with
+      | error fault =>
+          unfold Machine.setEnvironment at updated
+          simp [inBounds] at updated
+      | ok next => rfl
+    unfold Machine.setEnvironment at resetBy
+    simp [inBounds] at resetBy
+    rw [← resetBy]
+    rw [Array.getElem?_set]
+    simp
+  rw [newFound] at nextFound
+  simp at nextFound
+  subst nextEnvironment
+  have retained := bindings _ _ bindingFound
+  simp at retained
+
 private abbrev assignReturnsTargetCheck : Bool :=
   let machine := Machine.initial proofPlatform 10
   match machine.heap.allocate with
@@ -86,11 +669,5 @@ private abbrev assignReturnsTargetCheck : Bool :=
 /-- Successful `Object.assign` returns the same target identity it mutates. -/
 theorem Copy.objectAssign_returns_target : assignReturnsTargetCheck = true := by
   decide
-
--- TODO(theorem): lift the executable copy/slice/spread fresh-top-level and shared-nested-reference
--- checks to general preservation theorems over valid heaps and effectful getter traces.
--- TODO(theorem): generalize executable `isWellFormed` preservation checks for array index
--- extension, iterator advancement, and copy operations. Wrapper/array allocation and deletion
--- preservation are proved in `Heap.lean`.
 
 end TSLean.JS

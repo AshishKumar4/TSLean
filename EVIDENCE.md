@@ -904,3 +904,72 @@ $ git diff --check
 ```
 
 The 268 audited declarations and complete verification gate support only the theorem statements and branches above. They do not discharge iterator advancement, the three hook-conditional obligations, or effectful coercion refinement. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and were not suppressed or changed.
+
+## 2026-08-08 - Hook, iterator, and copy preservation
+
+This proof snapshot is based on `533fe9fa986c722ac13f8182a0492b0f1e4d4ff3` on `rebuild/semantic-core`. The prototype input now resolves every source-derived validation and hash from that immutable revision. Its manifest remains byte-for-byte unchanged at SHA-256 `aecb383818b16b75343b5fbeccce345e7216b5240a5ce1d32008b597e3c62722`, and its explicit generate/check commands remain available with all earlier historical commands. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target `phase2-hook-copy-input.json`.
+
+The preservation contract now tracks identity continuity as well as final validity. `ObjectKind.ContinuesFrom` preserves internal-method categories, exact function and primitive-wrapper metadata, and array-iterator target identity while allowing mutable array and iterator state to advance. `Heap.ContinuesFrom` retains every old reference with a permitted same-category transition, never shrinks the heap, and preserves old value validity; `Heap.MachineReferencesPreserved` additionally retains function-environment metadata. `Cell.ContinuesFrom` preserves mutability, `EnvironmentRecord.ContinuesFrom` preserves ancestry and every existing name-to-cell binding, and `Machine.ContinuesFrom` composes heap, cell, environment, intrinsic, and current-environment continuity while allowing committed platform, trace, fuel, initialized-cell, and new-binding changes. These relations are reflexive and transitive and are connected to complete `Machine.WellFormed` preservation.
+
+`RunResult.MachinePreserved`, `CompletionValuesValid`, `JSM.PreservesWellFormed`, `JSM.PreservesWellFormedWhen`, `JSM.PreservesResults`, and `JSM.PreservesResultsWhen` make terminal-state continuity and escaping-value validity explicit. Their composition theorems cover pure/bind, conditional preconditions, state and heap updates, trace emission, fuel, and every abrupt completion. Environment proofs cover global/child allocation, declaration, initialization, resolution, reads, writes, and dynamic-environment restoration. Control proofs cover catch, finally, combined catch/finally, switch and labeled breaks, loop control, and fuel-bounded while loops. Call normalization validates normal, returned, and thrown values and proves checked call preservation under `BodyHookPreservesWellFormed`.
+
+The hook premise is not justified only by an inert fixture. `BodyHookPreservesWellFormed_realistic` inspects callable metadata, allocates a child activation, declares and initializes `this` and `argument0`, executes under that environment, allocates a closure capturing it, and restores the caller environment. `BodyHookPreservesWellFormed_composed` separately composes environment allocation/restoration, checked call, catch/finally, and trace emission. Normal and throwing hooks instantiate the access, iterator, and copy theorems, while `continuityBreakingProofHook_rejected` demonstrates that a well-formed but identity-breaking result does not satisfy the strengthened contract.
+
+The heap proofs cover machine-reference continuity for public definition, creation, allocation, and iterator mutation. Array-iterator allocation and advancement preserve heap and machine validity; stepping composes the iterator-slot update with ordinary `Get`, preserving getter effects and validating yielded, done, and abrupt values. Object access proves `Get`, `Set`, strict `Set`, and `CreateDataProperty` preservation across data, getter/setter, rejection, throw, fault, and exhaustion branches. Copy proofs cover `copyDataProperties`, `Object.assign`, object spread, array slice, and iterator-based array spread, including source boxing, getter/setter calls, abrupt completion, and left-to-right composition.
+
+The fresh-result theorems are relational rather than only executable checks. `Heap.allocate_result_fresh_kind`, `Heap.allocateArray_result_fresh_kind`, and `Heap.allocateArrayIterator_result_fresh_kind` identify the old heap frontier and exact resulting kind. `Iterator.arrayValues_normal_result`, `Copy.objectSpread_normal_result`, `ArrayCopy.slice_normal_result`, and `ArrayCopy.spread_normal_result` prove final validity and continuity, freshness against every old valid reference, exact ordinary/array/iterator kind, and result-reference validity. Concrete normal runs witness each relation.
+
+Review approved removing exactly `copy-hook-conditional-preservation`, `iterator-hook-conditional-preservation`, and `machine-hook-conditional-preservation`. The canonical formal debt is now exactly one obligation, `abstract-effectful-coercion-refinement`. The four executable Float assumptions and all differential measurements are carried forward unchanged as runtime evidence, not proof axioms.
+
+This debt reduction is a model-preservation result, not a compiler-support claim. Canonical `GetIterator`, custom iterables, allocated iterator-result objects, and `IteratorClose` remain an open semantic feature gap. Promises and derived `super` remain unsupported compiler/runtime features. None of those gaps is counted as discharged by the three removed preservation obligations.
+
+The measured suite remains 43 files, 1,633 passing tests, 8 todos, 172 Lean jobs, and 102 red corpus entries. Differential evidence remains 16 scenario groups, 734 fixed plus 6,530 generated comparisons for 7,264 total, 6,088 unique operation inputs, 1,176 preserved duplicates, 97 legacy inventory IDs, the unchanged 102-entry coverage partition, and a 65,536-cell aggregate fixture budget. The manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:658b80535a5c119c0b28cc4fdfe8e9c4e98ed881078586fc4659d8226ca06535`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, proof tests and audit `sha256:abf9a5876478d1d597353267b09cd914012f594122a80a909622b7b2db40303c`, and trust/evidence infrastructure `sha256:493b73144dda00c1b4f76eaf986687dbecab188b8ecaa7964189055e9e51ca7e`. The manifest SHA-256 is `0aef5649d09cddef7d532a00458e3eae896523eb140efd5034910438efc75878`.
+
+Commands and results:
+
+```text
+$ bun run evidence:baseline:check
+$ bun run evidence:primitives:check
+$ bun run evidence:heap:check
+$ bun run evidence:execution:check
+$ bun run evidence:callable:check
+$ bun run evidence:arrays:check
+$ bun run evidence:primitive-ops:check
+$ bun run evidence:abstract-ops:check
+$ bun run evidence:differential:check
+$ bun run evidence:differential-compact:check
+$ bun run evidence:ordered-props:check
+$ bun run evidence:heap-allocation:check
+$ bun run evidence:array-shrink:check
+$ bun run evidence:heap-mutation:check
+$ bun run evidence:prototype:check
+$ bun run evidence:hook-copy:check
+
+$ bun scripts/check-js-axioms.mjs --self-test
+synthetic environment audit passed
+
+$ /usr/bin/time -p bun run verify
+All matched files use Prettier code style!
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+JS trust checks passed: 439 elaborated proof declarations
+JS trust gate passed: 439 proof declarations
+Test Files  43 passed (43)
+Tests  1633 passed | 8 todo (1641)
+Build completed successfully (172 jobs).
+real 81.09
+user 113.83
+sys 7.66
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 304
+Unpacked size: 3.56MB
+
+$ shasum -a 256 evidence/phase2-prototype-manifest.json evidence/phase2-hook-copy-manifest.json
+aecb383818b16b75343b5fbeccce345e7216b5240a5ce1d32008b597e3c62722  evidence/phase2-prototype-manifest.json
+0aef5649d09cddef7d532a00458e3eae896523eb140efd5034910438efc75878  evidence/phase2-hook-copy-manifest.json
+
+$ git diff --check
+```
+
+The 439 audited declarations and complete verification gate support only the preservation, continuity, result-validity, and freshness statements above. They do not establish the remaining effectful-coercion refinement, close the iterator semantic feature gap, or add promises or derived `super` support. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and were not suppressed or changed.

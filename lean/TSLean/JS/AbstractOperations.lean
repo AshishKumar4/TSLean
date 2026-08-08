@@ -121,5 +121,80 @@ def toObject (value : Value) : JSM P RefId := fun machine =>
                 | .ok (ref, heap) => .done (.normal ref) (machine.setHeap heap)
                 | .error fault => .fault (heapFault fault) machine
 
+/-- `ToObject` preserves machine continuity and returns an allocated object identity. -/
+theorem toObject_preservesResults (value : Value) :
+    JSM.PreservesResults (fun ref machine =>
+      machine.heap.valueValid (.object ref) = true ∧
+        ∀ original, value = .object original → ref = original)
+      (toObject (P := P) value) := by
+  constructor
+  · intro machine valid
+    unfold toObject
+    cases value with
+    | object ref =>
+        cases found : machine.heap.get? ref <;>
+          simp [found] <;> exact ⟨valid, machine.continuesFrom_refl⟩
+    | primitive primitive =>
+        cases primitive with
+        | undefined | null => exact ⟨valid, machine.continuesFrom_refl⟩
+        | boolean value | number value | string value | bigint value | symbol value =>
+            cases configured : machine.intrinsics with
+            | none => exact ⟨valid, machine.continuesFrom_refl⟩
+            | some intrinsics =>
+                simp only
+                split
+                · exact ⟨valid, machine.continuesFrom_refl⟩
+                · simp only [RealmIntrinsics.prototypeFor?]
+                  cases allocated : machine.heap.allocatePrimitiveWrapper _ _ with
+                  | error fault => exact ⟨valid, machine.continuesFrom_refl⟩
+                  | ok result =>
+                      rcases result with ⟨ref, heap⟩
+                      have preserved := Heap.allocatePrimitiveWrapper_preserves_machineReferences
+                        machine.heap heap _ _ ref allocated
+                      have heapValid := Heap.allocatePrimitiveWrapper_preserves_wellFormed
+                        machine.heap heap _ _ ref (Machine.wellFormed_heap machine valid) allocated
+                      exact ⟨Machine.setHeap_preserves_wellFormed machine heap valid heapValid
+                          preserved.1,
+                        Machine.setHeap_continuesFrom_machineReferences machine heap valid heapValid
+                          preserved.1⟩
+  · intro machine valid
+    cases value with
+    | object ref =>
+        cases found : machine.heap.get? ref with
+        | error fault => simp [toObject, found, RunResult.CompletionValuesValid]
+        | ok object =>
+            have validRef : machine.heap.valueValid (.object ref) = true := by
+              unfold Heap.get? at found
+              cases lookup : machine.heap.objects[ref.value]? with
+              | none => simp [lookup] at found
+              | some current =>
+                  exact decide_eq_true (by
+                    simpa [Heap.size] using (Array.getElem?_eq_some_iff.mp lookup).choose)
+            have resultValid : machine.heap.valueValid (.object ref) = true ∧
+                ∀ original, (.object ref : Value) = .object original → ref = original :=
+              ⟨validRef, by
+                intro original equal
+                cases equal
+                rfl⟩
+            simpa only [toObject, found, RunResult.CompletionValuesValid] using resultValid
+    | primitive primitive =>
+        unfold toObject
+        cases primitive with
+        | undefined | null => rfl
+        | boolean value | number value | string value | bigint value | symbol value =>
+            cases configured : machine.intrinsics with
+            | none => trivial
+            | some intrinsics =>
+                simp only
+                split
+                · trivial
+                · simp only [RealmIntrinsics.prototypeFor?]
+                  cases allocated : machine.heap.allocatePrimitiveWrapper _ _ with
+                  | error fault => trivial
+                  | ok result =>
+                      rcases result with ⟨ref, heap⟩
+                      exact ⟨(Heap.allocatePrimitiveWrapper_preserves_machineReferences
+                        machine.heap heap _ _ ref allocated).2, by intros original impossible; contradiction⟩
+
 end AbstractOperations
 end TSLean.JS

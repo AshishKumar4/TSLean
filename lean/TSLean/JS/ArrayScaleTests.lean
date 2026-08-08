@@ -7,6 +7,16 @@ private def platform : Platform := ScriptedPlatform.make { times := #[], randoms
 private def fallthrough : BodyHook platform := fun _ _ _ => pure ()
 private def undefined : Value := .primitive .undefined
 
+/-- The hook used by the 100,001-step iterator scale run satisfies its formal preservation premise. -/
+private theorem iteratorScaleHookPreservesWellFormed :
+    BodyHookPreservesWellFormed fallthrough ∧
+      JSM.PreservesWellFormed (Iterator.next fallthrough ⟨0⟩) := by
+  have hookValid : BodyHookPreservesWellFormed fallthrough := by
+    intro ref receiver arguments
+    exact ⟨fun machine valid inputs => JSM.pure_preservesWellFormed () machine valid,
+      by intro machine valid inputs; trivial⟩
+  exact ⟨hookValid, Iterator.next_preservesWellFormed fallthrough ⟨0⟩ hookValid⟩
+
 private def allocateArray (heap : Heap) (values : Array (Option Value)) : IO (RefId × Heap) :=
   match heap.allocateArrayFromArray values with
   | .ok result => pure result

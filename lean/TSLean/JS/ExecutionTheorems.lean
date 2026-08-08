@@ -216,4 +216,88 @@ theorem JSM.consumeFuel_zero (machine : Machine P) (empty : machine.fuel = 0) :
     JSM.consumeFuel machine = .exhausted machine := by
   simp [JSM.consumeFuel, Machine.consumeFuel, empty]
 
+private def environmentPreservationWorkflow (root : EnvId) : JSM P Value := do
+  let child ← Environment.allocateChild root
+  let cell ← Environment.declare child (JSString.ofLeanString "value") true
+  Environment.initialize cell (.primitive .undefined)
+  Environment.write child (JSString.ofLeanString "value") (.primitive .null)
+  Environment.withEnvironment child (Environment.read child (JSString.ofLeanString "value"))
+
+/-- Allocation, declaration, initialization, write, resolution, read, and dynamic restoration
+compose into one machine-preserving workflow with a valid returned value. -/
+theorem Environment.composed_preservesResults (root : EnvId) :
+    JSM.PreservesResults (fun value machine => machine.heap.valueValid value = true)
+      (environmentPreservationWorkflow (P := P) root) := by
+  have afterCell (child : EnvId) (cell : CellId) :
+      JSM.PreservesResults (fun value (machine : Machine P) => machine.heap.valueValid value = true)
+        (do
+          Environment.initialize (P := P) cell (.primitive .undefined)
+          Environment.write (P := P) child (JSString.ofLeanString "value") (.primitive .null)
+          Environment.withEnvironment child
+            (Environment.read (P := P) child (JSString.ofLeanString "value"))) := by
+    have afterWrite : JSM.PreservesResults
+        (fun value (machine : Machine P) => machine.heap.valueValid value = true) (do
+          Environment.write (P := P) child (JSString.ofLeanString "value") (.primitive .null)
+          Environment.withEnvironment child
+            (Environment.read (P := P) child (JSString.ofLeanString "value"))) := by
+      apply JSM.bind_preservesResults
+      · exact Environment.write_primitive_preservesResults child (JSString.ofLeanString "value")
+          .null
+      · intro _unit machine valid unitValid
+        exact ⟨(Environment.withEnvironment_preservesResults child
+            (Environment.read child (JSString.ofLeanString "value"))
+            (Environment.read_preservesResults child (JSString.ofLeanString "value"))).1 machine valid,
+          (Environment.withEnvironment_preservesResults child
+            (Environment.read child (JSString.ofLeanString "value"))
+            (Environment.read_preservesResults child (JSString.ofLeanString "value"))).2 machine valid⟩
+    apply JSM.bind_preservesResults
+    · exact Environment.initialize_primitive_preservesResults cell .undefined
+    · intro _unit machine valid unitValid
+      exact ⟨afterWrite.1 machine valid, afterWrite.2 machine valid⟩
+  have afterChild (child : EnvId) :
+      JSM.PreservesResults (fun value (machine : Machine P) => machine.heap.valueValid value = true)
+        (do
+          let cell ← Environment.declare (P := P) child (JSString.ofLeanString "value") true
+          Environment.initialize (P := P) cell (.primitive .undefined)
+          Environment.write (P := P) child (JSString.ofLeanString "value") (.primitive .null)
+          Environment.withEnvironment child
+            (Environment.read (P := P) child (JSString.ofLeanString "value"))) := by
+    apply JSM.bind_preservesResults
+    · exact Environment.declare_preservesResults child (JSString.ofLeanString "value") true
+    · intro cell machine valid cellValid
+      exact ⟨(afterCell child cell).1 machine valid, (afterCell child cell).2 machine valid⟩
+  unfold environmentPreservationWorkflow
+  apply JSM.bind_preservesResults
+  · exact Environment.allocateChild_preservesResults root
+  · intro child machine valid childValid
+    exact ⟨(afterChild child).1 machine valid, (afterChild child).2 machine valid⟩
+
+private def controlPreservationWorkflow (root : EnvId) : JSM P Unit :=
+  let label := JSString.ofLeanString "fixture-loop"
+  Control.tryFinally
+    (Environment.withEnvironment root
+      (Control.whileLoop (pure true) (JSM.breakJS (some label)) (some label)))
+    (JSM.emit (.emitted (JSString.ofLeanString "finally-hook")))
+
+/-- Dynamic environment restoration, matching labeled loop control, and a concrete finally hook
+compose without weakening machine validity or execution continuity. -/
+theorem Control.composed_environment_loop_finally_preserves (root : EnvId) :
+    JSM.PreservesWellFormed (controlPreservationWorkflow (P := P) root) := by
+  let label := JSString.ofLeanString "fixture-loop"
+  have conditionPreserves : JSM.PreservesResults (fun _ _ => True)
+      (JSM.pure (P := P) true) :=
+    JSM.pure_preservesResults (fun _ _ => True) true (by intros; trivial)
+  have bodyPreserves : JSM.PreservesResults (fun _ _ => True)
+      (JSM.breakJS (P := P) (α := Unit) (some label)) :=
+    JSM.breakJS_preservesResults (fun _ _ => True) (some label)
+  have loopPreserves := Control.whileLoop_preservesWellFormed
+    (JSM.pure (P := P) true) (JSM.breakJS (P := P) (α := Unit) (some label))
+    conditionPreserves bodyPreserves (some label)
+  exact Control.tryFinally_preservesWellFormed
+    (Environment.withEnvironment root
+      (Control.whileLoop (JSM.pure true) (JSM.breakJS (some label)) (some label)))
+    (JSM.emit (.emitted (JSString.ofLeanString "finally-hook")))
+    (Environment.withEnvironment_preservesWellFormed root _ loopPreserves)
+    (JSM.emit_preservesWellFormed _)
+
 end TSLean.JS

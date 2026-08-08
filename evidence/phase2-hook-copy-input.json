@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase2-prototype-manifest.json",
-  "baseRevision": "926e4924a367d40e72f0f4d403efd6e0030d18f6",
+  "outputPath": "evidence/phase2-hook-copy-manifest.json",
+  "baseRevision": "533fe9fa986c722ac13f8182a0492b0f1e4d4ff3",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": { "files": 43, "passed": 1633, "failed": 0, "todo": 8 },
     "lean": { "jobs": 172, "status": "passed" },
     "corpus": { "entries": 102, "red": 102 },
-    "auditedTheorems": 268,
+    "auditedTheorems": 439,
     "differential": {
       "scenarioGroups": 16,
       "fixed": 734,
@@ -60,23 +60,8 @@
     ]
   },
   "formalDebt": {
-    "counts": { "hookConditional": 3, "effectfulEquivalence": 1, "total": 4 },
+    "counts": { "effectfulEquivalence": 1, "total": 1 },
     "obligations": [
-      {
-        "id": "copy-hook-conditional-preservation",
-        "area": "hookConditional",
-        "statement": "Copy, assign, spread, and slice preserve Heap.WellFormed for body hooks that preserve Machine.WellFormed."
-      },
-      {
-        "id": "iterator-hook-conditional-preservation",
-        "area": "hookConditional",
-        "statement": "Array iterator allocation and advancement preserve Heap.WellFormed, including ordinary Get effects under preserving hooks."
-      },
-      {
-        "id": "machine-hook-conditional-preservation",
-        "area": "hookConditional",
-        "statement": "The composed array, copy, and iterator JSM operations preserve Machine.WellFormed under an explicit hook-preservation premise."
-      },
       {
         "id": "abstract-effectful-coercion-refinement",
         "area": "effectfulEquivalence",
@@ -95,7 +80,6 @@
     { "id": "selfhost-typemap-one-hole", "location": "tests/parser-advanced.test.ts" }
   ],
   "validation": {
-    "revision": "533fe9fa986c722ac13f8182a0492b0f1e4d4ff3",
     "testFiles": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.files" },
     "todos": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.todo" },
     "corpus": {
@@ -197,18 +181,9 @@
     ]
   },
   "hashGroups": {
-    "source": {
-      "paths": ["src"],
-      "revision": "533fe9fa986c722ac13f8182a0492b0f1e4d4ff3"
-    },
-    "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "533fe9fa986c722ac13f8182a0492b0f1e4d4ff3"
-    },
-    "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "533fe9fa986c722ac13f8182a0492b0f1e4d4ff3"
-    },
+    "source": { "paths": ["src"] },
+    "jsRuntime": { "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"] },
+    "corpus": { "paths": ["spec/corpus"] },
     "differentialSpecHarness": {
       "paths": [
         "spec/differential",
@@ -218,8 +193,7 @@
         "scripts/generate-differential-manifest.mjs",
         "tests/js-model-differential.test.ts",
         "tests/differential"
-      ],
-      "revision": "533fe9fa986c722ac13f8182a0492b0f1e4d4ff3"
+      ]
     },
     "proofTestsAudit": {
       "paths": [
@@ -228,8 +202,7 @@
         "tests/js-trust.test.ts",
         "tests/lean-fixtures/axiom-audit-synthetic.lean",
         "tests/lean-fixtures/ordered-props-transitions.lean"
-      ],
-      "revision": "533fe9fa986c722ac13f8182a0492b0f1e4d4ff3"
+      ]
     },
     "trustEvidenceInfrastructure": {
       "paths": [
@@ -241,8 +214,7 @@
         "tests/corpus-schema.test.ts",
         "tests/package.test.ts",
         "lean/lakefile.toml"
-      ],
-      "revision": "533fe9fa986c722ac13f8182a0492b0f1e4d4ff3"
+      ]
     }
   }
 }
