@@ -1,0 +1,21 @@
+evidence/phase3-refinement-core-manifest.json
+  s_a8696ab0b41d7c::t_83e83615039d0a 1-137
+scripts/check-js-axioms.mjs
+  s_a8696ab0b41d7c::t_19a9a948a158c9 2-4,8,87,100-117,140-145,202-205,209-212,236-272,278-284,296-324,341-364,385-388,398-414,420-429,456-472,491,497-498,501-528
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "e0665cdb7f2fae5e9092ba3dacb96ae26edf2227",
+  "prompts": {},
+  "sessions": {
+    "s_a8696ab0b41d7c": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_01f33e5c2ffej2d6XNRRevbQ7H",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    }
+  }
+}
