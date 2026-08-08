@@ -1,0 +1,19 @@
+evidence/phase2-hook-copy-manifest.json
+  s_d081d1096d198c::t_6d0ba7bfc38f52 1-144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "d68dab44af677733dd23b15c0ca16937ebc3d2ae",
+  "prompts": {},
+  "sessions": {
+    "s_d081d1096d198c": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0203cf965ffeLKrYyHZRYNeVTl",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    }
+  }
+}
