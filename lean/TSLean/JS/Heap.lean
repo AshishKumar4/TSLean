@@ -3218,19 +3218,19 @@ private theorem wellFormed_object (heap : Heap) (ref : RefId) (object : ObjectRe
       subst current
       exact Array.mem_of_getElem? lookup
 
-/-- Replacing an array's slots while preserving its stored properties and object metadata preserves
-the complete heap invariant when the replacement slots satisfy the full array constraint. -/
-theorem replaceArray_preserves_wellFormed (heap next : Heap) (target : RefId)
-    (properties : OrderedProps) (prototype : Option RefId) (extensible : Bool)
+private theorem replaceArrayRecord_preserves_wellFormed (heap next : Heap) (target : RefId)
+    (oldProperties newProperties : OrderedProps) (prototype : Option RefId) (extensible : Bool)
     (oldSlots newSlots : ArraySlots) (valid : heap.WellFormed)
-    (found : heap.get? target = .ok (.mk properties prototype extensible (.array oldSlots)))
-    (replaced : heap.replace target (.mk properties prototype extensible (.array newSlots)) =
+    (found : heap.get? target = .ok (.mk oldProperties prototype extensible (.array oldSlots)))
+    (propertiesValid : newProperties.WellFormed)
+    (descriptorsValid : newProperties.descriptors.all (descriptorReferencesValid heap) = true)
+    (replaced : heap.replace target (.mk newProperties prototype extensible (.array newSlots)) =
       .ok next)
     (slotsValid : arraySlotsValid
-      (.mk properties prototype extensible (.array newSlots)) newSlots = true) :
+      (.mk newProperties prototype extensible (.array newSlots)) newSlots = true) :
     next.WellFormed := by
-  let current : ObjectRecord := .mk properties prototype extensible (.array oldSlots)
-  let replacement : ObjectRecord := .mk properties prototype extensible (.array newSlots)
+  let current : ObjectRecord := .mk oldProperties prototype extensible (.array oldSlots)
+  let replacement : ObjectRecord := .mk newProperties prototype extensible (.array newSlots)
   have sourceValid := wellFormed_object heap target current valid found
   have callablePreserved : ∀ ref,
       callableReferenceValid next ref = callableReferenceValid heap ref := by
@@ -3304,11 +3304,11 @@ theorem replaceArray_preserves_wellFormed (heap next : Heap) (target : RefId)
     dsimp [replacement]
     unfold objectReferencesValid at sourceValid ⊢
     simp only [Bool.and_eq_true] at sourceValid ⊢
-    refine ⟨⟨⟨sourceValid.1.1.1, ?_⟩, ?_⟩, slotsValid⟩
-    · rw [List.all_eq_true] at sourceValid ⊢
+    refine ⟨⟨⟨propertiesValid, ?_⟩, ?_⟩, slotsValid⟩
+    · rw [List.all_eq_true] at descriptorsValid ⊢
       intro descriptor member
       rw [descriptorPreserved]
-      exact sourceValid.1.1.2 descriptor member
+      exact descriptorsValid descriptor member
     · simpa [replace_size heap next target replacement replaced] using sourceValid.1.2
   have slotsEqual : next.functionSlotList = heap.functionSlotList := by
     unfold replace at replaced
@@ -3392,6 +3392,24 @@ theorem replaceArray_preserves_wellFormed (heap next : Heap) (target : RefId)
     exact valid.1.2
   · rw [prototypeGraphAcyclic_replace heap next target current replacement found rfl replaced]
     exact valid.2
+
+/-- Replacing an array's slots while preserving its stored properties and object metadata preserves
+the complete heap invariant when the replacement slots satisfy the full array constraint. -/
+theorem replaceArray_preserves_wellFormed (heap next : Heap) (target : RefId)
+    (properties : OrderedProps) (prototype : Option RefId) (extensible : Bool)
+    (oldSlots newSlots : ArraySlots) (valid : heap.WellFormed)
+    (found : heap.get? target = .ok (.mk properties prototype extensible (.array oldSlots)))
+    (replaced : heap.replace target (.mk properties prototype extensible (.array newSlots)) =
+      .ok next)
+    (slotsValid : arraySlotsValid
+      (.mk properties prototype extensible (.array newSlots)) newSlots = true) :
+    next.WellFormed := by
+  have sourceValid := wellFormed_object heap target
+    (.mk properties prototype extensible (.array oldSlots)) valid found
+  unfold objectReferencesValid at sourceValid
+  simp only [Bool.and_eq_true] at sourceValid
+  exact replaceArrayRecord_preserves_wellFormed heap next target properties properties prototype
+    extensible oldSlots newSlots valid found sourceValid.1.1.1 sourceValid.1.1.2 replaced slotsValid
 
 private theorem replaceArrayPropertiesAndSlots_preserves_wellFormed
     (heap next : Heap) (target : RefId) (oldProperties newProperties : OrderedProps)
@@ -3606,6 +3624,562 @@ private theorem unblockedArrayShrinkReplacement_preserves_wellFormed
   · exact oldSlotsForProperties
   · exact newSlotsValid
   · exact replaced
+
+private theorem ordinaryDefineValidated_preserves_wellFormed
+    (heap next : Heap) (ref : RefId) (object : ObjectRecord) (key : PropertyKey)
+    (update : DescriptorUpdate) (kind : DescriptorKind) (success : Bool)
+    (valid : heap.WellFormed) (found : heap.get? ref = .ok object)
+    (referencesValid : validateDescriptorReferences heap update = .ok ())
+    (keyValid : (match object.kind with
+      | .array slots => match arrayIndexOfKey? key with
+          | some index => index < slots.length
+          | none => key != lengthPropertyKey
+      | .primitiveWrapper slots => (syntheticWrapperDescriptor? slots key).isNone
+      | _ => true) = true)
+    (defined : ordinaryDefineValidated heap ref object key update kind = .ok (success, next)) :
+    next.WellFormed := by
+  unfold ordinaryDefineValidated at defined
+  cases applied : update.applyValidatedDescriptor (object.properties.lookup key)
+      object.extensible kind with
+  | error rejection =>
+      simp [applied] at defined
+      obtain ⟨rfl, rfl⟩ := defined
+      exact valid
+  | ok descriptor =>
+      simp only [applied] at defined
+      cases replaced : heap.replace ref
+          { object with properties := object.properties.insert key descriptor } with
+      | error fault =>
+          rw [replaced] at defined
+          contradiction
+      | ok replacedHeap =>
+          simp [replaced] at defined
+          obtain ⟨rfl, rfl⟩ := defined
+          apply replace_preserves_wellFormed heap next ref object
+            { object with properties := object.properties.insert key descriptor }
+            valid found rfl rfl replaced
+          have sourceValid := wellFormed_object heap ref object valid found
+          unfold objectReferencesValid at sourceValid ⊢
+          simp only [Bool.and_eq_true] at sourceValid ⊢
+          have currentValid : (object.properties.lookup key).all
+              (descriptorReferencesValid heap) = true := by
+            cases lookup : object.properties.lookup key with
+            | none => rfl
+            | some current =>
+                exact OrderedProps.descriptor_of_lookup_satisfies object.properties
+                  (descriptorReferencesValid heap) sourceValid.1.1.2 key current lookup
+          have descriptorValid := applyValidatedDescriptor_referencesValid heap update
+            (object.properties.lookup key) object.extensible kind descriptor currentValid
+            referencesValid applied
+          refine ⟨⟨⟨OrderedProps.insert_wellFormed object.properties key descriptor
+            sourceValid.1.1.1, ?_⟩, ?_⟩, ?_⟩
+          · have descriptorsValid := OrderedProps.descriptors_all_insert object.properties key
+              descriptor (descriptorReferencesValid heap) sourceValid.1.1.2 descriptorValid
+            rw [List.all_eq_true] at descriptorsValid ⊢
+            intro stored member
+            rw [descriptorReferencesValid_replace heap next ref object
+              { object with properties := object.properties.insert key descriptor }
+              found rfl replaced]
+            exact descriptorsValid stored member
+          · simpa [replace_size heap next ref
+              { object with properties := object.properties.insert key descriptor } replaced]
+              using sourceValid.1.2
+          · cases kindEq : object.kind with
+            | ordinary => rfl
+            | function slots =>
+                simp only [kindEq] at sourceValid ⊢
+                rw [functionSlotsValid_replace heap next ref
+                  { object with properties := object.properties.insert key descriptor }
+                  replaced slots]
+                exact sourceValid.2
+            | array slots =>
+                simp only [kindEq, arraySlotsValid, Bool.and_eq_true] at sourceValid ⊢
+                exact ⟨sourceValid.2.1, OrderedProps.keysAll_insert object.properties key
+                  descriptor _ sourceValid.2.2 (by simpa [kindEq] using keyValid)⟩
+            | arrayIterator slots =>
+                simp only [kindEq] at sourceValid ⊢
+                rw [arrayIteratorSlotsValid_replace heap next ref object
+                  { object with properties := object.properties.insert key descriptor }
+                  found rfl replaced slots]
+                exact sourceValid.2
+            | primitiveWrapper slots =>
+                simp only [kindEq, primitiveWrapperSlotsValid, Bool.and_eq_true]
+                  at sourceValid ⊢
+                exact ⟨sourceValid.2.1, OrderedProps.keysAll_insert object.properties key
+                  descriptor _ sourceValid.2.2 (by simpa [kindEq] using keyValid)⟩
+
+private theorem replace_same_ref_twice (heap middle next : Heap) (ref : RefId)
+    (first second : ObjectRecord) (firstReplaced : heap.replace ref first = .ok middle)
+    (secondReplaced : middle.replace ref second = .ok next) :
+    heap.replace ref second = .ok next := by
+  unfold replace at firstReplaced
+  split at firstReplaced
+  · rename_i inBounds
+    cases firstReplaced
+    unfold replace at secondReplaced ⊢
+    simp [inBounds, Array.set_set] at secondReplaced ⊢
+    exact secondReplaced
+  · contradiction
+
+private theorem validArrayLength?_bound (number : JSNumber) (length : Nat)
+    (decoded : validArrayLength? number = some length) : length ≤ maxArrayLength := by
+  unfold validArrayLength? at decoded
+  dsimp only at decoded
+  split at decoded
+  all_goals repeat first | split at decoded
+  all_goals simp_all [maxArrayLength]
+  all_goals omega
+
+private theorem requestedArrayLength_bound (slots : ArraySlots) (update normalized : DescriptorUpdate)
+    (newLength : Nat) (oldBound : slots.length ≤ maxArrayLength)
+    (requested : (match update.value with
+      | .absent => Except.ok (slots.length, update)
+      | .present (.primitive (.number number)) =>
+          match validArrayLength? number with
+          | some length => Except.ok (length, { update with
+              value := .present (.primitive (.number (arrayLengthNumber length))) })
+          | none => Except.error (DefinePropertyFault.invalidArrayLength number)
+      | .present value => Except.error (DefinePropertyFault.invalidArrayLengthValue value)) =
+        Except.ok (newLength, normalized)) : newLength ≤ maxArrayLength := by
+  cases valueField : update.value with
+  | absent =>
+      simp [valueField] at requested
+      obtain ⟨rfl, rfl⟩ := requested
+      exact oldBound
+  | present value =>
+      cases value with
+      | object ref => simp [valueField] at requested
+      | primitive primitive =>
+          cases primitive <;> simp [valueField] at requested
+          rename_i number
+          cases decoded : validArrayLength? number with
+          | none => simp [decoded] at requested
+          | some length =>
+              simp [decoded] at requested
+              obtain ⟨rfl, rfl⟩ := requested
+              exact validArrayLength?_bound number length decoded
+
+private theorem arrayPropertyReplacement_preserves_wellFormed
+    (heap next : Heap) (ref : RefId) (properties : OrderedProps)
+    (prototype : Option RefId) (extensible : Bool) (oldSlots newSlots : ArraySlots)
+    (key : PropertyKey) (update : DescriptorUpdate) (kind : DescriptorKind)
+    (descriptor : PropertyDescriptor) (valid : heap.WellFormed)
+    (found : heap.get? ref = .ok (.mk properties prototype extensible (.array oldSlots)))
+    (referencesValid : validateDescriptorReferences heap update = .ok ())
+    (applied : update.applyValidatedDescriptor (properties.lookup key) extensible kind =
+      .ok descriptor)
+    (keyValid : (match arrayIndexOfKey? key with
+      | some index => index < newSlots.length
+      | none => key != lengthPropertyKey) = true)
+    (lengthMono : oldSlots.length ≤ newSlots.length)
+    (lengthValid : newSlots.length ≤ maxArrayLength)
+    (replaced : heap.replace ref
+      (.mk (properties.insert key descriptor) prototype extensible (.array newSlots)) = .ok next) :
+    next.WellFormed := by
+  have sourceValid := wellFormed_object heap ref
+    (.mk properties prototype extensible (.array oldSlots)) valid found
+  unfold objectReferencesValid at sourceValid
+  simp only [Bool.and_eq_true] at sourceValid
+  have oldSlotsValid := sourceValid.2
+  unfold arraySlotsValid at oldSlotsValid
+  simp only [Bool.and_eq_true] at oldSlotsValid
+  have currentValid : (properties.lookup key).all (descriptorReferencesValid heap) = true := by
+    cases lookup : properties.lookup key with
+    | none => rfl
+    | some current =>
+        exact OrderedProps.descriptor_of_lookup_satisfies properties
+          (descriptorReferencesValid heap) sourceValid.1.1.2 key current lookup
+  have descriptorValid := applyValidatedDescriptor_referencesValid heap update
+    (properties.lookup key) extensible kind descriptor currentValid referencesValid applied
+  have oldKeysValid : properties.keysAll (fun key =>
+      match arrayIndexOfKey? key with
+      | some index => index < newSlots.length
+      | none => key != lengthPropertyKey) = true := by
+    apply OrderedProps.keysAll_of_lookup
+    intro observed stored storedFound
+    have oldKey := OrderedProps.key_of_lookup_satisfies properties (fun key =>
+      match arrayIndexOfKey? key with
+      | some index => index < oldSlots.length
+      | none => key != lengthPropertyKey) oldSlotsValid.2 observed stored storedFound
+    cases parsed : arrayIndexOfKey? observed with
+    | none => simpa [parsed] using oldKey
+    | some index =>
+        simp [parsed] at oldKey ⊢
+        omega
+  apply replaceArrayRecord_preserves_wellFormed heap next ref properties
+    (properties.insert key descriptor) prototype extensible oldSlots newSlots valid found
+  · exact OrderedProps.insert_wellFormed properties key descriptor sourceValid.1.1.1
+  · exact OrderedProps.descriptors_all_insert properties key descriptor
+      (descriptorReferencesValid heap) sourceValid.1.1.2 descriptorValid
+  · exact replaced
+  · unfold arraySlotsValid
+    simp only [Bool.and_eq_true]
+    exact ⟨by simpa, OrderedProps.keysAll_insert properties key descriptor _
+      oldKeysValid keyValid⟩
+
+private theorem arrayLengthReplacement_preserves_wellFormed
+    (heap next : Heap) (ref : RefId) (properties : OrderedProps)
+    (prototype : Option RefId) (extensible : Bool) (oldSlots newSlots : ArraySlots)
+    (valid : heap.WellFormed)
+    (found : heap.get? ref = .ok (.mk properties prototype extensible (.array oldSlots)))
+    (lengthMono : oldSlots.length ≤ newSlots.length)
+    (lengthValid : newSlots.length ≤ maxArrayLength)
+    (replaced : heap.replace ref (.mk properties prototype extensible (.array newSlots)) =
+      .ok next) : next.WellFormed := by
+  have sourceValid := wellFormed_object heap ref
+    (.mk properties prototype extensible (.array oldSlots)) valid found
+  unfold objectReferencesValid arraySlotsValid at sourceValid
+  simp only [Bool.and_eq_true] at sourceValid
+  apply replaceArray_preserves_wellFormed heap next ref properties prototype extensible
+    oldSlots newSlots valid found replaced
+  unfold arraySlotsValid
+  simp only [Bool.and_eq_true]
+  refine ⟨by simpa, OrderedProps.keysAll_of_lookup properties _ ?_⟩
+  intro key descriptor descriptorFound
+  have oldKey := OrderedProps.key_of_lookup_satisfies properties (fun key =>
+    match arrayIndexOfKey? key with
+    | some index => index < oldSlots.length
+    | none => key != lengthPropertyKey) sourceValid.2.2 key descriptor descriptorFound
+  cases parsed : arrayIndexOfKey? key with
+  | none => simpa [parsed] using oldKey
+  | some index =>
+      simp [parsed] at oldKey ⊢
+      omega
+
+private theorem defineArrayLength_preserves_wellFormed
+    (heap next : Heap) (ref : RefId) (properties : OrderedProps)
+    (prototype : Option RefId) (extensible : Bool) (slots : ArraySlots)
+    (update : DescriptorUpdate) (kind : DescriptorKind) (success : Bool)
+    (valid : heap.WellFormed)
+    (found : heap.get? ref = .ok (.mk properties prototype extensible (.array slots)))
+    (defined : defineArrayLength heap ref
+      (.mk properties prototype extensible (.array slots)) slots update kind = .ok (success, next)) :
+    next.WellFormed := by
+  unfold defineArrayLength at defined
+  let requestedLength : Except DefinePropertyFault (Nat × DescriptorUpdate) :=
+    match update.value with
+    | .absent => .ok (slots.length, update)
+    | .present (.primitive (.number number)) =>
+        match validArrayLength? number with
+        | some length => .ok (length, { update with
+            value := .present (.primitive (.number (arrayLengthNumber length))) })
+        | none => .error (.invalidArrayLength number)
+    | .present value => .error (.invalidArrayLengthValue value)
+  change (match requestedLength with
+    | Except.error fault => Except.error fault
+    | Except.ok (newLength, normalizedUpdate) =>
+        match normalizedUpdate.applyValidatedDescriptor
+            (some (syntheticLengthDescriptor slots)) true kind with
+        | Except.error _ => Except.ok (false, heap)
+        | Except.ok (.accessor _) => Except.ok (false, heap)
+        | Except.ok (.data descriptor) =>
+            if slots.length < newLength then
+              (heap.replace ref (.mk properties prototype extensible
+                (.array ⟨newLength, descriptor.writable⟩))).mapError DefinePropertyFault.heap
+                |>.map fun next => (true, next)
+            else if slots.length = newLength then
+              (heap.replace ref (.mk properties prototype extensible
+                (.array ⟨newLength, descriptor.writable⟩))).mapError DefinePropertyFault.heap
+                |>.map fun next => (true, next)
+            else if !slots.lengthWritable then .ok (false, heap)
+            else
+              let deleted := deleteArrayIndicesFrom properties newLength
+              match deleted.1 with
+              | none =>
+                  (heap.replace ref (.mk deleted.2 prototype extensible
+                    (.array ⟨newLength, descriptor.writable⟩))).mapError DefinePropertyFault.heap
+                    |>.map fun next => (true, next)
+              | some blocked =>
+                  (heap.replace ref (.mk deleted.2 prototype extensible
+                    (.array ⟨blocked + 1, descriptor.writable⟩))).mapError DefinePropertyFault.heap
+                    |>.map fun next => (false, next)) = .ok (success, next) at defined
+  cases requested : requestedLength with
+  | error fault => simp [requested] at defined
+  | ok request =>
+      rcases request with ⟨newLength, normalizedUpdate⟩
+      simp only [requested] at defined
+      cases applied : normalizedUpdate.applyValidatedDescriptor
+          (some (syntheticLengthDescriptor slots)) true kind with
+      | error rejection =>
+          simp [applied] at defined
+          obtain ⟨rfl, rfl⟩ := defined
+          exact valid
+      | ok descriptor =>
+          rw [applied] at defined
+          cases descriptor with
+          | accessor descriptor =>
+              simp at defined
+              obtain ⟨rfl, rfl⟩ := defined
+              exact valid
+          | data descriptor =>
+              simp only at defined
+              by_cases grow : slots.length < newLength
+              · simp [grow] at defined
+                cases replaced : heap.replace ref
+                    (.mk properties prototype extensible
+                      (.array ⟨newLength, descriptor.writable⟩)) with
+                | error fault =>
+                    rw [replaced] at defined
+                    contradiction
+                | ok replacedHeap =>
+                    simp [replaced] at defined
+                    obtain ⟨rfl, rfl⟩ := defined
+                    exact arrayLengthReplacement_preserves_wellFormed heap next ref properties
+                      prototype extensible slots ⟨newLength, descriptor.writable⟩ valid found
+                      (by simpa using Nat.le_of_lt grow)
+                      (by
+                        simpa using (requestedArrayLength_bound slots update normalizedUpdate
+                          newLength
+                          (by
+                            have source := wellFormed_object heap ref
+                              (.mk properties prototype extensible (.array slots)) valid found
+                            unfold objectReferencesValid arraySlotsValid at source
+                            simp only [Bool.and_eq_true] at source
+                            simpa using source.2.1)
+                          (by simpa [requestedLength] using requested))) replaced
+              · by_cases equal : slots.length = newLength
+                · simp [grow, equal] at defined
+                  cases replaced : heap.replace ref
+                      (.mk properties prototype extensible
+                        (.array ⟨newLength, descriptor.writable⟩)) with
+                  | error fault =>
+                      rw [replaced] at defined
+                      contradiction
+                  | ok replacedHeap =>
+                      simp [replaced] at defined
+                      obtain ⟨rfl, rfl⟩ := defined
+                      have oldBound : slots.length ≤ maxArrayLength := by
+                        have source := wellFormed_object heap ref
+                          (.mk properties prototype extensible (.array slots)) valid found
+                        unfold objectReferencesValid arraySlotsValid at source
+                        simp only [Bool.and_eq_true] at source
+                        simpa using source.2.1
+                      exact arrayLengthReplacement_preserves_wellFormed heap next ref properties
+                        prototype extensible slots ⟨newLength, descriptor.writable⟩ valid found
+                        (by simp [equal]) (by simpa [equal] using oldBound) replaced
+                · cases writable : slots.lengthWritable with
+                  | false =>
+                      simp [grow, equal, writable] at defined
+                      obtain ⟨rfl, rfl⟩ := defined
+                      exact valid
+                  | true =>
+                      simp only [grow, equal, writable, Bool.not_true, ↓reduceIte] at defined
+                      cases swept : deleteArrayIndicesFrom properties newLength with
+                      | mk blocked finalProperties =>
+                          cases blocked with
+                          | none =>
+                              simp only [swept] at defined
+                              cases replaced : heap.replace ref
+                                  (.mk finalProperties prototype extensible
+                                    (.array ⟨newLength, descriptor.writable⟩)) with
+                              | error fault =>
+                                  rw [replaced] at defined
+                                  contradiction
+                              | ok replacedHeap =>
+                                  simp [replaced] at defined
+                                  obtain ⟨rfl, rfl⟩ := defined
+                                  exact unblockedArrayShrinkReplacement_preserves_wellFormed
+                                    heap next ref (.mk properties prototype extensible (.array slots))
+                                    slots newLength finalProperties descriptor.writable valid found rfl
+                                    (by omega) swept replaced
+                          | some blocked =>
+                              simp only [swept] at defined
+                              cases replaced : heap.replace ref
+                                  (.mk finalProperties prototype extensible
+                                    (.array ⟨blocked + 1, descriptor.writable⟩)) with
+                              | error fault =>
+                                  rw [replaced] at defined
+                                  contradiction
+                              | ok replacedHeap =>
+                                  simp [replaced] at defined
+                                  obtain ⟨rfl, rfl⟩ := defined
+                                  exact blockedArrayShrinkReplacement_preserves_wellFormed
+                                    heap next ref (.mk properties prototype extensible (.array slots))
+                                    slots newLength blocked finalProperties descriptor.writable valid
+                                    found rfl swept replaced
+
+/-- Every result returned by the public property-definition boundary preserves the complete heap
+invariant, including rejected definitions and blocked array-shrink committed deletions. -/
+theorem defineOwnProperty_preserves_wellFormed (heap next : Heap) (ref : RefId)
+    (key : PropertyKey) (update : DescriptorUpdate) (success : Bool)
+    (valid : heap.WellFormed)
+    (defined : heap.defineOwnProperty ref key update = .ok (success, next)) : next.WellFormed := by
+  unfold defineOwnProperty at defined
+  cases found : heap.get? ref with
+  | error fault => simp [found] at defined
+  | ok object =>
+      simp only [found] at defined
+      cases syntaxResult : update.validateSyntax with
+      | error fault => simp [syntaxResult] at defined
+      | ok kind =>
+          simp only [syntaxResult] at defined
+          cases references : validateDescriptorReferences heap update with
+          | error fault => simp [references] at defined
+          | ok unit =>
+              cases unit
+              simp only [references] at defined
+              rcases object with ⟨properties, prototype, extensible, objectKind⟩
+              cases objectKind with
+              | ordinary =>
+                  exact ordinaryDefineValidated_preserves_wellFormed heap next ref
+                    (.mk properties prototype extensible .ordinary) key update kind success valid
+                    found references rfl defined
+              | function slots =>
+                  exact ordinaryDefineValidated_preserves_wellFormed heap next ref
+                    (.mk properties prototype extensible (.function slots)) key update kind success
+                    valid found references rfl defined
+              | arrayIterator slots =>
+                  exact ordinaryDefineValidated_preserves_wellFormed heap next ref
+                    (.mk properties prototype extensible (.arrayIterator slots)) key update kind
+                    success valid found references rfl defined
+              | primitiveWrapper slots =>
+                  unfold defineWrapperProperty at defined
+                  cases synthetic : syntheticWrapperDescriptor? slots key with
+                  | some current =>
+                      cases applied : update.applyValidatedDescriptor (some current) true kind with
+                      | error rejection =>
+                          simp [synthetic, applied] at defined
+                          obtain ⟨rfl, rfl⟩ := defined
+                          exact valid
+                      | ok descriptor =>
+                          simp [synthetic, applied] at defined
+                          obtain ⟨rfl, rfl⟩ := defined
+                          exact valid
+                  | none =>
+                      apply ordinaryDefineValidated_preserves_wellFormed heap next ref
+                        (.mk properties prototype extensible (.primitiveWrapper slots)) key update
+                        kind success valid found references
+                      · simpa [synthetic]
+                      · simpa [synthetic] using defined
+              | array slots =>
+                  simp only at defined
+                  by_cases lengthKey : key == lengthPropertyKey
+                  · rw [if_pos lengthKey] at defined
+                    exact defineArrayLength_preserves_wellFormed heap next ref properties prototype
+                      extensible slots update kind success valid found defined
+                  · rw [if_neg lengthKey] at defined
+                    cases parsed : arrayIndexOfKey? key with
+                    | none =>
+                        apply ordinaryDefineValidated_preserves_wellFormed heap next ref
+                          (.mk properties prototype extensible (.array slots)) key update kind success
+                          valid found references
+                        · simp [parsed]
+                          intro equal
+                          subst key
+                          simp at lengthKey
+                        · simpa [parsed] using defined
+                    | some index =>
+                        simp only [parsed] at defined
+                        unfold defineArrayIndex at defined
+                        by_cases blocked : slots.length ≤ index && !slots.lengthWritable
+                        · simp [blocked] at defined
+                          obtain ⟨rfl, rfl⟩ := defined
+                          exact valid
+                        · rw [if_neg blocked] at defined
+                          cases ordinary : ordinaryDefineValidated heap ref
+                              (.mk properties prototype extensible (.array slots)) key update kind with
+                          | error fault => simp [ordinary] at defined
+                          | ok result =>
+                              rcases result with ⟨ordinarySuccess, middle⟩
+                              cases ordinarySuccess with
+                              | false =>
+                                  simp [ordinary] at defined
+                                  obtain ⟨rfl, rfl⟩ := defined
+                                  exact valid
+                              | true =>
+                                  rw [ordinary] at defined
+                                  cases applied : update.applyValidatedDescriptor
+                                      (properties.lookup key) extensible kind with
+                                  | error rejection =>
+                                      unfold ordinaryDefineValidated at ordinary
+                                      simp [applied] at ordinary
+                                  | ok descriptor =>
+                                      have firstReplaced : heap.replace ref
+                                          (.mk (properties.insert key descriptor) prototype extensible
+                                            (.array slots)) = .ok middle := by
+                                        unfold ordinaryDefineValidated at ordinary
+                                        simp only [applied] at ordinary
+                                        cases replaced : heap.replace ref
+                                            (.mk (properties.insert key descriptor) prototype extensible
+                                              (.array slots)) with
+                                        | error fault =>
+                                            rw [replaced] at ordinary
+                                            contradiction
+                                        | ok replacedHeap =>
+                                            rw [replaced] at ordinary
+                                            change Except.ok (true, replacedHeap) =
+                                              Except.ok (true, middle) at ordinary
+                                            exact congrArg Except.ok
+                                              (congrArg Prod.snd (Except.ok.inj ordinary))
+                                      by_cases inBounds : index < slots.length
+                                      · simp [inBounds] at defined
+                                        obtain ⟨rfl, rfl⟩ := defined
+                                        exact ordinaryDefineValidated_preserves_wellFormed heap middle ref
+                                          (.mk properties prototype extensible (.array slots)) key
+                                          update kind true valid found references
+                                          (by simp [parsed, inBounds]) ordinary
+                                      · simp only [inBounds, ↓reduceIte] at defined
+                                        have middleFound := get?_replace_same heap middle ref
+                                          (.mk (properties.insert key descriptor) prototype extensible
+                                            (.array slots)) firstReplaced
+                                        cases observed : middle.get? ref with
+                                        | error fault => simp [observed] at defined
+                                        | ok nextObject =>
+                                            rw [observed] at defined
+                                            simp only at defined
+                                            have nextObjectEq : nextObject =
+                                                .mk (properties.insert key descriptor) prototype extensible
+                                                  (.array slots) := by
+                                              rw [observed] at middleFound
+                                              exact Except.ok.inj middleFound
+                                            subst nextObject
+                                            cases finalReplaced : middle.replace ref
+                                                (.mk (properties.insert key descriptor) prototype extensible
+                                                  (.array ⟨index + 1, slots.lengthWritable⟩)) with
+                                            | error fault =>
+                                                rw [finalReplaced] at defined
+                                                contradiction
+                                            | ok finalHeap =>
+                                                simp [finalReplaced] at defined
+                                                obtain ⟨rfl, rfl⟩ := defined
+                                                have directReplaced := replace_same_ref_twice heap middle
+                                                  next ref
+                                                  (.mk (properties.insert key descriptor) prototype
+                                                    extensible (.array slots))
+                                                  (.mk (properties.insert key descriptor) prototype
+                                                    extensible
+                                                    (.array ⟨index + 1, slots.lengthWritable⟩))
+                                                  firstReplaced finalReplaced
+                                                apply arrayPropertyReplacement_preserves_wellFormed
+                                                  heap next ref properties prototype extensible slots
+                                                  ⟨index + 1, slots.lengthWritable⟩ key update kind descriptor
+                                                  valid found references applied
+                                                · simp [parsed]
+                                                · simp
+                                                  omega
+                                                · have indexBound : index ≤ PropertyKey.maxArrayIndex := by
+                                                    cases key with
+                                                    | symbol symbol => simp [arrayIndexOfKey?] at parsed
+                                                    | string stringKey =>
+                                                        change PropertyKey.arrayIndex? stringKey = some index
+                                                          at parsed
+                                                        exact PropertyKey.arrayIndex?_bound parsed
+                                                  unfold PropertyKey.maxArrayIndex at indexBound
+                                                  unfold maxArrayLength
+                                                  simp only
+                                                  omega
+                                                · exact directReplaced
+
+/-- `createDataProperty` preserves complete heap validity for every returned Boolean result. -/
+theorem createDataProperty_preserves_wellFormed (heap next : Heap) (ref : RefId)
+    (key : PropertyKey) (value : Value) (success : Bool) (valid : heap.WellFormed)
+    (created : heap.createDataProperty ref key value = .ok (success, next)) : next.WellFormed := by
+  exact defineOwnProperty_preserves_wellFormed heap next ref key {
+    value := .present value
+    writable := .present true
+    enumerable := .present true
+    configurable := .present true
+  } success valid created
 
 /-- Making an object nonextensible preserves the complete heap invariant. -/
 theorem preventExtensions_preserves_wellFormed (heap next : Heap) (ref : RefId)
@@ -4675,8 +5249,152 @@ private theorem defineOwnProperty_unblocked_array_shrink_nonvacuous :
               rfl
             exact ⟨next, rfl, lengthResult, lengthFound, finalValid⟩
 
--- TODO(theorem): prove general successful `createDataProperty`, iterator advancement, and
--- `setPrototypeOf` preserve `WellFormed`.
+private def publicMutationFixtureUpdate : DescriptorUpdate := {
+  value := .present (.primitive (.bigint 7))
+  writable := .present true
+  enumerable := .present true
+  configurable := .present true
+}
+
+private def ordinaryMutationFixtureHeap : Heap :=
+  .mk #[.mk OrderedProps.empty none true .ordinary] 0
+
+private def arrayExtensionFixtureHeap : Heap :=
+  .mk #[.mk OrderedProps.empty none true (.array ⟨0, true⟩)] 0
+
+private def wrapperMutationFixtureHeap : Heap :=
+  .mk #[.mk OrderedProps.empty none true
+    (.primitiveWrapper ⟨.string (JSString.ofLeanString "a")⟩)] 0
+
+private def objectValueFixtureHeap : Heap :=
+  .mk #[.mk OrderedProps.empty none true .ordinary,
+    .mk OrderedProps.empty none true .ordinary] 0
+
+private def operationReturns (expected : Bool)
+    (operation : Except DefinePropertyFault (Bool × Heap)) : Bool :=
+  match operation with
+  | .ok (success, _) => success == expected
+  | .error _ => false
+
+/-- Ordinary public definition has a successful witness covered by the general theorem. -/
+private theorem defineOwnProperty_ordinary_nonvacuous :
+    ∃ next, ordinaryMutationFixtureHeap.defineOwnProperty ⟨0⟩
+      (.string (JSString.ofLeanString "x")) publicMutationFixtureUpdate = .ok (true, next) ∧
+      next.WellFormed := by
+  have succeeds : operationReturns true (ordinaryMutationFixtureHeap.defineOwnProperty ⟨0⟩
+      (.string (JSString.ofLeanString "x")) publicMutationFixtureUpdate) = true := by native_decide
+  cases run : ordinaryMutationFixtureHeap.defineOwnProperty ⟨0⟩
+      (.string (JSString.ofLeanString "x")) publicMutationFixtureUpdate with
+  | error fault => simp [operationReturns, run] at succeeds
+  | ok result =>
+      rcases result with ⟨success, next⟩
+      cases success with
+      | false => simp [operationReturns, run] at succeeds
+      | true =>
+          exact ⟨next, rfl, defineOwnProperty_preserves_wellFormed _ _ _ _ _ _
+            (by unfold WellFormed; native_decide) run⟩
+
+/-- Public array-index extension has a witness covered by the general theorem. -/
+private theorem defineOwnProperty_array_extension_nonvacuous :
+    ∃ next, arrayExtensionFixtureHeap.defineOwnProperty ⟨0⟩
+      (.string (PropertyKey.arrayIndexString 0)) publicMutationFixtureUpdate = .ok (true, next) ∧
+      next.WellFormed := by
+  have succeeds : operationReturns true (arrayExtensionFixtureHeap.defineOwnProperty ⟨0⟩
+      (.string (PropertyKey.arrayIndexString 0)) publicMutationFixtureUpdate) = true := by native_decide
+  cases run : arrayExtensionFixtureHeap.defineOwnProperty ⟨0⟩
+      (.string (PropertyKey.arrayIndexString 0)) publicMutationFixtureUpdate with
+  | error fault => simp [operationReturns, run] at succeeds
+  | ok result =>
+      rcases result with ⟨success, next⟩
+      cases success with
+      | false => simp [operationReturns, run] at succeeds
+      | true =>
+          exact ⟨next, rfl, defineOwnProperty_preserves_wellFormed _ _ _ _ _ _
+            (by unfold WellFormed; native_decide) run⟩
+
+/-- Primitive-wrapper synthetic rejection and ordinary storage both instantiate the public theorem. -/
+private theorem defineOwnProperty_wrapper_nonvacuous :
+    (∃ next, wrapperMutationFixtureHeap.defineOwnProperty ⟨0⟩
+      (.string (PropertyKey.arrayIndexString 0)) publicMutationFixtureUpdate = .ok (false, next) ∧
+      next.WellFormed) ∧
+    (∃ next, wrapperMutationFixtureHeap.defineOwnProperty ⟨0⟩
+      (.string (JSString.ofLeanString "x")) publicMutationFixtureUpdate = .ok (true, next) ∧
+      next.WellFormed) := by
+  constructor
+  · have succeeds : operationReturns false (wrapperMutationFixtureHeap.defineOwnProperty ⟨0⟩
+        (.string (PropertyKey.arrayIndexString 0)) publicMutationFixtureUpdate) = true := by
+      native_decide
+    cases run : wrapperMutationFixtureHeap.defineOwnProperty ⟨0⟩
+        (.string (PropertyKey.arrayIndexString 0)) publicMutationFixtureUpdate with
+    | error fault => simp [operationReturns, run] at succeeds
+    | ok result =>
+        rcases result with ⟨success, next⟩
+        cases success with
+        | true => simp [operationReturns, run] at succeeds
+        | false =>
+            exact ⟨next, rfl, defineOwnProperty_preserves_wellFormed _ _ _ _ _ _
+              (by unfold WellFormed; native_decide) run⟩
+  · have succeeds : operationReturns true (wrapperMutationFixtureHeap.defineOwnProperty ⟨0⟩
+        (.string (JSString.ofLeanString "x")) publicMutationFixtureUpdate) = true := by native_decide
+    cases run : wrapperMutationFixtureHeap.defineOwnProperty ⟨0⟩
+        (.string (JSString.ofLeanString "x")) publicMutationFixtureUpdate with
+    | error fault => simp [operationReturns, run] at succeeds
+    | ok result =>
+        rcases result with ⟨success, next⟩
+        cases success with
+        | false => simp [operationReturns, run] at succeeds
+        | true =>
+            exact ⟨next, rfl, defineOwnProperty_preserves_wellFormed _ _ _ _ _ _
+              (by unfold WellFormed; native_decide) run⟩
+
+/-- Object-valued public data-property creation has a reference-valid witness. -/
+private theorem createDataProperty_object_reference_nonvacuous :
+    ∃ next, objectValueFixtureHeap.createDataProperty ⟨0⟩
+      (.string (JSString.ofLeanString "peer")) (.object ⟨1⟩) = .ok (true, next) ∧
+      next.WellFormed := by
+  have succeeds : operationReturns true (objectValueFixtureHeap.createDataProperty ⟨0⟩
+      (.string (JSString.ofLeanString "peer")) (.object ⟨1⟩)) = true := by native_decide
+  cases run : objectValueFixtureHeap.createDataProperty ⟨0⟩
+      (.string (JSString.ofLeanString "peer")) (.object ⟨1⟩) with
+  | error fault => simp [operationReturns, run] at succeeds
+  | ok result =>
+      rcases result with ⟨success, next⟩
+      cases success with
+      | false => simp [operationReturns, run] at succeeds
+      | true =>
+          exact ⟨next, rfl, createDataProperty_preserves_wellFormed _ _ _ _ _ _
+            (by unfold WellFormed; native_decide) run⟩
+
+/-- A blocked false commit is covered directly by the result-oriented public theorem. -/
+private theorem defineOwnProperty_blocked_false_preservation_nonvacuous :
+    ∃ next, blockedShrinkFixtureHeap.defineOwnProperty ⟨0⟩ lengthPropertyKey shrinkFixtureUpdate =
+      .ok (false, next) ∧ next.WellFormed := by
+  have succeeds : blockedShrinkFixtureSucceeds = true := by native_decide
+  cases run : blockedShrinkFixtureHeap.defineOwnProperty ⟨0⟩ lengthPropertyKey
+      shrinkFixtureUpdate with
+  | error fault => simp [blockedShrinkFixtureSucceeds, run] at succeeds
+  | ok result =>
+      rcases result with ⟨success, next⟩
+      cases success with
+      | true => simp [blockedShrinkFixtureSucceeds, run] at succeeds
+      | false =>
+          exact ⟨next, rfl, defineOwnProperty_preserves_wellFormed _ _ _ _ _ _
+            (by unfold WellFormed; native_decide) run⟩
+
+-- Registry of proved allocation, property-definition, deletion, and extensibility preservation
+-- theorems. Iterator advancement and prototype mutation remain explicit obligations below.
+namespace PublicMutationPreservation
+
+export Heap (allocate_preserves_wellFormed allocatePrimitiveWrapper_preserves_wellFormed
+  allocateArray_preserves_wellFormed allocateArrayFromArray_preserves_wellFormed
+  allocateFunction_preserves_wellFormed allocateConstructorPair_preserves_wellFormed
+  allocateArrayIterator_preserves_wellFormed defineOwnProperty_preserves_wellFormed
+  createDataProperty_preserves_wellFormed deleteProperty_preserves_wellFormed
+  preventExtensions_preserves_wellFormed)
+
+end PublicMutationPreservation
+
+-- TODO(theorem): prove iterator advancement and `setPrototypeOf` preserve `WellFormed`.
 
 end Heap
 end TSLean.JS

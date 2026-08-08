@@ -2753,6 +2753,21 @@ theorem key_of_lookup_satisfies (properties : OrderedProps) (predicate : Propert
   rcases rawSome with ⟨stored, storedFound, _⟩
   exact current (key, stored) (Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr storedFound)
 
+/-- A successful lookup inherits every predicate satisfied by all stored descriptors. -/
+theorem descriptor_of_lookup_satisfies (properties : OrderedProps)
+    (predicate : PropertyDescriptor → Bool) (current : properties.descriptors.all predicate = true)
+    (key : PropertyKey) (descriptor : PropertyDescriptor)
+    (found : properties.lookup key = some descriptor) : predicate descriptor = true := by
+  rw [List.all_eq_true] at current
+  have rawSome : ∃ stored, properties.rep.entries.get? key = some stored ∧
+      stored.descriptor = descriptor := by
+    simpa [lookup] using found
+  rcases rawSome with ⟨stored, storedFound, descriptorEq⟩
+  subst descriptor
+  apply current stored.descriptor
+  rw [descriptors, List.mem_map]
+  exact ⟨(key, stored), Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr storedFound, rfl⟩
+
 /-- Insertion installs the supplied descriptor at the inserted key. -/
 theorem lookup_insert_same (properties : OrderedProps) (key : PropertyKey)
     (descriptor : PropertyDescriptor) :

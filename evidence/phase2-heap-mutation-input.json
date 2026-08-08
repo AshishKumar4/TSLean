@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase2-array-shrink-manifest.json",
-  "baseRevision": "ac8ad990e39863a9eedb3ffdcd61b8b2c663aade",
+  "outputPath": "evidence/phase2-heap-mutation-manifest.json",
+  "baseRevision": "ec7b896f0fbdb639e22d1ae69a6a89e878f51c9c",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": { "files": 43, "passed": 1633, "failed": 0, "todo": 8 },
     "lean": { "jobs": 172, "status": "passed" },
     "corpus": { "entries": 102, "red": 102 },
-    "auditedTheorems": 259,
+    "auditedTheorems": 262,
     "differential": {
       "scenarioGroups": 16,
       "fixed": 734,
@@ -60,13 +60,8 @@
     ]
   },
   "formalDebt": {
-    "counts": { "heap": 2, "hookConditional": 3, "effectfulEquivalence": 1, "total": 6 },
+    "counts": { "heap": 1, "hookConditional": 3, "effectfulEquivalence": 1, "total": 5 },
     "obligations": [
-      {
-        "id": "heap-public-mutation-preservation",
-        "area": "heap",
-        "statement": "Successful public heap mutation operations preserve complete Heap.WellFormed."
-      },
       {
         "id": "heap-prototype-preservation",
         "area": "heap",
@@ -105,7 +100,6 @@
     { "id": "selfhost-typemap-one-hole", "location": "tests/parser-advanced.test.ts" }
   ],
   "validation": {
-    "revision": "ec7b896f0fbdb639e22d1ae69a6a89e878f51c9c",
     "testFiles": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.files" },
     "todos": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.todo" },
     "corpus": {
@@ -207,18 +201,9 @@
     ]
   },
   "hashGroups": {
-    "source": {
-      "paths": ["src"],
-      "revision": "ec7b896f0fbdb639e22d1ae69a6a89e878f51c9c"
-    },
-    "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "ec7b896f0fbdb639e22d1ae69a6a89e878f51c9c"
-    },
-    "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "ec7b896f0fbdb639e22d1ae69a6a89e878f51c9c"
-    },
+    "source": { "paths": ["src"] },
+    "jsRuntime": { "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"] },
+    "corpus": { "paths": ["spec/corpus"] },
     "differentialSpecHarness": {
       "paths": [
         "spec/differential",
@@ -228,8 +213,7 @@
         "scripts/generate-differential-manifest.mjs",
         "tests/js-model-differential.test.ts",
         "tests/differential"
-      ],
-      "revision": "ec7b896f0fbdb639e22d1ae69a6a89e878f51c9c"
+      ]
     },
     "proofTestsAudit": {
       "paths": [
@@ -238,8 +222,7 @@
         "tests/js-trust.test.ts",
         "tests/lean-fixtures/axiom-audit-synthetic.lean",
         "tests/lean-fixtures/ordered-props-transitions.lean"
-      ],
-      "revision": "ec7b896f0fbdb639e22d1ae69a6a89e878f51c9c"
+      ]
     },
     "trustEvidenceInfrastructure": {
       "paths": [
@@ -251,8 +234,7 @@
         "tests/corpus-schema.test.ts",
         "tests/package.test.ts",
         "lean/lakefile.toml"
-      ],
-      "revision": "ec7b896f0fbdb639e22d1ae69a6a89e878f51c9c"
+      ]
     }
   }
 }

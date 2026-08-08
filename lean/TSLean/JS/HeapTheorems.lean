@@ -50,6 +50,4 @@ theorem Heap.nonextensible_rejects_before_candidate
     heap.setPrototypeOf ref candidate = .ok (false, heap) := by
   simp [Heap.setPrototypeOf, found, changed, fixed]
 
--- TODO(theorem): prove ordinary property mutation preserves complete `Heap.WellFormed`.
-
 end TSLean.JS

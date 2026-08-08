@@ -747,3 +747,81 @@ $ git diff --check
 ```
 
 The 259 audited declarations and complete verification gate support only the theorem statements and premises above. They do not discharge general define/create preservation, prototype preservation, any hook-conditional obligation, or effectful coercion refinement. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and were not suppressed or changed.
+
+## 2026-08-07 - Heap public mutation preservation
+
+This proof snapshot is based on `ec7b896f0fbdb639e22d1ae69a6a89e878f51c9c` on `rebuild/semantic-core`. The array-shrink input now resolves every source-derived validation and hash from that immutable revision. Its manifest remains byte-for-byte unchanged at SHA-256 `3ce23701f655186504c498bfcdfc901f2ca8adebac5bd6cfad769987cbf960f4`, and its explicit generate/check commands remain available with all earlier historical commands. Current `evidence:generate`, `evidence:check`, `js:trust`, and `verify` target `phase2-heap-mutation-input.json`.
+
+Review approved this exact public preservation coverage under `TSLean.JS.Heap`:
+
+- `defineOwnProperty_preserves_wellFormed`: for every returned `success : Bool`, `heap.WellFormed` and `heap.defineOwnProperty ref key update = .ok (success, next)` imply `next.WellFormed`. This covers rejected definitions that return the original heap, ordinary/function/array-iterator storage, primitive-wrapper synthetic rejection and ordinary storage, array-index writes and extension, array-length growth and unchanged length, and both blocked and unblocked shrink commits.
+- `createDataProperty_preserves_wellFormed`: for every returned `success : Bool`, the public `createDataProperty` boundary preserves complete `Heap.WellFormed` as a direct instance of the definition theorem.
+- `deleteProperty_preserves_wellFormed`: both returned Boolean results preserve complete `Heap.WellFormed`.
+- `preventExtensions_preserves_wellFormed`: every successful public prevention result preserves complete `Heap.WellFormed`.
+- Allocation preservation remains complete for the seven exposed families: ordinary objects, primitive wrappers, empty arrays, arrays initialized from arrays, functions, atomic constructor/prototype pairs, and array iterators. `PublicMutationPreservation` exports these allocation theorems with the define/create/delete/prevent theorems as one reviewed registry.
+
+The private witnesses `defineOwnProperty_ordinary_nonvacuous`, `defineOwnProperty_array_extension_nonvacuous`, `defineOwnProperty_wrapper_nonvacuous`, `createDataProperty_object_reference_nonvacuous`, and `defineOwnProperty_blocked_false_preservation_nonvacuous` instantiate successful ordinary definition, successful array-index extension, primitive-wrapper rejection and storage, object-reference data creation, and a blocked false shrink commit. Together with the prior blocked and unblocked shrink witnesses, they ensure the general public theorems are exercised on successful and state-committing branches rather than only unchanged-heap rejection paths.
+
+Review approved removing exactly `heap-public-mutation-preservation`. The canonical formal debt is now exactly five obligations: `heap-prototype-preservation`, `copy-hook-conditional-preservation`, `iterator-hook-conditional-preservation`, `machine-hook-conditional-preservation`, and `abstract-effectful-coercion-refinement`. Iterator allocation is proved, but iterator advancement and its ordinary `Get` effects remain open. General `setPrototypeOf` preservation and prototype-graph validity remain open. Copy/assign/spread/slice preservation under preserving hooks, composed machine preservation under preserving hooks, and effectful coercion trace/state refinement also remain open. No prototype, iterator, hook-conditional, or effectful-refinement debt was removed.
+
+The four executable Float assumptions are carried forward unchanged as runtime assumptions, not proof axioms. The measured suite remains 43 files, 1,633 passing tests, 8 todos, 172 Lean jobs, and 102 red corpus entries. Differential evidence remains 16 scenario groups, 734 fixed plus 6,530 generated comparisons for 7,264 total, 6,088 unique operation inputs, 1,176 preserved duplicates, 97 legacy inventory IDs, the unchanged 102-entry coverage partition, and a 65,536-cell aggregate fixture budget.
+
+The heap-mutation manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:8b6f5ff42b89127d9d33921faf66e5ad6eddfd50a79c0852f0f7fdb420e05af3`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, proof tests and audit `sha256:abf9a5876478d1d597353267b09cd914012f594122a80a909622b7b2db40303c`, and trust/evidence infrastructure `sha256:2ce098f810ecbfce9a42e5d414cab5357d82b19448068004f9eed38c45f96af2`. The manifest SHA-256 is `d5285178f96b87531c7ccde070ceb12b355152f0de390a13aceebf10e835a895`.
+
+Commands and results:
+
+```text
+$ bun run evidence:generate
+$ bun run evidence:check
+
+$ bun run evidence:baseline:check
+$ bun run evidence:primitives:check
+$ bun run evidence:heap:check
+$ bun run evidence:execution:check
+$ bun run evidence:callable:check
+$ bun run evidence:arrays:check
+$ bun run evidence:primitive-ops:check
+$ bun run evidence:abstract-ops:check
+$ bun run evidence:differential:check
+$ bun run evidence:differential-compact:check
+$ bun run evidence:ordered-props:check
+$ bun run evidence:heap-allocation:check
+$ bun run evidence:array-shrink:check
+$ bun run evidence:heap-mutation:check
+
+$ bun run differential:check
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+
+$ bun run js:trust
+JS trust checks passed: 262 elaborated proof declarations
+JS trust gate passed: 262 proof declarations
+
+$ bun scripts/check-js-axioms.mjs --self-test
+synthetic environment audit passed
+
+$ /usr/bin/time -p bun run verify
+All matched files use Prettier code style!
+Differential manifest is current: 7264 vectors
+Legacy abstract inventory is current: 97 entries
+JS trust checks passed: 262 elaborated proof declarations
+JS trust gate passed: 262 proof declarations
+Test Files  43 passed (43)
+Tests  1633 passed | 8 todo (1641)
+Build completed successfully (172 jobs).
+real 141.56
+user 180.62
+sys 23.87
+
+$ bun pm pack --dry-run --ignore-scripts
+Total files: 304
+Unpacked size: 3.19MB
+
+$ shasum -a 256 evidence/phase2-array-shrink-manifest.json evidence/phase2-heap-mutation-manifest.json
+3ce23701f655186504c498bfcdfc901f2ca8adebac5bd6cfad769987cbf960f4  evidence/phase2-array-shrink-manifest.json
+d5285178f96b87531c7ccde070ceb12b355152f0de390a13aceebf10e835a895  evidence/phase2-heap-mutation-manifest.json
+
+$ git diff --check
+```
+
+The 262 audited declarations and complete verification gate support only the theorem statements and premises above. They do not discharge prototype mutation, iterator advancement, hook-conditional preservation, or effectful coercion refinement. Existing warnings and `sorry` declarations outside the isolated `TSLean.JS` trust boundary remain visible and were not suppressed or changed.
