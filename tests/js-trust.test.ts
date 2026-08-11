@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { leanFilesRecursively } from '../scripts/check-js-axioms.mjs';
+import { ensureLeanBuildCurrent, leanFilesRecursively } from '../scripts/check-js-axioms.mjs';
 
 describe('JS elaborated-environment trust audit', () => {
   it('discovers proof forms and rejects malformed trust records', () => {
@@ -55,6 +55,39 @@ describe('JS elaborated-environment trust audit', () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it('rejects orphaned compiled artifacts whose source module was deleted', () => {
+    const repository = resolve(import.meta.dirname, '..');
+    const artifact = 'lean/.lake/build/lib/lean/TSLean/Refinement/JsTrustOrphanFixture.olean';
+    const runGate = () =>
+      spawnSync('bun', ['scripts/check-js-axioms.mjs', '--self-test'], { cwd: repository, encoding: 'utf8' });
+    writeFileSync(join(repository, artifact), '');
+    try {
+      const orphaned = runGate();
+      expect(orphaned.status).not.toBe(0);
+      expect(orphaned.stderr).toContain('orphaned Lean build artifacts have no source module');
+      expect(orphaned.stderr).toContain(artifact);
+    } finally {
+      rmSync(join(repository, artifact), { force: true });
+    }
+    expect(runGate().stderr).not.toContain('orphaned Lean build artifacts');
+  }, 180_000);
+
+  it('refuses to audit when the Lean build cannot be brought up to date', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'tslean-lake-stub-'));
+    try {
+      const failing = join(directory, 'lake');
+      writeFileSync(failing, '#!/bin/sh\necho "type mismatch in Broken.lean"\necho "build failed" >&2\nexit 3\n', {
+        mode: 0o755,
+      });
+      expect(() => ensureLeanBuildCurrent(failing)).toThrow(
+        /lake build exited with status 3[\s\S]*build failed[\s\S]*type mismatch in Broken\.lean/,
+      );
+      expect(() => ensureLeanBuildCurrent(join(directory, 'absent-lake'))).toThrow('cannot run lake build');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 20_000);
 
   it('keeps refinement authority constructors inaccessible', () => {
     const constructors = spawnSync(

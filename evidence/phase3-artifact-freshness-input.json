@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase3-oracle-timeout-manifest.json",
-  "baseRevision": "9ae99757dda30d2705bc1e5be513bb1b51431e7a",
+  "outputPath": "evidence/phase3-artifact-freshness-manifest.json",
+  "baseRevision": "701612a9bb53fd66cbf42e6913e9cff0e52642ec",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": {
@@ -271,17 +271,14 @@
         "countPath": "differential.aggregateFixtureBudget",
         "measure": "value"
       }
-    ],
-    "revision": "701612a9bb53fd66cbf42e6913e9cff0e52642ec"
+    ]
   },
   "hashGroups": {
     "source": {
-      "paths": ["src"],
-      "revision": "701612a9bb53fd66cbf42e6913e9cff0e52642ec"
+      "paths": ["src"]
     },
     "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "701612a9bb53fd66cbf42e6913e9cff0e52642ec"
+      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
     },
     "refinementRuntimeAndBarrel": {
       "paths": [
@@ -293,8 +290,7 @@
         "lean/TSLean/Refinement/Primitive.lean",
         "lean/TSLean/Refinement/String.lean",
         "lean/TSLean/Refinement.lean"
-      ],
-      "revision": "701612a9bb53fd66cbf42e6913e9cff0e52642ec"
+      ]
     },
     "refinementTestsAuditRegistry": {
       "paths": [
@@ -304,12 +300,10 @@
         "tests/js-trust.test.ts",
         "tests/lean-fixtures/refinement-invalid-guard-receipt.lean",
         "tests/lean-fixtures/refinement-private-constructors.lean"
-      ],
-      "revision": "701612a9bb53fd66cbf42e6913e9cff0e52642ec"
+      ]
     },
     "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "701612a9bb53fd66cbf42e6913e9cff0e52642ec"
+      "paths": ["spec/corpus"]
     },
     "differentialSpecHarness": {
       "paths": [
@@ -320,8 +314,7 @@
         "scripts/generate-differential-manifest.mjs",
         "tests/js-model-differential.test.ts",
         "tests/differential"
-      ],
-      "revision": "701612a9bb53fd66cbf42e6913e9cff0e52642ec"
+      ]
     },
     "trustEvidenceInfrastructure": {
       "paths": [
@@ -335,8 +328,7 @@
         "lean/TSLean.lean",
         "lean/TSLean/Tests.lean",
         "lean/lakefile.toml"
-      ],
-      "revision": "701612a9bb53fd66cbf42e6913e9cff0e52642ec"
+      ]
     }
   }
 }

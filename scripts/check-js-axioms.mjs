@@ -1,6 +1,15 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { argv, stdout } from 'node:process';
@@ -8,6 +17,8 @@ import { fileURLToPath } from 'node:url';
 import { refinementProofRegistry } from './refinement-proof-registry.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const leanDirectory = join(root, 'lean');
+const compiledLibraryDirectory = join(leanDirectory, '.lake/build/lib/lean');
 const allowedAxioms = new Set(['propext', 'Classical.choice', 'Quot.sound']);
 const usage = 'Usage: check-js-axioms.mjs --evidence <input.json> | --self-test';
 
@@ -259,15 +270,19 @@ function validateRefinementSource(file, source, semantic = true) {
   }
 }
 
-export function leanFilesRecursively(directory) {
+function filesRecursively(directory, extension, symlinkFailure) {
   const files = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
-    if (entry.isSymbolicLink()) fail(`refinement source tree contains symlink: ${path}`);
-    else if (entry.isDirectory()) files.push(...leanFilesRecursively(path));
-    else if (entry.isFile() && entry.name.endsWith('.lean')) files.push(path);
+    if (entry.isSymbolicLink()) fail(`${symlinkFailure}: ${path}`);
+    else if (entry.isDirectory()) files.push(...filesRecursively(path, extension, symlinkFailure));
+    else if (entry.isFile() && entry.name.endsWith(extension)) files.push(path);
   }
   return files;
+}
+
+export function leanFilesRecursively(directory) {
+  return filesRecursively(directory, '.lean', 'refinement source tree contains symlink');
 }
 
 function checkSources() {
@@ -322,13 +337,97 @@ function enforceRefinementRegistry(records, registry = refinementProofRegistry) 
   return required.size;
 }
 
-function runLeanAudit(file, allowDiagnostics = false) {
+function moduleSourceFile(name) {
+  return join(leanDirectory, `${name.split('.').join(sep)}.lean`);
+}
+
+export function ensureLeanBuildCurrent(lakeExecutable = 'lake') {
+  const result = spawnSync(lakeExecutable, ['build', '--quiet', '--no-ansi'], {
+    cwd: leanDirectory,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.error) fail(`cannot run lake build: ${result.error.message}`);
+  if (result.status !== 0) {
+    const detail = [result.stderr, result.stdout]
+      .map((output) => output.trim())
+      .filter(Boolean)
+      .join('\n');
+    fail(`lake build exited with status ${result.status}: ${detail}`);
+  }
+}
+
+function compiledModuleName(artifact) {
+  return artifact
+    .slice(compiledLibraryDirectory.length + 1, -'.olean'.length)
+    .split(sep)
+    .join('.');
+}
+
+function checkCompiledArtifacts() {
+  const directory = join(compiledLibraryDirectory, 'TSLean');
+  const orphans = filesRecursively(directory, '.olean', 'Lean build tree contains symlink')
+    .filter((artifact) => !existsSync(moduleSourceFile(compiledModuleName(artifact))))
+    .map((artifact) => artifact.slice(root.length + 1))
+    .sort();
+  if (orphans.length > 0) fail(`orphaned Lean build artifacts have no source module: ${orphans.join(', ')}`);
+}
+
+function withTemporaryLeanFile(source, use) {
+  const directory = mkdtempSync(join(tmpdir(), 'tslean-audit-'));
+  try {
+    const file = join(directory, 'Audit.lean');
+    writeFileSync(file, source);
+    return use(file);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function auditedModules(imports) {
+  const result = withTemporaryLeanFile(
+    [
+      'import Lean',
+      ...imports.map((name) => `import ${name}`),
+      'open Lean in',
+      'run_cmd do',
+      '  let environment ← Lean.getEnv',
+      '  for name in environment.header.moduleNames do',
+      '    logInfo m!"JS_MODULE\\t{name}"',
+      '',
+    ].join('\n'),
+    runLean,
+  );
+  if (result.stderr.trim().length > 0) fail(`unexpected Lean module probe stderr: ${result.stderr.trim()}`);
+  const modules = new Set();
+  for (const line of result.stdout.split('\n').filter((value) => value.trim().length > 0)) {
+    const match = line.match(/^JS_MODULE\t(\S+)$/);
+    if (!match) fail(`unparsed Lean module record: ${line}`);
+    modules.add(match[1]);
+  }
+  if (modules.size === 0) fail('Lean module probe emitted no records');
+  return modules;
+}
+
+function checkAuditedEnvironment(imports) {
+  const unsourced = [...auditedModules(imports)]
+    .filter((name) => inNamespace(name, 'TSLean') && !existsSync(moduleSourceFile(name)))
+    .sort();
+  if (unsourced.length > 0) fail(`audited Lean environment loaded modules with no source: ${unsourced.join(', ')}`);
+}
+
+function runLean(file) {
   const result = spawnSync('lake', ['env', 'lean', file], {
-    cwd: join(root, 'lean'),
+    cwd: leanDirectory,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (result.status !== 0) fail(`Lean audit exited with status ${result.status}: ${result.stderr.trim()}`);
+  return result;
+}
+
+function runLeanAudit(file, allowDiagnostics = false) {
+  const result = runLean(file);
   const output = allowDiagnostics
     ? result.stdout
         .split('\n')
@@ -338,28 +437,25 @@ function runLeanAudit(file, allowDiagnostics = false) {
   return { records: parseEnvironmentAudit(output), stderr: result.stderr };
 }
 
-function runRefinementAudit() {
+function refinementAuditImports() {
   const refinementDirectory = join(root, 'lean/TSLean/Refinement');
   const discovered = leanFilesRecursively(refinementDirectory)
     .map((file) => file.slice(refinementDirectory.length + 1))
     .filter((relative) => relative !== 'AxiomAudit.lean')
     .map((relative) => `TSLean.Refinement.${relative.slice(0, -'.lean'.length).split(sep).join('.')}`);
-  const imports = [
+  return [
+    'TSLean.JS.AxiomAuditMeta',
     'TSLean.Refinement',
     ...discovered.filter((name) => moduleRole(name) === 'semantic').sort(),
     ...discovered.filter((name) => moduleRole(name) !== 'semantic').sort(),
   ];
-  const directory = mkdtempSync(join(tmpdir(), 'tslean-refinement-audit-'));
-  const file = join(directory, 'RefinementAudit.lean');
-  try {
-    writeFileSync(
-      file,
-      `import TSLean.JS.AxiomAuditMeta\n${imports.map((name) => `import ${name}`).join('\n')}\n#audit_proofs TSLean.Refinement\n`,
-    );
-    return runLeanAudit(file);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
+}
+
+function runRefinementAudit(imports) {
+  return withTemporaryLeanFile(
+    `${imports.map((name) => `import ${name}`).join('\n')}\n#audit_proofs TSLean.Refinement\n`,
+    runLeanAudit,
+  );
 }
 
 function selfTest() {
@@ -487,9 +583,12 @@ function selfTest() {
 
 function main() {
   const args = parseArgs(argv.slice(2));
+  ensureLeanBuildCurrent();
+  checkCompiledArtifacts();
   if (args.selfTest) return selfTest();
   const expected = readExpectedAuditCount(args.evidence);
   checkSources();
+  checkAuditedEnvironment(['TSLean.JS.AxiomAudit']);
   const { records, stderr } = runLeanAudit('TSLean/JS/AxiomAudit.lean');
   if (stderr.trim().length > 0) fail(`unexpected Lean audit stderr: ${stderr.trim()}`);
   enforceAllowlist(records);
@@ -498,7 +597,9 @@ function main() {
     fail(`expected ${expected.js} audited proof declarations, found ${records.size}`);
   }
   stdout.write(`JS trust gate passed: ${records.size} proof declarations\n`);
-  const refinementAudit = runRefinementAudit();
+  const refinementImports = refinementAuditImports();
+  checkAuditedEnvironment(refinementImports);
+  const refinementAudit = runRefinementAudit(refinementImports);
   if (refinementAudit.stderr.trim().length > 0) {
     fail(`unexpected refinement audit stderr: ${refinementAudit.stderr.trim()}`);
   }

@@ -1241,3 +1241,42 @@ files exist rather than rebuilding, so an orphaned artifact from a removed modul
 imported through a stale barrel and inflate the audit. Running `lake build` before the trust gate
 restores agreement between source and environment; `bun run verify` already does this, but the
 audit does not enforce it on its own.
+
+## Lean artifact freshness in the trust gate
+
+The trust gate audited an environment whose currency it never checked. `runLeanAudit` invokes
+`lake env lean`, which loads whatever `.olean` files already exist rather than rebuilding. That is
+not theoretical: an orphaned `lean/.lake/build/lib/lean/TSLean/Refinement/Array.olean`, left behind
+by a module whose source had been removed, stayed reachable through a stale barrel artifact and the
+gate reported 167 refinement proof declarations where source contained 155. `lake build` reconciled
+them. `bun run verify` masked the hazard by rebuilding first, so `bun run js:trust` alone was the
+unsound entry point.
+
+The gate now fails closed on its own. It runs `lake build` before any audit and surfaces both
+stdout and stderr on failure, because Lean reports diagnostics on stdout and only `error: build
+failed` on stderr. It then rejects orphaned artifacts: any compiled module under
+`lean/.lake/build/lib/lean/TSLean/**` with no corresponding source. That check is load-bearing
+rather than redundant, since `lake build` does not garbage-collect removed modules; it immediately
+found three genuine orphans from modules deleted in `4e0953f`
+(`JS/AbstractOperationsOracleTests`, `JS/CoercionEffectsRefinement`, `JS/PrimitiveOracleTests`).
+Finally it asks Lean for the modules actually loaded in the audited environment and rejects any
+without a source file.
+
+Requirement wording asked for namespace-level correspondence in both directions. Neither direction
+is implementable as stated and both were narrowed deliberately. Namespaces are not modules here:
+`TSLean.Refinement.BigInt`, `.Bool`, `.EvidenceKind`, `.Heap.ExactExtension`, `.LawfulCodec`,
+`.Codec` and `.Guard` legitimately have no source file, so the assertion is made at module
+granularity, which subsumes declarations. The reverse direction would be a pure false positive:
+`TSLean.JS.Function`, `TSLean.JS.Construct` and `TSLean.JS.CoercionEffectsBenchmark` are semantic by
+`moduleRole` yet sit outside the audit's import closure, and each declares zero theorems.
+
+Two regressions pin the behaviour: a fabricated orphan artifact must fail the gate with its path and
+stop failing once removed, and a failing or absent `lake` must fail the gate through an injected
+seam that only an in-process caller can reach. Test count moves from 1636 to 1638. Gate cost moves
+from 30.1 s to 30.6 s, with an up-to-date `lake build` measured at 0.1-2 s and no caching added.
+
+Residual, both accepted and recorded rather than fixed. `lake build` builds the default target's
+closure, so a refinement module outside it would not be rebuilt; none exists today and a missing
+artifact fails loudly rather than silently. The loaded-module probe cannot fire while the orphan
+check holds and `LEAN_PATH` has a single TSLean root; it uniquely covers modules resolved from
+outside the TSLean artifact tree and costs about 1.4 s.
