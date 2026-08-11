@@ -1208,3 +1208,36 @@ $ git diff --check
 ```
 
 Every evidence check from `evidence:baseline:check` through the current `evidence:float-refinement:check` passed. The Float-refinement manifest records source `sha256:fa74184c0093d5e56ae5c02c7f1496bc13038d4f3ce800033d8be7966d5aa5f3`, JS runtime `sha256:4fe149ff5f709495e20acca7deb27edfd0aca01c9d1f26b1dcd07cb9d8eb4969`, refinement runtime and barrel `sha256:fef2f61ad99859a0c0eefc4d8773f2266233c70b90cb2f55297dd547b6d839f7`, refinement tests, audit, and registry `sha256:b6e19c994a851d9f904522537bff041fc20f13cd148a3705a9e5187288511617`, corpus `sha256:467348cdf61bd4925e41c764cab7fa289d74b2bcd1e54cba87b225f543cf09ec`, differential specifications and harness `sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e`, and trust/evidence infrastructure `sha256:ea3629588eeb78366df81c900a4ac0548ca9c54eb532b2fd3133e74e88dc8d1e`. The registry SHA-256 is `6fbe4d0b6f71b418d3b840b41bb092c3562eadb93792616d1ccf2ec0fb32d2cb`. The manifest SHA-256 is `dc61688e170faba957c4993bd78a05b21556137278c092ad2e35d3b5eb23e633`.
+
+## Differential oracle timeout flake
+
+The differential harness gate was non-deterministic. `tests/js-model-differential.test.ts` spawns a
+real Node child through `fakeOracle`, and seven cases bounded the request at `1_000` ms (one at
+`50` ms) while asserting a _non-timeout_ outcome: unexpected stdout close, unexpected exit, invalid
+JSON followed by a fresh restart, unsolicited output, failed response correlation, a bounded close,
+and truncated stderr. Because the suite runs serialized (`fileParallelism: false`) and this file
+alone takes roughly 16 s, spawning the child can exceed one second under load. The request timeout
+then won the race and the harness reported `oracle batch timed out after 1000ms` instead of the
+lifecycle failure each case asserts. The tip passed in one run and failed two cases in the next, so
+the gate could not be trusted either way.
+
+The fix names the bound. `nonTimeoutRequestMs = 10_000` is used wherever the assertion is a
+non-timeout outcome, comfortably above real spawn latency and well inside the 30 s `testTimeout`.
+The deliberately short bounds are unchanged, because there the timeout _is_ the subject: `20` ms for
+the hanging-child request and `20` ms for `closeTimeoutMs`. No harness semantics, vector, or
+observation changed; the manifest still records 7264 comparisons.
+
+This snapshot exists because `tests/js-model-differential.test.ts` belongs to the
+`differentialSpecHarness` hash group, so the Float manifest became stale the moment the flake was
+fixed. The Float snapshot is frozen at its own revision `9ae9975` and its manifest remains
+`dc61688e170faba957c4993bd78a05b21556137278c092ad2e35d3b5eb23e633`, byte for byte. Counts are
+unchanged at 43 test files, 1636 passed, 8 todo, 187 Lean jobs, 596 audited JS proofs, 155 audited
+and 140 required refinement proofs, and 102 red corpus entries. Only the harness hash moves, from
+`sha256:6386c60110ee9bfae81fcb9fd013faf6112254af96502accd7203221a240993e` to
+`sha256:48e7e54c874b90058b563b84d5fe88f724f5f77a4f08d24ad1d4cfa069053e99`.
+
+A stale-artifact hazard surfaced while verifying this. `lake env lean` reuses whatever `.olean`
+files exist rather than rebuilding, so an orphaned artifact from a removed module can still be
+imported through a stale barrel and inflate the audit. Running `lake build` before the trust gate
+restores agreement between source and environment; `bun run verify` already does this, but the
+audit does not enforce it on its own.

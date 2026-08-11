@@ -104,6 +104,11 @@ function fakeOracle(source: string): () => ChildProcessWithoutNullStreams {
   return () => spawn(process.execPath, ['-e', source], { stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
+// Request bound for cases whose assertion is a non-timeout outcome. Spawning a real Node child
+// under a loaded serialized suite can take seconds, so a tight bound would race the behaviour being
+// asserted; only cases that assert the timeout itself may use a short one.
+const nonTimeoutRequestMs = 10_000;
+
 const fakeResponseSource = `
 let input = '';
 process.stdin.setEncoding('utf8');
@@ -918,7 +923,7 @@ describe('generic model differential infrastructure', () => {
   });
 
   it('rejects missing executables and request timeouts', async () => {
-    const missing = new LeanOracle(root, { executable: resolve(root, 'missing-js-model-oracle'), requestTimeoutMs: 50 });
+    const missing = new LeanOracle(root, { executable: resolve(root, 'missing-js-model-oracle'), requestTimeoutMs: nonTimeoutRequestMs });
     await expect(missing.exchangeLines(['{}'])).rejects.toThrow('oracle process error');
 
     const hanging = new LeanOracle(root, {
@@ -929,7 +934,7 @@ describe('generic model differential infrastructure', () => {
 
     const exited = new LeanOracle(root, {
       spawnChild: fakeOracle(`process.stdin.once('data', () => process.exit(0));`),
-      requestTimeoutMs: 1_000,
+      requestTimeoutMs: nonTimeoutRequestMs,
     });
     await expect(exited.exchangeLines(['{}'])).rejects.toThrow(/stdout closed unexpectedly|exited unexpectedly/);
   });
@@ -941,7 +946,7 @@ describe('generic model differential infrastructure', () => {
         starts += 1;
         return fakeOracle(starts === 1 ? `process.stdin.once('data', () => process.stdout.write('not-json\\n'));` : fakeResponseSource)();
       },
-      requestTimeoutMs: 1_000,
+      requestTimeoutMs: nonTimeoutRequestMs,
     });
     await expect(oracle.exchangeLines(['{}'])).rejects.toThrow('invalid JSON');
     await expect(oracle.requestBatch([{ id: 'fresh', operation: 'parse', fixtures: [] }])).resolves.toHaveLength(1);
@@ -954,7 +959,7 @@ describe('generic model differential infrastructure', () => {
     });
     const excess = new LeanOracle(root, {
       spawnChild: fakeOracle(`process.stdin.once('data', () => process.stdout.write(${JSON.stringify(`${validLine}\n{}\n`)}));`),
-      requestTimeoutMs: 1_000,
+      requestTimeoutMs: nonTimeoutRequestMs,
     });
     await expect(excess.requestBatch([{ id: 'one', operation: 'parse', fixtures: [] }]))
       .rejects.toThrow(/unsolicited|invalid response/);
@@ -963,7 +968,7 @@ describe('generic model differential infrastructure', () => {
       spawnChild: fakeOracle(`process.stdin.once('data', () => process.stdout.write(${JSON.stringify(
         `${validLine.replace('"one"', '"wrong"')}\n`,
       )}));`),
-      requestTimeoutMs: 1_000,
+      requestTimeoutMs: nonTimeoutRequestMs,
     });
     await expect(wrongId.requestBatch([{ id: 'one', operation: 'parse', fixtures: [] }]))
       .rejects.toThrow('response correlation failed');
@@ -979,7 +984,7 @@ describe('generic model differential infrastructure', () => {
     const closeTimeout = new LeanOracle(root, {
       spawnChild: fakeOracle(`${fakeResponseSource}\nsetInterval(() => {}, 1000);`),
       closeTimeoutMs: 20,
-      requestTimeoutMs: 1_000,
+      requestTimeoutMs: nonTimeoutRequestMs,
     });
     await closeTimeout.requestBatch([{ id: 'close', operation: 'parse', fixtures: [] }]);
     await expect(closeTimeout.close()).rejects.toThrow('oracle close timed out after 20ms');
@@ -987,7 +992,7 @@ describe('generic model differential infrastructure', () => {
     const stderr = new LeanOracle(root, {
       spawnChild: fakeOracle(`process.stderr.write('x'.repeat(1000));\n${fakeResponseSource}`),
       stderrLimit: 32,
-      requestTimeoutMs: 1_000,
+      requestTimeoutMs: nonTimeoutRequestMs,
     });
     await stderr.requestBatch([{ id: 'stderr', operation: 'parse', fixtures: [] }]);
     await expect(stderr.close()).rejects.toThrow('oracle stderr truncated');
