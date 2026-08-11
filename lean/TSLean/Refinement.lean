@@ -1,3 +1,4 @@
+import TSLean.Refinement.Array
 import TSLean.Refinement.Core
 import TSLean.Refinement.Evidence
 import TSLean.Refinement.Execution

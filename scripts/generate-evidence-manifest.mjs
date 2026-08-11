@@ -154,6 +154,27 @@ function hashGroup(group, name) {
   return `sha256:${hash.digest('hex')}`;
 }
 
+// Directories whose every Lean module must be hashed by some group, so that a new production
+// module cannot ship outside the freshness evidence.
+const coveredDirectories = ['lean/TSLean/JS', 'lean/TSLean/Refinement'];
+
+function assertModuleCoverage(groups) {
+  // Only groups that hash the working tree can be checked against it. Every historical input pins
+  // all of its groups to a frozen revision and describes a tree this checkout is not at, so those
+  // inputs are skipped: their coverage was whatever the pinned revision contained.
+  const live = Object.values(groups).filter((group) => group.revision === undefined);
+  if (live.length === 0) return;
+  const covered = new Set(live.flatMap((group) => currentFiles(group.paths)).map((file) => relative(root, file)));
+  const uncovered = coveredDirectories
+    .flatMap((directory) => filesUnder(repositoryPath(directory, 'covered directory')))
+    .map((file) => relative(root, file))
+    .filter((file) => file.endsWith('.lean') && !covered.has(file))
+    .sort(compare);
+  if (uncovered.length > 0) {
+    fail(`no hash group covers ${uncovered.join(', ')}; add each to a hashGroups entry`);
+  }
+}
+
 function countAt(counts, path) {
   if (typeof path !== 'string' || path.length === 0) fail('validation count paths must be non-empty strings');
   let value = counts;
@@ -466,6 +487,7 @@ if (branch !== input.branch) fail(`expected branch ${input.branch}, found ${bran
 const knownTodos = validateEvidence(input);
 const groups = object(input.hashGroups, 'hashGroups');
 if (Object.keys(groups).length === 0) fail('hashGroups must not be empty');
+assertModuleCoverage(groups);
 
 const localBin = (name) => join(root, 'node_modules/.bin', name);
 const hashes = Object.fromEntries(Object.entries(groups).map(([name, group]) => [name, hashGroup(group, name)]));

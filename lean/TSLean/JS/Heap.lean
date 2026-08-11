@@ -1868,7 +1868,8 @@ private def reachesWithFuel (heap : Heap) (target : RefId) : Nat → RefId → E
             | none => .ok false
             | some parent => reachesWithFuel heap target fuel parent
 
-private theorem get?_ok_valid (heap : Heap) (ref : RefId) (object : ObjectRecord)
+/-- A successful object read is the only public evidence that a reference is in range. -/
+theorem get?_ok_valid (heap : Heap) (ref : RefId) (object : ObjectRecord)
     (found : heap.get? ref = .ok object) : heap.ValidRef ref := by
   unfold get? at found
   unfold ValidRef size
@@ -6196,6 +6197,111 @@ private theorem arrayElementFold_preserves_validity (heap : Heap)
             ih (index + 1) (properties.insert key descriptor) nextPropertiesValid
               nextDescriptorsValid nextKeysValid valuesValid.2 restWithin
 
+private theorem mergeSort_cons_range (index : Nat) :
+    (index :: List.range index).mergeSort (fun left right => decide (left ≤ right)) =
+      List.range (index + 1) := by
+  refine List.Perm.eq_of_pairwise
+    (le := fun left right => decide (left ≤ right) = true)
+    (fun left right _ _ leftLe rightLe =>
+      Nat.le_antisymm (of_decide_eq_true leftLe) (of_decide_eq_true rightLe))
+    (List.pairwise_mergeSort (fun left middle right leftLe middleLe => by
+        simp only [decide_eq_true_eq] at leftLe middleLe ⊢
+        omega)
+      (fun left right => by simp only [Bool.or_eq_true, decide_eq_true_eq]; omega) _)
+    ?_ ?_
+  · rw [List.range_eq_range']
+    exact (List.pairwise_le_range' (s := 0) (n := index + 1)).imp decide_eq_true
+  · refine (List.mergeSort_perm _ _).trans ?_
+    rw [List.range_succ]
+    exact (List.perm_append_singleton index (List.range index)).symm
+
+private theorem denseFold_absent (properties : OrderedProps) (index : Nat)
+    (propertiesValid : properties.WellFormed)
+    (indices : properties.arrayIndices = List.range index)
+    (parsed : PropertyKey.arrayIndex? (PropertyKey.arrayIndexString index) = some index) :
+    properties.lookup (.string (PropertyKey.arrayIndexString index)) = none := by
+  cases lookupEq : properties.lookup (.string (PropertyKey.arrayIndexString index)) with
+  | none => rfl
+  | some descriptor =>
+      exfalso
+      have member : PropertyKey.string (PropertyKey.arrayIndexString index) ∈ properties.ownKeys :=
+        (OrderedProps.mem_ownKeys_iff_lookup_isSome properties _ propertiesValid).mpr
+          (by simp [lookupEq])
+      have indexMember : index ∈ properties.arrayIndices :=
+        List.mem_filterMap.mpr ⟨_, member, parsed⟩
+      rw [indices] at indexMember
+      simp at indexMember
+
+private theorem denseElementFold (values : List Value) (index : Nat) (properties : OrderedProps)
+    (propertiesValid : properties.WellFormed)
+    (indices : properties.arrayIndices = List.range index)
+    (strings : properties.stringKeys = [])
+    (symbols : properties.symbolKeys = [])
+    (bound : index + values.length ≤ maxArrayLength) :
+    let result := (values.map some).foldl (fun state element =>
+      let nextIndex := state.1
+      let nextProperties := match element with
+        | none => state.2
+        | some value => state.2.insert (.string (PropertyKey.arrayIndexString nextIndex))
+            (.data ⟨value, true, true, true⟩)
+      (nextIndex + 1, nextProperties)) (index, properties)
+    result.2.WellFormed ∧
+      result.2.arrayIndices = List.range (index + values.length) ∧
+      result.2.stringKeys = [] ∧
+      result.2.symbolKeys = [] ∧
+      (∀ key, (properties.lookup key).isSome → result.2.lookup key = properties.lookup key) ∧
+      ∀ (position : Nat) (inBounds : position < values.length),
+        result.2.lookup (.string (PropertyKey.arrayIndexString (index + position))) =
+          some (.data ⟨values[position], true, true, true⟩) := by
+  induction values generalizing index properties with
+  | nil => exact ⟨propertiesValid, by simpa using indices, strings, symbols,
+      fun _ _ => rfl, fun position inBounds => by simp at inBounds⟩
+  | cons value rest ih =>
+      have parsed : PropertyKey.arrayIndex? (PropertyKey.arrayIndexString index) = some index := by
+        apply PropertyKey.arrayIndex?_arrayIndexString
+        unfold maxArrayLength at bound
+        unfold PropertyKey.maxArrayIndex
+        simp only [List.length_cons] at bound
+        omega
+      have absent := denseFold_absent properties index propertiesValid indices parsed
+      let key : PropertyKey := .string (PropertyKey.arrayIndexString index)
+      let descriptor : PropertyDescriptor := .data ⟨value, true, true, true⟩
+      have nextValid := OrderedProps.insert_wellFormed properties key descriptor propertiesValid
+      have nextIndices : (properties.insert key descriptor).arrayIndices =
+          List.range (index + 1) := by
+        rw [OrderedProps.arrayIndices_insert_fresh_index properties _ index descriptor
+          propertiesValid parsed absent, indices]
+        exact mergeSort_cons_range index
+      have nextOrder := OrderedProps.orderedKeys_insert_fresh_index properties
+        (PropertyKey.arrayIndexString index) index descriptor propertiesValid parsed absent
+      have folded := ih (index + 1) (properties.insert key descriptor) nextValid nextIndices
+        (by rw [nextOrder.1, strings]) (by rw [nextOrder.2, symbols])
+        (by simp only [List.length_cons] at bound; omega)
+      have inserted : (properties.insert key descriptor).lookup key = some descriptor :=
+        OrderedProps.lookup_insert_same properties key descriptor
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+      · simpa [List.foldl_cons] using folded.1
+      · simpa [List.foldl_cons, Nat.add_assoc, Nat.add_comm 1] using folded.2.1
+      · simpa [List.foldl_cons] using folded.2.2.1
+      · simpa [List.foldl_cons] using folded.2.2.2.1
+      · intro other present
+        have different : key ≠ other := by
+          intro same
+          rw [← same, absent] at present
+          simp at present
+        have unchanged :=
+          OrderedProps.lookup_insert_ne properties key other descriptor different
+        have step := folded.2.2.2.2.1 other (by rw [unchanged]; exact present)
+        simpa [List.foldl_cons, unchanged] using step
+      · intro position inBounds
+        match position with
+        | 0 =>
+            have step := folded.2.2.2.2.1 key (by simp [inserted])
+            simpa [List.foldl_cons, key, descriptor, inserted] using step
+        | next + 1 =>
+            have shifted := folded.2.2.2.2.2 next (by simpa using Nat.lt_of_succ_lt_succ inBounds)
+            simpa [List.foldl_cons, Nat.add_assoc, Nat.add_comm 1] using shifted
+
 private theorem arrayInvalidFold_started (heap : Heap) (elements : List (Option Value))
     (ref : RefId) :
     elements.foldl (fun found element =>
@@ -6235,6 +6341,39 @@ private theorem arrayInvalidFold_none_valuesValid (heap : Heap)
                 simp [List.all_cons, valueValid, inBounds, restValid]
               · simp only [List.foldl_cons] at checked
                 simp [inBounds, arrayInvalidFold_started heap rest ref] at checked
+
+private theorem arrayInvalidFold_none_of_valid (heap : Heap) (elements : List (Option Value))
+    (valuesValid : elements.all (fun element => element.all heap.valueValid) = true) :
+    elements.foldl (fun found element =>
+      match found, element with
+      | some ref, _ => some ref
+      | none, some (.object ref) => if ref.value < heap.size then none else some ref
+      | none, _ => none) none = none := by
+  induction elements with
+  | nil => rfl
+  | cons element rest ih =>
+      simp only [List.all_cons, Bool.and_eq_true] at valuesValid
+      cases element with
+      | none => simpa [List.foldl_cons] using ih valuesValid.2
+      | some value =>
+          cases value with
+          | primitive value => simpa [List.foldl_cons] using ih valuesValid.2
+          | object ref =>
+              have inBounds : ref.value < heap.size := by
+                simpa [valueValid] using valuesValid.1
+              simpa [List.foldl_cons, inBounds] using ih valuesValid.2
+
+/-- A null-prototype array allocation succeeds whenever its length is representable and every
+element reference is valid in this heap. -/
+theorem allocateArrayFromArray_ok (heap : Heap) (elements : Array (Option Value))
+    (bound : elements.size ≤ maxArrayLength)
+    (valuesValid : elements.toList.all (fun element => element.all heap.valueValid) = true) :
+    ∃ ref next, heap.allocateArrayFromArray elements none = .ok (ref, next) := by
+  unfold allocateArrayFromArray
+  rw [if_neg (by omega)]
+  simp only
+  rw [← Array.foldl_toList, arrayInvalidFold_none_of_valid heap elements.toList valuesValid]
+  exact ⟨_, _, rfl⟩
 
 private theorem appendArray_preserves_wellFormed (heap : Heap)
     (elements : Array (Option Value)) (prototype : Option RefId) (valid : heap.WellFormed)
@@ -6433,6 +6572,139 @@ theorem allocateArrayFromArray_continuesFrom (heap next : Heap)
     heap.ContinuesFrom next := by
   apply allocateArray_continuesFrom heap next elements.toList prototype ref
   simpa [allocateArray] using allocated
+
+private theorem ownKeys_empty : OrderedProps.empty.ownKeys = [] := by
+  apply List.eq_nil_of_length_eq_zero
+  rw [OrderedProps.ownKeys_length OrderedProps.empty OrderedProps.empty_wellFormed]
+  rfl
+
+private theorem arrayIndexString_ne_length (index : Nat) (bound : index ≤ PropertyKey.maxArrayIndex) :
+    PropertyKey.string (PropertyKey.arrayIndexString index) ≠ lengthPropertyKey := by
+  intro same
+  have parsed := PropertyKey.arrayIndex?_arrayIndexString bound
+  have lengthUnparsed : PropertyKey.arrayIndex? (JSString.ofLeanString "length") = none := by decide
+  rw [show PropertyKey.arrayIndexString index = JSString.ofLeanString "length" from
+    PropertyKey.string.inj same, lengthUnparsed] at parsed
+  contradiction
+
+private theorem pushArray_observations (heap : Heap) (properties : OrderedProps)
+    (prototype : Option RefId) (values : Array Value)
+    (keys : properties.ownKeys =
+      (List.range values.size).map fun index =>
+        PropertyKey.string (PropertyKey.arrayIndexString index))
+    (lookups : ∀ index (inBounds : index < values.size),
+      properties.lookup (.string (PropertyKey.arrayIndexString index)) =
+        some (.data ⟨values[index], true, true, true⟩))
+    (bound : values.size ≤ maxArrayLength) :
+    let next : Heap := .mk (heap.objects.push (.mk properties prototype true
+      (.array ⟨values.size, true⟩))) heap.nextFunctionId
+    (∃ object, next.get? ⟨heap.objects.size⟩ = .ok object ∧
+        object.prototype = prototype ∧ object.extensible = true ∧
+        object.kind = .array ⟨values.size, true⟩) ∧
+      next.ownPropertyKeys ⟨heap.objects.size⟩ = .ok ((List.range values.size).map
+        (fun index => PropertyKey.string (PropertyKey.arrayIndexString index)) ++
+        [lengthPropertyKey]) ∧
+      ∀ index (inBounds : index < values.size),
+        next.getOwnProperty ⟨heap.objects.size⟩ (.string (PropertyKey.arrayIndexString index)) =
+          .ok (some (.data ⟨values[index], true, true, true⟩)) := by
+  have indexBound : ∀ index, index < values.size → index ≤ PropertyKey.maxArrayIndex := by
+    intro index inBounds
+    unfold maxArrayLength at bound
+    unfold PropertyKey.maxArrayIndex
+    omega
+  have found : (Heap.mk (heap.objects.push (.mk properties prototype true
+      (.array ⟨values.size, true⟩))) heap.nextFunctionId).get? ⟨heap.objects.size⟩ =
+      .ok (.mk properties prototype true (.array ⟨values.size, true⟩)) := by
+    simp [get?]
+  refine ⟨⟨_, found, rfl, rfl, rfl⟩, ?_, ?_⟩
+  · unfold ownPropertyKeys
+    rw [found]
+    simp only [keys, List.filter_map, Function.comp_def]
+    rw [List.filter_eq_self.mpr (by
+        intro index member
+        simp [PropertyKey.arrayIndex?_arrayIndexString
+          (indexBound index (List.mem_range.mp member))]),
+      List.filter_eq_nil_iff.mpr (by
+        intro index member
+        simp [PropertyKey.arrayIndex?_arrayIndexString
+          (indexBound index (List.mem_range.mp member))])]
+    simp
+  · intro index inBounds
+    unfold getOwnProperty
+    rw [found]
+    simp only [bind, Except.bind, pure, Except.pure]
+    rw [if_neg (by
+      simpa using arrayIndexString_ne_length index (indexBound index inBounds))]
+    exact congrArg Except.ok (lookups index inBounds)
+
+private theorem appendArray_dense (heap : Heap) (values : Array Value) (prototype : Option RefId)
+    (bound : values.size ≤ maxArrayLength) :
+    let allocated := appendArray heap prototype (values.map some)
+    (∃ object, allocated.2.get? allocated.1 = .ok object ∧
+        object.prototype = prototype ∧ object.extensible = true ∧
+        object.kind = .array ⟨values.size, true⟩) ∧
+      allocated.2.ownPropertyKeys allocated.1 = .ok ((List.range values.size).map
+        (fun index => PropertyKey.string (PropertyKey.arrayIndexString index)) ++
+        [lengthPropertyKey]) ∧
+      ∀ index (inBounds : index < values.size),
+        allocated.2.getOwnProperty allocated.1
+            (.string (PropertyKey.arrayIndexString index)) =
+          .ok (some (.data ⟨values[index], true, true, true⟩)) := by
+  obtain ⟨propertiesValid, propertiesIndices, propertiesStrings, propertiesSymbols, _,
+      propertiesLookup⟩ :=
+    denseElementFold values.toList 0 OrderedProps.empty OrderedProps.empty_wellFormed
+      (by simp [OrderedProps.arrayIndices, ownKeys_empty])
+      (by simp [OrderedProps.stringKeys, ownKeys_empty])
+      (by simp [OrderedProps.symbolKeys, ownKeys_empty])
+      (by simpa using bound)
+  simp only [Nat.zero_add, Array.length_toList] at propertiesIndices propertiesLookup
+  unfold appendArray
+  rw [← Array.foldl_toList]
+  simp only [Array.toList_map, Array.size_map]
+  refine pushArray_observations heap _ prototype values ?_ ?_ bound
+  · rw [OrderedProps.ownKeys_eq_projections _ propertiesValid, propertiesIndices,
+      propertiesStrings, propertiesSymbols]
+    simp
+  · intro index inBounds
+    simpa using propertiesLookup index (by simpa using inBounds)
+
+/-- Allocating an array with no holes yields exactly the ECMAScript dense observation: an extensible
+array object carrying the requested prototype, own keys that are the ascending index keys followed by
+`length`, and one standard data descriptor per index. This is the only public bridge from a
+successful allocation to the property observations the allocated object answers. -/
+theorem allocateArrayFromArray_dense (heap next : Heap) (values : Array Value)
+    (prototype : Option RefId) (ref : RefId)
+    (allocated : heap.allocateArrayFromArray (values.map some) prototype = .ok (ref, next)) :
+    (∃ object, next.get? ref = .ok object ∧
+        object.prototype = prototype ∧ object.extensible = true ∧
+        object.kind = .array ⟨values.size, true⟩) ∧
+      next.ownPropertyKeys ref = .ok ((List.range values.size).map
+        (fun index => PropertyKey.string (PropertyKey.arrayIndexString index)) ++
+        [lengthPropertyKey]) ∧
+      ∀ index (inBounds : index < values.size),
+        next.getOwnProperty ref (.string (PropertyKey.arrayIndexString index)) =
+          .ok (some (.data ⟨values[index], true, true, true⟩)) := by
+  unfold allocateArrayFromArray at allocated
+  split at allocated
+  · contradiction
+  · rename_i tooLong
+    have bound : values.size ≤ maxArrayLength := by simpa using Nat.le_of_not_lt tooLong
+    cases prototype with
+    | none =>
+        simp only at allocated
+        split at allocated <;> try contradiction
+        rcases allocated with ⟨rfl, rfl⟩
+        exact appendArray_dense heap values none bound
+    | some prototype =>
+        simp only at allocated
+        cases prototypeFound : heap.get? prototype with
+        | error fault => simp [prototypeFound] at allocated
+        | ok prototypeObject =>
+            rw [prototypeFound] at allocated
+            simp only at allocated
+            split at allocated <;> try contradiction
+            rcases allocated with ⟨rfl, rfl⟩
+            exact appendArray_dense heap values (some prototype) bound
 
 private theorem validateOptionalRef_valid (heap : Heap) (ref : Option RefId) (unit : Unit)
     (checked : validateOptionalRef heap ref = .ok unit) :

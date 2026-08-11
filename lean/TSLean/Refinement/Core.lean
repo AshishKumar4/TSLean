@@ -27,14 +27,30 @@ structure Codec (α : Type u) (EncodeFault : Type v) (DecodeFault : Type w)
   decode_sound : ∀ {heap value native}, decode heap value = .ok native →
     refinement.Rel heap native value
 
+/-- The completeness half of codec lawfulness on its own: every value the refinement relates decodes
+back to exactly that native value. Decode-side reasoning needs only this, and unlike full
+`LawfulCodec` it survives composition into a codec whose encoding cannot be total. -/
+def Codec.Complete {α : Type u} {EncodeFault : Type v} {DecodeFault : Type w}
+    {refinement : Refinement α} (codec : Codec α EncodeFault DecodeFault refinement) : Prop :=
+  ∀ {heap : Heap} {native : α} {value : Value},
+    refinement.Rel heap native value → codec.decode heap value = .ok native
+
 /-- A lawful codec encodes every native value from a well-formed heap and completely decodes its
 refinement relation. -/
 structure LawfulCodec {α : Type u} {EncodeFault : Type v} {DecodeFault : Type w}
     {refinement : Refinement α} (codec : Codec α EncodeFault DecodeFault refinement) : Prop where
   encode_total : ∀ (heap : Heap) (native : α), heap.WellFormed →
     ∃ value next, codec.encode heap native = .ok (value, next)
-  complete : ∀ {heap native value}, refinement.Rel heap native value →
-    codec.decode heap value = .ok native
+  complete : codec.Complete
+
+/-- A complete codec decodes each JavaScript value to at most one native value. -/
+theorem Codec.Complete.uniqueDecode {codec : Codec α EncodeFault DecodeFault refinement}
+    (complete : codec.Complete) : refinement.UniqueDecode := by
+  intro heap left right value leftRelated rightRelated
+  have leftDecoded := complete leftRelated
+  have rightDecoded := complete rightRelated
+  rw [leftDecoded] at rightDecoded
+  exact Except.ok.inj rightDecoded
 
 /-- Codec roundtrip follows from encode soundness and decode completeness. -/
 theorem LawfulCodec.roundtrip {codec : Codec α EncodeFault DecodeFault refinement}

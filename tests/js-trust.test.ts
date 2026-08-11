@@ -23,16 +23,20 @@ describe('JS elaborated-environment trust audit', () => {
   });
 
   it('audits refinement proof declarations', () => {
+    // A cold audit elaborates every refinement module and its #eval scale tests before emitting
+    // records, and its cost grows with the record count (155 -> 191 across this slice). Measured
+    // cold cost is ~16.5s, so 25s left barely 1.5x of headroom; 120s keeps the bound meaningful
+    // while surviving a loaded machine and further growth.
     const output = execFileSync('lake', ['env', 'lean', 'TSLean/Refinement/AxiomAudit.lean'], {
       cwd: resolve(import.meta.dirname, '../lean'),
       encoding: 'utf8',
-      timeout: 25_000,
+      timeout: 120_000,
     });
     expect(output).toContain('TSLean.Refinement.Heap.ExactExtension.trans');
     expect(output).toContain('TSLean.Refinement.EvidenceKind.join_assoc');
     expect(output).toContain('TSLean.Refinement.String.codec_roundtrip');
     expect(output).toContain('TSLean.Refinement.String.bmp_codeUnit_at');
-  }, 30_000);
+  }, 150_000);
 
   it('rejects symlinks during recursive refinement discovery', (context) => {
     const directory = mkdtempSync(join(tmpdir(), 'tslean-refinement-symlink-'));

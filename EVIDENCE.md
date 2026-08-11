@@ -1280,3 +1280,70 @@ closure, so a refinement module outside it would not be rebuilt; none exists tod
 artifact fails loudly rather than silently. The loaded-module probe cannot fire while the orphan
 check holds and `LEAN_PATH` has a single TSLean root; it uniquely covers modules resolved from
 outside the TSLean artifact tree and costs about 1.4 s.
+
+## Dense array snapshot refinement
+
+This slice was rejected twice before it landed, and the first rejection is the useful one. The
+initial implementation compiled and registered ten theorems, but the trust gate had never been run
+on it: `requiredDeclarations` was unsorted, because `TSLean.Refinement.Array.` sorts before
+`TSLean.Refinement.Assumption.`, and the gate rejects an unsorted registry at index 0. Behind that,
+seven of its ten registered theorems could be replaced by `True` with CI still green, its one
+identity theorem `aliases_strictEqual` was provable with no hypotheses for a root in no heap, and
+its declared `Codec` did not exist. A registry checks names; only a contract inventory checks
+meaning, and the namespaces that had one caught this class of defect while the one that did not,
+did not.
+
+Two design faults sat underneath. `DenseArrayRel` carried `heap.WellFormed` inside `Rel`, unlike
+every other refinement, and `Codec.decode_sound` has no well-formedness premise, so the codec was
+not merely missing but unprovable as written. And `inspectDense` compared observed keys against
+`denseKeys slots.length`, which materializes one `JSString` per declared index before comparing, so
+a sparse array with two own keys and a declared length of 4294967295 -- reachable through public
+`defineArrayLength` -- cost roughly 1.5 hours and 4.29e9 list nodes to reject. A boundary validator
+that hangs on the invalid input it exists to reject is the wrong shape.
+
+The rework removes `WellFormed` from `Rel` and carries it as an explicit hypothesis where it is
+genuinely needed, and streams key comparison so work is bounded by the actual own-key count. Sparse
+rejection at 2^32-1 now measures 9.9 microseconds and is flat in the declared length; dense
+validation, encode and decode are linear across 50k and 100k elements at roughly 2.1x per doubling.
+Identity and mutation were deleted from the slice rather than shipped unproved: `Tracked`, `set`,
+`push` and `pop` are deferred to their own reviewed slice, because unproved public mutation API
+behind a green proof gate is worse than shipping less.
+
+Two claims in the original specification were false and were proved false rather than satisfied.
+`LawfulCodec` cannot hold for arrays: `encode_total` quantifies over every `Array α`, Lean arrays
+are unbounded, and ECMAScript caps length at 2^32-1, so the slice proves conditional totality plus
+`not_lawful : ¬LawfulCodec (codec elementCodec)` as evidence that the bound is not decoration. And
+guard soundness in the form `check = true → ∃ native, Rel` is false for a shape-only check, since a
+one-element array holding `undefined` is shape-valid with no `Array Bool` witness; the existential
+belongs in `decode_sound`, where the decoder supplies the witness rather than the caller.
+
+A subtler vacuity survived into the third round. Six theorems required `LawfulCodec elementCodec`,
+which this slice itself refutes for a nested array codec, so every completeness and totality claim
+was vacuously true for `Array (Array α)` while still compiling. Four of them consume only the
+completeness half, so `Codec.Complete` was factored out in `Core.lean` -- with `LawfulCodec.complete`
+now spelled as that same type so the two cannot drift -- and those four are stated over it. Nested
+completeness is now a real theorem, `nested_array_contract`, discharged by `codec_complete` and
+proved beside `¬LawfulCodec (codec Bool.codec)`. `encode_total` and `codec_roundtrip` keep the
+stronger hypothesis and say plainly in their doc-comments that they do not compose without a
+per-element bound.
+
+The kernel gained two public theorems, `allocateArrayFromArray_dense` and
+`allocateArrayFromArray_ok`, because nothing characterized a freshly allocated array beyond
+`objectKind?` and the private `ObjectRecord`/`Heap` constructors correctly prevent the refinement
+layer from looking inside. `get?_ok_valid` lost `private` for the same reason, which removed the
+representation access the previous review flagged. Across all tracked files this round removes
+exactly two lines -- that `private` keyword and one doc-comment line -- and the JS audit moving
+596 to 599 independently confirms no other kernel surface changed.
+
+`array_contract_inventory` pins all twenty-nine registered Array statements as typed conjuncts, and
+the defence is demonstrated rather than asserted: weakening `denseShapeGuard_sound` or
+`fresh_root_distinct` to `True` leaves the production module green and fails the inventory. The
+inventories themselves are now registered, for String and Float as well as Array, since deleting the
+file that is the entire substitution defence previously failed nothing.
+
+One coverage gap surfaced at approval and is closed here: `lean/TSLean/Refinement/Array.lean`
+belonged to no hash group, so the new production module would have shipped unhashed, and no count
+refresh would have revealed it. The generator now asserts that every module under `lean/TSLean/JS`
+and `lean/TSLean/Refinement` is covered by some hash group, scoped to inputs without a pinned
+revision because a frozen input describes a tree this checkout is not at. Counts move to 599 audited
+JS proofs, 191 audited and 178 required refinement proofs, and 189 Lean jobs.
