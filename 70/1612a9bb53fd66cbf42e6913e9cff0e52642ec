@@ -1,0 +1,29 @@
+EVIDENCE.md
+  s_ecd6eb42c0f104::t_2f58a45fa322ef 1211-1243
+evidence/phase3-float-refinement-input.json
+  s_ecd6eb42c0f104::t_6c315071b6d9ab 7-20,62-65,70-73,78-81,86-89,94-97,102-105,110-113,119-150,153-162,223-226,233-236,243-246,253-256,263-266,274-275,278-285,296-297,307-312,323-324,338-339
+evidence/phase3-oracle-timeout-input.json
+  s_ecd6eb42c0f104::t_5a44bcf106b79c 1-334
+evidence/phase3-oracle-timeout-manifest.json
+  s_ecd6eb42c0f104::t_68b537807dc26e 1-170
+package.json
+  s_ecd6eb42c0f104::t_ece70f39e2058d 5,35-38,81
+tests/js-model-differential.test.ts
+  s_ecd6eb42c0f104::t_87980e04d130e9 107-111,926,937,949,962,971,987,995
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "701612a9bb53fd66cbf42e6913e9cff0e52642ec",
+  "prompts": {},
+  "sessions": {
+    "s_ecd6eb42c0f104": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_09941a719ffegk5CvArJXx9tWM",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    }
+  }
+}
