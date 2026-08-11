@@ -46,40 +46,6 @@ export class SorryTracker {
   get sorryCount(): number { return this.entries.filter(e => e.level === 'sorry').length; }
   get defaultCount(): number { return this.entries.filter(e => e.level === 'default').length; }
   get all(): readonly SorryEntry[] { return this.entries; }
-
-  /** Group entries by category for summary reporting. */
-  byCat(): Map<SorryCategory, SorryEntry[]> {
-    const m = new Map<SorryCategory, SorryEntry[]>();
-    for (const e of this.entries) {
-      const list = m.get(e.category) ?? [];
-      list.push(e);
-      m.set(e.category, list);
-    }
-    return m;
-  }
-
-  /** Format as a human-readable summary appended to Lean output. */
-  summary(): string {
-    if (this.entries.length === 0) return '';
-    const sorrys = this.sorryCount;
-    const defaults = this.defaultCount;
-    const parts: string[] = [];
-    if (defaults > 0) parts.push(`${defaults} default placeholder(s)`);
-    if (sorrys > 0) parts.push(`${sorrys} sorry axiom(s)`);
-    const lines = [`\n-- Degradation summary: ${parts.join(', ')}`];
-    if (sorrys > 0) {
-      lines.push(`-- ⚠ ${sorrys} sorry axiom(s) block formal verification`);
-    }
-    for (const [cat, entries] of this.byCat()) {
-      const catSorrys = entries.filter(e => e.level === 'sorry').length;
-      const catDefaults = entries.filter(e => e.level === 'default').length;
-      const catParts: string[] = [];
-      if (catDefaults > 0) catParts.push(`${catDefaults} default`);
-      if (catSorrys > 0) catParts.push(`${catSorrys} sorry`);
-      lines.push(`--   ${cat}: ${catParts.join(', ')}`);
-    }
-    return lines.join('\n');
-  }
 }
 
 // Global tracker for the current transpilation (reset per file)

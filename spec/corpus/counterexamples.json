@@ -344,6 +344,28 @@
           "severity": "high",
           "provenance": [{ "sourceRevision": "uncommitted-lost-attempt", "transcript": "baseline-suite-2026-08-05", "sourceRefs": ["tests/e2e-v3.test.ts:146-159"] }],
           "status": "red"
+        },
+        {
+          "id": "completion-generator-yield-erased",
+          "title": "Generator functions erase every yield",
+          "source": "function* gen(): Generator<number> {\n  yield 1;\n  yield 2;\n}",
+          "partial": false,
+          "expected": { "kind": "trace", "value": "Iterating gen() produces 1, then 2, then completes." },
+          "priorLean": { "kind": "result", "value": "Generated def gen : Generator Float TSAny TSAny := let _ := (default : TSAny); (default : TSAny) — both yields are dropped, and Generator is not a Lean type, so the module does not elaborate." },
+          "severity": "high",
+          "provenance": [{ "sourceRevision": "9d8916e", "transcript": "baseline-suite-2026-08-11", "sourceRefs": ["tests/parser-advanced.test.ts:341-351", "src/codegen/lower.ts:1957"] }],
+          "status": "red"
+        },
+        {
+          "id": "completion-labeled-loop-discarded",
+          "title": "Labelled loops discard the accumulator they update",
+          "source": "function sumAll(xs: number[]): number {\n  let total = 0;\n  outer: for (const x of xs) {\n    total += x;\n  }\n  return total;\n}",
+          "partial": false,
+          "expected": { "kind": "result", "value": "sumAll([1, 2, 3]) returns 6." },
+          "priorLean": { "kind": "result", "value": "Generated Array.forM (fun x => do let total := total + x; pure ()) rebinds total inside the callback and discards it, so sumAll returns 0 for every input; Lean's own linter reports the unused variable." },
+          "severity": "high",
+          "provenance": [{ "sourceRevision": "9d8916e", "transcript": "baseline-suite-2026-08-11", "sourceRefs": ["tests/e2e-v3.test.ts:191-204", "src/codegen/lower.ts:1966"] }],
+          "status": "red"
         }
       ]
     },

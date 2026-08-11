@@ -194,7 +194,7 @@ describe('generic model differential infrastructure', () => {
     expect(manifest.schemaHash).toBe(sha256(readFileSync(resolve(root, 'spec/differential/schema.json'), 'utf8')));
     expect(manifest.classificationCounts).toEqual({
       'model-covered': 13,
-      'compiler-only': 43,
+      'compiler-only': 45,
       'model-pending': 26,
       'proof-integrity': 11,
       scale: 9,
@@ -290,7 +290,7 @@ describe('generic model differential infrastructure', () => {
     const corpusIds = corpusEntries.map(({ id }: { id: string }) => id).sort(compareCodeUnits);
     const coverageIds = coverage.entries.map(({ id }: { id: string }) => id).sort(compareCodeUnits);
     expect(coverageIds).toEqual(corpusIds);
-    expect(new Set(coverageIds).size).toBe(102);
+    expect(new Set(coverageIds).size).toBe(104);
     expect(corpusEntries.every(({ status }: { status: string }) => status === 'red')).toBe(true);
 
     const suites = [JSON.parse(suiteSource), JSON.parse(abstractSuiteSource)];

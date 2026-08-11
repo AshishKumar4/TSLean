@@ -337,6 +337,18 @@ describe('Parser: generator functions', () => {
     expect(fn).toBeDefined();
     expect(fn?.tag).toBe('FuncDef');
   });
+
+  it('generator with literal yields parsed', () => {
+    const mod = parsedInline(`
+      function* gen(): Generator<number> {
+        yield 1;
+        yield 2;
+      }
+    `);
+    expect(findDecl(mod, 'gen')?.tag).toBe('FuncDef');
+  });
+
+  it.todo('[completion-generator-yield-erased] gen preserves both of its yields');
 });
 
 // ─── Complex generic types ────────────────────────────────────────────────────

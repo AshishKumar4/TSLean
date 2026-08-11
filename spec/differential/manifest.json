@@ -7,12 +7,12 @@
     "primitive": "97657576a7555a3f3471589318b8a0c6d218043e2a3482632cb1e81d0e1ae3b1",
     "abstract-operations": "7d2c215c9caece8e553e93b53ec18a654e9b5fd3e88b141306c55fbbfb4b66bc"
   },
-  "corpusCoverageHash": "30cb6f3e52714911e1b9b7aaeac42b7eacc5ac0bfb7d52da5f58a610668a1efd",
+  "corpusCoverageHash": "2451345a9454bd958f0cebdfd76277ea86e689eb2cac1f925b9a692603cddd87",
   "legacyInventoryHash": "45bd931eae2700c1b72b90ee99f019a5feea14cf7aa77c4202c16a7b1602f0ec",
   "legacyInventoryCount": 97,
   "classificationCounts": {
     "model-covered": 13,
-    "compiler-only": 43,
+    "compiler-only": 45,
     "model-pending": 26,
     "proof-integrity": 11,
     "scale": 9

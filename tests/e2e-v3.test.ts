@@ -187,6 +187,21 @@ describe('E2E v3: complex loops', () => {
     `);
     expect(code).toMatch(/def skipEven/);
   });
+
+  it('labelled loop over an accumulator', () => {
+    const code = inline(`
+      function sumAll(xs: number[]): number {
+        let total = 0;
+        outer: for (const x of xs) {
+          total += x;
+        }
+        return total;
+      }
+    `);
+    expect(code).toMatch(/def sumAll/);
+  });
+
+  it.todo('[completion-labeled-loop-discarded] sumAll returns the sum its labelled loop accumulates');
 });
 
 // ─── Verification with complex patterns ───────────────────────────────────────

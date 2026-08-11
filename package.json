@@ -25,6 +25,7 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
+    "lean:gate": "vitest run tests/lean-build-gate.test.ts",
     "lint": "tsc --noEmit && eslint src/ scripts/*.mjs",
     "format": "prettier --write 'src/**/*.ts'",
     "format:check": "prettier --check 'src/**/*.ts'",
@@ -32,8 +33,10 @@
     "differential:generate": "bun scripts/generate-differential-manifest.mjs",
     "differential:check": "bun scripts/generate-differential-manifest.mjs --check && bun scripts/check-differential-inventory.mjs",
     "benchmark:coercion-effects": "cd lean && lake exe js-coercion-effects-benchmark",
-    "evidence:generate": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase3-array-refinement-input.json",
-    "evidence:check": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase3-array-refinement-input.json --check",
+    "evidence:generate": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase4-build-gate-input.json",
+    "evidence:check": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase4-build-gate-input.json --check",
+    "evidence:build-gate:generate": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase4-build-gate-input.json",
+    "evidence:build-gate:check": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase4-build-gate-input.json --check",
     "evidence:array-refinement:generate": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase3-array-refinement-input.json",
     "evidence:array-refinement:check": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase3-array-refinement-input.json --check",
     "evidence:artifact-freshness:generate": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase3-artifact-freshness-input.json",
@@ -82,8 +85,8 @@
     "evidence:primitives:check": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase1-primitives-input.json --check",
     "evidence:baseline:generate": "bun scripts/generate-evidence-manifest.mjs --input evidence/baseline-input.json",
     "evidence:baseline:check": "bun scripts/generate-evidence-manifest.mjs --input evidence/baseline-input.json --check",
-    "js:trust": "bun scripts/check-js-axioms.mjs --evidence evidence/phase3-array-refinement-input.json",
-    "verify": "bun run format:check:foundation && bun run differential:check && bun run js:trust && bun run evidence:check && bun run lint && bun run test && bun run build && cd lean && lake build",
+    "js:trust": "bun scripts/check-js-axioms.mjs --evidence evidence/phase4-build-gate-input.json",
+    "verify": "bun run format:check:foundation && bun run differential:check && bun run js:trust && bun run evidence:check && bun run lint && bun run test && bun run lean:gate && bun run build && cd lean && lake build",
     "prepublishOnly": "bun run build"
   },
   "keywords": [

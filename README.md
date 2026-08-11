@@ -272,7 +272,7 @@ tslean init [dir]                      Scaffold a new tslean project
 | `-o, --output <path>` | Output file or directory |
 | `-w, --watch` | Watch for changes and recompile |
 | `--lake` | Auto-run `lake build` after each recompile |
-| `--strict` | Error on `sorry` instead of continuing |
+| `--strict` | Reject output containing `sorry`/`default` placeholders (single-file and project mode) |
 | `--timing` | Show phase-by-phase timing breakdown |
 | `--verify` | Generate proof obligations |
 | `--project <path>` | Use tsconfig.json for multi-file compilation |
@@ -347,7 +347,7 @@ TSLean is honest about what it can and cannot express. Some TypeScript features 
 | `ReturnType<F>` (generic) | `sorry` | Concrete types resolve fine |
 | Generators / `yield` | `sorry` | Use arrays or recursion |
 
-Use `--strict` to turn sorry warnings into errors. See [docs/limitations.md](docs/limitations.md) for the full list.
+Use `--strict` to reject any output that carries a `sorry` or `default` placeholder — the check scans the emitted Lean, so it also catches placeholders the lowerer never recorded. See [docs/limitations.md](docs/limitations.md) for the full list.
 
 ## Self-Hosting
 

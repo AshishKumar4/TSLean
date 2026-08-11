@@ -17,4 +17,4 @@ Shows patterns that produce `sorry` in the Lean output, with recommended workaro
 npx tsx src/cli.ts examples/10-advanced/limitations.ts -o output.lean --strict
 ```
 
-The `--strict` flag turns sorry warnings into errors, useful for CI/CD pipelines where you want to guarantee complete translation.
+The `--strict` flag scans the emitted Lean and rejects it if it carries any `sorry` axiom or `default` placeholder, useful for CI/CD pipelines where you want to guarantee complete translation. Because the check reads the artifact rather than the lowerer's bookkeeping, it also catches placeholders no degradation site recorded — a `⟨sorry⟩` instance emitted for mutually recursive types, for example.

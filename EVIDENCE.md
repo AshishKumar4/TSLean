@@ -1347,3 +1347,50 @@ refresh would have revealed it. The generator now asserts that every module unde
 and `lean/TSLean/Refinement` is covered by some hash group, scoped to inputs without a pinned
 revision because a frozen input describes a tree this checkout is not at. Counts move to 599 audited
 JS proofs, 191 audited and 178 required refinement proofs, and 189 Lean jobs.
+
+## Making compiler output falsifiable
+
+Before this stage nothing in the pipeline would have noticed a miscompilation, so no analysis built
+on top of it could be trusted. Three facts, each verified against the real toolchain rather than
+inferred. A function taking an anonymous object parameter emitted Lean that does not typecheck:
+the parameter maps to `AssocMap String TSAny`, `TSAny` is `abbrev TSAny := String`, and no
+`Coe String Float` exists, so arithmetic on a field cannot elaborate -- and the compiler exited 0
+under `--strict`. `--strict` itself called `addSorry` from exactly one site, the `catch` inside
+`lowerExpr`, so it rejected only "lowering threw an exception" and never inspected the artifact; two
+mutually recursive interfaces emitted `instance : Inhabited Node1 := ⟨sorry⟩` twice and exited 0.
+And `--strict` was parsed and stored but never destructured in `compileProject`, so it was entirely
+inert in project mode. Of 59 degradation sites in `lower.ts`, 4 recorded anything.
+
+Strictness is now a property of the emitted artifact. A scan walks the printed `LeanFile` with
+exhaustive switches over all 18 `LeanDecl` and 31 `LeanExpr` variants, guarded by a `never`
+parameter so a new AST node fails to compile rather than escaping the scan. The three channels that
+bypass the AST -- `Raw`, `StandaloneInstance` and `Theorem` -- are tokenized by a Lean-aware scanner
+that skips line comments, nested block comments and string literals, which is what catches the
+`⟨sorry⟩` emitted as raw text. String literals, interpolation text, panic messages and doc comments
+are never reported, and identifiers match as whole tokens so `Inhabited.default` and `sorryish` do
+not. Cross-checked over 88 real files against an independent tokenizer: zero markers missed, and
+every additional marker the AST scan reports is a `default` inside an `s!` interpolation, which a
+text scan structurally cannot see. Both CLI modes now share one reporting path, `generateLean` and
+`generateLeanTracked` produce identical bytes, and `resetTracker` runs on both, fixing tracker state
+that previously accumulated across files in project mode and was never read.
+
+The build gate is the part that makes the rest falsifiable: it transpiles a representative fixture
+set and elaborates each with `lake env lean`, one case per fixture so a failure names its source.
+Six fixtures elaborate cleanly. The anonymous-object fixture does not, and it is recorded rather
+than hidden. A permanently red gate gets ignored and a skipped one records nothing, so the defect
+asserts its own failure against the exact diagnostic it produces today
+(`failed to synthesize instance of type class HMul TSAny TSAny`). That expectation breaks in both
+directions: if the output regresses further, and if it is fixed. Fixing it forces promotion into the
+green set. The honest repair is not a coercion -- objects have no refinement or codec in
+`TSLean.Refinement`, so that flow has to degrade visibly rather than claim a carrier it cannot
+justify, which is Phase 2 work.
+
+Two silent miscompilations were confirmed and recorded without being fixed, both exiting 0 under the
+old `--strict`. Generator functions erase every `yield` and emit an undefined `Generator` type.
+A labelled `for...of` lowers to a lambda that rebinds the accumulator and discards it, so a summing
+function returns `0` for every input; Lean's own linter independently flags the unused variable.
+Both are now corpus entries with tracking todos, taking the corpus from 102 to 104 and
+`compiler-only` from 43 to 45.
+
+Counts move to 45 test files, 1674 passed and 10 todo. Two pre-existing inventory assertions were
+updated for the corpus growth, and `spec/differential/manifest.json` regenerated accordingly.

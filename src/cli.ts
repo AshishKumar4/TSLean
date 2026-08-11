@@ -18,8 +18,9 @@ import { fileURLToPath } from 'url';
 import { parseFile } from './parser/index.js';
 import { rewriteModule } from './rewrite/index.js';
 import { generateLeanTracked } from './codegen/index.js';
-import { generateLeanV2 } from './codegen/v2.js';
-import { currentTracker } from './sorry-tracker.js';
+import {
+  countLevel, degradationSites, describeDegradation, type DegradationMarker,
+} from './codegen/degradation.js';
 import { resetTimer } from './timing.js';
 import { generateVerification } from './verification/index.js';
 import { generateVeilStub } from './verification/veil-gen.js';
@@ -65,7 +66,7 @@ ${c.bold('OPTIONS')}
   -o, --output <path>    Output file or directory
   -w, --watch            Watch for changes and recompile
   --lake                 Auto-run lake build after each watch recompile
-  --strict               Error on sorry instead of continuing
+  --strict               Reject output containing sorry/default placeholders
    --verify               Generate proof obligations
    --veil                 Generate Veil transition system stubs for DO classes
   --project <path>       Use tsconfig.json for multi-file compilation
@@ -180,6 +181,27 @@ function info(msg: string): void {
   process.stdout.write(`${c.cyan('›')} ${msg}\n`);
 }
 
+/**
+ * Report the placeholders the emitted Lean actually carries.
+ *
+ * Shared by single-file and project mode so `--strict` means the same thing in
+ * both: the artifact, not the lowerer's bookkeeping, decides.
+ *
+ * @returns false when `--strict` rejects the output.
+ */
+function reportDegradation(markers: readonly DegradationMarker[], strict: boolean): boolean {
+  if (markers.length === 0) return true;
+
+  const counts = describeDegradation(markers);
+  const severity = countLevel(markers, 'sorry') > 0 ? c.yellow('warn') : c.dim('info');
+  process.stdout.write(`${severity}: ${counts} in output\n`);
+
+  if (!strict) return true;
+  error(`--strict: ${counts} in generated Lean — rejected. Re-run without --strict to accept degraded output.`);
+  for (const site of degradationSites(markers)) process.stderr.write(`  ${c.dim(site)}\n`);
+  return false;
+}
+
 // ─── Compile: single file ────────────────────────────────────────────────────
 
 function compileSingle(opts: CompileOpts): boolean {
@@ -200,9 +222,10 @@ function compileSingle(opts: CompileOpts): boolean {
     const rw  = rewriteModule(mod);
 
     timer.start('codegen');
-    const { code: rawCode, tracker } = selfHost
-      ? { code: generateLeanV2(rw, { selfHost: true, baseName }), tracker: currentTracker() }
-      : generateLeanTracked(rw);
+    const { code: rawCode, degradations } = generateLeanTracked(
+      rw,
+      selfHost ? { selfHost: true, baseName } : undefined,
+    );
     let code = rawCode;
 
     if (verify) {
@@ -234,20 +257,7 @@ function compileSingle(opts: CompileOpts): boolean {
     fs.writeFileSync(output, code, 'utf-8');
     timer.end();
 
-    // Summary report: distinguish sorry (blocks proofs) from default (type-correct placeholder)
-    if (tracker.count > 0) {
-      const defaults = tracker.defaultCount;
-      const sorrys = tracker.sorryCount;
-      const parts: string[] = [];
-      if (defaults > 0) parts.push(`${defaults} default placeholder(s)`);
-      if (sorrys > 0) parts.push(`${sorrys} sorry axiom(s)`);
-      const severity = sorrys > 0 ? c.yellow('warn') : c.dim('info');
-      process.stdout.write(`${severity}: ${parts.join(', ')} in output\n`);
-      if (strict && sorrys > 0) {
-        error(`--strict: ${sorrys} sorry axiom(s) found — aborting. Use without --strict to emit anyway.`);
-        return false;
-      }
-    }
+    if (!reportDegradation(degradations, strict)) return false;
 
     success(`${input} → ${output}`);
     if (timing) process.stdout.write(timer.report() + '\n');
@@ -263,7 +273,7 @@ function compileSingle(opts: CompileOpts): boolean {
 // ─── Compile: project (directory) ────────────────────────────────────────────
 
 function compileProject(opts: CompileOpts): boolean {
-  const { input, output, verify, ns } = opts;
+  const { input, output, verify, ns, strict } = opts;
   const tsconfigPath = opts.tsconfigPath || '';
   const genLakefile = opts.genLakefile !== false;
 
@@ -298,6 +308,12 @@ function compileProject(opts: CompileOpts): boolean {
     success(`${path.relative(projectDir, tsFile)} → ${path.relative(process.cwd(), leanFile)}`);
   }
 
+  // Attribute each marker to its source file — the sites are otherwise ambiguous
+  // across a project, and `reportDegradation` prints one aggregated list.
+  const degradations = result.files.flatMap(f =>
+    f.degradations.map(m => ({ ...m, site: `${path.relative(projectDir, f.tsFile)}: ${m.site}` })));
+  const accepted = reportDegradation(degradations, strict);
+
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
   const nFiles = result.files.length;
   const nCycles = result.graph.cycles.length;
@@ -307,7 +323,7 @@ function compileProject(opts: CompileOpts): boolean {
   const lakeSummary = genLakefile && nFiles > 0 ? `, lakefile generated` : '';
   process.stdout.write(`\n${c.bold(summary)}${cycleSummary}${errSummary}${lakeSummary} ${c.dim(`(${elapsed}s)`)}\n`);
 
-  return result.errors.length === 0;
+  return accepted && result.errors.length === 0;
 }
 
 // ─── Watch mode ──────────────────────────────────────────────────────────────

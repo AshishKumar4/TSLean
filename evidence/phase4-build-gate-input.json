@@ -1,22 +1,22 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase3-array-refinement-manifest.json",
-  "baseRevision": "aab470f31b4f04bd8f19f1367e71fda1fe65d655",
+  "outputPath": "evidence/phase4-build-gate-manifest.json",
+  "baseRevision": "9d8916eba21b52a1e6a2584253616e654e7fe3a6",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": {
-      "files": 43,
-      "passed": 1636,
+      "files": 45,
+      "passed": 1674,
       "failed": 0,
-      "todo": 8
+      "todo": 10
     },
     "lean": {
       "jobs": 189,
       "status": "passed"
     },
     "corpus": {
-      "entries": 102,
-      "red": 102
+      "entries": 104,
+      "red": 104
     },
     "auditedTheorems": 599,
     "differential": {
@@ -28,9 +28,9 @@
       "preservedDuplicates": 1176,
       "legacyInventoryIds": 97,
       "coverage": {
-        "total": 102,
+        "total": 104,
         "modelCovered": 13,
-        "compilerOnly": 43,
+        "compilerOnly": 45,
         "modelPending": 26,
         "proofIntegrity": 11,
         "scale": 9
@@ -116,6 +116,14 @@
     ]
   },
   "knownTodos": [
+    {
+      "id": "completion-generator-yield-erased",
+      "location": "tests/parser-advanced.test.ts"
+    },
+    {
+      "id": "completion-labeled-loop-discarded",
+      "location": "tests/e2e-v3.test.ts"
+    },
     {
       "id": "completion-nested-forof-erased",
       "location": "tests/e2e-v3.test.ts"
@@ -271,17 +279,14 @@
         "countPath": "differential.aggregateFixtureBudget",
         "measure": "value"
       }
-    ],
-    "revision": "9d8916eba21b52a1e6a2584253616e654e7fe3a6"
+    ]
   },
   "hashGroups": {
     "source": {
-      "paths": ["src"],
-      "revision": "9d8916eba21b52a1e6a2584253616e654e7fe3a6"
+      "paths": ["src"]
     },
     "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "9d8916eba21b52a1e6a2584253616e654e7fe3a6"
+      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
     },
     "refinementRuntimeAndBarrel": {
       "paths": [
@@ -294,8 +299,7 @@
         "lean/TSLean/Refinement/Primitive.lean",
         "lean/TSLean/Refinement/String.lean",
         "lean/TSLean/Refinement.lean"
-      ],
-      "revision": "9d8916eba21b52a1e6a2584253616e654e7fe3a6"
+      ]
     },
     "refinementTestsAuditRegistry": {
       "paths": [
@@ -305,12 +309,10 @@
         "tests/js-trust.test.ts",
         "tests/lean-fixtures/refinement-invalid-guard-receipt.lean",
         "tests/lean-fixtures/refinement-private-constructors.lean"
-      ],
-      "revision": "9d8916eba21b52a1e6a2584253616e654e7fe3a6"
+      ]
     },
     "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "9d8916eba21b52a1e6a2584253616e654e7fe3a6"
+      "paths": ["spec/corpus"]
     },
     "differentialSpecHarness": {
       "paths": [
@@ -321,8 +323,7 @@
         "scripts/generate-differential-manifest.mjs",
         "tests/js-model-differential.test.ts",
         "tests/differential"
-      ],
-      "revision": "9d8916eba21b52a1e6a2584253616e654e7fe3a6"
+      ]
     },
     "trustEvidenceInfrastructure": {
       "paths": [
@@ -336,8 +337,7 @@
         "lean/TSLean.lean",
         "lean/TSLean/Tests.lean",
         "lean/lakefile.toml"
-      ],
-      "revision": "9d8916eba21b52a1e6a2584253616e654e7fe3a6"
+      ]
     }
   }
 }

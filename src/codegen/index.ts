@@ -12,14 +12,20 @@
  */
 
 import type { IRModule } from '../ir/types.js';
-import { generateLeanV2 } from './v2.js';
+import { buildLeanFile, type CodegenOptions } from './v2.js';
+import { printFile } from './printer.js';
+import { scanDegradation, type DegradationMarker } from './degradation.js';
 import { resetTracker, type SorryTracker } from '../sorry-tracker.js';
 export type { CodegenOptions } from './v2.js';
 export type { SorryTracker, SorryEntry } from '../sorry-tracker.js';
+export type { DegradationMarker } from './degradation.js';
 
 export interface GenerateResult {
   code: string;
+  /** Why the lowerer degraded, for the sites that record a reason. */
   tracker: SorryTracker;
+  /** Every `sorry`/`default` placeholder present in `code`. */
+  degradations: DegradationMarker[];
 }
 
 /**
@@ -29,19 +35,18 @@ export interface GenerateResult {
  * @returns A string containing valid Lean 4 source code.
  */
 export function generateLean(mod: IRModule): string {
-  return generateLeanV2(mod);
+  return generateLeanTracked(mod).code;
 }
 
 /**
- * Generate Lean 4 source code with sorry tracking.
- * Returns both the code and a tracker with all sorry entries.
+ * Generate Lean 4 source code together with the degradation it carries.
+ *
+ * The single code path: `generateLean` returns this function's `code`, so
+ * every caller emits the same bytes and every caller can see the same
+ * degradation.
  */
-export function generateLeanTracked(mod: IRModule): GenerateResult {
+export function generateLeanTracked(mod: IRModule, opts?: CodegenOptions): GenerateResult {
   const tracker = resetTracker();
-  const code = generateLeanV2(mod);
-  const summary = tracker.summary();
-  return {
-    code: summary ? code + '\n' + summary : code,
-    tracker,
-  };
+  const file = buildLeanFile(mod, opts);
+  return { code: printFile(file), tracker, degradations: scanDegradation(file) };
 }

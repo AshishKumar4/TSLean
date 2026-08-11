@@ -19,14 +19,23 @@ export interface CodegenOptions {
 }
 
 /**
+ * Build the LeanAST for a module — the exact tree `generateLeanV2` prints.
+ *
+ * Exposed so callers that need to inspect the artifact (the degradation scan)
+ * work on the printed tree rather than on the printed text.
+ */
+export function buildLeanFile(mod: IRModule, opts?: CodegenOptions): LeanFile {
+  const leanFile = lowerModule(mod);
+  return opts?.selfHost
+    ? applySelfHostTransforms(leanFile, opts.baseName ?? mod.name)
+    : leanFile;
+}
+
+/**
  * Generate Lean 4 source code from an IR module using the V2 pipeline.
  */
 export function generateLeanV2(mod: IRModule, opts?: CodegenOptions): string {
-  let leanFile = lowerModule(mod);
-  if (opts?.selfHost) {
-    leanFile = applySelfHostTransforms(leanFile, opts.baseName ?? mod.name);
-  }
-  return printFile(leanFile);
+  return printFile(buildLeanFile(mod, opts));
 }
 
 // ─── Self-host transforms ───────────────────────────────────────────────────────

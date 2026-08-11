@@ -171,6 +171,18 @@
       "reason": "The corpus defect is compiler lowering; the prior vector exercised only a nearby model operation."
     },
     {
+      "id": "completion-generator-yield-erased",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
+      "id": "completion-labeled-loop-discarded",
+      "classification": "compiler-only",
+      "tests": [],
+      "reason": "The defect is in parsing, lowering, module analysis, or effect inference; model execution cannot validate compiler output."
+    },
+    {
       "id": "effects-forward-call",
       "classification": "compiler-only",
       "tests": [],

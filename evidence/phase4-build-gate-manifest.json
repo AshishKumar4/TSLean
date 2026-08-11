@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "baseRevision": "9d8916eba21b52a1e6a2584253616e654e7fe3a6",
+  "branch": "rebuild/semantic-core",
+  "toolchain": {
+    "bun": "1.3.14",
+    "node": "v22.23.1",
+    "typescript": "6.0.3",
+    "vitest": "vitest/4.1.10 darwin-arm64 node-v22.23.1",
+    "prettier": "3.9.6",
+    "eslint": "v10.8.0",
+    "lean": "Lean (version 4.29.0, arm64-apple-darwin24.6.0, commit 98dc76e3c0a9b856c9b98726b713fb04fab16740, Release)",
+    "lake": "Lake version 5.0.0-src+98dc76e (Lean version 4.29.0)"
+  },
+  "counts": {
+    "tests": {
+      "files": 45,
+      "passed": 1674,
+      "failed": 0,
+      "todo": 10
+    },
+    "lean": {
+      "jobs": 189,
+      "status": "passed"
+    },
+    "corpus": {
+      "entries": 104,
+      "red": 104
+    },
+    "auditedTheorems": 599,
+    "differential": {
+      "scenarioGroups": 16,
+      "fixed": 734,
+      "generated": 6530,
+      "comparisons": 7264,
+      "uniqueOperationInputs": 6088,
+      "preservedDuplicates": 1176,
+      "legacyInventoryIds": 97,
+      "coverage": {
+        "total": 104,
+        "modelCovered": 13,
+        "compilerOnly": 45,
+        "modelPending": 26,
+        "proofIntegrity": 11,
+        "scale": 9
+      },
+      "aggregateFixtureBudget": 65536
+    },
+    "lint": "passed",
+    "build": "passed"
+  },
+  "refinementProofs": {
+    "audited": 191,
+    "required": 178,
+    "registryHash": "sha256:29c4986fa1453172ee9bc39fb8dff9d366827512065fbe04c55db1f81c8409b3"
+  },
+  "executableAssumptions": {
+    "statement": "These eight executable trusted-computing-base assumptions exactly record the Float refinement runtime contracts. They are not proof axioms and introduce no additional runtime contract.",
+    "assumptions": [
+      {
+        "id": "83:Canonical re-encoding of Float.ofBits is JSNumber.sameValue to the source JSNumber.:77:Lean Float primitives are executable runtime bridges, not kernel definitions.",
+        "primitives": {
+          "decode": "Float.ofBits",
+          "encode": "Float.toBits",
+          "canonicalize": "JSNumber.ofFloatCanonical"
+        },
+        "statement": "Canonical re-encoding of Float.ofBits is JSNumber.sameValue to the source JSNumber."
+      },
+      {
+        "id": "80:Canonical Float.add encoding is SameValue to JSNumber.add on canonical operands.:45:Float.add is an executable runtime primitive.",
+        "primitives": {
+          "native": "Float.add",
+          "model": "JSNumber.add"
+        },
+        "statement": "Canonical Float.add encoding is SameValue to JSNumber.add on canonical operands."
+      },
+      {
+        "id": "85:Canonical Float.sub encoding is SameValue to JSNumber.subtract on canonical operands.:45:Float.sub is an executable runtime primitive.",
+        "primitives": {
+          "native": "Float.sub",
+          "model": "JSNumber.subtract"
+        },
+        "statement": "Canonical Float.sub encoding is SameValue to JSNumber.subtract on canonical operands."
+      },
+      {
+        "id": "85:Canonical Float.mul encoding is SameValue to JSNumber.multiply on canonical operands.:45:Float.mul is an executable runtime primitive.",
+        "primitives": {
+          "native": "Float.mul",
+          "model": "JSNumber.multiply"
+        },
+        "statement": "Canonical Float.mul encoding is SameValue to JSNumber.multiply on canonical operands."
+      },
+      {
+        "id": "83:Canonical Float.div encoding is SameValue to JSNumber.divide on canonical operands.:45:Float.div is an executable runtime primitive.",
+        "primitives": {
+          "native": "Float.div",
+          "model": "JSNumber.divide"
+        },
+        "statement": "Canonical Float.div encoding is SameValue to JSNumber.divide on canonical operands."
+      },
+      {
+        "id": "76:Native Float strict ordering equals JSNumber.lessThan on canonical operands.:47:Float.decLt is an executable runtime primitive.",
+        "primitives": {
+          "native": "Float.decLt",
+          "model": "JSNumber.lessThan"
+        },
+        "statement": "Native Float strict ordering equals JSNumber.lessThan on canonical operands."
+      },
+      {
+        "id": "96:Native Float non-strict ordering equals ordered JSNumber not-greater-than on canonical operands.:47:Float.decLe is an executable runtime primitive.",
+        "primitives": {
+          "native": "Float.decLe",
+          "model": "JSNumber.lessThan"
+        },
+        "statement": "Native Float non-strict ordering equals ordered JSNumber not-greater-than on canonical operands."
+      },
+      {
+        "id": "60:Float.beq equals JSNumber.strictEqual on canonical operands.:45:Float.beq is an executable runtime primitive.",
+        "primitives": {
+          "native": "Float.beq",
+          "model": "JSNumber.strictEqual"
+        },
+        "statement": "Float.beq equals JSNumber.strictEqual on canonical operands."
+      }
+    ]
+  },
+  "knownTodos": [
+    {
+      "id": "completion-generator-yield-erased",
+      "location": "tests/parser-advanced.test.ts"
+    },
+    {
+      "id": "completion-labeled-loop-discarded",
+      "location": "tests/e2e-v3.test.ts"
+    },
+    {
+      "id": "completion-nested-forof-erased",
+      "location": "tests/e2e-v3.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased-cli",
+      "location": "tests/e2e/cli.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased-e2e",
+      "location": "tests/e2e/advanced.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased",
+      "location": "tests/pipeline-full.test.ts"
+    },
+    {
+      "id": "completion-safe-divide-catch-none",
+      "location": "tests/all-fixtures.test.ts"
+    },
+    {
+      "id": "objects-anonymous-shorthand-default",
+      "location": "tests/parser-types.test.ts"
+    },
+    {
+      "id": "objects-renamed-shorthand-default",
+      "location": "tests/parser-types.test.ts"
+    },
+    {
+      "id": "selfhost-typemap-one-hole",
+      "location": "tests/parser-advanced.test.ts"
+    }
+  ],
+  "hashes": {
+    "source": "sha256:af3f009cb6b08cc8216c2f7371442b7385854ebe68639fe5caf2160a562415ea",
+    "jsRuntime": "sha256:1cbf1332124b2d02c6acc8b10bfe6877ef060f637047561648c03b207d60e095",
+    "refinementRuntimeAndBarrel": "sha256:cfe3dfc68f1e595dca43663365df7bf9026dafd76eb08db3a2d5435532e4320f",
+    "refinementTestsAuditRegistry": "sha256:da7fc56e6279d395bb940d115b1e8725d10def3e565901267e924370d0d8a740",
+    "corpus": "sha256:d5f43e3f1ba87f38067db592e464a6aacfba71b75235905d0e08148b4472b887",
+    "differentialSpecHarness": "sha256:3f41a8ed43125df941d923c0f683a9194177ccb307b71d6d47bbeff5abed5ae6",
+    "trustEvidenceInfrastructure": "sha256:589dc1766f33a48920ea31b9b67d17d812ce22ff857c01cf7bfc63614842c0bb"
+  }
+}

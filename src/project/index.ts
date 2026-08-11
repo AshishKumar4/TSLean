@@ -6,7 +6,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { parseFile } from '../parser/index.js';
 import { rewriteModule } from '../rewrite/index.js';
-import { generateLean } from '../codegen/index.js';
+import { generateLeanTracked, type DegradationMarker } from '../codegen/index.js';
 import { generateVerification } from '../verification/index.js';
 import type { IRModule } from '../ir/types.js';
 import { capitalize } from '../utils.js';
@@ -29,7 +29,14 @@ export interface ProjectOpts {
 }
 
 export interface ProjectResult {
-  files: Array<{ tsFile: string; leanFile: string; module: string; content: string }>;
+  files: Array<{
+    tsFile: string;
+    leanFile: string;
+    module: string;
+    content: string;
+    /** Every `sorry`/`default` placeholder present in `content`. */
+    degradations: DegradationMarker[];
+  }>;
   errors: string[];
   warnings: string[];
   graph: DependencyGraph;
@@ -78,13 +85,14 @@ export function transpileProject(opts: ProjectOpts): ProjectResult {
       // Use project-level module name instead of parser's basename-only version
       const fixed = fixModuleName(parsed, node.leanModule);
       const rw = rewriteModule(fixed);
-      let code = generateLean(rw);
+      const { code, degradations } = generateLeanTracked(rw);
+      let content = code;
       if (verify) {
         const { leanCode } = generateVerification(rw);
-        if (leanCode) code += '\n\n-- Verification\n' + leanCode;
+        if (leanCode) content += '\n\n-- Verification\n' + leanCode;
       }
       const leanFile = fileToLeanPath(node.filePath, resolverOpts, config.outDir);
-      results.push({ tsFile: node.filePath, leanFile, module: node.leanModule, content: code });
+      results.push({ tsFile: node.filePath, leanFile, module: node.leanModule, content, degradations });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       errors.push(`${node.filePath}: ${message}`);

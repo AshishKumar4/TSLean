@@ -168,9 +168,11 @@ Pretty-prints LeanAST to valid Lean 4 source text. Purely structural — no heur
 - Separate `printExpr()` (indented multiline) and `printExprInline()` (inline, no leading indent) for contextual formatting.
 - `printTy()` and `printTyAtom()` handle type printing with correct parenthesization.
 
-### `src/codegen/v2.ts` (112 lines) and `src/codegen/index.ts` (47 lines)
+### `src/codegen/v2.ts`, `src/codegen/index.ts` and `src/codegen/degradation.ts`
 
-The public codegen API. `generateLeanV2()` calls `lowerModule()` then `printFile()`. Optional self-host transforms remap namespaces and imports for the self-hosting pipeline. `generateLeanTracked()` appends a sorry summary comment to the output.
+The public codegen API. `buildLeanFile()` calls `lowerModule()` plus the optional self-host transforms (which remap namespaces and imports for the self-hosting pipeline); `generateLeanV2()` prints it. `generateLeanTracked()` is the single code path — it returns that same text plus the degradation the artifact carries, and `generateLean()` returns its `code`, so single-file and project mode emit identical bytes.
+
+`scanDegradation()` walks the printed LeanAST and reports every `sorry` and `default` placeholder with the declaration carrying it. It is what `--strict` rejects on: the tracker only records the few sites that call it, whereas the scan is a property of the output. `Raw`, `StandaloneInstance` and `Theorem` carry text the AST never saw — that is how `⟨sorry⟩` reaches the output for mutually recursive types — so their code is tokenized, skipping comments and string literals.
 
 ### `src/stdlib/index.ts` (240 lines)
 
@@ -215,9 +217,9 @@ Reads `.d.ts` files from npm packages and generates Lean stub modules with opaqu
 
 Structured error reporting with 15 error codes in ranges: TSL001–005 (parser), TSL100–103 (types), TSL200–205 (lowering), TSL300–302 (project), TSL400–401 (Lean build). Each diagnostic carries a code, severity, location, message, auto-populated explanation, and suggestion. `DiagnosticCollector` aggregates errors across the pipeline.
 
-### `src/sorry-tracker.ts` (75 lines)
+### `src/sorry-tracker.ts`
 
-Tracks `sorry` degradation points during transpilation. Eight categories: `unresolved-expr`, `unresolved-type`, `runtime-api`, `type-test`, `inductive-field`, `mutation`, `control-flow`, `generator`, `other`. Each file gets a fresh tracker via `resetTracker()`.
+Records *why* the lowerer degraded an expression, for the sites that call it. Eight categories: `unresolved-expr`, `unresolved-type`, `runtime-api`, `type-test`, `inductive-field`, `mutation`, `control-flow`, `generator`, `other`. Each file gets a fresh tracker via `resetTracker()`. It is diagnostic only — whether the output *is* degraded is answered by `scanDegradation()`.
 
 ### `src/timing.ts` (59 lines)
 
@@ -242,7 +244,7 @@ The CLI entry point. Parses arguments and dispatches to commands:
 | Fixpoint | (via script) | Verify self-hosted output matches |
 | Init | `tslean init [dir]` | Scaffold project with `tslean.json` |
 | Timing | `--timing` | Print per-phase timing report |
-| Strict | `--strict` | Enable strict type checking |
+| Strict | `--strict` | Reject output containing `sorry`/`default` placeholders (single-file and project mode) |
 
 ## Lean Runtime Library Organization
 
