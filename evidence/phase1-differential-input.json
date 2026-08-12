@@ -179,20 +179,24 @@
     }
   ],
   "validation": {
+    "revision": "4e0953fa3a5a81b8db24077b0d28ddbcdb397655",
     "testFiles": {
       "directory": "tests",
       "suffix": ".test.ts",
-      "countPath": "tests.files"
+      "countPath": "tests.files",
+      "revision": "4e0953fa3a5a81b8db24077b0d28ddbcdb397655"
     },
     "todos": {
       "directory": "tests",
       "suffix": ".test.ts",
-      "countPath": "tests.todo"
+      "countPath": "tests.todo",
+      "revision": "4e0953fa3a5a81b8db24077b0d28ddbcdb397655"
     },
     "corpus": {
       "path": "spec/corpus/counterexamples.json",
       "entriesPath": "corpus.entries",
-      "redPath": "corpus.red"
+      "redPath": "corpus.red",
+      "revision": "4e0953fa3a5a81b8db24077b0d28ddbcdb397655"
     },
     "lineCounts": [],
     "jsonMetrics": [
@@ -249,35 +253,50 @@
         "jsonPath": "entries",
         "countPath": "differential.coverage.modelCovered",
         "measure": "count",
-        "where": { "path": "classification", "equals": "model-covered" }
+        "where": {
+          "path": "classification",
+          "equals": "model-covered"
+        }
       },
       {
         "path": "spec/differential/corpus-coverage.json",
         "jsonPath": "entries",
         "countPath": "differential.coverage.compilerOnly",
         "measure": "count",
-        "where": { "path": "classification", "equals": "compiler-only" }
+        "where": {
+          "path": "classification",
+          "equals": "compiler-only"
+        }
       },
       {
         "path": "spec/differential/corpus-coverage.json",
         "jsonPath": "entries",
         "countPath": "differential.coverage.modelPending",
         "measure": "count",
-        "where": { "path": "classification", "equals": "model-pending" }
+        "where": {
+          "path": "classification",
+          "equals": "model-pending"
+        }
       },
       {
         "path": "spec/differential/corpus-coverage.json",
         "jsonPath": "entries",
         "countPath": "differential.coverage.proofIntegrity",
         "measure": "count",
-        "where": { "path": "classification", "equals": "proof-integrity" }
+        "where": {
+          "path": "classification",
+          "equals": "proof-integrity"
+        }
       },
       {
         "path": "spec/differential/corpus-coverage.json",
         "jsonPath": "entries",
         "countPath": "differential.coverage.scale",
         "measure": "count",
-        "where": { "path": "classification", "equals": "scale" }
+        "where": {
+          "path": "classification",
+          "equals": "scale"
+        }
       },
       {
         "path": "spec/differential/manifest.json",

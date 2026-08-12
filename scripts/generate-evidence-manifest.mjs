@@ -158,6 +158,35 @@ function hashGroup(group, name) {
 // module cannot ship outside the freshness evidence.
 const coveredDirectories = ['lean/TSLean/JS', 'lean/TSLean/Refinement'];
 
+/**
+ * A snapshot is either live or frozen, never half of each.
+ *
+ * Freezing is a manual step, and `phase1-differential` was frozen with its hash groups pinned but
+ * its validation left reading the working tree. That snapshot was not immutable: it reproduced only
+ * while the live test-file count happened to match, and broke the moment the suite grew. Validation
+ * counts and hashes have to describe the same tree, so pinning one without the other is rejected
+ * here rather than discovered later by an unrelated change.
+ */
+function assertFreezingIsCoherent(input, groups) {
+  const pinned = Object.entries(groups).filter(([, group]) => group.revision !== undefined);
+  if (pinned.length === 0) return;
+  if (pinned.length !== Object.entries(groups).length) {
+    const live = Object.entries(groups)
+      .filter(([, group]) => group.revision === undefined)
+      .map(([name]) => name);
+    fail(`hashGroups mix frozen and live entries; live: ${live.join(', ')}`);
+  }
+  const validation = input.validation;
+  if (validation === undefined) return;
+  const reads = ['testFiles', 'todos', 'corpus'].filter((key) => validation[key] !== undefined);
+  const unfrozen = reads.filter((key) => validation[key].revision === undefined);
+  if (validation.revision !== undefined) return;
+  const metrics = Array.isArray(validation.jsonMetrics) ? validation.jsonMetrics.length : 0;
+  if (unfrozen.length === 0 && metrics === 0) return;
+  const detail = [...unfrozen.map((key) => `validation.${key}`), ...(metrics > 0 ? ['validation.jsonMetrics'] : [])];
+  fail(`hashGroups are frozen but ${detail.join(', ')} still read the working tree; set validation.revision`);
+}
+
 function assertModuleCoverage(groups) {
   // Only groups that hash the working tree can be checked against it. Every historical input pins
   // all of its groups to a frozen revision and describes a tree this checkout is not at, so those
@@ -484,9 +513,12 @@ if (input.refinementProofs !== undefined) validateRefinementProofs(input.refinem
 
 const branch = textCommand('git', ['branch', '--show-current']);
 if (branch !== input.branch) fail(`expected branch ${input.branch}, found ${branch || '<detached HEAD>'}`);
-const knownTodos = validateEvidence(input);
 const groups = object(input.hashGroups, 'hashGroups');
 if (Object.keys(groups).length === 0) fail('hashGroups must not be empty');
+// Before any count is read, so a half-frozen snapshot reports why rather than surfacing as a
+// confusing mismatch against whatever the working tree happens to contain.
+assertFreezingIsCoherent(input, groups);
+const knownTodos = validateEvidence(input);
 assertModuleCoverage(groups);
 
 const localBin = (name) => join(root, 'node_modules/.bin', name);

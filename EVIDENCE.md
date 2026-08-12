@@ -1394,3 +1394,27 @@ Both are now corpus entries with tracking todos, taking the corpus from 102 to 1
 
 Counts move to 45 test files, 1674 passed and 10 todo. Two pre-existing inventory assertions were
 updated for the corpus growth, and `spec/differential/manifest.json` regenerated accordingly.
+
+## Half-frozen evidence snapshot
+
+Adding two corpus entries broke `evidence:differential:check`, which should have been impossible: a
+frozen historical snapshot must reproduce forever. The cause was not the new entries. Freezing is a
+manual step, and `phase1-differential` had been frozen incompletely -- its seven hash groups were
+pinned to `4e0953f`, but `validation` was left reading the working tree. It was never immutable. It
+reproduced only while the live test-file count stayed at 43, and failed the moment the suite grew to
+45, reporting `expected 43 test files, found 45` about a snapshot taken twenty commits earlier.
+
+Auditing all snapshots found nine with pinned hash groups and no top-level `validation.revision`.
+Eight are harmless: they pin `testFiles`, `todos` and `corpus` individually and declare no
+`jsonMetrics`, so nothing reads the live tree. `phase1-differential` was the sole outlier, and the
+only one with `jsonMetrics` -- which resolve against the top-level revision alone, since per-entry
+revisions are not part of that schema. Setting `validation.revision` to its own commit fixes it, and
+its manifest stays byte-identical at `354abd94...`, confirming the counts were always those of the
+frozen tree and only the reader was wrong.
+
+The generator now rejects the incoherent state directly: if any hash group is pinned, hash groups
+must all be pinned, and validation must not still read the working tree. The check runs before any
+count is validated, so a half-frozen input reports why instead of surfacing later as a mismatch
+against whatever the tree happens to contain -- verified by removing the revision and observing
+`hashGroups are frozen but validation.jsonMetrics still read the working tree` in place of the
+former count error. A snapshot is now either live or frozen, never half of each.
