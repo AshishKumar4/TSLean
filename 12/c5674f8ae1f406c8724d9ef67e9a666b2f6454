@@ -1,0 +1,23 @@
+EVIDENCE.md
+  s_ecd6eb42c0f104::t_f5866237e3ae63 1397-1420
+evidence/phase1-differential-input.json
+  s_ecd6eb42c0f104::t_7bed9a28961d18 182,186-187,192-193,198-199,256-259,266-269,276-279,286-289,296-299
+evidence/phase4-build-gate-manifest.json
+  s_ecd6eb42c0f104::t_4dc2e519ee576e 176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "12c5674f8ae1f406c8724d9ef67e9a666b2f6454",
+  "prompts": {},
+  "sessions": {
+    "s_ecd6eb42c0f104": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_09941a719ffegk5CvArJXx9tWM",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    }
+  }
+}
