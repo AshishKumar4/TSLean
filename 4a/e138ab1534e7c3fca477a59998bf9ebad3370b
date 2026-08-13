@@ -1,0 +1,45 @@
+EVIDENCE.md
+  s_ecd6eb42c0f104::t_632640c82cd658 1485-1538
+evidence/phase4-compiler-seams-input.json
+  s_ecd6eb42c0f104::t_f9d7c473cc8489 282-283,287-288,291-292,305-306,316-317,320-321,332-333,347-348
+evidence/phase4-record-refinement-input.json
+  s_ecd6eb42c0f104::t_87b9529e289498 1-344
+evidence/phase4-record-refinement-manifest.json
+  s_ecd6eb42c0f104::t_151e20485b9421 1-178
+lean/TSLean/JS/Heap.lean
+  s_ecd6eb42c0f104::t_af0f1c1de1fd62 6709-6901
+lean/TSLean/Refinement.lean
+  s_ecd6eb42c0f104::t_0fba439c14e2b2 7
+lean/TSLean/Refinement/AxiomAudit.lean
+  s_ecd6eb42c0f104::t_f3121a22fd886e 7
+lean/TSLean/Refinement/Record.lean
+  s_e5b2e4d0c9ce63::t_593f2b383a12c3 1-1333
+package.json
+  s_ecd6eb42c0f104::t_d02782589b9832 36-39,92
+scripts/refinement-proof-registry.mjs
+  s_ecd6eb42c0f104::t_6cd07edc009ead 138-172,213-225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "4ae138ab1534e7c3fca477a59998bf9ebad3370b",
+  "prompts": {},
+  "sessions": {
+    "s_e5b2e4d0c9ce63": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_004246da2ffeL5FoHBZxmBx5rE",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_ecd6eb42c0f104": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_09941a719ffegk5CvArJXx9tWM",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    }
+  }
+}
