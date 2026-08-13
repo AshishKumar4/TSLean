@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase4-build-gate-manifest.json",
-  "baseRevision": "9d8916eba21b52a1e6a2584253616e654e7fe3a6",
+  "outputPath": "evidence/phase4-compiler-seams-manifest.json",
+  "baseRevision": "12c5674f8ae1f406c8724d9ef67e9a666b2f6454",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": {
-      "files": 45,
-      "passed": 1674,
+      "files": 46,
+      "passed": 1691,
       "failed": 0,
       "todo": 10
     },
@@ -279,17 +279,14 @@
         "countPath": "differential.aggregateFixtureBudget",
         "measure": "value"
       }
-    ],
-    "revision": "12c5674f8ae1f406c8724d9ef67e9a666b2f6454"
+    ]
   },
   "hashGroups": {
     "source": {
-      "paths": ["src"],
-      "revision": "12c5674f8ae1f406c8724d9ef67e9a666b2f6454"
+      "paths": ["src"]
     },
     "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "12c5674f8ae1f406c8724d9ef67e9a666b2f6454"
+      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
     },
     "refinementRuntimeAndBarrel": {
       "paths": [
@@ -302,8 +299,7 @@
         "lean/TSLean/Refinement/Primitive.lean",
         "lean/TSLean/Refinement/String.lean",
         "lean/TSLean/Refinement.lean"
-      ],
-      "revision": "12c5674f8ae1f406c8724d9ef67e9a666b2f6454"
+      ]
     },
     "refinementTestsAuditRegistry": {
       "paths": [
@@ -313,12 +309,10 @@
         "tests/js-trust.test.ts",
         "tests/lean-fixtures/refinement-invalid-guard-receipt.lean",
         "tests/lean-fixtures/refinement-private-constructors.lean"
-      ],
-      "revision": "12c5674f8ae1f406c8724d9ef67e9a666b2f6454"
+      ]
     },
     "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "12c5674f8ae1f406c8724d9ef67e9a666b2f6454"
+      "paths": ["spec/corpus"]
     },
     "differentialSpecHarness": {
       "paths": [
@@ -329,8 +323,7 @@
         "scripts/generate-differential-manifest.mjs",
         "tests/js-model-differential.test.ts",
         "tests/differential"
-      ],
-      "revision": "12c5674f8ae1f406c8724d9ef67e9a666b2f6454"
+      ]
     },
     "trustEvidenceInfrastructure": {
       "paths": [
@@ -344,8 +337,7 @@
         "lean/TSLean.lean",
         "lean/TSLean/Tests.lean",
         "lean/lakefile.toml"
-      ],
-      "revision": "12c5674f8ae1f406c8724d9ef67e9a666b2f6454"
+      ]
     }
   }
 }

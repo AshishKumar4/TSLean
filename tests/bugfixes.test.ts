@@ -12,7 +12,7 @@ import {
   IRModule, IRDecl, IRExpr,
 } from '../src/ir/types.js';
 import { monadString } from '../src/effects/index.js';
-import { irTypeToLean } from '../src/typemap/index.js';
+import { leanTypeOf } from './helpers/lean-type.js';
 
 const FIX = path.join(process.cwd(), 'tests/fixtures');
 
@@ -205,14 +205,20 @@ describe('Bug #4: DO constructor clean init', () => {
 // ─── Universe type emission ───────────────────────────────────────────────────
 
 describe('Bug #7 (universe type): no trailing space in Type 1', () => {
-  it('Universe 0 → Prop',   () => expect(irTypeToLean({ tag: 'Universe', level: 0 })).toBe('Prop'));
-  it('Universe 1 → Type',   () => {
-    const r = irTypeToLean({ tag: 'Universe', level: 1 });
+  // One numbering, `Type n`, with level 0 spelled `Type` — the spelling the
+  // printer already gives every type-parameter binder.
+  it('Universe 0 → Type',   () => {
+    const r = leanTypeOf({ tag: 'Universe', level: 0 });
+    expect(r).toBe('Type');
+    expect(r).not.toMatch(/\s$/);
+  });
+  it('Universe 1 → Type 1', () => {
+    const r = leanTypeOf({ tag: 'Universe', level: 1 });
     expect(r).toBe('Type 1');
     expect(r).not.toMatch(/\s$/);
   });
-  it('Universe 2 → Type 2', () => expect(irTypeToLean({ tag: 'Universe', level: 2 })).toBe('Type 2'));
-  it('Universe 3 → Type 3', () => expect(irTypeToLean({ tag: 'Universe', level: 3 })).toBe('Type 3'));
+  it('Universe 2 → Type 2', () => expect(leanTypeOf({ tag: 'Universe', level: 2 })).toBe('Type 2'));
+  it('Universe 3 → Type 3', () => expect(leanTypeOf({ tag: 'Universe', level: 3 })).toBe('Type 3'));
 });
 
 // ─── Extra regression: optional chaining ────────────────────────────────────

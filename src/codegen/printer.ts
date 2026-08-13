@@ -306,6 +306,9 @@ function printExpr(e: LeanExpr, depth: number): string {
     case 'TypeAnnot':
       return `${ind}(${printExprInline(e.expr)} : ${printTy(e.ty)})`;
 
+    case 'TyExpr':
+      return `${ind}${printTy(e.ty)}`;
+
     case 'App': {
       const fn = printExprInline(e.fn);
       if (e.args.length === 0) return `${ind}${fn}`;
@@ -472,6 +475,8 @@ function printExprInline(e: LeanExpr): string {
       return `(${printExprInline(e.inner)})`;
     case 'TypeAnnot':
       return `(${printExprInline(e.expr)} : ${printTy(e.ty)})`;
+    case 'TyExpr':
+      return printTy(e.ty);
     case 'App': {
       const fn = printExprInline(e.fn);
       if (e.args.length === 0) return fn;

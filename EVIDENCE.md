@@ -1418,3 +1418,67 @@ count is validated, so a half-frozen input reports why instead of surfacing late
 against whatever the tree happens to contain -- verified by removing the revision and observing
 `hashGroups are frozen but validation.jsonMetrics still read the working tree` in place of the
 former count error. A snapshot is now either live or frozen, never half of each.
+
+## Compiler seams: spans, one renderer, provenance-based carriers
+
+Three prerequisites for refinement-driven type mapping, none of which changes what the compiler emits
+for anything in this repository. Byte-identical output was verified across all 61 fixtures and
+examples in isolated trees, so concurrent work could not confound the comparison.
+
+**Source spans.** `IRNode.span` had been declared since the IR was written and assigned nowhere, so
+"degrade locally with a diagnostic" was literally unimplementable and the existing degradation
+records faked a location with strings like `lower:${tag}`. Spans are now stamped through single
+funnels for expressions, statements and the seven declaration forms. The first attempt documented
+them as "identical across machines" while relativizing against the current working directory, which
+is false: run from `/private/tmp` the same file yielded
+`../../Users/ashishsingh/TSLean/tests/fixtures/basic/hello.ts`, embedding a developer's home
+directory -- the exact leak the comment promised to prevent. It now relativizes against a project
+root discovered from the nearest ancestor holding `tsconfig.json` or `package.json`, so the path is
+an ancestor by construction and the span is identical from any cwd, verified from four including one
+outside the repository and one at `/`. The test that was supposed to catch this was tautological,
+building its expectation with the same `path.join` against the same cwd; it now spawns a real parser
+process per directory.
+
+Coverage was also overstated. A first pass left 37% of expression nodes unspanned, and worst of all
+`Hole` -- the node that prints `sorry`, the single highest-value location a diagnostic could want --
+carried a span 2 times out of 16. Statement funnelling brings expression coverage to 79.8% and
+`Hole` to 18 of 18. The remaining 890 nodes are parser-synthesised desugarings with no source
+construct of their own, enumerated in the source rather than described vaguely.
+
+**One renderer.** Two independent IRType-to-Lean renderers existed and already disagreed; a third
+stringifier and a fourth `printTyQuick` turned up during the work. Differential comparison across
+every IR tag found fifteen disagreements, not the three that were visible. `LowerCtx.lowerType` is
+now the only renderer in the TypeScript pipeline, with each decision settled against the real
+toolchain rather than by preference. `Set<T>` becomes `Array T` because every emitted Set operation
+is already an Array operation and a `List` carrier fails to elaborate. Nested `Promise` becomes a
+fully recursive `IO T`: neither previous behaviour was right, and `IO (IO String)` was a genuine
+miscompilation, since one `←` bind lands a layer short and `tsc --strict` confirms
+`Promise<Promise<string>>` awaits to `string`. `Universe 0` becomes `Type`, because pairing `Prop`
+with `Type 1` mixes the Sort and Type ladders. `Dependent` had been silently dropping its parameter,
+changing arity. Two renderers survive outside the TypeScript pipeline, in `lean/TSLean/Codegen.lean`
+and injected by `scripts/selfhost-adapter.ts`, both still carrying the bugs just fixed and both now
+named in the source instead of claimed absent.
+
+**Carriers by provenance.** Collapsing the renderers deleted a name set and turned eighteen TypeScript
+compiler-API names from a silently wrong `String` carrier into a loud unknown identifier. Widening the
+name sets was measured and rejected: adding `Node` erases every parameter of an ordinary user
+`interface Node` while still emitting its `structure`, and `Node`, `Expression`, `Statement`,
+`Declaration` and `Program` are five of the six most frequent such names. The repair asks where the
+symbol was declared, which is information no name set holds. A type collapses when every declaration
+of its symbol lives inside the TypeScript package; `every` rather than `some`, because the Durable
+Object ambient file reopens `ArrayBuffer`, `ArrayBufferView`, `AbortSignal` and `ReadableStream`, and
+a program declaring its own `Node` merges with the DOM one. Provenance deliberately abstains for
+types carrying arguments: erasing a generic discards them, and that regression was caught mid-work by
+the corpus diff after `MapIterator<Info>` collapsed and silently deleted a `for...of` body from the
+self-host output. An explicit allowlist keeps the Durable Object types, `Disposable` and `URL`, each
+of which has a real Lean carrier. The two near-duplicate name sets merged into one of 37, in three
+documented groups. Measured 18 of 18 red becomes 0 of 18, while a user's own `interface Node` stays
+byte-identical to before.
+
+One trap is worth recording because it produced a confident wrong reading during review: a probe file
+outside a tree with `node_modules` cannot resolve `typescript`, so `ts.SourceFile` degrades to an
+error type and maps to `TSAny` for entirely the wrong reason, making the collapse look like it
+already worked. Every measurement and test here asserts that resolution genuinely succeeded before
+asserting the mapping.
+
+Counts move to 46 test files and 1691 passed with 10 todo.

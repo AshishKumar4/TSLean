@@ -347,3 +347,104 @@ describe('Full pipeline: discriminated unions', () => {
     expect(fn).toMatch(/\.\s*Node/);
   });
 });
+
+// ─── Aliases of types with no Lean carrier ────────────────────────────────────
+//
+// Collapsing the two IRType renderers into one deleted a render-time copy of
+// "which TS types have no Lean carrier", which had been reached from type-alias
+// bodies. The names below then reached the printer and were emitted verbatim, and
+// `lake env lean` rejects each with `Unknown identifier`. A parameter of the same
+// type survives that, because Lean auto-binds an unknown identifier in a signature
+// as an implicit; an abbrev's value position has no such escape. The answer now
+// comes from mapType, so the alias never sees the name at all.
+
+describe('Aliases of standard-library types with no Lean carrier', () => {
+  const aliasesOf = (code: string): string[] =>
+    code.split('\n').filter(line => line.startsWith('abbrev '));
+
+  it('emits an erased carrier, not the TypeScript name', () => {
+    const code = pipeline(`
+      export type UnusedKey = PropertyKey;
+      export type UnusedDesc = PropertyDescriptor;
+      export type UnusedThenable = PromiseLike<string>;
+      export type UnusedView = ArrayBufferView;
+      export type UnusedAsyncIter = AsyncIterable<string>;
+      export type UnusedBuffer = ArrayBufferLike;
+    `);
+    expect(aliasesOf(code)).toEqual([
+      'abbrev UnusedKey := String',
+      'abbrev UnusedDesc := String',
+      'abbrev UnusedThenable := String',
+      'abbrev UnusedView := String',
+      'abbrev UnusedAsyncIter := String',
+      'abbrev UnusedBuffer := String',
+    ]);
+  });
+
+  // The same erasure has to reach usage sites, or the file claims two carriers
+  // for one type: this is what `def unwrap (w : PromiseLike String)` used to do
+  // beside `abbrev Wrapper := String`, and Lean rejected the parameter.
+  it('erases the alias and its usage sites alike', () => {
+    const code = pipeline(`
+      export type Wrapper<T> = PromiseLike<T>;
+      export function unwrap(w: Wrapper<string>): string { return "x"; }
+    `);
+    expect(code).toContain('abbrev Wrapper := String');
+    expect(code).toContain('def unwrap (w : TSAny) : String');
+    expect(code).not.toContain('PromiseLike');
+  });
+});
+
+// ─── Aliases of TypeScript's own types ────────────────────────────────────────
+//
+// Which TS types have no Lean carrier is decided by where they were declared, not
+// by their name: a name set cannot tell `ts.Node` from a program's own
+// `interface Node`, and erasing the latter would leave its `structure` unreachable
+// with every parameter of it typed TSAny.
+//
+// `parseFile` compiles with NodeNext resolution from the repository root, so the
+// `typescript` import below genuinely resolves. That matters: an unresolved import
+// makes `ts.Node` an error type, which maps to TSAny as `any` does and would let
+// these assertions pass for the wrong reason. `tests/unit/typemap.test.ts` pins the
+// resolved case directly, asserting no `Cannot find module` diagnostic and a
+// checker view that is not `any`.
+
+describe('Aliases of TypeScript compiler API types', () => {
+  const src = `
+    import type * as ts from 'typescript';
+    export interface Node { id: string; label: string }
+    export type ApiNode = ts.Node;
+    export type UnusedFile = ts.SourceFile;
+    export function labelOf(n: Node): string { return n.label; }
+    export function firstId(ns: Node[]): string { return ns.length > 0 ? ns[0].id : ""; }
+  `;
+
+  it('erases the compiler API type, including where nothing references it', () => {
+    const code = pipeline(src);
+    expect(code).toContain('abbrev ApiNode := String');
+    expect(code).toContain('abbrev UnusedFile := String');
+  });
+
+  it('keeps a same-named type the program declares itself', () => {
+    const code = pipeline(src);
+    expect(code).toContain('structure Node where');
+    expect(code).toContain('def labelOf (n : Node) : String');
+    expect(code).toContain('(ns : Array Node)');
+  });
+
+  // Erasing a generic throws its arguments away, and iteration reads the element
+  // type out of them: with `MapIterator<Info>` collapsed, this loop body was lost
+  // and the whole `for` lowered to `pure ()`.
+  it('keeps the arguments of a generic it cannot give a carrier', () => {
+    const code = pipeline(`
+      interface Info { disc: string }
+      export function find(m: Map<string, Info>, field: string): string {
+        let hit = "";
+        for (const u of m.values()) { if (u.disc === field) { hit = u.disc; } }
+        return hit;
+      }
+    `);
+    expect(code).toContain('AssocMap.values');
+    expect(code).not.toMatch(/def find[^]]*:=\s*pure \(\)/);
+  });
+});

@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as ts from 'typescript';
-import { mapType, irTypeToLean, detectDiscriminatedUnion, extractTypeParams } from '../src/typemap/index.js';
+import { mapType, detectDiscriminatedUnion, extractTypeParams } from '../src/typemap/index.js';
 import { TyString, TyFloat, TyBool, TyUnit, TyNat, TyNever, TyOption, TyArray, IRType } from '../src/ir/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -151,46 +151,6 @@ describe('mapType – generics', () => {
     const { prog } = makeProgram('function noop(): void {}');
     const fn = prog.getSourceFile('test.ts')!.statements[0] as ts.FunctionDeclaration;
     expect(extractTypeParams(fn)).toEqual([]);
-  });
-});
-
-describe('irTypeToLean – emission', () => {
-  it('Nat',          () => expect(irTypeToLean({ tag: 'Nat' })).toBe('Nat'));
-  it('Int',          () => expect(irTypeToLean({ tag: 'Int' })).toBe('Int'));
-  it('Float',        () => expect(irTypeToLean({ tag: 'Float' })).toBe('Float'));
-  it('String',       () => expect(irTypeToLean({ tag: 'String' })).toBe('String'));
-  it('Bool',         () => expect(irTypeToLean({ tag: 'Bool' })).toBe('Bool'));
-  it('Unit',         () => expect(irTypeToLean({ tag: 'Unit' })).toBe('Unit'));
-  it('Never → Empty', () => expect(irTypeToLean({ tag: 'Never' })).toBe('Empty'));
-
-  it('Option String',    () => expect(irTypeToLean({ tag: 'Option', inner: { tag: 'String' } })).toBe('Option String'));
-  it('Option (complex)', () => expect(irTypeToLean({ tag: 'Option', inner: { tag: 'Array', elem: { tag: 'Nat' } } })).toBe('Option (Array Nat)'));
-  it('Array Nat',        () => expect(irTypeToLean({ tag: 'Array', elem: { tag: 'Nat' } })).toBe('Array Nat'));
-  it('Map String Nat → AssocMap', () => expect(irTypeToLean({ tag: 'Map', key: { tag: 'String' }, value: { tag: 'Nat' } })).toBe('AssocMap String Nat'));
-  it('Set String → List',    () => expect(irTypeToLean({ tag: 'Set', elem: { tag: 'String' } })).toBe('List String'));
-  it('Promise String → IO String', () => expect(irTypeToLean({ tag: 'Promise', inner: { tag: 'String' } })).toBe('IO String'));
-
-  it('Tuple (String × Nat)', () =>
-    expect(irTypeToLean({ tag: 'Tuple', elems: [{ tag: 'String' }, { tag: 'Nat' }] })).toBe('(String × Nat)'));
-
-  it('TypeRef no args',  () => expect(irTypeToLean({ tag: 'TypeRef', name: 'Foo', args: [] })).toBe('Foo'));
-  it('TypeRef with args', () =>
-    expect(irTypeToLean({ tag: 'TypeRef', name: 'Foo', args: [{ tag: 'String' }] })).toBe('Foo String'));
-
-  it('TypeVar α', () => expect(irTypeToLean({ tag: 'TypeVar', name: 'α' })).toBe('α'));
-
-  it('Universe 0 → Prop',   () => expect(irTypeToLean({ tag: 'Universe', level: 0 })).toBe('Prop'));
-  it('Universe 1 → Type',   () => expect(irTypeToLean({ tag: 'Universe', level: 1 })).toBe('Type 1'));
-  it('Universe 2 → Type 2', () => expect(irTypeToLean({ tag: 'Universe', level: 2 })).toBe('Type 2'));
-
-  it('irTypeToLean with parens=true wraps compound', () => {
-    expect(irTypeToLean({ tag: 'Option', inner: { tag: 'Nat' } }, true)).toBe('(Option Nat)');
-    expect(irTypeToLean({ tag: 'Nat' }, true)).toBe('Nat');
-  });
-
-  it('nested: Option (Map String (Array Nat))', () => {
-    const t: IRType = { tag: 'Option', inner: { tag: 'Map', key: { tag: 'String' }, value: { tag: 'Array', elem: { tag: 'Nat' } } } };
-    expect(irTypeToLean(t)).toBe('Option (AssocMap String (Array Nat))');
   });
 });
 

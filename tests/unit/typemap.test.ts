@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as ts from 'typescript';
-import { mapType, irTypeToLean, detectDiscriminatedUnion, extractTypeParams } from '../../src/typemap/index.js';
+import { mapType, detectDiscriminatedUnion, extractTypeParams } from '../../src/typemap/index.js';
 import {
   TyString, TyFloat, TyBool, TyUnit, TyNat, TyInt, TyNever,
   TyOption, TyArray, TyMap, TySet, TyPromise, TyRef, TyVar, TyTuple,
@@ -197,34 +197,152 @@ describe('mapType: generics', () => {
   });
 });
 
-// ─── irTypeToLean ─────────────────────────────────────────────────────────────
+// ─── Types with no Lean carrier ───────────────────────────────────────────────
+//
+// This is where "does this type have a Lean carrier" is answered, so that the IR
+// carries one answer for every consumer. Codegen cannot answer it: it sees a name
+// where this layer sees a resolved symbol. Each of these reaches mapType by a
+// different route, and a name that escapes all three is emitted verbatim — which
+// `lake env lean` rejects, since none of them exists in Lean.
 
-describe('irTypeToLean', () => {
-  it('Nat → Nat',          () => expect(irTypeToLean({ tag: 'Nat' })).toBe('Nat'));
-  it('Int → Int',          () => expect(irTypeToLean({ tag: 'Int' })).toBe('Int'));
-  it('Float → Float',      () => expect(irTypeToLean({ tag: 'Float' })).toBe('Float'));
-  it('String → String',    () => expect(irTypeToLean({ tag: 'String' })).toBe('String'));
-  it('Bool → Bool',        () => expect(irTypeToLean({ tag: 'Bool' })).toBe('Bool'));
-  it('Unit → Unit',        () => expect(irTypeToLean({ tag: 'Unit' })).toBe('Unit'));
-  it('Never → Empty',      () => expect(irTypeToLean({ tag: 'Never' })).toBe('Empty'));
-  it('Option String',      () => expect(irTypeToLean({ tag: 'Option', inner: { tag: 'String' } })).toBe('Option String'));
-  it('Option (Array Nat)', () => expect(irTypeToLean({ tag: 'Option', inner: { tag: 'Array', elem: { tag: 'Nat' } } })).toBe('Option (Array Nat)'));
-  it('Array Nat',          () => expect(irTypeToLean({ tag: 'Array', elem: { tag: 'Nat' } })).toBe('Array Nat'));
-  it('Map String Nat → AssocMap', () => expect(irTypeToLean({ tag: 'Map', key: { tag: 'String' }, value: { tag: 'Nat' } })).toBe('AssocMap String Nat'));
-  it('Set String → List',  () => expect(irTypeToLean({ tag: 'Set', elem: { tag: 'String' } })).toBe('List String'));
-  it('Promise String → IO String', () => expect(irTypeToLean({ tag: 'Promise', inner: { tag: 'String' } })).toBe('IO String'));
-  it('Tuple (String × Nat)',   () => expect(irTypeToLean({ tag: 'Tuple', elems: [{ tag: 'String' }, { tag: 'Nat' }] })).toBe('(String × Nat)'));
-  it('TypeRef no args',        () => expect(irTypeToLean({ tag: 'TypeRef', name: 'Foo', args: [] })).toBe('Foo'));
-  it('TypeRef with args',      () => expect(irTypeToLean({ tag: 'TypeRef', name: 'Foo', args: [{ tag: 'String' }] })).toBe('Foo String'));
-  it('TypeVar α',              () => expect(irTypeToLean({ tag: 'TypeVar', name: 'α' })).toBe('α'));
-  it('Universe 0 → Prop',      () => expect(irTypeToLean({ tag: 'Universe', level: 0 })).toBe('Prop'));
-  it('Universe 1 → Type',      () => expect(irTypeToLean({ tag: 'Universe', level: 1 })).toBe('Type 1'));
-  it('Universe 2 → Type 2',    () => expect(irTypeToLean({ tag: 'Universe', level: 2 })).toBe('Type 2'));
-  it('parens=true wraps',      () => expect(irTypeToLean({ tag: 'Option', inner: { tag: 'Nat' } }, true)).toBe('(Option Nat)'));
-  it('parens=true, simple',    () => expect(irTypeToLean({ tag: 'Nat' }, true)).toBe('Nat'));
-  it('nested complex',         () => {
-    const t: IRType = { tag: 'Option', inner: { tag: 'Map', key: { tag: 'String' }, value: { tag: 'Array', elem: { tag: 'Nat' } } } };
-    expect(irTypeToLean(t)).toBe('Option (AssocMap String (Array Nat))');
+describe('mapType: types with no Lean carrier collapse to TSAny', () => {
+  const isTSAny = (t: IRType) => t.tag === 'TypeRef' && t.name === 'TSAny' && t.args.length === 0;
+
+  // Answered by where the type was declared, since each of these is TypeScript's
+  // own and carries no type arguments to lose.
+  it('PropertyDescriptor', () => expect(isTSAny(typeOf('PropertyDescriptor'))).toBe(true));
+  it('Date',               () => expect(isTSAny(typeOf('Date'))).toBe(true));
+  it('RegExp',             () => expect(isTSAny(typeOf('RegExp'))).toBe(true));
+
+  // A union alias is neither an object nor a reference, so it reaches the check by
+  // its own third route.
+  it('PropertyKey',        () => expect(isTSAny(typeOf('PropertyKey'))).toBe(true));
+  it('ArrayBufferLike',    () => expect(isTSAny(typeOf('ArrayBufferLike'))).toBe(true));
+
+  // Generic, so provenance abstains — erasing one would discard its arguments.
+  // These carry no carrier either, so they are named instead.
+  it('PromiseLike<T>',     () => expect(isTSAny(typeOf('PromiseLike<string>'))).toBe(true));
+  it('AsyncIterable<T>',   () => expect(isTSAny(typeOf('AsyncIterable<string>'))).toBe(true));
+  it('ArrayBufferView',    () => expect(isTSAny(typeOf('ArrayBufferView'))).toBe(true));
+  it('Uint8Array',         () => expect(isTSAny(typeOf('Uint8Array'))).toBe(true));
+
+  // A generic whose arguments are read downstream keeps them: iteration takes the
+  // element type out of `MapIterator<T>`, and erasing it loses the loop body.
+  it('MapIterator keeps its element type', () => {
+    const t = typeOf('ReturnType<Map<string, number>["values"]>');
+    expect(t.tag).toBe('TypeRef');
+    if (t.tag !== 'TypeRef') throw new Error('expected a TypeRef');
+    expect(t.args.map(a => a.tag)).toEqual(['Float']);
+  });
+
+  // A type that does have a carrier keeps its name
+  it('a local interface is untouched', () => {
+    const t = aliasType('interface Conf { host: string }\ntype C = Conf;');
+    expect(t.tag).toBe('TypeRef');
+  });
+});
+
+// ─── Provenance, not name ─────────────────────────────────────────────────────
+//
+// "Has no Lean carrier" is decided by where a type was declared. These tests are
+// the ones that can lie: if `typescript` fails to resolve, `ts.SourceFile` becomes
+// an error type, maps to TSAny as `any` does, and the assertion passes for the
+// wrong reason. So the program below is built with NodeNext resolution, and each
+// test first requires that the module resolved and that the checker's view of the
+// type is not `any`.
+
+describe('mapType: provenance decides, not the name', () => {
+  function resolvingProgram(src: string, file = 'provenance-test.ts') {
+    const opts: ts.CompilerOptions = {
+      strict: true, target: ts.ScriptTarget.ES2022, skipLibCheck: true,
+      module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext,
+      lib: ['lib.es2022.d.ts'],
+    };
+    const host = ts.createCompilerHost(opts);
+    const base = host.getSourceFile.bind(host);
+    const prog = ts.createProgram({
+      rootNames: [file], options: opts,
+      host: {
+        ...host,
+        getSourceFile: (n, v, e, sc) => n === file ? ts.createSourceFile(n, src, v, true) : base(n, v, e, sc),
+        fileExists: f => f === file || host.fileExists(f),
+        readFile: f => f === file ? src : host.readFile(f),
+      },
+    });
+    const sf = prog.getSourceFile(file);
+    if (!sf) throw new Error('provenance test: no source file');
+    // 2307 is "Cannot find module". Without this the whole describe could pass on
+    // an unresolved import.
+    const unresolved = prog.getSemanticDiagnostics(sf).filter(d => d.code === 2307);
+    expect(unresolved.map(d => ts.flattenDiagnosticMessageText(d.messageText, ' '))).toEqual([]);
+    return { prog, sf, checker: prog.getTypeChecker() };
+  }
+
+  function aliasNamed(src: string, name: string): { ir: IRType; shown: string } {
+    const { sf, checker } = resolvingProgram(src);
+    const alias = sf.statements.find(
+      (st): st is ts.TypeAliasDeclaration => ts.isTypeAliasDeclaration(st) && st.name.text === name,
+    );
+    if (!alias) throw new Error(`provenance test: no alias ${name}`);
+    const t = checker.getTypeAtLocation(alias.type);
+    return { ir: mapType(t, checker), shown: checker.typeToString(t) };
+  }
+
+  const SRC = `import type * as ts from 'typescript';
+    export interface Node { id: string }
+    type FromCompiler = ts.Node;
+    type FromProgram = Node;
+    type CompilerFile = ts.SourceFile;
+  `;
+
+  it('a compiler API type resolves and then collapses', () => {
+    const { ir, shown } = aliasNamed(SRC, 'FromCompiler');
+    expect(shown).toBe('Node');                       // resolved, not `any`
+    expect(ir).toEqual({ tag: 'TypeRef', name: 'TSAny', args: [] });
+  });
+
+  it('the same name declared by the program is kept', () => {
+    const { ir, shown } = aliasNamed(SRC, 'FromProgram');
+    expect(shown).toBe('Node');
+    expect(ir).toEqual({ tag: 'TypeRef', name: 'Node', args: [] });
+  });
+
+  it('an unreferenced compiler API alias collapses too', () => {
+    const { ir, shown } = aliasNamed(SRC, 'CompilerFile');
+    expect(shown).toBe('SourceFile');
+    expect(ir).toEqual({ tag: 'TypeRef', name: 'TSAny', args: [] });
+  });
+
+  // The allowlist has to win against provenance, or a type with a real Lean
+  // carrier would be erased for having been declared by TypeScript. `Disposable`
+  // is the case that can be resolved here, with the lib that declares it loaded.
+  it('an allowlisted type keeps its name despite being TypeScript\'s own', () => {
+    const file = 'provenance-carrier.ts';
+    const src = 'export type D = Disposable;';
+    const opts: ts.CompilerOptions = {
+      strict: true, target: ts.ScriptTarget.ES2022, skipLibCheck: true,
+      module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext,
+      lib: ['lib.es2022.d.ts', 'lib.esnext.disposable.d.ts'],
+    };
+    const host = ts.createCompilerHost(opts);
+    const base = host.getSourceFile.bind(host);
+    const prog = ts.createProgram({
+      rootNames: [file], options: opts,
+      host: {
+        ...host,
+        getSourceFile: (n, v, e, sc) => n === file ? ts.createSourceFile(n, src, v, true) : base(n, v, e, sc),
+        fileExists: f => f === file || host.fileExists(f),
+        readFile: f => f === file ? src : host.readFile(f),
+      },
+    });
+    const sf = prog.getSourceFile(file);
+    if (!sf) throw new Error('provenance test: no source file');
+    const checker = prog.getTypeChecker();
+    const alias = sf.statements.find(ts.isTypeAliasDeclaration);
+    if (!alias) throw new Error('provenance test: no alias');
+    const t = checker.getTypeAtLocation(alias.type);
+    expect(checker.typeToString(t)).toBe('Disposable');   // resolved, and lib-declared
+    expect(mapType(t, checker)).toEqual({ tag: 'TypeRef', name: 'Disposable', args: [] });
   });
 });
 

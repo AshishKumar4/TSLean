@@ -6,14 +6,20 @@
  * Uses the TypeChecker for fully-resolved types, handling generics, mapped
  * types, branded newtypes, discriminated unions, and conditional types.
  *
- * Key mappings:
- *   `number`              → `Float` (default; `Nat`/`Int` when context implies)
- *   `string`              → `String`
- *   `boolean`             → `Bool`
- *   `T | undefined`       → `Option T`
- *   `Promise<T>`          → `IO T`
- *   `Map<K, V>`           → `AssocMap K V`
+ * Key mappings, into the IR — the Lean carrier for each is chosen later, by
+ * `LowerCtx.lowerType` in `codegen/lower.ts`:
+ *   `number`              → `TyFloat` (default; `TyNat`/`TyInt` when context implies)
+ *   `string`              → `TyString`
+ *   `boolean`             → `TyBool`
+ *   `T | undefined`       → `TyOption`
+ *   `Promise<T>`          → `TyPromise`
+ *   `Map<K, V>`           → `TyMap`
  *   `string & {__brand:X}`→ branded newtype (`TyRef(alias)`)
+ *
+ * One carrier question does belong here, because it needs the checker rather than
+ * a name: whether a TS type has a Lean carrier at all.  It is answered by asking
+ * where the type was declared (`declaredByTypeScriptItself`), collapsing to
+ * `TyRef('TSAny')`, so the IR carries one answer and every consumer agrees.
  *
  * Pipeline position:  TS AST → **Type Mapper** → IR types → Codegen
  */
@@ -37,6 +43,104 @@ const FALLBACK_TYPE_VAR = 'α';
 
 /** Sentinel names for anonymous object types (TypeScript uses these internally). */
 const TS_ANON_NAMES = new Set(['__type', '__object']);
+
+/**
+ * The residue of "no Lean carrier" that `declaredByTypeScriptItself` below cannot
+ * answer.  Measured, not guessed — of the 50 names the two former sets held,
+ * provenance answers 13, so these remain, in three groups:
+ *
+ *   Generic, and erased anyway.  Provenance does not fire on a type that carries
+ *     arguments (see below), so a typed array or `PromiseLike<T>` needs its name
+ *     here to lose the carrier it never had.
+ *   Reopened by the transpiled program.  The Durable Object ambient file declares
+ *     `ArrayBuffer`, `ArrayBufferView`, `AbortSignal` and `ReadableStream`, giving
+ *     each a declaration outside TypeScript's own files, so provenance abstains on
+ *     purpose (see the `every` note below) and the name answers.
+ *   Never resolvable here.  The parser loads `lib.es2022.d.ts` only, so the host
+ *     and DOM names below have no declaration at all and arrive as `any`; these
+ *     entries are inert for this transpiler and answer for a caller that loads
+ *     `lib.dom`.  `console`, `Proxy` and `Reflect` name values rather than types,
+ *     so they could not be measured either way and are kept as declared intent.
+ *
+ * Deliberately absent: `Generator`, `AsyncGenerator`, `IterableIterator`,
+ * `AsyncIterableIterator` and TypeScript 6's `MapIterator`.  Iteration reads the
+ * element type out of their arguments, so erasing them loses it — with
+ * `MapIterator<Info>` collapsed, `for (const u of m.values())` lowers to
+ * `pure ()`.  The former reference-path set omitted them for the same reason.
+ *
+ * The object and reference paths used to hold near-duplicate sets differing on
+ * seven names; one set now serves both.
+ */
+const NO_LEAN_CARRIER_NAMES = new Set([
+  // generic, so provenance abstains, but no carrier exists either
+  'Uint8Array', 'Int8Array', 'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array',
+  'Float32Array', 'Float64Array', 'DataView', 'PromiseLike', 'AsyncIterable',
+  'WeakSet', 'WeakMap', 'WeakRef', 'FinalizationRegistry',
+  // reopened by the Durable Object ambient declarations
+  'ArrayBuffer', 'ArrayBufferView', 'AbortSignal', 'ReadableStream',
+  // never resolvable under `lib.es2022.d.ts`
+  'WritableStream', 'TransformStream', 'ReadableStreamDefaultReader',
+  'Blob', 'File', 'FormData', 'AbortController',
+  'AsyncDisposable', 'EventTarget', 'Event',
+  'TextEncoder', 'TextDecoder', 'SubtleCrypto', 'CryptoKey', 'CryptoKeyPair',
+  'console', 'Proxy', 'Reflect',
+]);
+
+/**
+ * External types that keep their own name because a Lean carrier exists for them.
+ * Checked before any collapse, so being declared by TypeScript itself does not
+ * erase them:
+ *   - the Durable Object surface — `TSLean.DurableObjects.*` models each one, and
+ *     `scanTypeImports` requests that module when one appears;
+ *   - `Disposable` — `structure Disposable` in `TSLean/Stubs/WebAPIs.lean`;
+ *   - `URL` — `structure URL` in `TSLean/Runtime/WebAPI.lean`, reachable because
+ *     the lowerer maps `new URL(...)` and `.pathname`/`.searchParams` onto it.
+ * `TextEncoder`, `TextDecoder` and `AbortController` deliberately stay out: their
+ * Lean stubs exist, but no import path requests `TSLean.Stubs.WebAPIs` for a type
+ * occurrence, so their own name would not resolve. See the note in
+ * `codegen/lower.ts` on the set overlaps.
+ */
+const LEAN_CARRIER_TYPES = new Set([
+  'DurableObjectNamespace', 'DurableObjectStub', 'DurableObjectId',
+  'DurableObjectStorage', 'DurableObjectState',
+  'Disposable',
+  'URL',
+]);
+
+/** Files inside the TypeScript package: its standard library and its compiler API. */
+const TYPESCRIPT_PACKAGE_FILE = /[/\\]node_modules[/\\]typescript[/\\]/;
+
+/**
+ * Is every declaration of this symbol TypeScript's own — its `lib.*.d.ts`
+ * standard library, or the `typescript.d.ts` compiler API?
+ *
+ * This is the authoritative test for "has no Lean carrier", because it asks where
+ * a type came from rather than what it is called. `ts.SourceFile` collapses while
+ * a program's own `interface Node` does not, which no set of names can tell apart
+ * — and getting that wrong erases a real user type, since the transpiler still
+ * emits a `structure` for it.
+ *
+ * `every`, not `some`: a program may reopen a platform interface (the Durable
+ * Object ambient file declares `ArrayBuffer`, `ArrayBufferView`, `AbortSignal` and
+ * `ReadableStream`), and a program that loads `lib.dom` and declares its own
+ * `Node` merges with the DOM one. Neither may be erased on account of the
+ * declaration it does not own; the platform types that behave this way are named
+ * in `NO_LEAN_CARRIER_NAMES` instead.
+ *
+ * Callers must not apply it to a type that carries type arguments, because
+ * erasing one throws those arguments away and the pipeline reads them: with
+ * `MapIterator<Info>` erased, `for (const u of m.values())` loses its element type
+ * and the loop body lowers to `pure ()`. A generic type with no carrier is named
+ * instead.
+ *
+ * When TypeScript is not installed under `node_modules` the test simply does not
+ * fire, and the name set answers as it did before.
+ */
+function declaredByTypeScriptItself(sym: ts.Symbol | undefined): boolean {
+  const decls = sym?.declarations;
+  if (decls === undefined || decls.length === 0) return false;
+  return decls.every(d => TYPESCRIPT_PACKAGE_FILE.test(d.getSourceFile().fileName));
+}
 
 // ─── Main entry ─────────────────────────────────────────────────────────────────
 
@@ -118,10 +222,16 @@ function mapUnion(t: ts.UnionType, checker: ts.TypeChecker, depth: number): IRTy
     return TyBool;
 
   // Named alias (e.g. `type Status = "active" | "inactive"`, `Tree<T>`)
-  const alias = getAliasName(t);
+  const aliasSymbol = getAliasSymbol(t);
+  const alias = aliasSymbol?.name;
   if (alias) {
-    // Propagate alias type arguments (e.g. Tree<T> → TyRef('Tree', [TyVar('T')]))
+    // A union alias is neither an object nor a reference, so this is the only
+    // place `PropertyKey` (string | number | symbol) and `ArrayBufferLike`
+    // (ArrayBuffer | SharedArrayBuffer) can be collapsed.
     const aliasArgs = t.aliasTypeArguments;
+    if (!LEAN_CARRIER_TYPES.has(alias) && (aliasArgs === undefined || aliasArgs.length === 0) &&
+        declaredByTypeScriptItself(aliasSymbol)) return TyRef('TSAny');
+    // Propagate alias type arguments (e.g. Tree<T> → TyRef('Tree', [TyVar('T')]))
     if (aliasArgs && aliasArgs.length > 0) {
       return TyRef(alias, aliasArgs.map(a => mapType(a, checker, depth + 1)));
     }
@@ -191,26 +301,9 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
     return TyRef('TSAny');
   }
   if (name === 'Error' || name.endsWith('Error')) return TyString;  // JS Error → String for Lean
-  // Cloudflare DO types with Lean stubs — preserve as-is (these appear in struct fields)
-  const stubbedTypes = new Set([
-    'DurableObjectNamespace', 'DurableObjectStub', 'DurableObjectId',
-    'DurableObjectStorage', 'DurableObjectState',
-    'Disposable',
-  ]);
-  if (stubbedTypes.has(name)) return TyRef(name);
-  // Web API / built-in types with no Lean equivalent → collapse to TSAny
-  const webApiTypes = new Set([
-    'Uint8Array', 'Int8Array', 'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array',
-    'Float32Array', 'Float64Array', 'ArrayBuffer', 'ArrayBufferLike', 'SharedArrayBuffer', 'DataView',
-    'ReadableStream', 'WritableStream', 'TransformStream', 'ReadableStreamDefaultReader',
-    'Blob', 'File', 'FormData', 'AbortController', 'AbortSignal',
-    'AsyncDisposable', 'EventTarget', 'Event',
-    'TextEncoder', 'TextDecoder', 'SubtleCrypto', 'CryptoKey', 'CryptoKeyPair',
-    'WeakSet', 'WeakMap', 'WeakRef', 'FinalizationRegistry',
-    'Generator', 'AsyncGenerator', 'IterableIterator', 'AsyncIterableIterator',
-    'Date', 'RegExp', 'JSON', 'Math', 'console', 'Proxy', 'Reflect',
-  ]);
-  if (webApiTypes.has(name)) return TyRef('TSAny');
+  if (LEAN_CARRIER_TYPES.has(name)) return TyRef(name);
+  if (declaredByTypeScriptItself(sym)) return TyRef('TSAny');
+  if (NO_LEAN_CARRIER_NAMES.has(name)) return TyRef('TSAny');
   return TyRef(name);
 }
 
@@ -237,108 +330,14 @@ function mapTypeRef(t: ts.TypeReference, checker: ts.TypeChecker, depth: number)
     case 'ReturnType':    case 'Parameters':    return TyRef(name, [map1()]);
     case 'Exclude':       case 'Extract':       return TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
     default: {
-      // Web API / built-in types that have no Lean equivalent
-      // Cloudflare DO types with Lean stubs — preserve as proper types
-      const stubbedRefTypes = new Set([
-        'DurableObjectNamespace', 'DurableObjectStub', 'DurableObjectId',
-        'DurableObjectStorage', 'DurableObjectState',
-        'Disposable',
-      ]);
-      if (stubbedRefTypes.has(name)) {
+      if (LEAN_CARRIER_TYPES.has(name)) {
         return args.length === 0 ? TyRef(name) : TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
       }
-      const webApiRefTypes = new Set([
-        'Uint8Array', 'Int8Array', 'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array',
-        'Float32Array', 'Float64Array', 'ArrayBuffer', 'ArrayBufferLike', 'SharedArrayBuffer', 'DataView',
-        'ReadableStream', 'WritableStream', 'TransformStream', 'ReadableStreamDefaultReader',
-        'Blob', 'File', 'FormData', 'AbortController', 'AbortSignal',
-        'AsyncDisposable', 'EventTarget', 'Event',
-        'TextEncoder', 'TextDecoder', 'SubtleCrypto', 'CryptoKey', 'CryptoKeyPair',
-        'RegExp', 'RegExpMatchArray', 'FinalizationRegistry', 'WeakRef',
-        'Date', 'JSON', 'Math', 'console', 'Proxy', 'Reflect',
-      ]);
-      if (webApiRefTypes.has(name)) return TyRef('TSAny');
+      // no arguments to lose, so provenance can answer; a generic one is named
+      if (args.length === 0 && declaredByTypeScriptItself(t.target.symbol)) return TyRef('TSAny');
+      if (NO_LEAN_CARRIER_NAMES.has(name)) return TyRef('TSAny');
       return args.length === 0 ? TyRef(name) : TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
     }
-  }
-}
-
-// ─── IR type → Lean 4 syntax ────────────────────────────────────────────────────
-
-/**
- * Convert an IR type to its Lean 4 syntax string.
- *
- * @param t      - The IR type to render.
- * @param parens - If true, wrap multi-word types in parentheses for
- *                 use as function arguments (e.g. `(Array Nat)`).
- * @returns A valid Lean 4 type expression.
- *
- * @example
- * irTypeToLean({ tag: 'Array', elem: { tag: 'Nat' } })       // "Array Nat"
- * irTypeToLean({ tag: 'Array', elem: { tag: 'Nat' } }, true) // "(Array Nat)"
- */
-export function irTypeToLean(t: IRType, parens = false): string {
-  const s = typeStr(t);
-  return parens && s.includes(' ') ? `(${s})` : s;
-}
-
-function typeStr(t: IRType): string {
-  switch (t.tag) {
-    case 'Nat':       return 'Nat';
-    case 'Int':       return 'Int';
-    case 'Float':     return 'Float';
-    case 'String':    return 'String';
-    case 'Bool':      return 'Bool';
-    case 'Unit':      return 'Unit';
-    case 'Never':     return 'Empty';
-    case 'Option':    return `Option ${irTypeToLean(t.inner, true)}`;
-    case 'Array':     return `Array ${irTypeToLean(t.elem, true)}`;
-    case 'Tuple':     return t.elems.length === 0 ? 'Unit' : `(${t.elems.map(typeStr).join(' × ')})`;
-    case 'Function': {
-      // Empty params () → T becomes Unit → T in Lean
-      const paramStr = t.params.length === 0 ? 'Unit' : t.params.map(p => irTypeToLean(p, true)).join(' → ');
-      return `${paramStr} → ${typeStr(t.ret)}`;
-    }
-    case 'Map':       return `AssocMap ${irTypeToLean(t.key, true)} ${irTypeToLean(t.value, true)}`;
-    case 'Set':       return `List ${irTypeToLean(t.elem, true)}`;
-    case 'Promise': {
-      // Flatten nested IO: Promise<Promise<T>> → IO T (not IO (IO T))
-      const inner = t.inner;
-      if (inner.tag === 'Promise') return `IO ${irTypeToLean(inner.inner, true)}`;
-      return `IO ${irTypeToLean(inner, true)}`;
-    }
-    case 'Result':    return `Except ${irTypeToLean(t.err, true)} ${irTypeToLean(t.ok, true)}`;
-    case 'TypeRef': {
-      // Indexed access types like D["length"], generic syntax like Foo<T>, template literals → TSAny
-      if (t.name.includes('[') || t.name.includes('"') || t.name.includes('`') || t.name.includes('<')) return 'TSAny';
-      // Map TS-specific types to Any (no Lean equivalent)
-       const tsOnlyTypes = new Set(['CompilerHost', 'SourceFile', 'Program', 'TypeChecker',
-        'Node', 'Statement', 'Declaration', 'Expression', 'FunctionDeclaration',
-        'ClassDeclaration', 'InterfaceDeclaration', 'TypeAliasDeclaration',
-        'VariableStatement', 'ModuleDeclaration', 'EnumDeclaration',
-        'PropertyAccessExpression', 'CallExpression', 'BinaryExpression',
-        'ReadableStream', 'WritableStream', 'TransformStream',
-        'ArrayBuffer', 'ArrayBufferLike', 'ArrayBufferView', 'SharedArrayBuffer',
-        'Uint8Array', 'Int8Array', 'Uint16Array', 'Int16Array', 'Uint32Array', 'Int32Array',
-        'Float32Array', 'Float64Array', 'DataView', 'TypedArray',
-        'IterableIterator', 'AsyncIterableIterator', 'AsyncIterable',
-        'Generator', 'AsyncGenerator', 'PromiseLike', 'RegExp', 'RegExpMatchArray',
-        'WeakSet', 'WeakMap', 'WeakRef', 'FinalizationRegistry',
-        'SymbolConstructor', 'PropertyDescriptor', 'PropertyKey',
-        'Blob', 'File', 'FormData', 'AbortController', 'AbortSignal',
-        'AsyncDisposable', 'EventTarget', 'Event',
-        'TextEncoder', 'TextDecoder', 'ReadableStreamDefaultReader',
-        'SubtleCrypto', 'CryptoKey', 'CryptoKeyPair']);
-      if (tsOnlyTypes.has(t.name)) return 'TSAny';
-      return t.args.length === 0 ? t.name : `${t.name} ${t.args.map(a => irTypeToLean(a, true)).join(' ')}`;
-    }
-    case 'TypeVar':   return t.name.includes('[') || t.name.includes('"') ? 'TSAny' : t.name;
-    case 'Structure': return t.name;
-    case 'Inductive': return t.name;
-    case 'Dependent': return `(${t.param} : ${typeStr(t.paramType)}) → ${typeStr(t.body)}`;
-    case 'Subtype':   return `{x : ${typeStr(t.base)} // ${t.refinement}}`;
-    case 'Universe':  return t.level === 0 ? 'Prop' : `Type ${t.level}`;
-    default:          return 'TSAny';
   }
 }
 
@@ -493,14 +492,18 @@ export function extractTypeParams(
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
 /**
- * Access the `aliasSymbol.name` on a TypeScript type.
+ * Access the `aliasSymbol` on a TypeScript type.
  *
  * This property is not in the public TS API typings but is stable across
- * TypeScript versions (4.x–5.x).  It gives the user-defined alias name
- * for union and intersection types.
+ * TypeScript versions (4.x–5.x).  It gives the declared alias for union and
+ * intersection types — its name, and where it was declared.
  */
+function getAliasSymbol(t: ts.Type): ts.Symbol | undefined {
+  return (t as { aliasSymbol?: ts.Symbol }).aliasSymbol;
+}
+
 function getAliasName(t: ts.Type): string | undefined {
-  return (t as { aliasSymbol?: ts.Symbol }).aliasSymbol?.name;
+  return getAliasSymbol(t)?.name;
 }
 
 function safeMapType(checker: ts.TypeChecker, node: ts.TypeNode): IRType | undefined {

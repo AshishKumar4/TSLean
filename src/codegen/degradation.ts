@@ -136,11 +136,13 @@ function scanExpr(e: LeanExpr, site: string, out: DegradationMarker[]): void {
       out.push({ level: 'sorry', site });
       return;
 
-    // Leaves. `Lit`, `SInterp` text and `Panic` messages are quoted, not code.
+    // Leaves. `Lit`, `SInterp` text and `Panic` messages are quoted, not code,
+    // and a `TyExpr` holds a type — no scan reaches into `LeanTy`.
     case 'Lit':
     case 'Var':
     case 'None':
     case 'Panic':
+    case 'TyExpr':
       return;
 
     case 'ArrayLit':

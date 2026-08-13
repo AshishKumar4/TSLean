@@ -26,14 +26,67 @@ import type {
   LeanTyParam, LeanParam, LeanField, LeanCtor,
   LeanMatchArm, SInterpPart,
 } from './lean-ast.js';
-import { irTypeToLean } from '../typemap/index.js';
-
 import { translateBinOp } from '../stdlib/index.js';
 import { printTyStr, printExprStr } from './printer.js';
 import { currentTracker } from '../sorry-tracker.js';
 
+// ─── Hardcoded type-name sets ───────────────────────────────────────────────────
+//
+// Four sets of TS type names decide type-related behaviour and they overlap. They
+// are not interchangeable: each answers a different question, and none of them
+// answers the one that decides what Lean type gets emitted.
+//
+//   Which TS types have no Lean carrier?  Not a name question at all, and not
+//     answered here. `declaredByTypeScriptItself` (typemap/index.ts) is
+//     AUTHORITATIVE: it asks whether every declaration of the type is
+//     TypeScript's own — its `lib.*.d.ts` or its `typescript.d.ts` — which is the
+//     only way to tell `ts.Node` from a program's own `interface Node`. It answers
+//     during mapType, so the IR itself says `TyRef('TSAny')` and every later
+//     consumer — this renderer, degradation recording, sorryForType — sees one
+//     answer. `NO_LEAN_CARRIER_NAMES` holds the measured residue it cannot
+//     express: types the transpiled program reopens, types that never resolve
+//     under the parser's lib, and generics whose arguments must not be discarded.
+//   Which need type-level computation?  INEXPRESSIBLE_UTILITY_TYPES, consulted by
+//     lowerType alone and only when an argument is a type variable.
+//   Which have real Lean field accessors?  LEAN_BUILTIN_TYPES, consulted at the
+//     value level and never for rendering. It holds IR spellings, so `Any` sits
+//     beside `TSAny`: the parser emits `TyRef('Any')` for a missing symbol, while
+//     `TSAny` is the only carrier name ever emitted.
+//   Which receivers are TypeScript compiler API objects?  TS_API_TYPES, also
+//     value level only, AUTHORITATIVE for the self-host boundary. Since mapType
+//     now erases those types, an IR TypeRef reaching it is already `TSAny`, which
+//     the set also holds — the remaining names cover a receiver whose type the
+//     parser could not resolve.
+//
+// The overlaps, measured, so the next slice need not re-derive them:
+//   - TS_API_TYPES ∩ LEAN_BUILTIN_TYPES = {Any, TSAny}. Intended: both questions
+//     need the erased type.
+//   - LEAN_BUILTIN_TYPES ∩ NO_LEAN_CARRIER_NAMES = {TextEncoder, TextDecoder,
+//     AbortController}, and the two contradict each other: all three do have Lean
+//     stubs (TSLean/Stubs/WebAPIs.lean), yet they are erased, so the field-access
+//     entries here can never fire for a checker-derived type. Keeping their
+//     carrier is not a local fix — `scanTypeImports` requests TSLean.Stubs.WebAPIs
+//     for the Durable Object stubs only, so TSAny is today the sole spelling that
+//     elaborates. `URL` shows what the fix looks like: it is allowlisted in
+//     `LEAN_CARRIER_TYPES` because the lowerer does map its constructor and fields
+//     onto the Lean structure.
+//   - A fifth set used to exist: a render-time copy of the carrier question inside
+//     typemap's `typeStr`, reached from type-alias bodies and explicit type
+//     arguments only. Deleting that renderer deleted it, which turned 23 alias
+//     bodies from `abbrev X := String` into `abbrev X := <the TS name>` — 23 of 23
+//     rejected by `lake env lean`, whether or not the alias was used. Provenance
+//     closes all 23 at mapType and does not need the name-based collapse that
+//     would have erased a program's own types to do it.
+//
 // TS utility types that require type-level computation (keyof, infer, conditional)
 // and cannot be expressed in Lean 4 when their arguments contain type variables.
+// The erasure is unrecorded: lowerType returns TSAny's `String` carrier for them.
+//
+// The branch is dead as things stand: the checker resolves each of these before
+// the IR exists, so none arrives as `TyRef('Partial', …)`. Measured — `Partial<T>`
+// and `Pick<T, keyof T>` arrive as TSAny, `ReturnType<T>` and `Awaited<T>` as the
+// type variable itself, and `Partial<Conf>` as `AssocMap String TSAny`. Removing
+// it is a separate slice: mapTypeRef's matching cases would go with it.
 const INEXPRESSIBLE_UTILITY_TYPES = new Set([
   'Partial', 'Required', 'Pick', 'Omit',
   'ReturnType', 'Parameters', 'ConstructorParameters', 'InstanceType',
@@ -41,7 +94,8 @@ const INEXPRESSIBLE_UTILITY_TYPES = new Set([
   'Awaited',
 ]);
 
-// Lean built-in types that have valid field accessors — don't collapse these to default.
+// Lean built-in types that have valid field accessors — don't collapse these to
+// default. IR spellings, never emitted; see the overlap note above.
 const LEAN_BUILTIN_TYPES = new Set([
   'String', 'Nat', 'Int', 'Float', 'Bool', 'Unit', 'Char',
   'Array', 'List', 'Option', 'Except',
@@ -105,6 +159,9 @@ export function lowerModule(mod: IRModule): LeanFile {
 
 // ─── TS API boundary ────────────────────────────────────────────────────────────
 
+// Receivers whose fields and methods belong to the TypeScript compiler API.
+// Value level only, and mostly reached through its `TSAny` entry now that mapType
+// erases these types by provenance; see the overlap note above.
 const TS_API_TYPES = new Set([
   'Any', 'TSAny', 'Node', 'TypeChecker', 'Type', 'Symbol', 'Signature',
   'SyntaxKind', 'Token', 'Expression', 'Statement', 'Declaration',
@@ -305,7 +362,11 @@ class LowerCtx {
 
   private scanTypeImports(t: IRType, needs: Set<string>): void {
     switch (t.tag) {
-      case 'Map': case 'Set': needs.add('TSLean.Stdlib.HashMap'); break;
+      // `Map` needs AssocMap. `Set` does not: its carrier is `Array` and the
+      // operations it lowers to are Array ones, so no name from this module is
+      // emitted for it — it scans like the Array it becomes.
+      case 'Map': needs.add('TSLean.Stdlib.HashMap'); break;
+      case 'Set': this.scanTypeImports(t.elem, needs); break;
       case 'TypeRef': {
         // Types with stubs in TSLean.Stubs.WebAPIs
         const webApiStubTypes = new Set([
@@ -760,25 +821,20 @@ class LowerCtx {
     };
   }
 
-  /** Quick stringify of a LeanTy for checking type param usage. */
-  private printTyQuick(t: LeanTy): string {
-    switch (t.tag) {
-      case 'TyName': return t.name;
-      case 'TyApp': return `${this.printTyQuick(t.fn)} ${t.args.map(a => this.printTyQuick(a)).join(' ')}`;
-      case 'TyArrow': return `${t.params.map(p => this.printTyQuick(p)).join(' → ')} → ${this.printTyQuick(t.ret)}`;
-      case 'TyTuple': return t.elems.map(e => this.printTyQuick(e)).join(' × ');
-      case 'TyParen': return this.printTyQuick(t.inner);
-      default: return '';
-    }
-  }
-
   private lowerTypeAlias(d: Extract<IRDecl, { tag: 'TypeAlias' }>): LeanDecl {
-    const bodyStr = irTypeToLean(d.body);
-    // Self-referencing type alias → structure with tag+fields (for IR types)
-    // Also catch parametric self-references like `MaybePromise T` where name is `MaybePromise`
+    // The body is rendered once, by the one renderer, so the shape this decl
+    // branches on is the shape it goes on to emit.
+    const loweredBody = this.lowerType(d.body);
+    // An erased body carries no type parameters; asked of the node, not of text.
+    const isErased = loweredBody.tag === 'TyName' &&
+      (loweredBody.name === 'String' || loweredBody.name === 'TSAny');
+    // Self-referencing type alias → structure with tag+fields (for IR types).
+    // Textual on purpose: it catches a self-mention in head position of any
+    // rendering, including `type F = (x: F) => void`, which prints `F → Unit`.
+    const bodyStr = printTyStr(loweredBody);
     const isSelfRef = bodyStr === d.name || bodyStr.startsWith(d.name + ' ');
     const knownTaggedTypes = new Set(['IRExpr', 'IRDecl']);
-    if (isSelfRef || bodyStr === 'String' || bodyStr === 'TSAny') {
+    if (isSelfRef || isErased) {
       if (knownTaggedTypes.has(d.name)) {
         const fields: LeanField[] = [
           { name: 'tag', ty: { tag: 'TyName', name: 'String' } },
@@ -817,9 +873,7 @@ class LowerCtx {
         comment: d.comment,
       };
     }
-    const loweredBody = this.lowerType(d.body);
-    const bodyStrFull = this.printTyQuick(loweredBody);
-    const usedParamsFull = d.typeParams.filter(p => new RegExp(`\\b${p.name}\\b`).test(bodyStrFull));
+    const usedParamsFull = d.typeParams.filter(p => new RegExp(`\\b${p.name}\\b`).test(bodyStr));
     this.typeAliases.set(d.name, { usedParamCount: usedParamsFull.length });
     return {
       tag: 'Abbrev',
@@ -1379,6 +1433,43 @@ class LowerCtx {
 
   // ─── Type lowering ──────────────────────────────────────────────────────────
 
+  /**
+   * Render an IR type as a Lean type.  This is the only IRType → Lean renderer
+   * in the TypeScript pipeline: every type in the output — parameters, fields,
+   * returns, alias bodies, explicit type arguments — comes from here, as a
+   * `LeanTy` node that only the printer turns into text.
+   *
+   * Two more renderers exist elsewhere in the repository and both still carry
+   * the bugs fixed below — `lean/TSLean/Codegen.lean`'s `irTypeToLean` (the
+   * self-hosted port) and the Lean definitions `scripts/selfhost-adapter.ts`
+   * injects for the typemap module (dead now: they define the functions this
+   * pipeline no longer has, and nothing references them).
+   *
+   * Two carrier decisions are load-bearing and easy to get wrong in isolation,
+   * so they are stated here rather than at each caller:
+   *
+   * - `Set<T>` → `Array T`.  `AssocSet` is real — `abbrev AssocSet α [BEq α] :=
+   *   List α` — so `List T` was that carrier unfolded, not an arbitrary choice.
+   *   What settles it is that nothing live emits an `AssocSet` operation: the
+   *   `SET_METHODS` table is reachable only through `lookupMethod`, which this
+   *   pipeline never calls (and the table is stale as well as dead — it names
+   *   `AssocSet.forM`, which does not exist; the Lean side has `forEach`).  The
+   *   operations that do get emitted are Array ones (`AssocSet.empty` → `#[]`,
+   *   `AssocSet.insert` → `Array.push`, and the `isSet` branch of
+   *   `lowerMethodCall`), and a `List T` carrier makes each of them ill-typed.
+   *   Set semantics (dedup) are lost, at the value level too — this records
+   *   that, it does not cause it.
+   * - `Promise<…>` → `IO` of the *fully awaited* type.  TypeScript's own
+   *   `Awaited<T>` unwraps recursively and one `await` on `Promise<Promise<T>>`
+   *   yields `T`, so a nested carrier binds one layer short and the bound value
+   *   is used at the wrong type.  It matches how `lowerRetSig` already refuses
+   *   to wrap a return type that is already `IO`.
+   *
+   * `Dependent`, `Subtype` and `Universe` have no producer: nothing in the
+   * pipeline builds them, so their cases below normalise what a future producer
+   * would mean rather than describe live behaviour.  Same for the `TypeApp`
+   * expression this renderer serves, and hence for `TyExpr`.
+   */
   lowerType(t: IRType): LeanTy {
     switch (t.tag) {
       case 'Nat': return { tag: 'TyName', name: 'Nat' };
@@ -1399,7 +1490,11 @@ class LowerCtx {
         args: [this.lowerType(t.key), this.lowerType(t.value)],
       };
       case 'Set': return { tag: 'TyApp', fn: { tag: 'TyName', name: 'Array' }, args: [this.lowerType(t.elem)] };
-      case 'Promise': return { tag: 'TyApp', fn: { tag: 'TyName', name: 'IO' }, args: [this.lowerType(t.inner)] };
+      case 'Promise': {
+        let awaited = t.inner;
+        while (awaited.tag === 'Promise') awaited = awaited.inner;
+        return { tag: 'TyApp', fn: { tag: 'TyName', name: 'IO' }, args: [this.lowerType(awaited)] };
+      }
       case 'Result': return {
         tag: 'TyApp',
         fn: { tag: 'TyName', name: 'Except' },
@@ -1418,8 +1513,13 @@ class LowerCtx {
         // Indexed access types (T[K]), generics with angle brackets, template literals → TSAny
         if (t.name.includes('[') || t.name.includes('<') || t.name.includes('"') || t.name.includes('`'))
           return { tag: 'TyName', name: 'TSAny' };
+        // `Any` is the parser's spelling for "no symbol"; `TSAny` is the carrier.
         const name = t.name === 'Any' ? 'TSAny' : t.name;
-        // Inexpressible TS utility types in generic context → sorry
+        // A utility type applied to a type variable needs type-level computation
+        // Lean has no equivalent for, so the carrier collapses to TSAny's `String`.
+        // Emitting a type-level `sorry` is not an option: `LeanTy` has no such
+        // node, and this loss is not recorded anywhere — see the erasure note on
+        // INEXPRESSIBLE_UTILITY_TYPES.
         if (INEXPRESSIBLE_UTILITY_TYPES.has(name) && t.args.some(a => a.tag === 'TypeVar')) {
           return { tag: 'TyName', name: 'String' };
         }
@@ -1436,9 +1536,18 @@ class LowerCtx {
       case 'TypeVar': return { tag: 'TyName', name: t.name };
       case 'Structure': return { tag: 'TyName', name: t.name };
       case 'Inductive': return { tag: 'TyName', name: t.name };
-      case 'Dependent': return this.lowerType(t.body);
+      // Lean's dependent function type needs the binder, which `LeanTy` cannot
+      // carry; the non-dependent skeleton keeps the arity, which dropping the
+      // parameter would not.
+      case 'Dependent': return { tag: 'TyArrow', params: [this.lowerType(t.paramType)], ret: this.lowerType(t.body) };
+      // The predicate is discarded, and nothing records that it was.
       case 'Subtype': return this.lowerType(t.base);
-      case 'Universe': return { tag: 'TyName', name: `Type ${t.level > 0 ? t.level : ''}`.trim() };
+      // One numbering: `Type n`, with level 0 spelled `Type` — the same spelling
+      // the printer already gives every type-parameter binder. The level is an
+      // argument, not part of the name, or the printer cannot parenthesise it.
+      case 'Universe': return t.level > 0
+        ? { tag: 'TyApp', fn: { tag: 'TyName', name: 'Type' }, args: [{ tag: 'TyName', name: String(t.level) }] }
+        : { tag: 'TyName', name: 'Type' };
     }
   }
 
@@ -1625,7 +1734,8 @@ class LowerCtx {
       case 'TypeApp': {
         const fn = this.lowerExpr(e.fn, ctx);
         // Type args are applied as explicit args in Lean
-        const tArgs = e.typeArgs.map(t => ({ tag: 'Paren' as const, inner: { tag: 'Lit' as const, value: irTypeToLean(t) } }));
+        const tArgs = e.typeArgs.map((t): LeanExpr =>
+          ({ tag: 'Paren', inner: { tag: 'TyExpr', ty: this.lowerType(t) } }));
         return { tag: 'App', fn, args: tArgs };
       }
 

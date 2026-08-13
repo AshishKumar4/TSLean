@@ -181,7 +181,20 @@ export const TyFn      = (params: IRType[], ret: IRType, effect: Effect = Pure):
 // Every IRExpr node carries `type: IRType` and `effect: Effect` via the IRNode
 // mixin.  This is the key invariant: the IR is always fully typed and effected.
 
-/** Source location for error messages and debugging. */
+/**
+ * Source location for error messages and debugging.
+ *
+ * `line` and `col` are **1-based** — TypeScript's own
+ * `getLineAndCharacterOfPosition` is 0-based on both, and the parser adds one so
+ * a span reads the way editors and compilers print `file:line:col`.
+ *
+ * `file` is relative to the project root (`ParseOptions.projectRoot`, or the
+ * nearest ancestor of the source file holding a `tsconfig.json` or
+ * `package.json`).  Because the root always contains the file, `file` is a path
+ * inside the project: never absolute, never `../`, and independent of the
+ * directory the compiler was invoked from — so the same checkout produces the
+ * same span on every machine.
+ */
 export interface Span { file: string; line: number; col: number }
 
 /**
@@ -328,13 +341,13 @@ export type IRDecl =
   | { tag: 'TypeAlias';    name: string; typeParams: TypeParam[]; body: IRType;  comment?: string }
   | { tag: 'StructDef';    name: string; typeParams: TypeParam[]; fields: Array<{ name: string; type: IRType; mutable?: boolean }>; deriving?: string[]; comment?: string; extends_?: string }
   | { tag: 'InductiveDef'; name: string; typeParams: TypeParam[]; ctors: Array<{ name: string; fields: Array<{ name?: string; type: IRType }> }>; comment?: string }
-  | { tag: 'FuncDef';      name: string; typeParams: TypeParam[]; params: IRParam[]; retType: IRType; effect: Effect; body: IRExpr; comment?: string; isPartial?: boolean; where_?: IRDecl[]; docComment?: string }
+  | { tag: 'FuncDef';      name: string; typeParams: TypeParam[]; params: IRParam[]; retType: IRType; effect: Effect; body: IRExpr; comment?: string; isPartial?: boolean; where_?: IRDecl[]; docComment?: string; span?: Span }
   | { tag: 'InstanceDef';  typeClass: string; typeArgs: IRType[]; methods: IRDecl[]; comment?: string }
   | { tag: 'TheoremDef';   name: string; statement: string; proof: string; comment?: string }
   | { tag: 'ClassDecl';    name: string; typeParams: TypeParam[]; supers?: string[]; methods: Array<{ name: string; type: IRType; default_?: IRExpr }>; comment?: string }
   | { tag: 'Namespace';    name: string; decls: IRDecl[] }
   | { tag: 'RawLean';      code: string }
-  | { tag: 'VarDecl';      name: string; type: IRType; value: IRExpr; mutable: boolean }
+  | { tag: 'VarDecl';      name: string; type: IRType; value: IRExpr; mutable: boolean; span?: Span }
   | { tag: 'SectionDecl';  name?: string; decls: IRDecl[] }
   | { tag: 'AttributeDecl'; attr: string; target: string }
   | { tag: 'DeriveDecl';   typeName: string; classes: string[] };
@@ -373,40 +386,43 @@ export interface IRModule {
 // ─── Smart constructors ─────────────────────────────────────────────────────────
 //
 // Convenience functions for building IR nodes in the parser.  Each returns a
-// fully-typed, effected node so callers never need to assemble IRNode fields.
+// fully-typed, effected node so callers never need to assemble IRNode fields,
+// and each takes the optional `span` of the source construct it came from.  The
+// key is omitted rather than set to `undefined` when there is none, so that
+// `'span' in node` answers whether a node was located.
 
 /** String literal. */
-export function litStr(v: string):   IRExpr { return { tag: 'LitString', value: v, type: TyString, effect: Pure }; }
+export function litStr(v: string, span?: Span):   IRExpr { return { tag: 'LitString', value: v, type: TyString, effect: Pure, ...(span && { span }) }; }
 /** Natural number literal. */
-export function litNat(v: number):   IRExpr { return { tag: 'LitNat',    value: v, type: TyNat,    effect: Pure }; }
+export function litNat(v: number, span?: Span):   IRExpr { return { tag: 'LitNat',    value: v, type: TyNat,    effect: Pure, ...(span && { span }) }; }
 /** Boolean literal. */
-export function litBool(v: boolean): IRExpr { return { tag: 'LitBool',   value: v, type: TyBool,   effect: Pure }; }
+export function litBool(v: boolean, span?: Span): IRExpr { return { tag: 'LitBool',   value: v, type: TyBool,   effect: Pure, ...(span && { span }) }; }
 /** Unit literal `()`. */
-export function litUnit():           IRExpr { return { tag: 'LitUnit',              type: TyUnit,   effect: Pure }; }
+export function litUnit(span?: Span):             IRExpr { return { tag: 'LitUnit',              type: TyUnit,   effect: Pure, ...(span && { span }) }; }
 /** Float literal. */
-export function litFloat(v: number): IRExpr { return { tag: 'LitFloat',  value: v, type: TyFloat,  effect: Pure }; }
+export function litFloat(v: number, span?: Span): IRExpr { return { tag: 'LitFloat',  value: v, type: TyFloat,  effect: Pure, ...(span && { span }) }; }
 /** Integer literal. */
-export function litInt(v: number):   IRExpr { return { tag: 'LitInt',    value: v, type: TyInt,     effect: Pure }; }
+export function litInt(v: number, span?: Span):   IRExpr { return { tag: 'LitInt',    value: v, type: TyInt,     effect: Pure, ...(span && { span }) }; }
 /** Variable reference. */
-export function varExpr(name: string, type: IRType = TyUnit): IRExpr {
-  return { tag: 'Var', name, type, effect: Pure };
+export function varExpr(name: string, type: IRType = TyUnit, span?: Span): IRExpr {
+  return { tag: 'Var', name, type, effect: Pure, ...(span && { span }) };
 }
 /** Placeholder for an unknown expression — emits `sorry` in Lean. */
-export function holeExpr(type: IRType = TyUnit): IRExpr {
-  return { tag: 'Hole', type, effect: Pure };
+export function holeExpr(type: IRType = TyUnit, span?: Span): IRExpr {
+  return { tag: 'Hole', type, effect: Pure, ...(span && { span }) };
 }
 /** Type-appropriate default value for uninitialized variables. */
-export function defaultForIRType(type: IRType): IRExpr {
+export function defaultForIRType(type: IRType, span?: Span): IRExpr {
   switch (type.tag) {
-    case 'String':  return litStr('');
-    case 'Nat':     return litNat(0);
-    case 'Int':     return litNat(0);
-    case 'Float':   return { tag: 'LitFloat', value: 0, type, effect: Pure };
-    case 'Bool':    return litBool(false);
-    case 'Unit':    return litUnit();
-    case 'Option':  return { tag: 'LitNull', type, effect: Pure };
-    case 'Array':   return { tag: 'ArrayLit', elems: [], type, effect: Pure };
-    default:        return holeExpr(type);
+    case 'String':  return litStr('', span);
+    case 'Nat':     return litNat(0, span);
+    case 'Int':     return litNat(0, span);
+    case 'Float':   return { tag: 'LitFloat', value: 0, type, effect: Pure, ...(span && { span }) };
+    case 'Bool':    return litBool(false, span);
+    case 'Unit':    return litUnit(span);
+    case 'Option':  return { tag: 'LitNull', type, effect: Pure, ...(span && { span }) };
+    case 'Array':   return { tag: 'ArrayLit', elems: [], type, effect: Pure, ...(span && { span }) };
+    default:        return holeExpr(type, span);
   }
 }
 /** Struct update: `{ base with field₁ := v₁, … }`. */

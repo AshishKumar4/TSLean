@@ -97,6 +97,8 @@ export type LeanExpr =
   | { tag: 'Seq'; stmts: LeanExpr[] }                                  // stmt1 \n stmt2 \n ...
   // Annotations
   | { tag: 'TypeAnnot'; expr: LeanExpr; ty: LeanTy }                  // (expr : T)
+  // A type in term position — an explicit type argument, as in `f Nat x`
+  | { tag: 'TyExpr'; ty: LeanTy }                                      // Nat, Array String
   // Comments attached to expressions
   | { tag: 'LineComment'; text: string; expr: LeanExpr }              // -- comment \n expr
   // Panic
