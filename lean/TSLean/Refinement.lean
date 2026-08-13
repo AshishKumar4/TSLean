@@ -4,4 +4,5 @@ import TSLean.Refinement.Evidence
 import TSLean.Refinement.Execution
 import TSLean.Refinement.Float
 import TSLean.Refinement.Primitive
+import TSLean.Refinement.Record
 import TSLean.Refinement.String

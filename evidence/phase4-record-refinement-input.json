@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase4-compiler-seams-manifest.json",
-  "baseRevision": "12c5674f8ae1f406c8724d9ef67e9a666b2f6454",
+  "outputPath": "evidence/phase4-record-refinement-manifest.json",
+  "baseRevision": "51596ba30b9c51e91ae14008fe7dfe72c8993f6a",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": {
@@ -11,14 +11,14 @@
       "todo": 10
     },
     "lean": {
-      "jobs": 189,
+      "jobs": 191,
       "status": "passed"
     },
     "corpus": {
       "entries": 104,
       "red": 104
     },
-    "auditedTheorems": 599,
+    "auditedTheorems": 603,
     "differential": {
       "scenarioGroups": 16,
       "fixed": 734,
@@ -41,9 +41,9 @@
     "build": "passed"
   },
   "refinementProofs": {
-    "audited": 191,
-    "required": 178,
-    "registryHash": "sha256:29c4986fa1453172ee9bc39fb8dff9d366827512065fbe04c55db1f81c8409b3"
+    "audited": 239,
+    "required": 226,
+    "registryHash": "sha256:77cd66554ae05fb4128c8c92e5ff998dea65a1b741cecb853099ea75d12c902c"
   },
   "executableAssumptions": {
     "statement": "These eight executable trusted-computing-base assumptions exactly record the Float refinement runtime contracts. They are not proof axioms and introduce no additional runtime contract.",
@@ -279,20 +279,18 @@
         "countPath": "differential.aggregateFixtureBudget",
         "measure": "value"
       }
-    ],
-    "revision": "51596ba30b9c51e91ae14008fe7dfe72c8993f6a"
+    ]
   },
   "hashGroups": {
     "source": {
-      "paths": ["src"],
-      "revision": "51596ba30b9c51e91ae14008fe7dfe72c8993f6a"
+      "paths": ["src"]
     },
     "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "51596ba30b9c51e91ae14008fe7dfe72c8993f6a"
+      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
     },
     "refinementRuntimeAndBarrel": {
       "paths": [
+        "lean/TSLean/Refinement.lean",
         "lean/TSLean/Refinement/Array.lean",
         "lean/TSLean/Refinement/Core.lean",
         "lean/TSLean/Refinement/Evidence.lean",
@@ -300,10 +298,9 @@
         "lean/TSLean/Refinement/Float.lean",
         "lean/TSLean/Refinement/Heap.lean",
         "lean/TSLean/Refinement/Primitive.lean",
-        "lean/TSLean/Refinement/String.lean",
-        "lean/TSLean/Refinement.lean"
-      ],
-      "revision": "51596ba30b9c51e91ae14008fe7dfe72c8993f6a"
+        "lean/TSLean/Refinement/Record.lean",
+        "lean/TSLean/Refinement/String.lean"
+      ]
     },
     "refinementTestsAuditRegistry": {
       "paths": [
@@ -313,12 +310,10 @@
         "tests/js-trust.test.ts",
         "tests/lean-fixtures/refinement-invalid-guard-receipt.lean",
         "tests/lean-fixtures/refinement-private-constructors.lean"
-      ],
-      "revision": "51596ba30b9c51e91ae14008fe7dfe72c8993f6a"
+      ]
     },
     "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "51596ba30b9c51e91ae14008fe7dfe72c8993f6a"
+      "paths": ["spec/corpus"]
     },
     "differentialSpecHarness": {
       "paths": [
@@ -329,8 +324,7 @@
         "scripts/generate-differential-manifest.mjs",
         "tests/js-model-differential.test.ts",
         "tests/differential"
-      ],
-      "revision": "51596ba30b9c51e91ae14008fe7dfe72c8993f6a"
+      ]
     },
     "trustEvidenceInfrastructure": {
       "paths": [
@@ -344,8 +338,7 @@
         "lean/TSLean.lean",
         "lean/TSLean/Tests.lean",
         "lean/lakefile.toml"
-      ],
-      "revision": "51596ba30b9c51e91ae14008fe7dfe72c8993f6a"
+      ]
     }
   }
 }

@@ -1482,3 +1482,57 @@ already worked. Every measurement and test here asserts that resolution genuinel
 asserting the mapping.
 
 Counts move to 46 test files and 1691 passed with 10 todo.
+
+## Closed record refinement
+
+The last carrier the refinement layer needed, completing `Bool`, `BigInt`, `String`, `Float` and dense
+`Array`. A closed record relates a Lean structure to an extensible ordinary object with a null
+prototype whose own keys are exactly the declared field keys in declaration order, each an own
+standard data descriptor. Symbols, extra string keys, accessors and inherited properties are excluded
+by observation rather than assumption -- the null prototype is what makes "no extra keys" checkable at
+all, and it is pinned for the same reason the array slice pins it.
+
+The slice's author was interrupted before self-verifying, so it was reviewed as unverified. No
+soundness defect was found: all 32 registered production theorems are mechanically load-bearing, the
+axiom footprint is clean, and the 193-line kernel delta is strictly additive with exactly four new
+public theorems, all instantiated on a genuinely allocated and mutated heap. Four findings mattered.
+
+The one worth naming first was a **provably false justification attached to a registered theorem**.
+`index_like_key_schema_not_lawful` used witness `["0", "flag"]` and claimed own-key order hoists the
+index so declaration order could not be its own-key order. Measured against the model, that schema is
+presentable in declaration order; only `["flag", "0"]` is genuinely hoisted. The encoder was refusing
+a record it demonstrably could have built, while the docstring asserted it could not. The witness is
+now the order that is actually hoisted, and `not_lawful`'s prose distinguishes the two refusals by
+strength: a repeated key is impossible, derived from the model by `nodup_of_related` (renamed from
+`not_realizable_of_duplicateKeys`, which stated the contrapositive a reader had to invert), while
+index-like keys are refused wholesale as deliberate conservatism.
+
+Four of seven named fault classes had no theorem-level pin -- missing key, extra key, malformed
+descriptor and field attribution -- and they are precisely this slice's novel contribution. They
+existed only in private `IO Unit` fixtures, which `#audit_proofs` skips, so deleting one left the
+whole trust gate green. `decode_shapeFault` now pins all of them at the `inspectRecord` boundary,
+covering `ShapeFault` uniformly rather than one constructor at a time, and `decode_field_head` pins
+the position-to-index correspondence that makes attribution meaningful. Weakening either to `True`
+leaves the production module building and fails the inventory, verified on a copy.
+
+Records also differ from arrays in a way the slice had left on the table: `Array.not_lawful` refutes
+`LawfulCodec` for every element codec because a Lean array is unbounded against a `2^32 - 1` cap,
+whereas `Native schema` has exactly the declared fields, so a record over a presentable schema is
+lawful outright. `codec_lawful` now ships that, so records nest without every caller re-deriving it.
+The decode side continues to require only `Codecs.Complete`, which is what keeps records of records
+from being vacuous.
+
+The last finding was a test that proved nothing. Its comment claimed the timing guarded against a
+per-extra-key search of the declared keys, "quadratic in the extra-key count" -- but that costs
+`extra * declared` and the demo schema declares two fields, so it is linear, and a deliberately naive
+implementation passed the same envelope. Rather than restate the claim, the regression was
+investigated: this comparison must report the _first_ difference, so every form of it short-circuits
+at the first undeclared key, and a per-key membership search over an all-matching fixture was not
+distinguishable from the streaming form at these sizes either. The comment now states exactly what the
+timing bounds -- absolute cost at 20002 own keys, dominated by `ownPropertyKeys` -- and points at
+`matchKeys_iff` as the real guarantee, which is a theorem rather than a stopwatch. Adding a
+non-discriminating scaling assertion would have repeated the sin the finding identified.
+
+Counts move to 603 audited JS proofs, 239 audited and 226 required refinement proofs, and 191 Lean
+jobs. `lean/TSLean/Refinement/Record.lean` was added to the hash groups, which the coverage assertion
+introduced earlier would otherwise have rejected.

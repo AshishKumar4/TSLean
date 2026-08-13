@@ -6706,6 +6706,199 @@ theorem allocateArrayFromArray_dense (heap next : Heap) (values : Array Value)
             rcases allocated with ⟨rfl, rfl⟩
             exact appendArray_dense heap values (some prototype) bound
 
+private theorem lookup_empty (key : PropertyKey) : OrderedProps.empty.lookup key = none := by
+  cases found : OrderedProps.empty.lookup key with
+  | none => rfl
+  | some descriptor =>
+      have member : key ∈ OrderedProps.empty.ownKeys :=
+        (OrderedProps.mem_ownKeys_iff_lookup_isSome OrderedProps.empty key
+          OrderedProps.empty_wellFormed).mpr (by rw [found]; rfl)
+      rw [ownKeys_empty] at member
+      exact absurd member (by simp)
+
+private theorem wellFormed_properties (heap : Heap) (ref : RefId) (object : ObjectRecord)
+    (valid : heap.WellFormed) (found : heap.get? ref = .ok object) :
+    OrderedProps.WellFormed object.properties := by
+  have references := wellFormed_object heap ref object valid found
+  unfold objectReferencesValid at references
+  simp only [Bool.and_eq_true] at references
+  exact references.1.1.1
+
+private theorem ordinary_ownKeys (heap : Heap) (ref : RefId) (object : ObjectRecord)
+    (found : heap.get? ref = .ok object) (ordinary : object.kind = .ordinary) :
+    heap.ownPropertyKeys ref = .ok object.properties.ownKeys := by
+  unfold ownPropertyKeys
+  rw [found]
+  simp only [ordinary]
+
+private theorem ordinary_getOwnProperty (heap : Heap) (ref : RefId) (object : ObjectRecord)
+    (found : heap.get? ref = .ok object) (ordinary : object.kind = .ordinary) (key : PropertyKey) :
+    heap.getOwnProperty ref key = .ok (object.properties.lookup key) := by
+  unfold getOwnProperty
+  simp only [Bind.bind, Except.bind]
+  rw [found]
+  simp only [ordinary, Pure.pure, Except.pure]
+
+private theorem ownKeys_insert_fresh_append (properties : OrderedProps) (key : JSString)
+    (descriptor : PropertyDescriptor) (valid : OrderedProps.WellFormed properties)
+    (nonIndex : PropertyKey.arrayIndex? key = none)
+    (absent : properties.lookup (.string key) = none)
+    (noSymbols : ∀ symbol : SymbolId, PropertyKey.symbol symbol ∉ properties.ownKeys) :
+    (properties.insert (.string key) descriptor).ownKeys = properties.ownKeys ++ [.string key] := by
+  have symbolsEmpty : properties.symbolKeys = [] := by
+    unfold OrderedProps.symbolKeys
+    apply List.filter_eq_nil_iff.mpr
+    intro candidate member
+    cases candidate with
+    | string stringKey => simp
+    | symbol symbolKey => exact absurd member (noSymbols symbolKey)
+  obtain ⟨stringOrder, symbolOrder⟩ :=
+    OrderedProps.orderedKeys_insert_fresh_string properties key descriptor valid nonIndex absent
+  rw [OrderedProps.ownKeys_eq_projections _
+      (OrderedProps.insert_wellFormed properties (.string key) descriptor valid),
+    OrderedProps.arrayIndices_insert_nonIndex_string properties key descriptor valid nonIndex,
+    stringOrder, symbolOrder, symbolsEmpty,
+    OrderedProps.ownKeys_eq_projections properties valid, symbolsEmpty]
+  simp
+
+private def dataPropertyUpdate (value : Value) : DescriptorUpdate :=
+  { value := .present value, writable := .present true, enumerable := .present true,
+    configurable := .present true }
+
+private theorem createDataProperty_eq (heap : Heap) (ref : RefId) (key : PropertyKey)
+    (value : Value) :
+    heap.createDataProperty ref key value =
+      heap.defineOwnProperty ref key (dataPropertyUpdate value) := rfl
+
+private theorem dataPropertyUpdate_syntax (value : Value) :
+    (dataPropertyUpdate value).validateSyntax = .ok .data := rfl
+
+private theorem dataPropertyUpdate_applied (value : Value) (extensible : Bool)
+    (isExtensible : extensible = true) :
+    DescriptorUpdate.applyValidatedDescriptor none extensible (dataPropertyUpdate value) .data =
+      .ok (.data ⟨value, true, true, true⟩) := by
+  rw [isExtensible]
+  rfl
+
+private theorem dataPropertyUpdate_references (heap : Heap) (value : Value)
+    (validValue : heap.valueValid value = true) :
+    validateDescriptorReferences heap (dataPropertyUpdate value) = .ok () := by
+  unfold validateDescriptorReferences dataPropertyUpdate
+  simp only [Bind.bind, Except.bind, (validateValue_iff_valueValid heap value).mpr validValue]
+  rfl
+
+/-- Allocating with a null prototype always succeeds: there is no prototype reference to validate. -/
+theorem allocate_null_prototype_ok (heap : Heap) (extensible : Bool) :
+    ∃ ref next, heap.allocate none extensible = .ok (ref, next) :=
+  ⟨⟨heap.objects.size⟩,
+    .mk (heap.objects.push (.mk OrderedProps.empty none extensible .ordinary))
+      heap.nextFunctionId, by simp [allocate, validPrototype]⟩
+
+/-- A freshly allocated null-prototype ordinary object answers no own property at all: its own-key
+sequence is empty and every key is absent. This is the ordinary-object counterpart of
+`allocateArrayFromArray_dense` — the only public bridge from an ordinary allocation to the property
+observations the allocated object answers. -/
+theorem allocate_ordinary_observations (heap next : Heap) (extensible : Bool) (ref : RefId)
+    (allocated : heap.allocate none extensible = .ok (ref, next)) :
+    (∃ object, next.get? ref = .ok object ∧ object.kind = .ordinary ∧
+      object.prototype = none ∧ object.extensible = extensible) ∧
+    next.ownPropertyKeys ref = .ok [] ∧
+    ∀ key, next.getOwnProperty ref key = .ok none := by
+  unfold allocate at allocated
+  split at allocated
+  · rcases allocated with ⟨rfl, rfl⟩
+    have found : (Heap.mk (heap.objects.push (.mk OrderedProps.empty none extensible .ordinary))
+        heap.nextFunctionId).get? ⟨heap.objects.size⟩ =
+        .ok (.mk OrderedProps.empty none extensible .ordinary) := by
+      simp [get?]
+    refine ⟨⟨_, found, rfl, rfl, rfl⟩, ?_, fun key => ?_⟩
+    · rw [ordinary_ownKeys _ _ _ found rfl]
+      exact congrArg Except.ok ownKeys_empty
+    · rw [ordinary_getOwnProperty _ _ _ found rfl key]
+      exact congrArg Except.ok (lookup_empty key)
+  · simp at allocated
+
+/-- Creating a fresh ordinary-string data property on an extensible ordinary object whose own keys
+carry no symbol appends exactly that key to the end of its own-key sequence, answers exactly the
+standard data descriptor at it, and leaves every other object, every other own key, and every
+reference's validity untouched. This is the only public bridge from a successful ordinary property
+definition to the observations the mutated object answers. -/
+theorem createDataProperty_ordinary_append (heap : Heap) (ref : RefId) (object : ObjectRecord)
+    (key : JSString) (value : Value) (keys : List PropertyKey) (valid : heap.WellFormed)
+    (found : heap.get? ref = .ok object) (ordinary : object.kind = .ordinary)
+    (extensible : object.extensible = true)
+    (nonIndex : PropertyKey.arrayIndex? key = none)
+    (currentKeys : heap.ownPropertyKeys ref = .ok keys)
+    (freshKey : PropertyKey.string key ∉ keys)
+    (noSymbols : ∀ symbol : SymbolId, PropertyKey.symbol symbol ∉ keys)
+    (validValue : heap.valueValid value = true) :
+    ∃ next, heap.createDataProperty ref (.string key) value = .ok (true, next) ∧
+      next.size = heap.size ∧
+      (∀ other, other ≠ ref → next.get? other = heap.get? other) ∧
+      (∀ observed, next.valueValid observed = heap.valueValid observed) ∧
+      (∃ nextObject, next.get? ref = .ok nextObject ∧ nextObject.kind = .ordinary ∧
+        nextObject.prototype = object.prototype ∧ nextObject.extensible = true) ∧
+      next.ownPropertyKeys ref = .ok (keys ++ [.string key]) ∧
+      next.getOwnProperty ref (.string key) = .ok (some (.data ⟨value, true, true, true⟩)) ∧
+      ∀ query, query ≠ .string key →
+        next.getOwnProperty ref query = heap.getOwnProperty ref query := by
+  have propertiesValid := wellFormed_properties heap ref object valid found
+  have keysEq : object.properties.ownKeys = keys := by
+    rw [ordinary_ownKeys heap ref object found ordinary] at currentKeys
+    exact Except.ok.inj currentKeys
+  have absent : object.properties.lookup (.string key) = none := by
+    cases lookupResult : object.properties.lookup (.string key) with
+    | none => rfl
+    | some descriptor =>
+        refine absurd (keysEq ▸ (OrderedProps.mem_ownKeys_iff_lookup_isSome object.properties
+          (.string key) propertiesValid).mpr ?_) freshKey
+        rw [lookupResult]
+        rfl
+  have inBounds : ref.value < heap.objects.size := get?_ok_valid heap ref object found
+  obtain ⟨next, replaced⟩ : ∃ next, heap.replace ref
+      { object with properties :=
+        object.properties.insert (.string key) (.data ⟨value, true, true, true⟩) } = .ok next := by
+    unfold replace
+    rw [dif_pos inBounds]
+    exact ⟨_, rfl⟩
+  have nextFound := get?_replace_same heap next ref _ replaced
+  refine ⟨next, ?_, replace_size heap next ref _ replaced,
+    fun other different => get?_replace_ne heap next ref other _ different replaced,
+    valueValid_replace heap next ref _ replaced,
+    ⟨_, nextFound, ordinary, rfl, extensible⟩, ?_, ?_, ?_⟩
+  · rw [createDataProperty_eq]
+    unfold defineOwnProperty
+    rw [found]
+    simp only [dataPropertyUpdate_syntax, dataPropertyUpdate_references heap value validValue,
+      ordinary]
+    unfold ordinaryDefineValidated
+    rw [absent, dataPropertyUpdate_applied value object.extensible extensible]
+    simp only [replaced, Except.mapError, Except.map]
+  · rw [ordinary_ownKeys next ref _ nextFound ordinary]
+    exact congrArg Except.ok (by
+      simpa [keysEq] using ownKeys_insert_fresh_append object.properties key
+        (.data ⟨value, true, true, true⟩) propertiesValid nonIndex absent (by
+          intro symbol
+          rw [keysEq]
+          exact noSymbols symbol))
+  · rw [ordinary_getOwnProperty next ref _ nextFound ordinary]
+    exact congrArg Except.ok (OrderedProps.lookup_insert_same object.properties (.string key)
+      (.data ⟨value, true, true, true⟩))
+  · intro query different
+    rw [ordinary_getOwnProperty next ref _ nextFound ordinary,
+      ordinary_getOwnProperty heap ref object found ordinary]
+    exact congrArg Except.ok (OrderedProps.lookup_insert_ne object.properties (.string key) query
+      (.data ⟨value, true, true, true⟩) (Ne.symm different))
+
+/-- A well-formed heap answers an ordinary object's own keys without repetition. -/
+theorem ordinary_ownPropertyKeys_nodup (heap : Heap) (ref : RefId) (object : ObjectRecord)
+    (keys : List PropertyKey) (valid : heap.WellFormed) (found : heap.get? ref = .ok object)
+    (ordinary : object.kind = .ordinary) (observed : heap.ownPropertyKeys ref = .ok keys) :
+    keys.Nodup := by
+  rw [ordinary_ownKeys heap ref object found ordinary] at observed
+  exact Except.ok.inj observed ▸
+    OrderedProps.ownKeys_nodup object.properties (wellFormed_properties heap ref object valid found)
+
 private theorem validateOptionalRef_valid (heap : Heap) (ref : Option RefId) (unit : Unit)
     (checked : validateOptionalRef heap ref = .ok unit) :
     ref.all (fun value => value.value < heap.size) = true := by
