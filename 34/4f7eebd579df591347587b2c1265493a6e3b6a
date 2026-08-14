@@ -1,0 +1,27 @@
+EVIDENCE.md
+  s_ecd6eb42c0f104::t_3171a68ba651c3 1590-1623
+evidence/phase4-runtime-soundness-input.json
+  s_ecd6eb42c0f104::t_c61f29fa6257ac 282-283,287-288,291-292,306-307,317-318,321-322,333-334,348-349
+evidence/phase5-remove-false-claims-input.json
+  s_ecd6eb42c0f104::t_faf449044fac3f 1-344
+evidence/phase5-remove-false-claims-manifest.json
+  s_ecd6eb42c0f104::t_30611f5f76422b 1-178
+package.json
+  s_ecd6eb42c0f104::t_486279efa2c0bb 36-39,96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "344f7eebd579df591347587b2c1265493a6e3b6a",
+  "prompts": {},
+  "sessions": {
+    "s_ecd6eb42c0f104": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_09941a719ffegk5CvArJXx9tWM",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    }
+  }
+}
