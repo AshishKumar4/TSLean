@@ -1536,3 +1536,54 @@ non-discriminating scaling assertion would have repeated the sin the finding ide
 Counts move to 603 audited JS proofs, 239 audited and 226 required refinement proofs, and 191 Lean
 jobs. `lean/TSLean/Refinement/Record.lean` was added to the hash groups, which the coverage assertion
 introduced earlier would otherwise have rejected.
+
+## A live inconsistency in the runtime every artifact imports
+
+`docs/REBUILD_PLAN.md` lists `LawfulBEq Float` among the causes of the previous attempt's failure -- a
+`sorry`-backed instance, false for `NaN`, from which the imported runtime could prove `False` -- and
+§6 rule 5 records it as deleted. It was not deleted. It was still present at
+`lean/TSLean/Runtime/Basic.lean:102-106`:
+
+```lean
+instance : LawfulBEq Float where
+  eq_of_beq := sorry
+  rfl := sorry
+
+instance : DecidableEq Float := sorry
+```
+
+It is exploitable, not theoretically but demonstrably. `LawfulBEq` supplies
+`beq_self_eq_true : ∀ a, (a == a) = true`, while IEEE says `NaN != NaN` and evaluation agrees:
+
+```
+theorem contradiction : False := by
+  have claimed : (nan == nan) = true := beq_self_eq_true nan
+  have actual  : (nan == nan) = false := by native_decide
+  rw [claimed] at actual; exact Bool.noConfusion actual
+
+#eval (nan == nan)                      -- false
+'contradiction' depends on axioms: [sorryAx, Classical.choice, ...]
+```
+
+What makes this worse than an isolated `sorry` is reach. Every compilation emits
+`import TSLean.Runtime.Basic` -- `tests/fixtures/basic/hello.ts` produces it as its first import -- so
+every generated module has been elaborated in an environment where `False` is derivable. The trust
+gate already knew this module was tainted and rejected `TSLean.Runtime` imports from
+`TSLean.Refinement` as a "legacy runtime module", but it audits only `TSLean.JS` and
+`TSLean.Refinement`, so the proof layers were quarantined while the compiler's own output was not.
+Any theorem emitted into a generated module would have been worthless, which makes this a hard
+precondition for both refinement theorem emission and translation certificates rather than a cleanup.
+
+Both instances are removed. Nothing needed them: `lake build` completes all 191 jobs unchanged, the
+suite stays at 1691 passed with 10 todo, and the build gate stays at 7. The exploit no longer
+elaborates -- `beq_self_eq_true` now fails to synthesize `ReflBEq Float`, which is the correct
+outcome, since the instance it wanted does not exist and cannot honestly be written.
+
+The remaining `sorry` sites outside the audited trees are a different and weaker class, and are
+recorded rather than fixed here. `Stubs/NodeHttp.lean` and `Stubs/WebAPIs.lean` carry
+`instance : Inhabited X := ⟨sorry⟩`, which taints only values that actually use `default : X` instead
+of making an ordinary lemma false. `Parser.lean` and the `V2` modules emit the _string_ `"sorry"` as
+generator output, which output-based `--strict` already rejects. The structural lesson is the one to
+act on: the trust gate should audit the transitive import closure of what the compiler emits, not a
+fixed pair of namespaces, because that is the gap that let a known, documented, supposedly-deleted
+exploit survive in the shipped path.

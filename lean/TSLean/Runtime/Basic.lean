@@ -99,11 +99,6 @@ def deserializeInt (s : String) : Option Int := s.toInt?
 
 /-! ## Float comparison -/
 
-instance : LawfulBEq Float where
-  eq_of_beq := sorry
-  rfl := sorry
-
-instance : DecidableEq Float := sorry
 
 instance : Ord Float where
   compare a b :=
