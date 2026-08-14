@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase4-runtime-soundness-manifest.json",
-  "baseRevision": "4ae138ab1534e7c3fca477a59998bf9ebad3370b",
+  "outputPath": "evidence/phase5-remove-false-claims-manifest.json",
+  "baseRevision": "48c59ed8ee6ca579fb925ad158448de443067949",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": {
@@ -279,17 +279,14 @@
         "countPath": "differential.aggregateFixtureBudget",
         "measure": "value"
       }
-    ],
-    "revision": "48c59ed8ee6ca579fb925ad158448de443067949"
+    ]
   },
   "hashGroups": {
     "source": {
-      "paths": ["src"],
-      "revision": "48c59ed8ee6ca579fb925ad158448de443067949"
+      "paths": ["src"]
     },
     "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "48c59ed8ee6ca579fb925ad158448de443067949"
+      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
     },
     "refinementRuntimeAndBarrel": {
       "paths": [
@@ -303,8 +300,7 @@
         "lean/TSLean/Refinement/Primitive.lean",
         "lean/TSLean/Refinement/Record.lean",
         "lean/TSLean/Refinement/String.lean"
-      ],
-      "revision": "48c59ed8ee6ca579fb925ad158448de443067949"
+      ]
     },
     "refinementTestsAuditRegistry": {
       "paths": [
@@ -314,12 +310,10 @@
         "tests/js-trust.test.ts",
         "tests/lean-fixtures/refinement-invalid-guard-receipt.lean",
         "tests/lean-fixtures/refinement-private-constructors.lean"
-      ],
-      "revision": "48c59ed8ee6ca579fb925ad158448de443067949"
+      ]
     },
     "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "48c59ed8ee6ca579fb925ad158448de443067949"
+      "paths": ["spec/corpus"]
     },
     "differentialSpecHarness": {
       "paths": [
@@ -330,8 +324,7 @@
         "scripts/generate-differential-manifest.mjs",
         "tests/js-model-differential.test.ts",
         "tests/differential"
-      ],
-      "revision": "48c59ed8ee6ca579fb925ad158448de443067949"
+      ]
     },
     "trustEvidenceInfrastructure": {
       "paths": [
@@ -345,8 +338,7 @@
         "lean/TSLean.lean",
         "lean/TSLean/Tests.lean",
         "lean/lakefile.toml"
-      ],
-      "revision": "48c59ed8ee6ca579fb925ad158448de443067949"
+      ]
     }
   }
 }

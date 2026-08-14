@@ -1587,3 +1587,37 @@ generator output, which output-based `--strict` already rejects. The structural 
 act on: the trust gate should audit the transitive import closure of what the compiler emits, not a
 fixed pair of namespaces, because that is the gap that let a known, documented, supposedly-deleted
 exploit survive in the shipped path.
+
+## Removing artifacts that assert false things
+
+Two deletions, no behaviour change: `lake build` stays at 191 jobs, the suite at 1691 passed with 10
+todo, the build gate at 7, and lint clean.
+
+`staging/` was listed in `.gitignore` and simultaneously tracked -- 34 files, 9751 lines, three stale
+copies of self-host output. Nothing under `package.json`, `scripts/`, `src/`, `tests/` or
+`lean/TSLean.lean` referenced it.
+
+`lean/TSLean/Proofs/` was 2417 lines across 13 files, excluded from the default build target by
+`lean/TSLean.lean:133` and imported by nothing outside itself. Its headline result,
+`semantic_preservation : eval fuel env e = leval fuel env (exprToLExpr e)`, relates two inductives
+declared with identical constructors through two character-identical interpreters, where
+`exprToLExpr` is the identity function. It proved that an identity function commutes with itself and
+called that the crown jewel.
+
+Three things in it were actively harmful rather than merely useless.
+`Proofs/PipelineCorrectness.lean:84,89,94` declared `axiom parseFile_preserves_name`,
+`axiom generateLean_nonempty` and `axiom generateLean_has_namespace` -- asserting properties of the
+compiler as axioms, which is what `REBUILD_PLAN.md` §6 rule 6 exists to forbid. Several theorems used
+`native_decide`, which injects `Lean.ofReduceBool`, outside the three-axiom allowlist. And
+`PipelineCorrectness.lean:73` proved `selfhost_modules_typecheck : True := by trivial` with a comment
+claiming that its own compilation witnesses eleven transpiled modules being well-typed Lean -- while
+`Generated/SelfHost/typemap_index.lean` is 39 lines standing in for a 512-line source, and
+`scripts/selfhost-adapter.ts:206` discards transpiler output with
+`code.slice(0, nsStart) + <hand-written namespace>`. The bootstrap it certified is fabricated.
+
+Nothing here was salvageable for the real preservation work. A per-compilation certificate relates a
+specific emitted file to `TSLean.JS`; that is a different theorem over different objects, and keeping
+2417 lines as inspiration costs more than it saves. The remaining half of that cluster -- the second
+compiler reachable through `TSLean.Main`, and the fabricated `Generated/SelfHost/` tree it certifies --
+is entangled with the `self-host` CLI subcommand, three test files and `lean/TSLean.lean`'s import
+list, so it is deliberately left for its own change rather than bundled here.
