@@ -15,7 +15,7 @@
   "counts": {
     "tests": {
       "files": 49,
-      "passed": 1760,
+      "passed": 1804,
       "failed": 0,
       "todo": 10
     },
@@ -167,13 +167,13 @@
     }
   ],
   "hashes": {
-    "source": "sha256:0a586872e7ba21385630ae232c80ccc2fadc71836b43138bc3bbae0c881f7dc3",
-    "leanToTypeScriptCompiler": "sha256:6b9e133d09e74345f33edc398406772d480604b2a18d9c26a4a12ce03406b8ea",
+    "source": "sha256:14abbf3111b19799becb340d13e064b96e1b8632d4b559e9d199dd2d142b670d",
+    "leanToTypeScriptCompiler": "sha256:dcbc5f1115f7bf2e9e95b713cdcd265c345b5e76744a80a2327c67396439e0fe",
     "jsRuntime": "sha256:de59f2c8c1cfbd7865cfbe8f677e98159a2a47b1aeeee6015fb39b77a742b662",
     "refinementRuntimeAndBarrel": "sha256:65ac151e483e7803ecea297427f47d3e282b364345c541306d26281d73a19619",
     "refinementTestsAuditRegistry": "sha256:899396394e4f924f6b2ea65b448b15a6f2bef1be558b12ac931e2c9a24b6df57",
     "corpus": "sha256:813ba0e3fa8d02912872c4451cf33773aa0fc627dac24f68f770e25506fa1903",
     "differentialSpecHarness": "sha256:a60e709b193d859da6521ab4179c645fd0c33cb50cfa9d1fba9f486a4feb6eb5",
-    "trustEvidenceInfrastructure": "sha256:5cd141b9df1b731cf0d040fa6d1258602d7ea458d1110002014db2cab329c2cb"
+    "trustEvidenceInfrastructure": "sha256:386d6247a7e73396e5a5228cde3521b7c64b9b0343ec64e1707ef4531329efca"
   }
 }

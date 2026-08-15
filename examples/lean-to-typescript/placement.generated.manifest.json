@@ -6,7 +6,7 @@
     "TSLean.Examples.Placement.choosePlacement"
   ],
   "semanticIrSha256": "sha256:1eed8008e7d38c37b789a16c221ff25eeb20e23d49eddd9a18d22a2c0a785cc7",
-  "inputClosureSha256": "sha256:d5a5253e36df7506de3bbc2dc2af21a86d268abe69fb33b0da02adbf993bfb84",
+  "inputClosureSha256": "sha256:4c071c8d8d956da8f773555bd3ec70b7b7c2d627985d0e8bcb46d135d74d88c4",
   "generatedBodySha256": "sha256:748344172b982c1d98064e3a40ae88ab88edfc304bae5f19d0bc684c38b9bd57",
   "inputs": [
     {
@@ -41,13 +41,23 @@
     },
     {
       "kind": "compiler",
+      "identity": "compiler:artifact-transaction",
+      "sha256": "sha256:ef497aac0c0d8371919b961631c064d2cebd9965dc674a1a3c473ee2d7dffc01"
+    },
+    {
+      "kind": "compiler",
+      "identity": "compiler:bounds:placement-v1",
+      "sha256": "sha256:b2d2d591c08560c153344c47b4c4b4dc294cae44b87bb02cda848eb190ae10b0"
+    },
+    {
+      "kind": "compiler",
       "identity": "compiler:cli",
-      "sha256": "sha256:39ae92c3560e3530b6388866d877c4c0f3425f055dbd4a132e0c39803396a69c"
+      "sha256": "sha256:e895a4aed751d814e1eb36bccc0b269d88ad86d46fb5cc0696ecadeb1ae9d28d"
     },
     {
       "kind": "compiler",
       "identity": "compiler:compiler",
-      "sha256": "sha256:ad5c8ebbcbaf353035bfdcc153e6c23678b54c17bf12b3fd99692f5ea4179052"
+      "sha256": "sha256:e588094215618669b97a21e355edb23261c162d3109849550ec4fe2fbf6136c3"
     },
     {
       "kind": "compiler",
@@ -77,12 +87,22 @@
     {
       "kind": "compiler",
       "identity": "compiler:package",
-      "sha256": "sha256:6b59af9dd2c6e872e43a148f85cd2f85d16fbb178c9f22e084abfbd7b0001a5c"
+      "sha256": "sha256:d9e9b52ac5780433aaaf496937bddf7bba3526d86b81e688f0adc4a14bea71db"
+    },
+    {
+      "kind": "compiler",
+      "identity": "compiler:registry",
+      "sha256": "sha256:ab97f0fdf51603ea2a9e3b6f8f6262b4193619067d1f7153130f345a77c0bc89"
     },
     {
       "kind": "compiler",
       "identity": "compiler:runtime",
       "sha256": "sha256:92181daccf61361e7c54d6404a3e2c2307a916d076492e3c0b388e6e5f86a854"
+    },
+    {
+      "kind": "compiler",
+      "identity": "compiler:runtime-provenance",
+      "sha256": "sha256:ce13261fc94bacf2c3d40c61e1ef6066b19de70e5c5ff94937b833bedfcac405"
     },
     {
       "kind": "lean-module",
@@ -138,6 +158,66 @@
       "kind": "compiler",
       "identity": "target-toolchain:lean-executable",
       "sha256": "sha256:3e0d0d3d801675359f2d4cf9815bfdb417b20b92fdd9d48b3b14c95bbae28bbf"
+    },
+    {
+      "kind": "compiler",
+      "identity": "toolchain-launcher:lake",
+      "sha256": "sha256:840179e70803ef373c2ec53342d6a45ea7d022533e4145489fc1278b4f716385"
+    },
+    {
+      "kind": "compiler",
+      "identity": "toolchain-runtime:00:libInit_shared.so",
+      "sha256": "sha256:6ce912e300ad305bb38a362404544602e2229d072b78d75b1dd71c637e453c2c"
+    },
+    {
+      "kind": "compiler",
+      "identity": "toolchain-runtime:01:libLake_shared.so",
+      "sha256": "sha256:284d1a03de75db0d513ad624ce5bfdd03e7064ec397c35768d2cc0d16c242ab5"
+    },
+    {
+      "kind": "compiler",
+      "identity": "toolchain-runtime:02:libleanshared.so",
+      "sha256": "sha256:05624e0f914c8cabef97c1947632ee7e4cdaeea937558646eca7332bdc87b0ff"
+    },
+    {
+      "kind": "compiler",
+      "identity": "toolchain-runtime:03:libleanshared_1.so",
+      "sha256": "sha256:6ce912e300ad305bb38a362404544602e2229d072b78d75b1dd71c637e453c2c"
+    },
+    {
+      "kind": "compiler",
+      "identity": "toolchain-runtime:04:libleanshared_2.so",
+      "sha256": "sha256:6ce912e300ad305bb38a362404544602e2229d072b78d75b1dd71c637e453c2c"
+    },
+    {
+      "kind": "compiler",
+      "identity": "toolchain-runtime:05:ld-linux-x86-64.so.2",
+      "sha256": "sha256:c5e80a563850d6ab5c2f2482e4202d9c1b71fbf44854b8c399e63527202c64e1"
+    },
+    {
+      "kind": "compiler",
+      "identity": "toolchain-runtime:06:libc.so.6",
+      "sha256": "sha256:a3947513a02831ec692ebf13053c07614882ab54a2101fb91a1b15724062ed0c"
+    },
+    {
+      "kind": "compiler",
+      "identity": "toolchain-runtime:07:libdl.so.2",
+      "sha256": "sha256:7d293f8361fcead4f9691561adc0413f724f3607b959abe0d4fb243072956079"
+    },
+    {
+      "kind": "compiler",
+      "identity": "toolchain-runtime:08:libm.so.6",
+      "sha256": "sha256:beea4eeacfcfa2cd96011b959a826c97cf4a774017e214f6a34d7eea3d49cd88"
+    },
+    {
+      "kind": "compiler",
+      "identity": "toolchain-runtime:09:libpthread.so.0",
+      "sha256": "sha256:f93acb6e78dcf0213c8a85f922d21916249148e24de426079c40b6304c42085d"
+    },
+    {
+      "kind": "compiler",
+      "identity": "toolchain-runtime:10:librt.so.1",
+      "sha256": "sha256:5df2508a1ef33bd8024d77271e2a4a2607cb63e59dd753dd46f8e7a2ed44962d"
     },
     {
       "kind": "typescript",

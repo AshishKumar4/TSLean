@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "models": [
+    {
+      "id": "placement-v1",
+      "entrypoint": {
+        "projectRoot": "lean",
+        "module": "TSLean.Examples.Placement",
+        "source": "lean/TSLean/Examples/Placement.lean",
+        "declarations": ["TSLean.Examples.Placement.choosePlacement"]
+      },
+      "fragmentClosure": ["lean/TSLean/Examples/Placement.lean"],
+      "oracleOperation": {
+        "command": "bunx vitest run tests/lean-to-typescript.test.ts",
+        "selector": "generated decision agrees with Lean on the complete finite input domain",
+        "verdict": "exactly-equal"
+      },
+      "generatedTarget": {
+        "source": "examples/lean-to-typescript/placement.generated.ts",
+        "manifest": "examples/lean-to-typescript/placement.generated.manifest.json"
+      },
+      "runtimeAdapter": "examples/lean-to-typescript/placement.adapter.ts",
+      "boundsArtifact": "spec/lean-to-typescript/placement.bounds.json"
+    }
+  ]
+}

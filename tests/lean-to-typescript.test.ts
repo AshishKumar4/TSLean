@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -364,6 +364,151 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     }
   });
 
+  test('executes the captured toolchain instead of a later PATH build wrapper', () => {
+    const fixture = createLeanProjectFixture(
+      ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
+    );
+    const wrapperRoot = mkdtempSync(join(tmpdir(), 'tslean-lake-wrapper-'));
+    const wrapperPath = join(wrapperRoot, 'lake');
+    const invocationLogPath = join(wrapperRoot, 'invocations.log');
+    const launcherPath = spawnSync('sh', ['-c', 'command -v lake'], { encoding: 'utf8' }).stdout.trim();
+    const originalPath = process.env['PATH'];
+    writeFileSync(
+      wrapperPath,
+      [
+        '#!/bin/sh',
+        `printf '%s\n' "$*" >> ${shellQuote(invocationLogPath)}`,
+        `if [ "$PWD" = ${shellQuote(fixture.projectRoot)} ] && [ "$1" = "-H" ] && [ "$2" = "build" ]; then`,
+        `  cp ${shellQuote(fixture.sourcePath)} ${shellQuote(`${fixture.sourcePath}.saved`)}`,
+        `  printf '%s\\n' 'namespace Fixture' 'def decide (value : Bool) : Bool := !value' 'end Fixture' > ${shellQuote(fixture.sourcePath)}`,
+        `  ${shellQuote(launcherPath)} "$@"`,
+        '  status=$?',
+        `  mv ${shellQuote(`${fixture.sourcePath}.saved`)} ${shellQuote(fixture.sourcePath)}`,
+        '  exit "$status"',
+        'fi',
+        `exec ${shellQuote(launcherPath)} "$@"`,
+        '',
+      ].join('\n'),
+    );
+    chmodSync(wrapperPath, 0o755);
+    try {
+      process.env['PATH'] = `${wrapperRoot}:${originalPath ?? ''}`;
+      const artifact = compileLeanToTypeScript({
+        projectRoot: fixture.projectRoot,
+        moduleName: 'Fixture',
+        sourcePath: fixture.sourcePath,
+        declarations: ['Fixture.decide'],
+      });
+      const decide = evaluateGeneratedModuleExports(artifact.code)['decide'];
+      if (typeof decide !== 'function') throw new TypeError('generated decide is not callable');
+      expect(decide(false)).toBe(false);
+      expect(decide(true)).toBe(true);
+      expect(artifact.manifest.inputs).toContainEqual(
+        expect.objectContaining({
+          kind: 'compiler',
+          identity: 'toolchain-launcher:lake',
+          sha256: sha256(readFileSync(wrapperPath)),
+        }),
+      );
+      expect(artifact.manifest.inputs.some((input) => input.identity.startsWith('toolchain-runtime:'))).toBe(true);
+      const canonicalLake = spawnSync(launcherPath, ['env', 'which', 'lake'], {
+        cwd: fixture.projectRoot,
+        encoding: 'utf8',
+      }).stdout.trim();
+      expect(artifact.manifest.inputs).toContainEqual({
+        kind: 'compiler',
+        identity: 'target-toolchain:lake-executable',
+        sha256: sha256(readFileSync(canonicalLake)),
+      });
+      expect(artifact.manifest.inputs).toContainEqual({
+        kind: 'lean-source',
+        identity: 'source:Fixture',
+        sha256: sha256(readFileSync(fixture.sourcePath)),
+      });
+      expect(readFileSync(invocationLogPath, 'utf8').trim().split('\n')).toEqual(['env which lake', 'env which lake']);
+    } finally {
+      process.env['PATH'] = originalPath;
+      fixture.dispose();
+      rmSync(wrapperRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('rejects a source changed and restored while the immutable staged source is compiled', () => {
+    const fixture = createLeanProjectFixture(
+      ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
+    );
+    const wrapperRoot = mkdtempSync(join(tmpdir(), 'tslean-source-mutation-wrapper-'));
+    const wrapperPath = join(wrapperRoot, 'lake');
+    const launcherPath = spawnSync('sh', ['-c', 'command -v lake'], { encoding: 'utf8' }).stdout.trim();
+    const originalPath = process.env['PATH'];
+    writeFileSync(
+      wrapperPath,
+      [
+        '#!/bin/sh',
+        'if [ "$1" = "env" ] && [ "$2" = "which" ] && [ "$3" = "lake" ]; then',
+        '  printf \'%s\\n\' "$0"',
+        '  exit 0',
+        'fi',
+        'case "$PWD:$1:$2" in',
+        '  */target:-H:build)',
+        `    cp ${shellQuote(fixture.sourcePath)} ${shellQuote(`${fixture.sourcePath}.saved`)}`,
+        `    printf '%s\\n' 'namespace Fixture' 'def decide (value : Bool) : Bool := !value' 'end Fixture' > ${shellQuote(fixture.sourcePath)}`,
+        `    ${shellQuote(launcherPath)} "$@"`,
+        '    status=$?',
+        `    mv ${shellQuote(`${fixture.sourcePath}.saved`)} ${shellQuote(fixture.sourcePath)}`,
+        '    exit "$status"',
+        '    ;;',
+        'esac',
+        `exec ${shellQuote(launcherPath)} "$@"`,
+        '',
+      ].join('\n'),
+    );
+    chmodSync(wrapperPath, 0o755);
+    try {
+      process.env['PATH'] = `${wrapperRoot}:${originalPath ?? ''}`;
+      expect(() =>
+        compileLeanToTypeScript({
+          projectRoot: fixture.projectRoot,
+          moduleName: 'Fixture',
+          sourcePath: fixture.sourcePath,
+          declarations: ['Fixture.decide'],
+        }),
+      ).toThrowError(
+        /compiler input changed during Lean to TypeScript compilation: target-stage-source:.*Fixture\.lean/u,
+      );
+      expect(readFileSync(fixture.sourcePath, 'utf8')).toContain(':= value');
+    } finally {
+      process.env['PATH'] = originalPath;
+      fixture.dispose();
+      rmSync(wrapperRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('ignores ambient toolchain overrides when resolving the pinned project toolchain', () => {
+    const fixture = createLeanProjectFixture(
+      ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
+    );
+    const originalToolchain = process.env['ELAN_TOOLCHAIN'];
+    try {
+      process.env['ELAN_TOOLCHAIN'] = 'tslean-deliberately-unavailable-toolchain';
+      const artifact = compileLeanToTypeScript({
+        projectRoot: fixture.projectRoot,
+        moduleName: 'Fixture',
+        sourcePath: fixture.sourcePath,
+        declarations: ['Fixture.decide'],
+      });
+      expect(artifact.manifest.leanToolchain.identity).toBe('leanprover/lean4:v4.29.0');
+      expect(artifact.manifest.leanToolchain.leanVersion).toContain('Lean (version 4.29.0');
+    } finally {
+      if (originalToolchain === undefined) {
+        delete process.env['ELAN_TOOLCHAIN'];
+      } else {
+        process.env['ELAN_TOOLCHAIN'] = originalToolchain;
+      }
+      fixture.dispose();
+    }
+  });
+
   test('generates byte-identical artifacts in independent locale-varied processes', () => {
     expect(compileInChild('C')).toBe(compileInChild('tr_TR.UTF-8'));
   });
@@ -563,6 +708,10 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
 
 function sha256(value: string | Buffer): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 function unsupportedFixtureError(declaration: string): UnsupportedLeanFragmentError {

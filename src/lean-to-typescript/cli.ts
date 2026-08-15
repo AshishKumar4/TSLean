@@ -1,16 +1,8 @@
 #!/usr/bin/env node
 
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  readlinkSync,
-  realpathSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { publishArtifactPair } from './artifact-transaction.js';
 import { compileLeanToTypeScriptWithInputs } from './compiler.js';
 
 interface CompilerArguments {
@@ -53,32 +45,32 @@ function main(arguments_: readonly string[]): void {
     { name: '--output', path: outputPath },
     { name: '--manifest', path: manifestPath },
   ] as const;
-  assertArtifactPathsAreIsolated(destinations, [{ name: '--source', path: sourcePath }]);
+  const initialDestinations = assertArtifactPathsAreIsolated(destinations, [{ name: '--source', path: sourcePath }]);
   const compilation = compileLeanToTypeScriptWithInputs({
     projectRoot,
     moduleName: options.moduleName,
     sourcePath,
     declarations: options.declarations,
   });
-  assertArtifactPathsAreIsolated(
+  const currentDestinations = assertArtifactPathsAreIsolated(
     destinations,
     compilation.inputs.map(({ identity, path }) => ({ name: identity, path })),
   );
+  assertSameDestinationIdentities(initialDestinations, currentDestinations);
   const { artifact } = compilation;
   const manifest = `${JSON.stringify(artifact.manifest, null, 2)}\n`;
   if (options.check) {
-    assertCurrent(outputPath, artifact.code);
-    assertCurrent(manifestPath, manifest);
+    assertCurrent(currentDestinations[0].canonicalPath, artifact.code);
+    assertCurrent(currentDestinations[1].canonicalPath, manifest);
   } else {
-    write(outputPath, artifact.code);
-    write(manifestPath, manifest);
+    publishArtifactPair(currentDestinations, [artifact.code, manifest]);
   }
 }
 
 function assertArtifactPathsAreIsolated(
   destinations: readonly [NamedPath, NamedPath],
   compilerInputs: readonly NamedPath[],
-): void {
+): readonly [FilesystemIdentity, FilesystemIdentity] {
   const output = filesystemIdentity(destinations[0]);
   const manifest = filesystemIdentity(destinations[1]);
   for (const destination of [output, manifest]) {
@@ -106,6 +98,29 @@ function assertArtifactPathsAreIsolated(
     }
     if (destination.nonDirectoryAncestor) {
       throw new TypeError(`${destination.name} has an existing non-directory ancestor`);
+    }
+  }
+  return [output, manifest];
+}
+
+function assertSameDestinationIdentities(
+  expected: readonly [FilesystemIdentity, FilesystemIdentity],
+  actual: readonly [FilesystemIdentity, FilesystemIdentity],
+): void {
+  for (let index = 0; index < expected.length; index += 1) {
+    const before = expected[index];
+    const after = actual[index];
+    if (
+      before === undefined ||
+      after === undefined ||
+      before.canonicalPath !== after.canonicalPath ||
+      before.canonicalAncestorInode !== after.canonicalAncestorInode ||
+      before.existingDirectory !== after.existingDirectory ||
+      before.nonDirectoryAncestor !== after.nonDirectoryAncestor ||
+      before.unresolvedSegments.length !== after.unresolvedSegments.length ||
+      before.unresolvedSegments.some((segment, segmentIndex) => segment !== after.unresolvedSegments[segmentIndex])
+    ) {
+      throw new TypeError('artifact destination changed during compilation');
     }
   }
 }
@@ -257,11 +272,6 @@ function uniqueValue(previous: string | undefined, value: string, option: string
 function requiredValue(value: string | undefined, option: string): string {
   if (value === undefined) throw new TypeError(`${option} is required`);
   return value;
-}
-
-function write(absolutePath: string, contents: string): void {
-  mkdirSync(dirname(absolutePath), { recursive: true });
-  writeFileSync(absolutePath, contents, 'utf8');
 }
 
 function assertCurrent(absolutePath: string, expected: string): void {

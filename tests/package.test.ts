@@ -58,6 +58,7 @@ describe('package contents', () => {
         'examples/lean-to-typescript/README.md',
         'examples/lean-to-typescript/placement.generated.manifest.json',
         'examples/lean-to-typescript/placement.generated.ts',
+        'examples/lean-to-typescript/placement.adapter.ts',
         'dist/lean-to-typescript/cli.js',
         'dist/lean-to-typescript/cli.d.ts',
         'spec/differential/schema.json',
@@ -67,6 +68,8 @@ describe('package contents', () => {
         'spec/differential/corpus-coverage.schema.json',
         'spec/differential/manifest.json',
         'spec/differential/legacy-abstract-inventory.json',
+        'spec/lean-to-typescript/compiler-registry.json',
+        'spec/lean-to-typescript/placement.bounds.json',
       ]),
     );
     expect(files).not.toHaveLength(0);

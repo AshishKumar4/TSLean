@@ -115,9 +115,11 @@ Each generated artifact records:
 - semantic IR SHA-256;
 - generated TypeScript body SHA-256;
 - compiler, emitter, IR, ordering, package, and Lean exporter SHA-256 values;
+- the W-3 compiler registry and finite bounds artifact SHA-256 values;
 - exact TypeScript version, compiler artifact, package metadata, and loaded library SHA-256 values;
 - generation runtime identity and executable SHA-256;
-- exact Lean and Lake versions, executable SHA-256 values, toolchain identity, and project inputs;
+- exact Lean and Lake versions, executable and dynamically loaded runtime-closure SHA-256 values,
+  toolchain identity, and project inputs;
 - fragment version and one hash over the ordered input closure.
 
 `generatedBodySha256` is the SHA-256 of the UTF-8 bytes produced by the TypeScript printer,
@@ -127,18 +129,35 @@ SHA-256 of the compact ordered manifest JSON. This ordering is deliberately non-
 `verifyLeanToTypeScriptArtifact` requires the exact manifest-derived header and rehashes the
 body.
 
-The generated source binds the completed manifest and input closure in its header. The
-compiler snapshots the shipped exporter and its project inputs before copying them into an owned
-temporary build tree, then snapshots the target closure before semantic export. It rebuilds
-with Lake's hash checks enabled and rejects any changed byte or changed module resolution;
-installed package files are never build outputs. Changing Lean source, toolchain, imports,
-compiler code, fragment schema, or roots makes the freshness check fail until the artifact
-is regenerated.
+The generated source binds the completed manifest and input closure in its header. Compiler
+runtime bytes are captured once while the compiler modules load; later filesystem bytes never
+replace that snapshot in provenance. The compiler captures the PATH launcher used only for
+toolchain discovery, then executes only the canonical Lake and Lean binaries returned for the
+pinned toolchain. Ambient loader, Lean-path, and toolchain-override variables are removed from
+compiler subprocesses. The executable loader and shared-library closure is captured in provenance,
+and device, inode, size, modification time, and change time are rechecked around every tool execution.
+It copies the shipped exporter, target project configuration, and target Lean sources into owned
+read-only source trees before building either project. PATH wrappers and later target-source
+mutations therefore cannot change the compiled bytes. It rebuilds with Lake's hash checks enabled
+and rejects any changed input identity, byte closure, or module resolution; installed package files
+are never build outputs. Changing Lean source, toolchain, imports, compiler code, fragment schema,
+registry, bounds, or roots makes the freshness check fail until the artifact is regenerated.
 
 The CLI rejects existing-directory destinations, paths beneath an existing non-directory, and
 destination equality or containment against the other artifact and explicit source before
 compilation. After compilation discovers the complete input closure, it repeats the same
-canonical-path and inode relationship check against every input before writing either artifact.
+canonical-path and inode relationship check against every input. Publication binds the canonical
+parent directory handles, stages and fsyncs both artifacts, writes a recovery journal, and only
+then replaces either destination. A failed stage or commit rolls both destinations back; a later
+invocation restores the prior pair from a prepared journal or completes the published pair from a
+durable committed marker before starting a new transaction. Parent-path swaps are detected, and
+descriptor-relative operations cannot be redirected through a replacement path. Corrupt, stale,
+or mutually inconsistent journal copies fail closed before recovery changes either destination.
+
+`spec/lean-to-typescript/compiler-registry.json` is the single W-3 registry. Its model entry binds
+the Lean entry point, transitive checked fragment, exhaustive oracle operation, generated source
+and manifest, runtime adapter, and explicit 4,096-case bounds artifact. The release tests reject a
+stale path, selector, target, adapter, non-canonical registry, or inconsistent cardinality.
 
 The checked-in pilot provenance is canonical for the recorded Linux release environment and
 intentionally includes the exact Node, Lean, and Lake executable bytes. Another platform may

@@ -19,3 +19,7 @@ The generator accepts only the declared pure, total, first-order fragment. Passi
 tests means the generated decision agreed with Lean on this example's complete 4,096-case
 input domain. That is exhaustive evidence for this finite decision, not a general
 TypeScript refinement proof.
+
+`placement.adapter.ts` is the explicit runtime boundary registered for the pilot. It validates
+plain placement-set data before calling the generated decision; it is not part of the compiler's
+semantic correspondence claim.

@@ -1,7 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  accessSync,
+  chmodSync,
+  constants,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -11,10 +15,10 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertRuntimeInputsUnchanged, runtimeInputSnapshots } from './runtime-provenance.js';
 import ts from 'typescript';
 import type { LeanToTypeScriptArtifact, LeanToTypeScriptInput, LeanToTypeScriptManifest } from './artifact.js';
 import { emitTypeScript } from './emitter.js';
@@ -57,29 +61,75 @@ interface InputFile {
 }
 
 interface InputSnapshot extends InputFile, LeanToTypeScriptInput {
-  readonly contents: Buffer;
+  readonly contents?: Buffer;
+  readonly filesystemVersion?: FilesystemVersion;
+}
+
+interface FilesystemVersion {
+  readonly device: bigint;
+  readonly inode: bigint;
+  readonly size: bigint;
+  readonly modified: bigint;
+  readonly changed: bigint;
 }
 
 interface CompilationLayout {
-  readonly packageRoot: string;
   readonly compilerLeanRoot: string;
   readonly compilerSourceSnapshots: readonly InputSnapshot[];
   readonly exporterBuildSourcePath: string;
-  readonly typescriptPath: string;
+  readonly targetProjectRoot: string;
+  readonly targetProjectSnapshots: readonly InputSnapshot[];
   readonly targetSourcePath: string;
 }
+
+interface LeanToolchain {
+  readonly identity: string;
+  readonly leanVersion: string;
+  readonly lakeVersion: string;
+  readonly lake: InputSnapshot;
+  readonly lean: InputSnapshot;
+  readonly closure: readonly InputSnapshot[];
+}
+
+interface CachedToolchainInput {
+  readonly filesystemVersion: FilesystemVersion;
+  readonly sha256: string;
+}
+
+const toolchainInputCache = new Map<string, CachedToolchainInput>();
 
 export function compileLeanToTypeScript(request: LeanToTypeScriptRequest): LeanToTypeScriptArtifact {
   return compileLeanToTypeScriptWithInputs(request).artifact;
 }
 
 export function compileLeanToTypeScriptWithInputs(request: LeanToTypeScriptRequest): LeanToTypeScriptCompilation {
+  assertRuntimeInputsUnchanged();
   const normalized = normalizeRequest(request);
   const directory = mkdtempSync(join(tmpdir(), 'tslean-compilation-'));
   try {
-    const layout = compilationLayout(normalized, join(directory, 'compiler'));
-    return compileNormalized(normalized, layout, join(directory, 'export'));
+    const layout = compilationLayout(normalized, join(directory, 'compiler'), join(directory, 'target'));
+    const launcher = snapshotInputs([
+      { kind: 'compiler', identity: 'toolchain-launcher:lake', path: findExecutableOnPath('lake') },
+    ])[0];
+    if (launcher === undefined) throw new TypeError('Lake launcher snapshot is missing');
+    const compilerCandidate = resolveToolchain(layout.compilerLeanRoot, launcher, 'compiler-toolchain');
+    const targetCandidate = resolveToolchain(layout.targetProjectRoot, launcher, 'target-toolchain');
+    if (!sameToolchain(targetCandidate, compilerCandidate)) {
+      throw new TypeError('target and compiler Lean toolchains do not match exactly');
+    }
+    const closure = snapshotToolchainInputs(toolchainClosure(compilerCandidate));
+    const compilerToolchain = { ...compilerCandidate, closure };
+    const targetToolchain = { ...targetCandidate, closure };
+    return compileNormalized(
+      normalized,
+      layout,
+      join(directory, 'export'),
+      launcher,
+      compilerToolchain,
+      targetToolchain,
+    );
   } finally {
+    makeDirectoriesWritable(directory);
     rmSync(directory, { force: true, recursive: true });
   }
 }
@@ -88,19 +138,37 @@ function compileNormalized(
   normalized: LeanToTypeScriptRequest,
   layout: CompilationLayout,
   directory: string,
+  launcher: InputSnapshot,
+  compilerToolchain: LeanToolchain,
+  targetToolchain: LeanToolchain,
 ): LeanToTypeScriptCompilation {
-  prepareLeanModules(normalized, layout);
-  const moduleFiles = collectModuleFiles(normalized, layout);
-  const targetModules = collectTargetModuleNames(normalized);
+  const targetRequest = stagedTargetRequest(normalized, layout);
+  prepareLeanModules(targetRequest, layout, compilerToolchain, targetToolchain);
+  const moduleFiles = collectModuleFiles(targetRequest, layout, compilerToolchain, targetToolchain);
+  const targetModules = collectTargetModuleNames(targetRequest, targetToolchain);
   assertTargetSource(moduleFiles, normalized.moduleName, layout.targetSourcePath);
   const snapshots = mergeSnapshots(
+    runtimeInputSnapshots,
     layout.compilerSourceSnapshots,
-    snapshotInputs(inputFiles(normalized, layout, moduleFiles)),
+    [
+      launcher,
+      compilerToolchain.lake,
+      compilerToolchain.lean,
+      targetToolchain.lake,
+      targetToolchain.lean,
+      ...compilerToolchain.closure,
+    ],
+    snapshotInputs(inputFiles(normalized, moduleFiles)),
   );
 
-  prepareLeanModules(normalized, layout);
-  assertSameModuleClosure(moduleFiles, collectModuleFiles(normalized, layout));
-  assertSameStrings(targetModules, collectTargetModuleNames(normalized), 'target Lean module closure changed');
+  prepareLeanModules(targetRequest, layout, compilerToolchain, targetToolchain);
+  assertSameModuleClosure(moduleFiles, collectModuleFiles(targetRequest, layout, compilerToolchain, targetToolchain));
+  assertSameStrings(
+    targetModules,
+    collectTargetModuleNames(targetRequest, targetToolchain),
+    'target Lean module closure changed',
+  );
+  assertStagedProjectsUnchanged(layout);
   assertUnchanged(snapshots);
 
   mkdirSync(directory);
@@ -109,14 +177,25 @@ function compileNormalized(
   stageLeanModules(importRoot, leanLibraryRoot, snapshots);
   const driverPath = join(directory, 'Export.lean');
   writeFileSync(driverPath, exportDriver(normalized, targetModules), 'utf8');
-  const leanExecutable = requiredInputPath(snapshots, 'target-toolchain:lean-executable');
   const response = decodeExporterResponse(
-    runLean(leanExecutable, normalized.projectRoot, [driverPath], 'semantic export', {
-      LEAN_PATH: [importRoot, leanLibraryRoot].join(delimiter),
-    }),
+    runCaptured(
+      targetToolchain.lean,
+      targetToolchain.closure,
+      layout.targetProjectRoot,
+      [driverPath],
+      'semantic export',
+      {
+        LEAN_PATH: [importRoot, leanLibraryRoot].join(delimiter),
+      },
+    ),
   );
-  assertSameModuleClosure(moduleFiles, collectModuleFiles(normalized, layout));
-  assertSameStrings(targetModules, collectTargetModuleNames(normalized), 'target Lean module closure changed');
+  assertSameModuleClosure(moduleFiles, collectModuleFiles(targetRequest, layout, compilerToolchain, targetToolchain));
+  assertSameStrings(
+    targetModules,
+    collectTargetModuleNames(targetRequest, targetToolchain),
+    'target Lean module closure changed',
+  );
+  assertStagedProjectsUnchanged(layout);
   assertUnchanged(snapshots);
   if (!response.ok) throw unsupportedError(response.error, normalized.declarations[0]);
 
@@ -124,11 +203,7 @@ function compileNormalized(
   if (!sameStrings(program.roots, normalized.declarations)) {
     throw new TypeError('Lean semantic exporter returned different roots than requested');
   }
-  const toolchain = toolchainIdentity(normalized.projectRoot);
-  const compilerToolchain = toolchainIdentity(layout.compilerLeanRoot);
-  if (!sameToolchain(toolchain, compilerToolchain)) {
-    throw new TypeError('target and compiler Lean toolchains do not match exactly');
-  }
+  const toolchain = toolchainManifest(targetToolchain);
   const inputs = snapshots.map(({ kind, identity, sha256: digest }) => ({
     kind,
     identity,
@@ -147,8 +222,13 @@ function compileNormalized(
     leanToolchain: toolchain,
   });
   assertTypeChecks(artifact.code, directory);
-  assertSameModuleClosure(moduleFiles, collectModuleFiles(normalized, layout));
-  assertSameStrings(targetModules, collectTargetModuleNames(normalized), 'target Lean module closure changed');
+  assertSameModuleClosure(moduleFiles, collectModuleFiles(targetRequest, layout, compilerToolchain, targetToolchain));
+  assertSameStrings(
+    targetModules,
+    collectTargetModuleNames(targetRequest, targetToolchain),
+    'target Lean module closure changed',
+  );
+  assertStagedProjectsUnchanged(layout);
   assertUnchanged(snapshots);
   return {
     artifact,
@@ -182,35 +262,67 @@ function normalizeRequest(request: LeanToTypeScriptRequest): LeanToTypeScriptReq
   };
 }
 
-function compilationLayout(request: LeanToTypeScriptRequest, compilerLeanRoot: string): CompilationLayout {
+function compilationLayout(
+  request: LeanToTypeScriptRequest,
+  compilerLeanRoot: string,
+  targetProjectRoot: string,
+): CompilationLayout {
   const packageRoot = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'));
   const compilerSourceRoot = realpathSync(join(packageRoot, 'lean'));
   const compilerSourceSnapshots = snapshotInputs([
     ...compilerLeanSources(compilerSourceRoot),
     ...projectInputs(compilerSourceRoot, 'compiler-project'),
   ]);
+  const targetProjectSnapshots = snapshotInputs([
+    ...projectInputs(request.projectRoot, 'target-project'),
+    ...targetLeanSources(request.projectRoot),
+  ]);
   stageCompilerProject(compilerSourceRoot, compilerLeanRoot, compilerSourceSnapshots);
+  stageProject(request.projectRoot, targetProjectRoot, targetProjectSnapshots);
   return {
-    packageRoot,
     compilerLeanRoot,
     compilerSourceSnapshots,
     exporterBuildSourcePath: realpathSync(join(compilerLeanRoot, 'TSLean', 'LeanToTypeScript', 'Export.lean')),
-    typescriptPath: realpathSync(createRequire(import.meta.url).resolve('typescript')),
+    targetProjectRoot,
+    targetProjectSnapshots,
     targetSourcePath: request.sourcePath,
   };
 }
 
-function prepareLeanModules(request: LeanToTypeScriptRequest, layout: CompilationLayout): void {
-  runLake(layout.compilerLeanRoot, ['-H', 'build', 'TSLean.LeanToTypeScript.Export'], 'exporter build');
-  runLake(request.projectRoot, ['-H', 'build', request.moduleName], 'target build');
+function stagedTargetRequest(request: LeanToTypeScriptRequest, layout: CompilationLayout): LeanToTypeScriptRequest {
+  return {
+    ...request,
+    projectRoot: layout.targetProjectRoot,
+    sourcePath: join(layout.targetProjectRoot, relative(request.projectRoot, request.sourcePath)),
+  };
 }
 
-function collectModuleFiles(request: LeanToTypeScriptRequest, layout: CompilationLayout): readonly InputFile[] {
+function prepareLeanModules(
+  request: LeanToTypeScriptRequest,
+  layout: CompilationLayout,
+  compilerToolchain: LeanToolchain,
+  targetToolchain: LeanToolchain,
+): void {
+  runLake(
+    compilerToolchain,
+    layout.compilerLeanRoot,
+    ['-H', 'build', 'TSLean.LeanToTypeScript.Export'],
+    'exporter build',
+  );
+  runLake(targetToolchain, request.projectRoot, ['-H', 'build', request.moduleName], 'target build');
+}
+
+function collectModuleFiles(
+  request: LeanToTypeScriptRequest,
+  layout: CompilationLayout,
+  compilerToolchain: LeanToolchain,
+  targetToolchain: LeanToolchain,
+): readonly InputFile[] {
   const artifacts = [
-    moduleArtifact(layout.compilerLeanRoot, 'TSLean.LeanToTypeScript.Export'),
-    ...moduleDependencies(layout.compilerLeanRoot, layout.exporterBuildSourcePath),
-    moduleArtifact(request.projectRoot, request.moduleName),
-    ...moduleDependencies(request.projectRoot, request.sourcePath),
+    moduleArtifact(compilerToolchain, layout.compilerLeanRoot, 'TSLean.LeanToTypeScript.Export'),
+    ...moduleDependencies(compilerToolchain, layout.compilerLeanRoot, layout.exporterBuildSourcePath),
+    moduleArtifact(targetToolchain, request.projectRoot, request.moduleName),
+    ...moduleDependencies(targetToolchain, request.projectRoot, request.sourcePath),
   ];
   const modules = new Map<string, string>();
   for (const artifact of artifacts.map((path) => realpathSync(path))) {
@@ -225,16 +337,22 @@ function collectModuleFiles(request: LeanToTypeScriptRequest, layout: Compilatio
   for (const [moduleName, artifact] of [...modules].sort(([left], [right]) => compareCodePoints(left, right))) {
     files.push({ kind: 'lean-module', identity: `module:${moduleName}`, path: artifact });
     const source = sourceFromTrace(artifact);
-    if (source !== undefined) files.push({ kind: 'lean-source', identity: `source:${moduleName}`, path: source });
+    if (source !== undefined) {
+      files.push({
+        kind: 'lean-source',
+        identity: `source:${moduleName}`,
+        path: originalTargetSourcePath(source, layout),
+      });
+    }
   }
   return files;
 }
 
-function collectTargetModuleNames(request: LeanToTypeScriptRequest): readonly string[] {
+function collectTargetModuleNames(request: LeanToTypeScriptRequest, toolchain: LeanToolchain): readonly string[] {
   const targetBuildRoot = realpathSync(join(request.projectRoot, '.lake', 'build', 'lib', 'lean'));
   const names = [
-    moduleArtifact(request.projectRoot, request.moduleName),
-    ...moduleDependencies(request.projectRoot, request.sourcePath),
+    moduleArtifact(toolchain, request.projectRoot, request.moduleName),
+    ...moduleDependencies(toolchain, request.projectRoot, request.sourcePath),
   ]
     .map((path) => realpathSync(path))
     .filter((path) => isWithin(targetBuildRoot, path))
@@ -245,59 +363,8 @@ function collectTargetModuleNames(request: LeanToTypeScriptRequest): readonly st
   return names;
 }
 
-function inputFiles(
-  request: LeanToTypeScriptRequest,
-  layout: CompilationLayout,
-  moduleFiles: readonly InputFile[],
-): readonly InputFile[] {
-  const extension = extname(fileURLToPath(import.meta.url));
-  const compilerDirectory = dirname(fileURLToPath(import.meta.url));
-  const compilerFiles = compilerModuleFiles(compilerDirectory, extension);
-  return [
-    ...compilerFiles,
-    { kind: 'compiler', identity: 'compiler:package', path: realpathSync(join(layout.packageRoot, 'package.json')) },
-    { kind: 'compiler', identity: 'compiler:runtime', path: realpathSync(process.execPath) },
-    {
-      kind: 'compiler',
-      identity: 'compiler-toolchain:lean-executable',
-      path: toolchainExecutable(layout.compilerLeanRoot, 'lean'),
-    },
-    {
-      kind: 'compiler',
-      identity: 'compiler-toolchain:lake-executable',
-      path: toolchainExecutable(layout.compilerLeanRoot, 'lake'),
-    },
-    {
-      kind: 'compiler',
-      identity: 'target-toolchain:lean-executable',
-      path: toolchainExecutable(request.projectRoot, 'lean'),
-    },
-    {
-      kind: 'compiler',
-      identity: 'target-toolchain:lake-executable',
-      path: toolchainExecutable(request.projectRoot, 'lake'),
-    },
-    ...projectInputs(request.projectRoot, 'target-project'),
-    ...moduleFiles,
-    { kind: 'typescript', identity: 'typescript:compiler', path: layout.typescriptPath },
-    {
-      kind: 'typescript',
-      identity: 'typescript:package',
-      path: realpathSync(join(dirname(layout.typescriptPath), '..', 'package.json')),
-    },
-    ...['lib.decorators.d.ts', 'lib.decorators.legacy.d.ts', 'lib.es5.d.ts'].map((name): InputFile => ({
-      kind: 'typescript',
-      identity: `typescript:library:${name}`,
-      path: realpathSync(join(dirname(layout.typescriptPath), name)),
-    })),
-  ];
-}
-
-function compilerModuleFiles(directory: string, extension: string): readonly InputFile[] {
-  return filesRecursively(directory, extension).map((path) => {
-    const name = relative(directory, path).slice(0, -extension.length).split(sep).join('/');
-    return { kind: 'compiler', identity: `compiler:${name}`, path };
-  });
+function inputFiles(request: LeanToTypeScriptRequest, moduleFiles: readonly InputFile[]): readonly InputFile[] {
+  return [...projectInputs(request.projectRoot, 'target-project'), ...moduleFiles];
 }
 
 function compilerLeanSources(projectRoot: string): readonly InputFile[] {
@@ -311,6 +378,30 @@ function compilerLeanSources(projectRoot: string): readonly InputFile[] {
         : `compiler:lean-source:${relative(projectRoot, path).split(sep).join('/')}`,
     path,
   }));
+}
+
+function targetLeanSources(projectRoot: string): readonly InputFile[] {
+  const files: InputFile[] = [];
+  const visit = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
+      compareCodePoints(left.name, right.name),
+    )) {
+      if (entry.name === '.git' || entry.name === '.lake') continue;
+      const path = join(directory, entry.name);
+      if (entry.isSymbolicLink()) throw new TypeError(`target project source tree contains symlink: ${path}`);
+      if (entry.isDirectory()) {
+        visit(path);
+      } else if (entry.isFile() && extname(entry.name) === '.lean') {
+        files.push({
+          kind: 'lean-source',
+          identity: `target-stage-source:${relative(projectRoot, path).split(sep).join('/')}`,
+          path: realpathSync(path),
+        });
+      }
+    }
+  };
+  visit(projectRoot);
+  return files;
 }
 
 function filesRecursively(directory: string, extension: string): readonly string[] {
@@ -333,18 +424,129 @@ function filesRecursively(directory: string, extension: string): readonly string
 }
 
 function stageCompilerProject(sourceRoot: string, destinationRoot: string, snapshots: readonly InputSnapshot[]): void {
-  for (const snapshot of snapshots) {
-    if (!isWithin(sourceRoot, snapshot.path)) throw new TypeError('compiler project input is outside the package');
-    const destination = join(destinationRoot, relative(sourceRoot, snapshot.path));
-    mkdirSync(dirname(destination), { recursive: true });
-    writeFileSync(destination, snapshot.contents);
-  }
+  stageProject(sourceRoot, destinationRoot, snapshots);
 }
 
-function toolchainExecutable(projectRoot: string, executable: 'lake' | 'lean'): string {
-  const path = runLake(projectRoot, ['env', 'which', executable], `${executable} executable`).trim();
+function stageProject(sourceRoot: string, destinationRoot: string, snapshots: readonly InputSnapshot[]): void {
+  for (const snapshot of snapshots) {
+    if (!isWithin(sourceRoot, snapshot.path)) throw new TypeError('staged project input is outside its project root');
+    const destination = join(destinationRoot, relative(sourceRoot, snapshot.path));
+    mkdirSync(dirname(destination), { recursive: true });
+    writeFileSync(destination, requiredSnapshotContents(snapshot));
+    chmodSync(destination, 0o444);
+  }
+  mkdirSync(join(destinationRoot, '.lake'), { recursive: true });
+  makeSourceDirectoriesReadOnly(destinationRoot);
+}
+
+function originalTargetSourcePath(sourcePath: string, layout: CompilationLayout): string {
+  if (!isWithin(layout.targetProjectRoot, sourcePath)) return sourcePath;
+  const candidate = resolve(
+    commonProjectRoot(layout.targetProjectSnapshots, layout.targetSourcePath),
+    relative(layout.targetProjectRoot, sourcePath),
+  );
+  return existsSync(candidate) ? realpathSync(candidate) : sourcePath;
+}
+
+function commonProjectRoot(snapshots: readonly InputSnapshot[], targetSourcePath: string): string {
+  const projectInput = snapshots.find((snapshot) => snapshot.identity.startsWith('target-project:'));
+  if (projectInput !== undefined) return dirname(projectInput.path);
+  let candidate = dirname(targetSourcePath);
+  while (dirname(candidate) !== candidate) {
+    if (existsSync(join(candidate, 'lean-toolchain'))) return candidate;
+    candidate = dirname(candidate);
+  }
+  throw new TypeError('target project root cannot be recovered from staged inputs');
+}
+
+function resolveToolchain(projectRoot: string, launcher: InputSnapshot, prefix: string): LeanToolchain {
+  const lakePath = executableReportedByLake(launcher, projectRoot, 'lake');
+  const lake = snapshotInputs([{ kind: 'compiler', identity: `${prefix}:lake-executable`, path: lakePath }])[0];
+  if (lake === undefined) throw new TypeError(`${prefix} Lake executable snapshot is missing`);
+  const leanPath = executableReportedByLake(lake, projectRoot, 'lean');
+  const lean = snapshotInputs([{ kind: 'compiler', identity: `${prefix}:lean-executable`, path: leanPath }])[0];
+  if (lean === undefined) throw new TypeError(`${prefix} Lean executable snapshot is missing`);
+  const identity = readFileSync(join(projectRoot, 'lean-toolchain'), 'utf8').trim();
+  if (identity.length === 0) throw new TypeError('lean-toolchain is empty');
+  return {
+    identity,
+    leanVersion: runCaptured(lean, [], projectRoot, ['--version'], 'Lean version').trim(),
+    lakeVersion: runCaptured(lake, [], projectRoot, ['--version'], 'Lake version').trim(),
+    lake,
+    lean,
+    closure: [],
+  };
+}
+
+function executableReportedByLake(
+  lakeExecutable: InputSnapshot,
+  projectRoot: string,
+  executable: 'lake' | 'lean',
+): string {
+  const path = runCaptured(lakeExecutable, [], projectRoot, ['env', 'which', executable], `${executable} executable`, {
+    PATH: executablePath(lakeExecutable.path),
+  }).trim();
   if (path.length === 0) throw new TypeError(`Lake environment has no ${executable} executable`);
   return realpathSync(path);
+}
+
+function toolchainClosure(toolchain: LeanToolchain): readonly InputFile[] {
+  const paths = [...new Set([...linkedLibraries(toolchain.lake), ...linkedLibraries(toolchain.lean)])].sort(
+    compareCodePoints,
+  );
+  return paths.map((path, index) => ({
+    kind: 'compiler',
+    identity: `toolchain-runtime:${index.toString().padStart(2, '0')}:${basename(path)}`,
+    path,
+  }));
+}
+
+function linkedLibraries(executable: InputSnapshot): readonly string[] {
+  assertUnchanged([executable]);
+  const result = spawnSync(executable.path, [], {
+    encoding: 'utf8',
+    env: { ...sanitizedProcessEnvironment(), LD_TRACE_LOADED_OBJECTS: '1' },
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  assertUnchanged([executable]);
+  if (result.error !== undefined) {
+    throw new TypeError(`toolchain runtime closure could not be inspected: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new TypeError(`toolchain runtime closure inspection failed: ${result.stderr.trim()}`);
+  }
+  const libraries: string[] = [];
+  for (const line of result.stdout.split(/\r?\n/u)) {
+    const normalized = line.trim();
+    if (normalized.length === 0 || normalized.startsWith('linux-vdso')) continue;
+    if (normalized.includes('=> not found')) {
+      throw new TypeError(`toolchain runtime dependency is unavailable: ${normalized}`);
+    }
+    const resolved = normalized.includes('=>')
+      ? normalized
+          .slice(normalized.indexOf('=>') + 2)
+          .trim()
+          .split(/\s+/u)[0]
+      : normalized.split(/\s+/u)[0];
+    if (resolved !== undefined && isAbsolute(resolved)) libraries.push(realpathSync(resolved));
+  }
+  if (libraries.length === 0) throw new TypeError('toolchain runtime closure inspection returned no files');
+  return libraries;
+}
+
+function findExecutableOnPath(name: string): string {
+  const path = process.env['PATH'];
+  if (path === undefined) throw new TypeError('PATH is unavailable while locating the Lake launcher');
+  for (const component of path.split(delimiter)) {
+    const candidate = resolve(component.length === 0 ? process.cwd() : component, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      if (statSync(candidate).isFile()) return realpathSync(candidate);
+    } catch (error: unknown) {
+      if (!hasFilesystemError(error, 'ENOENT', 'ENOTDIR', 'EACCES')) throw error;
+    }
+  }
+  throw new TypeError('Lake launcher is not available on PATH');
 }
 
 function projectInputs(projectRoot: string, identity: string): readonly InputFile[] {
@@ -359,16 +561,44 @@ function projectInputs(projectRoot: string, identity: string): readonly InputFil
 }
 
 function snapshotInputs(files: readonly InputFile[]): readonly InputSnapshot[] {
+  const ordered = orderedUniqueInputs(files);
+  return ordered.map((file) => {
+    const before = filesystemVersion(file.path);
+    const contents = readFileSync(file.path);
+    const after = filesystemVersion(file.path);
+    if (!sameFilesystemVersion(before, after)) {
+      throw new TypeError(`compiler input changed while it was captured: ${file.identity}`);
+    }
+    return { ...file, contents, filesystemVersion: after, sha256: sha256(contents) };
+  });
+}
+
+function snapshotToolchainInputs(files: readonly InputFile[]): readonly InputSnapshot[] {
+  return orderedUniqueInputs(files).map((file) => {
+    const current = filesystemVersion(file.path);
+    const cached = toolchainInputCache.get(file.path);
+    if (cached !== undefined && sameFilesystemVersion(cached.filesystemVersion, current)) {
+      return { ...file, ...cached };
+    }
+    const contents = readFileSync(file.path);
+    const after = filesystemVersion(file.path);
+    if (!sameFilesystemVersion(current, after)) {
+      throw new TypeError(`toolchain input changed while it was captured: ${file.identity}`);
+    }
+    const captured = { filesystemVersion: after, sha256: sha256(contents) };
+    toolchainInputCache.set(file.path, captured);
+    return { ...file, ...captured };
+  });
+}
+
+function orderedUniqueInputs(files: readonly InputFile[]): readonly InputFile[] {
   const ordered = [...files].sort((left, right) => compareCodePoints(left.identity, right.identity));
   for (let index = 1; index < ordered.length; index += 1) {
     if (ordered[index - 1]?.identity === ordered[index]?.identity) {
       throw new TypeError(`duplicate compiler input identity ${ordered[index]?.identity}`);
     }
   }
-  return ordered.map((file) => {
-    const contents = readFileSync(file.path);
-    return { ...file, contents, sha256: sha256(contents) };
-  });
+  return ordered;
 }
 
 function mergeSnapshots(...groups: readonly (readonly InputSnapshot[])[]): readonly InputSnapshot[] {
@@ -387,7 +617,7 @@ function stageLeanModules(directory: string, leanLibraryRoot: string, snapshots:
     const moduleName = snapshot.identity.slice('module:'.length);
     const path = join(directory, `${moduleName.split('.').join(sep)}.olean`);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, snapshot.contents);
+    writeFileSync(path, requiredSnapshotContents(snapshot));
   }
 }
 
@@ -399,10 +629,43 @@ function requiredInputPath(snapshots: readonly InputSnapshot[], identity: string
 
 function assertUnchanged(snapshots: readonly InputSnapshot[]): void {
   for (const snapshot of snapshots) {
-    if (!snapshot.contents.equals(readFileSync(snapshot.path))) {
+    const changed =
+      snapshot.filesystemVersion === undefined
+        ? !requiredSnapshotContents(snapshot).equals(readFileSync(snapshot.path))
+        : !sameFilesystemVersion(snapshot.filesystemVersion, filesystemVersion(snapshot.path));
+    if (changed) {
       throw new TypeError(`compiler input changed during Lean to TypeScript compilation: ${snapshot.identity}`);
     }
   }
+}
+
+function requiredSnapshotContents(snapshot: InputSnapshot): Buffer {
+  if (snapshot.contents === undefined) {
+    throw new TypeError(`compiler input bytes are unavailable: ${snapshot.identity}`);
+  }
+  return snapshot.contents;
+}
+
+function filesystemVersion(path: string): FilesystemVersion {
+  const metadata = statSync(path, { bigint: true });
+  if (!metadata.isFile()) throw new TypeError(`compiler input is not a regular file: ${path}`);
+  return {
+    device: metadata.dev,
+    inode: metadata.ino,
+    size: metadata.size,
+    modified: metadata.mtimeNs,
+    changed: metadata.ctimeNs,
+  };
+}
+
+function sameFilesystemVersion(left: FilesystemVersion, right: FilesystemVersion): boolean {
+  return (
+    left.device === right.device &&
+    left.inode === right.inode &&
+    left.size === right.size &&
+    left.modified === right.modified &&
+    left.changed === right.changed
+  );
 }
 
 function assertSameModuleClosure(expected: readonly InputFile[], actual: readonly InputFile[]): void {
@@ -421,9 +684,9 @@ function assertTargetSource(moduleFiles: readonly InputFile[], moduleName: strin
   }
 }
 
-function moduleArtifact(projectRoot: string, moduleName: string): string {
+function moduleArtifact(toolchain: LeanToolchain, projectRoot: string, moduleName: string): string {
   const relativePath = `${moduleName.split('.').join(sep)}.olean`;
-  const candidates = runLake(projectRoot, ['env', 'printenv', 'LEAN_PATH'], `${moduleName} search path`)
+  const candidates = runLake(toolchain, projectRoot, ['env', 'printenv', 'LEAN_PATH'], `${moduleName} search path`)
     .trim()
     .split(delimiter)
     .map((directory) => join(directory, relativePath))
@@ -435,8 +698,8 @@ function moduleArtifact(projectRoot: string, moduleName: string): string {
   return artifact;
 }
 
-function moduleDependencies(projectRoot: string, sourcePath: string): readonly string[] {
-  return runLake(projectRoot, ['env', 'lean', '--deps', sourcePath], 'module dependencies')
+function moduleDependencies(toolchain: LeanToolchain, projectRoot: string, sourcePath: string): readonly string[] {
+  return runLake(toolchain, projectRoot, ['env', 'lean', '--deps', sourcePath], 'module dependencies')
     .split(/\r?\n/u)
     .filter((path) => path.endsWith('.olean'));
 }
@@ -539,32 +802,58 @@ function assertTypeChecks(code: string, directory: string): void {
   }
 }
 
-function toolchainIdentity(projectRoot: string): LeanToTypeScriptManifest['leanToolchain'] {
-  const identity = readFileSync(join(projectRoot, 'lean-toolchain'), 'utf8').trim();
-  if (identity.length === 0) throw new TypeError('lean-toolchain is empty');
+function toolchainManifest(toolchain: LeanToolchain): LeanToTypeScriptManifest['leanToolchain'] {
   return {
-    identity,
-    leanVersion: runLake(projectRoot, ['env', 'lean', '--version'], 'Lean version').trim(),
-    lakeVersion: runLake(projectRoot, ['--version'], 'Lake version').trim(),
+    identity: toolchain.identity,
+    leanVersion: toolchain.leanVersion,
+    lakeVersion: toolchain.lakeVersion,
   };
 }
 
-function sameToolchain(
-  left: LeanToTypeScriptManifest['leanToolchain'],
-  right: LeanToTypeScriptManifest['leanToolchain'],
-): boolean {
+function sameToolchain(left: LeanToolchain, right: LeanToolchain): boolean {
   return (
-    left.identity === right.identity && left.leanVersion === right.leanVersion && left.lakeVersion === right.lakeVersion
+    left.identity === right.identity &&
+    left.leanVersion === right.leanVersion &&
+    left.lakeVersion === right.lakeVersion &&
+    left.lean.path === right.lean.path &&
+    left.lake.path === right.lake.path &&
+    left.lean.sha256 === right.lean.sha256 &&
+    left.lake.sha256 === right.lake.sha256
   );
 }
 
 function runLake(
+  toolchain: LeanToolchain,
   projectRoot: string,
   arguments_: readonly string[],
   label: string,
   environment: Readonly<Record<string, string>> = {},
 ): string {
-  return runLean('lake', projectRoot, arguments_, label, environment);
+  return runCaptured(toolchain.lake, [toolchain.lean, ...toolchain.closure], projectRoot, arguments_, label, {
+    ...environment,
+    PATH: executablePath(toolchain.lake.path, environment['PATH']),
+  });
+}
+
+function runCaptured(
+  executable: InputSnapshot,
+  closure: readonly InputSnapshot[],
+  projectRoot: string,
+  arguments_: readonly string[],
+  label: string,
+  environment: Readonly<Record<string, string>> = {},
+): string {
+  const captured = [executable, ...closure];
+  assertUnchanged(captured);
+  try {
+    return runLean(executable.path, projectRoot, arguments_, label, environment);
+  } finally {
+    assertUnchanged(captured);
+  }
+}
+
+function executablePath(executable: string, inheritedPath = process.env['PATH']): string {
+  return [dirname(executable), inheritedPath].filter((value): value is string => value !== undefined).join(delimiter);
 }
 
 function runLean(
@@ -577,7 +866,7 @@ function runLean(
   const result = spawnSync(executable, arguments_, {
     cwd: projectRoot,
     encoding: 'utf8',
-    env: { ...process.env, ...environment },
+    env: { ...sanitizedProcessEnvironment(), ...environment },
     maxBuffer: 64 * 1024 * 1024,
   });
   if (result.error !== undefined) throw new TypeError(`Lean ${label} could not start: ${result.error.message}`);
@@ -588,9 +877,72 @@ function runLean(
   return result.stdout;
 }
 
+function sanitizedProcessEnvironment(): NodeJS.ProcessEnv {
+  const environment = { ...process.env };
+  for (const name of Object.keys(environment)) {
+    if (
+      name.startsWith('LD_') ||
+      name.startsWith('DYLD_') ||
+      name === 'ELAN_TOOLCHAIN' ||
+      name === 'LEAN_PATH' ||
+      name === 'LEAN_SRC_PATH' ||
+      name === 'LEAN_SYSROOT'
+    ) {
+      delete environment[name];
+    }
+  }
+  return environment;
+}
+
 function runtimeIdentity(): string {
   const bunVersion = process.versions['bun'];
   return bunVersion === undefined ? `node:${process.version}` : `bun:${bunVersion}`;
+}
+
+function assertStagedProjectsUnchanged(layout: CompilationLayout): void {
+  assertUnchanged(layout.compilerSourceSnapshots);
+  assertUnchanged(layout.targetProjectSnapshots);
+  for (const snapshot of [...layout.compilerSourceSnapshots, ...layout.targetProjectSnapshots]) {
+    const sourceRoot = snapshot.identity.startsWith('compiler')
+      ? commonCompilerProjectRoot(layout.compilerSourceSnapshots)
+      : commonProjectRoot(layout.targetProjectSnapshots, layout.targetSourcePath);
+    const destinationRoot = snapshot.identity.startsWith('compiler')
+      ? layout.compilerLeanRoot
+      : layout.targetProjectRoot;
+    const stagedPath = join(destinationRoot, relative(sourceRoot, snapshot.path));
+    if (!requiredSnapshotContents(snapshot).equals(readFileSync(stagedPath))) {
+      throw new TypeError(`staged compiler input changed during Lean to TypeScript compilation: ${snapshot.identity}`);
+    }
+  }
+}
+
+function commonCompilerProjectRoot(snapshots: readonly InputSnapshot[]): string {
+  const projectInput = snapshots.find((snapshot) => snapshot.identity.startsWith('compiler-project:'));
+  if (projectInput === undefined) throw new TypeError('compiler project root cannot be recovered from staged inputs');
+  return dirname(projectInput.path);
+}
+
+function makeSourceDirectoriesReadOnly(root: string): void {
+  const visit = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name === '.lake') continue;
+      if (entry.isDirectory()) visit(join(directory, entry.name));
+    }
+    chmodSync(directory, 0o555);
+  };
+  visit(root);
+}
+
+function makeDirectoriesWritable(root: string): void {
+  if (!existsSync(root)) return;
+  const metadata = lstatSync(root);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) return;
+  chmodSync(root, metadata.mode | 0o700);
+  for (const entry of readdirSync(root)) makeDirectoriesWritable(join(root, entry));
+}
+
+function hasFilesystemError(error: unknown, ...codes: readonly string[]): boolean {
+  return error instanceof Error && 'code' in error && typeof error.code === 'string' && codes.includes(error.code);
 }
 
 function isWithin(root: string, path: string): boolean {

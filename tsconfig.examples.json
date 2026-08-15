@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    "noEmit": true,
+    "rootDir": ".",
+    "sourceMap": false
+  },
+  "include": ["examples/lean-to-typescript/placement.adapter.ts", "examples/lean-to-typescript/placement.generated.ts"]
+}

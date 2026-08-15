@@ -29,6 +29,7 @@
     "lean/lake-manifest.json",
     "docs/LEAN_TO_TS_PLAN.md",
     "examples/lean-to-typescript/**",
+    "spec/lean-to-typescript/**",
     "spec/differential/**",
     "README.md",
     "LICENSE"
@@ -37,7 +38,7 @@
     "build": "tsc",
     "test": "vitest run",
     "lean:gate": "vitest run tests/lean-build-gate.test.ts",
-    "lint": "tsc --noEmit && oxlint src/lean-to-typescript tests/lean-to-typescript.test.ts tests/lean-to-typescript-ir.test.ts tests/lean-to-typescript-package.test.ts tests/heap-scale.test.ts tests/helpers/lean-project-fixture.ts --deny-warnings && eslint src/ scripts/*.mjs",
+    "lint": "tsc --noEmit && tsc --project tsconfig.examples.json && oxlint src/lean-to-typescript tests/lean-to-typescript.test.ts tests/lean-to-typescript-ir.test.ts tests/lean-to-typescript-package.test.ts tests/heap-scale.test.ts tests/helpers/lean-project-fixture.ts examples/lean-to-typescript/placement.adapter.ts --deny-warnings && eslint src/ scripts/*.mjs",
     "format": "prettier --write 'src/**/*.ts' 'tests/lean-to-typescript*.test.ts' 'tests/helpers/lean-project-fixture.ts'",
     "format:check": "prettier --check 'src/**/*.ts' 'tests/lean-to-typescript*.test.ts' 'tests/helpers/lean-project-fixture.ts'",
     "format:check:foundation": "prettier --check 'scripts/*.mjs' 'evidence/*.json' package.json",
