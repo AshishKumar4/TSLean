@@ -283,6 +283,8 @@ private def run : IO Unit := do
   testDescriptors
   testPrototypeBehavior
   testFaults
+
+def runScale : IO Unit := do
   scalingSmoke
   churnSmoke
 

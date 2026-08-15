@@ -7,6 +7,7 @@
     <a href="#quick-start">Quick Start</a> &bull;
     <a href="#examples">Examples</a> &bull;
     <a href="#features">Features</a> &bull;
+    <a href="#lean-to-typescript">Lean to TypeScript</a> &bull;
     <a href="docs/architecture.md">Architecture</a> &bull;
     <a href="docs/limitations.md">Limitations</a>
   </p>
@@ -31,6 +32,37 @@ It ships with:
 - JS standard library mappings for String, Array, Map, Set, Math, Promise, JSON, and Date operations
 - **npm type stubs** for node:fs, node:path, node:http, console, process
 - 7 Durable Object models with safety invariant theorems
+
+## Lean to TypeScript
+
+The package exposes an early Lean-to-TypeScript compiler at
+`tslean/lean-to-typescript`. It accepts a closed fragment of elaborated Lean: pure,
+total, first-order functions over booleans, finite nullary inductives, immutable
+records, and non-nested options. Unsupported declarations fail before TypeScript is
+emitted.
+
+```typescript
+import { compileLeanToTypeScript, verifyLeanToTypeScriptArtifact } from 'tslean/lean-to-typescript';
+
+const artifact = compileLeanToTypeScript({
+  projectRoot: '/path/to/lean-project',
+  moduleName: 'Policy.Placement',
+  sourcePath: '/path/to/lean-project/src/Policy/Placement.lean',
+  declarations: ['Policy.Placement.choose'],
+});
+verifyLeanToTypeScriptArtifact(artifact);
+```
+
+The target project does not need to contain TSLean's exporter. The package builds its
+own pinned exporter and loads the target project's compiled module through Lake. Each
+artifact records hashes for its generated body, the transitive Lean module closure,
+available imported sources, compiler sources, TypeScript compiler, project files, and
+Lean toolchain. Generation fails if an input or the resolved module closure changes during
+compilation.
+
+The first checked-in example compares all 4,096 inputs of a finite placement decision
+against Lean. That result covers the example's finite domain; it is not a general
+refinement proof. See [the fragment and evidence boundary](docs/LEAN_TO_TS_PLAN.md).
 
 The implemented subset includes functions, classes, interfaces, enums, generics, discriminated unions, async/await, exceptions, and multi-file modules, with known semantic gaps tracked in the corpus.
 

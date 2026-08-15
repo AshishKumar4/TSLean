@@ -5,8 +5,19 @@
   "description": "TypeScript \u2192 Lean 4 transpiler under semantic reconstruction",
   "main": "dist/codegen/index.js",
   "types": "dist/codegen/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/codegen/index.d.ts",
+      "import": "./dist/codegen/index.js"
+    },
+    "./lean-to-typescript": {
+      "types": "./dist/lean-to-typescript/index.d.ts",
+      "import": "./dist/lean-to-typescript/index.js"
+    }
+  },
   "bin": {
-    "tslean": "dist/cli.js"
+    "tslean": "dist/cli.js",
+    "lean-to-typescript": "dist/lean-to-typescript/cli.js"
   },
   "files": [
     "dist/",
@@ -16,6 +27,8 @@
     "lean/lakefile.toml",
     "lean/lean-toolchain",
     "lean/lake-manifest.json",
+    "docs/LEAN_TO_TS_PLAN.md",
+    "examples/lean-to-typescript/**",
     "spec/differential/**",
     "README.md",
     "LICENSE"
@@ -24,12 +37,14 @@
     "build": "tsc",
     "test": "vitest run",
     "lean:gate": "vitest run tests/lean-build-gate.test.ts",
-    "lint": "tsc --noEmit && eslint src/ scripts/*.mjs",
-    "format": "prettier --write 'src/**/*.ts'",
-    "format:check": "prettier --check 'src/**/*.ts'",
+    "lint": "tsc --noEmit && oxlint src/lean-to-typescript tests/lean-to-typescript.test.ts tests/lean-to-typescript-ir.test.ts tests/lean-to-typescript-package.test.ts tests/heap-scale.test.ts tests/helpers/lean-project-fixture.ts --deny-warnings && eslint src/ scripts/*.mjs",
+    "format": "prettier --write 'src/**/*.ts' 'tests/lean-to-typescript*.test.ts' 'tests/helpers/lean-project-fixture.ts'",
+    "format:check": "prettier --check 'src/**/*.ts' 'tests/lean-to-typescript*.test.ts' 'tests/helpers/lean-project-fixture.ts'",
     "format:check:foundation": "prettier --check 'scripts/*.mjs' 'evidence/*.json' package.json",
     "differential:generate": "bun scripts/generate-differential-manifest.mjs",
     "differential:check": "bun scripts/generate-differential-manifest.mjs --check && bun scripts/check-differential-inventory.mjs",
+    "lean-to-typescript:generate": "node dist/lean-to-typescript/cli.js --project-root lean --module TSLean.Examples.Placement --source lean/TSLean/Examples/Placement.lean --declaration TSLean.Examples.Placement.choosePlacement --output examples/lean-to-typescript/placement.generated.ts --manifest examples/lean-to-typescript/placement.generated.manifest.json",
+    "lean-to-typescript:check": "bun run lean-to-typescript:generate --check",
     "benchmark:coercion-effects": "cd lean && lake exe js-coercion-effects-benchmark",
     "evidence:generate": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase5-remove-false-claims-input.json",
     "evidence:check": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase5-remove-false-claims-input.json --check",
@@ -92,8 +107,8 @@
     "evidence:baseline:generate": "bun scripts/generate-evidence-manifest.mjs --input evidence/baseline-input.json",
     "evidence:baseline:check": "bun scripts/generate-evidence-manifest.mjs --input evidence/baseline-input.json --check",
     "js:trust": "bun scripts/check-js-axioms.mjs --evidence evidence/phase5-remove-false-claims-input.json",
-    "verify": "bun run format:check:foundation && bun run differential:check && bun run js:trust && bun run evidence:check && bun run lint && bun run test && bun run lean:gate && bun run build && cd lean && lake build",
-    "prepublishOnly": "bun run build"
+    "verify": "bun run format:check:foundation && bun run differential:check && bun run js:trust && bun run evidence:check && bun run lint && bun run build && bun run lean-to-typescript:check && bun run test && bun run lean:gate && cd lean && lake build",
+    "prepublishOnly": "bun run verify"
   },
   "keywords": [
     "typescript",
@@ -119,13 +134,14 @@
     "node": ">=18"
   },
   "dependencies": {
-    "typescript": "^6.0.2"
+    "typescript": "6.0.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.5.2",
     "eslint": "^10.2.0",
     "eslint-config-prettier": "^10.1.8",
+    "oxlint": "1.78.0",
     "prettier": "^3.8.2",
     "tsx": "^4.21.0",
     "typescript-eslint": "^8.58.1",

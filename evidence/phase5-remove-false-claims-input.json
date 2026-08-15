@@ -5,8 +5,8 @@
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": {
-      "files": 45,
-      "passed": 1682,
+      "files": 49,
+      "passed": 1760,
       "failed": 0,
       "todo": 10
     },
@@ -285,6 +285,23 @@
     "source": {
       "paths": ["src"]
     },
+    "leanToTypeScriptCompiler": {
+      "paths": [
+        "README.md",
+        "docs/LEAN_TO_TS_PLAN.md",
+        "examples/lean-to-typescript",
+        "lean/TSLean/Examples/Placement.lean",
+        "lean/TSLean/LeanToTypeScript/Export.lean",
+        "package-lock.json",
+        "package.json",
+        "src/lean-to-typescript",
+        "tests/helpers/lean-project-fixture.ts",
+        "tests/lean-to-typescript-ir.test.ts",
+        "tests/lean-to-typescript-package.test.ts",
+        "tests/lean-to-typescript.test.ts",
+        "tests/package.test.ts"
+      ]
+    },
     "jsRuntime": {
       "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
     },
@@ -335,6 +352,7 @@
         "scripts/check-js-axioms.mjs",
         "tests/helpers/json-schema.ts",
         "tests/corpus-schema.test.ts",
+        "tests/heap-scale.test.ts",
         "tests/package.test.ts",
         "lean/TSLean.lean",
         "lean/TSLean/Tests.lean",

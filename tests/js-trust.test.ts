@@ -2,8 +2,17 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { ensureLeanBuildCurrent, leanFilesRecursively } from '../scripts/check-js-axioms.mjs';
+
+const REQUIRED_LEAN_TARGETS = [
+  'TSLean.JS.AxiomAuditMeta',
+  'TSLean.JS.OrderedProps',
+  'TSLean.Refinement',
+  'TSLean.Refinement.AxiomAudit',
+] as const;
+
+beforeAll(() => ensureLeanBuildCurrent('lake', REQUIRED_LEAN_TARGETS), 120_000);
 
 describe('JS elaborated-environment trust audit', () => {
   it('discovers proof forms and rejects malformed trust records', () => {

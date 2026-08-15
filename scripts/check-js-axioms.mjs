@@ -341,8 +341,8 @@ function moduleSourceFile(name) {
   return join(leanDirectory, `${name.split('.').join(sep)}.lean`);
 }
 
-export function ensureLeanBuildCurrent(lakeExecutable = 'lake') {
-  const result = spawnSync(lakeExecutable, ['build', '--quiet', '--no-ansi'], {
+export function ensureLeanBuildCurrent(lakeExecutable = 'lake', targets = []) {
+  const result = spawnSync(lakeExecutable, ['build', ...targets, '--quiet', '--no-ansi'], {
     cwd: leanDirectory,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -583,7 +583,7 @@ function selfTest() {
 
 function main() {
   const args = parseArgs(argv.slice(2));
-  ensureLeanBuildCurrent();
+  ensureLeanBuildCurrent('lake', args.selfTest ? ['TSLean.JS.AxiomAuditMeta'] : []);
   checkCompiledArtifacts();
   if (args.selfTest) return selfTest();
   const expected = readExpectedAuditCount(args.evidence);

@@ -11,6 +11,10 @@ name = "js-array-scale-tests"
 root = "TSLean.JS.ArrayScaleTests"
 
 [[lean_exe]]
+name = "js-heap-scale-tests"
+root = "TSLean.JS.HeapScaleTests"
+
+[[lean_exe]]
 name = "js-model-oracle"
 root = "TSLean.JS.Oracle.Main"
 
