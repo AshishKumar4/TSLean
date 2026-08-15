@@ -236,7 +236,7 @@ describe('published Lean to TypeScript API', () => {
     writeFileSync(destinations[0].path, 'old output\n');
     writeFileSync(destinations[1].path, 'old manifest\n');
     try {
-      const publisher = crashArtifactTransaction(temporaryRoot, destinations, newContents, 'fsync', 10);
+      const publisher = crashArtifactTransaction(temporaryRoot, destinations, newContents, 'fsync', 12);
       expect(publisher.signal).toBe('SIGKILL');
       const recovery = crashArtifactRecovery(temporaryRoot, destinations, 'remove', occurrence);
       expect(recovery.signal).toBe('SIGKILL');
@@ -366,12 +366,210 @@ describe('published Lean to TypeScript API', () => {
     PACKED_COMPILER_TIMEOUT_MS,
   );
 
+  test('never removes a replacement at a stage path after its own stage write fails', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-stage-write-replacement-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    const oldContents = ['old output\n', 'old manifest\n'] as const;
+    const replacementContents = 'foreign stage replacement\n';
+    writeFileSync(destinations[0].path, oldContents[0]);
+    writeFileSync(destinations[1].path, oldContents[1]);
+    let displacedStagePath: string | undefined;
+    let replacementStagePath: string | undefined;
+    const filesystem: ArtifactFileSystem = {
+      ...nodeArtifactFileSystem,
+      write(descriptor, contents) {
+        nodeArtifactFileSystem.write(descriptor, contents);
+        if (contents !== 'new output\n') return;
+        const stagePath = nodeArtifactFileSystem.realpath(`/proc/self/fd/${descriptor}`);
+        displacedStagePath = `${stagePath}.displaced`;
+        replacementStagePath = stagePath;
+        renameSync(stagePath, displacedStagePath);
+        writeFileSync(stagePath, replacementContents);
+        throw new TypeError('injected stage write failure');
+      },
+    };
+    try {
+      expect(() =>
+        publishArtifactPairWithFileSystem(destinations, ['new output\n', 'new manifest\n'], filesystem),
+      ).toThrowError(/artifact transaction file identity changed/u);
+      expect(displacedStagePath).toBeDefined();
+      expect(replacementStagePath).toBeDefined();
+      if (displacedStagePath === undefined || replacementStagePath === undefined) {
+        throw new TypeError('stage replacement was not injected');
+      }
+      expect(readFileSync(displacedStagePath, 'utf8')).toBe('new output\n');
+      expect(readFileSync(replacementStagePath, 'utf8')).toBe(replacementContents);
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe(oldContents[0]);
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
+      expect(readdirSync(temporaryRoot).filter((name) => name.endsWith('.lock'))).toHaveLength(1);
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('rejects a stage path replaced before publication without accepting its contents', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-stage-prerename-replacement-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    const oldContents = ['old output\n', 'old manifest\n'] as const;
+    const foreignContents = 'foreign stage contents\n';
+    writeFileSync(destinations[0].path, oldContents[0]);
+    writeFileSync(destinations[1].path, oldContents[1]);
+    let renames = 0;
+    let displacedStagePath: string | undefined;
+    let replacementStagePath: string | undefined;
+    const filesystem: ArtifactFileSystem = {
+      ...nodeArtifactFileSystem,
+      rename(from, to) {
+        nodeArtifactFileSystem.rename(from, to);
+        renames += 1;
+        if (renames !== 2) return;
+        const stageName = transactionFiles(temporaryRoot).find((name) =>
+          name.startsWith('.generated.ts.tslean-stage-'),
+        );
+        if (stageName === undefined) throw new TypeError('output stage did not exist before publication');
+        replacementStagePath = join(temporaryRoot, stageName);
+        displacedStagePath = `${replacementStagePath}.displaced`;
+        renameSync(replacementStagePath, displacedStagePath);
+        writeFileSync(replacementStagePath, foreignContents);
+      },
+    };
+    try {
+      expect(() =>
+        publishArtifactPairWithFileSystem(destinations, ['new output\n', 'new manifest\n'], filesystem),
+      ).toThrowError(/artifact transaction file identity changed/u);
+      expect(displacedStagePath).toBeDefined();
+      expect(replacementStagePath).toBeDefined();
+      if (displacedStagePath === undefined || replacementStagePath === undefined) {
+        throw new TypeError('stage replacement was not injected');
+      }
+      expect(readFileSync(displacedStagePath, 'utf8')).toBe('new output\n');
+      expect(readFileSync(replacementStagePath, 'utf8')).toBe(foreignContents);
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe(oldContents[0]);
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('never overwrites a replacement that appears after the original destination is moved', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-destination-replacement-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    const oldContents = ['old output\n', 'old manifest\n'] as const;
+    const foreignContents = 'foreign destination replacement\n';
+    writeFileSync(destinations[0].path, oldContents[0]);
+    writeFileSync(destinations[1].path, oldContents[1]);
+    let renames = 0;
+    const filesystem: ArtifactFileSystem = {
+      ...nodeArtifactFileSystem,
+      rename(from, to) {
+        nodeArtifactFileSystem.rename(from, to);
+        renames += 1;
+        if (renames === 2) writeFileSync(destinations[0].path, foreignContents);
+      },
+    };
+    try {
+      expect(() =>
+        publishArtifactPairWithFileSystem(destinations, ['new output\n', 'new manifest\n'], filesystem),
+      ).toThrowError(/artifact publication failed and rollback failed: artifact rollback destination changed/u);
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe(foreignContents);
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
+      expect(transactionFiles(temporaryRoot)).toContain(transactionJournalFilename(destinations));
+      expect(
+        transactionFiles(temporaryRoot).some(
+          (name) =>
+            name.startsWith('.generated.ts.tslean-backup-') &&
+            readFileSync(join(temporaryRoot, name), 'utf8') === oldContents[0],
+        ),
+      ).toBe(true);
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('rejects a replacement moved to the destination during stage publication', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-stage-postrename-replacement-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    const oldContents = ['old output\n', 'old manifest\n'] as const;
+    const foreignContents = 'foreign published contents\n';
+    writeFileSync(destinations[0].path, oldContents[0]);
+    writeFileSync(destinations[1].path, oldContents[1]);
+    let renames = 0;
+    let displacedStagePath: string | undefined;
+    const filesystem: ArtifactFileSystem = {
+      ...nodeArtifactFileSystem,
+      rename(from, to) {
+        renames += 1;
+        if (renames === 3) {
+          displacedStagePath = join(temporaryRoot, `${basename(from)}.displaced`);
+          renameSync(from, displacedStagePath);
+          writeFileSync(from, foreignContents);
+        }
+        nodeArtifactFileSystem.rename(from, to);
+      },
+    };
+    try {
+      expect(() =>
+        publishArtifactPairWithFileSystem(destinations, ['new output\n', 'new manifest\n'], filesystem),
+      ).toThrowError(/artifact publication failed and rollback failed: artifact transaction file identity changed/u);
+      expect(displacedStagePath).toBeDefined();
+      if (displacedStagePath === undefined) throw new TypeError('stage replacement was not injected');
+      expect(readFileSync(displacedStagePath, 'utf8')).toBe('new output\n');
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe(foreignContents);
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
+      expect(
+        transactionFiles(temporaryRoot).some(
+          (name) =>
+            name.startsWith('.generated.ts.tslean-backup-') &&
+            readFileSync(join(temporaryRoot, name), 'utf8') === oldContents[0],
+        ),
+      ).toBe(true);
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('revalidates the complete published pair before recording its commit', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-pair-precommit-replacement-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    const oldContents = ['old output\n', 'old manifest\n'] as const;
+    const foreignContents = 'foreign output replacement\n';
+    writeFileSync(destinations[0].path, oldContents[0]);
+    writeFileSync(destinations[1].path, oldContents[1]);
+    let renames = 0;
+    let displacedOutputPath: string | undefined;
+    const filesystem: ArtifactFileSystem = {
+      ...nodeArtifactFileSystem,
+      rename(from, to) {
+        nodeArtifactFileSystem.rename(from, to);
+        renames += 1;
+        if (renames !== 4) return;
+        displacedOutputPath = `${destinations[0].path}.displaced`;
+        renameSync(destinations[0].path, displacedOutputPath);
+        writeFileSync(destinations[0].path, foreignContents);
+      },
+    };
+    try {
+      expect(() =>
+        publishArtifactPairWithFileSystem(destinations, ['new output\n', 'new manifest\n'], filesystem),
+      ).toThrowError(/artifact publication failed and rollback failed: artifact transaction file identity changed/u);
+      expect(displacedOutputPath).toBeDefined();
+      if (displacedOutputPath === undefined) throw new TypeError('output replacement was not injected');
+      expect(readFileSync(displacedOutputPath, 'utf8')).toBe('new output\n');
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe(foreignContents);
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
   test.each([
     ['write', 1, 'old'],
     ['write', 2, 'old'],
     ['write', 3, 'old'],
     ['write', 4, 'old'],
     ['write', 5, 'old'],
+    ['write', 6, 'old'],
+    ['write', 7, 'old'],
     ['rename', 1, 'old'],
     ['rename', 2, 'old'],
     ['rename', 3, 'old'],
@@ -387,8 +585,10 @@ describe('published Lean to TypeScript API', () => {
     ['fsync', 9, 'old'],
     ['fsync', 10, 'old'],
     ['fsync', 11, 'old'],
-    ['fsync', 12, 'new'],
-    ['fsync', 13, 'new'],
+    ['fsync', 12, 'old'],
+    ['fsync', 13, 'old'],
+    ['fsync', 14, 'new'],
+    ['fsync', 15, 'new'],
   ] as const)(
     'keeps a complete recoverable pair when %s operation %i fails',
     (operation, occurrence, expectedVersion) => {
@@ -422,19 +622,32 @@ describe('published Lean to TypeScript API', () => {
   );
 
   test.each([
+    ['write', 1, 'old'],
+    ['write', 2, 'old'],
+    ['write', 3, 'old'],
+    ['write', 4, 'old'],
+    ['write', 5, 'old'],
+    ['write', 6, 'old'],
+    ['write', 7, 'new'],
     ['rename', 1, 'old'],
     ['rename', 2, 'old'],
     ['rename', 3, 'old'],
     ['rename', 4, 'old'],
+    ['fsync', 1, 'old'],
+    ['fsync', 2, 'old'],
     ['fsync', 3, 'old'],
     ['fsync', 4, 'old'],
+    ['fsync', 5, 'old'],
+    ['fsync', 6, 'old'],
     ['fsync', 7, 'old'],
     ['fsync', 8, 'old'],
     ['fsync', 9, 'old'],
-    ['fsync', 10, 'new'],
-    ['fsync', 11, 'new'],
+    ['fsync', 10, 'old'],
+    ['fsync', 11, 'old'],
     ['fsync', 12, 'new'],
     ['fsync', 13, 'new'],
+    ['fsync', 14, 'new'],
+    ['fsync', 15, 'new'],
   ] as const)(
     'recovers a complete pair after a process crash immediately after %s operation %i',
     (operation, occurrence, expectedVersion) => {
@@ -459,6 +672,77 @@ describe('published Lean to TypeScript API', () => {
       }
     },
   );
+
+  test('recovers an identity-bound stage left by a crash before the prepared journal', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-prejournal-crash-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    const oldContents = ['old output\n', 'old manifest\n'] as const;
+    const finalContents = ['final output\n', 'final manifest\n'] as const;
+    writeFileSync(destinations[0].path, oldContents[0]);
+    writeFileSync(destinations[1].path, oldContents[1]);
+    try {
+      const crashed = crashArtifactTransaction(
+        temporaryRoot,
+        destinations,
+        ['abandoned output\n', 'abandoned manifest\n'],
+        'write',
+        2,
+      );
+      expect(crashed.signal).toBe('SIGKILL');
+      expect(transactionFiles(temporaryRoot).filter((name) => name.includes('.tslean-stage-'))).toHaveLength(1);
+
+      publishArtifactPairWithFileSystem(destinations, finalContents, nodeArtifactFileSystem);
+
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe(finalContents[0]);
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe(finalContents[1]);
+      expect(transactionFiles(temporaryRoot)).toEqual([]);
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('preserves every recorded pre-journal stage when any identity was replaced', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-prejournal-replacement-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    const oldContents = ['old output\n', 'old manifest\n'] as const;
+    const foreignContents = 'foreign stage replacement\n';
+    writeFileSync(destinations[0].path, oldContents[0]);
+    writeFileSync(destinations[1].path, oldContents[1]);
+    try {
+      const crashed = crashArtifactTransaction(
+        temporaryRoot,
+        destinations,
+        ['abandoned output\n', 'abandoned manifest\n'],
+        'write',
+        5,
+      );
+      expect(crashed.signal).toBe('SIGKILL');
+      const stageNames = transactionFiles(temporaryRoot).filter((name) => name.includes('.tslean-stage-'));
+      expect(stageNames).toHaveLength(2);
+      const outputStageName = stageNames.find((name) => name.startsWith('.generated.ts.tslean-stage-'));
+      const manifestStageName = stageNames.find((name) => name.startsWith('.generated.manifest.json.tslean-stage-'));
+      if (outputStageName === undefined || manifestStageName === undefined) {
+        throw new TypeError('crashed publisher did not leave both stages');
+      }
+      const outputStagePath = join(temporaryRoot, outputStageName);
+      const manifestStagePath = join(temporaryRoot, manifestStageName);
+      const displacedManifestStagePath = `${manifestStagePath}.displaced`;
+      renameSync(manifestStagePath, displacedManifestStagePath);
+      writeFileSync(manifestStagePath, foreignContents);
+
+      expect(() =>
+        publishArtifactPairWithFileSystem(destinations, ['final output\n', 'final manifest\n'], nodeArtifactFileSystem),
+      ).toThrowError(/artifact transaction file identity changed/u);
+
+      expect(readFileSync(outputStagePath, 'utf8')).toBe('abandoned output\n');
+      expect(readFileSync(manifestStagePath, 'utf8')).toBe(foreignContents);
+      expect(readFileSync(displacedManifestStagePath, 'utf8')).toBe('abandoned manifest\n');
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe(oldContents[0]);
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
 
   test('blocks a live contender, then recovers and publishes after the owner crashes', async () => {
     const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-contender-'));
@@ -733,11 +1017,11 @@ describe('published Lean to TypeScript API', () => {
         nodeArtifactFileSystem.fsync(descriptor);
         if (!replaceOnNextSynchronization) return;
         replaceOnNextSynchronization = false;
-        const lock: unknown = JSON.parse(readFileSync(lockPath, 'utf8'));
-        if (!isRecord(lock) || !isRecord(lock['owner'])) throw new TypeError('publication lock is invalid');
-        lock['owner']['transactionId'] = '00000000-0000-4000-8000-000000000000';
         const replacementPath = `${lockPath}.foreign`;
-        writeFileSync(replacementPath, `${JSON.stringify(lock)}\n`);
+        writeFileSync(
+          replacementPath,
+          reassignPublicationLock(readFileSync(lockPath, 'utf8'), '00000000-0000-4000-8000-000000000000'),
+        );
         renameSync(replacementPath, lockPath);
         foreignLock = readFileSync(lockPath);
       },
@@ -809,10 +1093,10 @@ describe('published Lean to TypeScript API', () => {
       );
       expect(crashed.signal).toBe('SIGKILL');
       const lockPath = join(temporaryRoot, `${transactionJournalFilename(destinations)}.lock`);
-      const lock: unknown = JSON.parse(readFileSync(lockPath, 'utf8'));
-      if (!isRecord(lock) || !isRecord(lock['owner'])) throw new TypeError('crash probe lock is invalid');
-      lock['owner']['transactionId'] = '00000000-0000-4000-8000-000000000000';
-      writeFileSync(lockPath, `${JSON.stringify(lock)}\n`);
+      writeFileSync(
+        lockPath,
+        reassignPublicationLock(readFileSync(lockPath, 'utf8'), '00000000-0000-4000-8000-000000000000'),
+      );
       const beforeOutput = readFileSync(destinations[0].path);
       const beforeManifest = existsSync(destinations[1].path) ? readFileSync(destinations[1].path) : undefined;
       const beforeTransactionFiles = transactionFiles(temporaryRoot).map(
@@ -887,11 +1171,14 @@ describe('published Lean to TypeScript API', () => {
 
   test.each([
     ['write', 5, 'old'],
+    ['write', 6, 'old'],
     ['fsync', 10, 'old'],
     ['rename', 4, 'old'],
-    ['write', 7, 'new'],
-    ['fsync', 15, 'new'],
-    ['fsync', 16, 'new'],
+    ['write', 7, 'old'],
+    ['write', 8, 'old'],
+    ['write', 9, 'new'],
+    ['fsync', 17, 'new'],
+    ['fsync', 18, 'new'],
   ] as const)(
     'keeps cross-directory publication recoverable when %s operation %i fails',
     (operation, occurrence, expectedVersion) => {
@@ -1638,6 +1925,23 @@ function startForeignPublicationLockReplacement(
   };
 }
 
+function reassignPublicationLock(source: string, transactionId: string): string {
+  if (!source.endsWith('\n')) throw new TypeError('publication lock is not newline terminated');
+  const lines = source.slice(0, -1).split('\n');
+  return `${lines
+    .map((line) => {
+      const record: unknown = JSON.parse(line);
+      if (!isRecord(record) || !isRecord(record['owner'])) {
+        throw new TypeError('publication lock record has no owner');
+      }
+      return JSON.stringify({
+        ...record,
+        owner: { ...record['owner'], transactionId },
+      });
+    })
+    .join('\n')}\n`;
+}
+
 function transactionJournalFilename(destinations: readonly [ArtifactDestination, ArtifactDestination]): string {
   const digest = createHash('sha256')
     .update(JSON.stringify(destinations.map((destination) => destination.canonicalPath).sort(compareCodePoints)))
@@ -1728,19 +2032,30 @@ async function collectChild(
   child: ReturnType<typeof spawn>,
 ): Promise<{ readonly signal: NodeJS.Signals | null; readonly status: number | null; readonly stderr: string }> {
   let stderr = '';
-  child.stderr?.setEncoding('utf8');
-  child.stderr?.on('data', (chunk: string) => {
-    stderr += chunk;
+  const stderrComplete = new Promise<void>((resolvePromise, rejectPromise) => {
+    const stream = child.stderr;
+    if (stream === null) {
+      resolvePromise();
+      return;
+    }
+    stream.setEncoding('utf8');
+    stream.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+    stream.once('error', rejectPromise);
+    stream.once('end', resolvePromise);
+    if (stream.readableEnded) resolvePromise();
   });
-  const result =
-    child.exitCode !== null || child.signalCode !== null
-      ? { signal: child.signalCode, status: child.exitCode }
-      : await new Promise<{ readonly signal: NodeJS.Signals | null; readonly status: number | null }>(
-          (resolvePromise, rejectPromise) => {
-            child.once('error', rejectPromise);
-            child.once('exit', (status, signal) => resolvePromise({ signal, status }));
-          },
-        );
+  const processComplete = new Promise<{ readonly signal: NodeJS.Signals | null; readonly status: number | null }>(
+    (resolvePromise, rejectPromise) => {
+      child.once('error', rejectPromise);
+      child.once('exit', (status, signal) => resolvePromise({ signal, status }));
+      if (child.exitCode !== null || child.signalCode !== null) {
+        resolvePromise({ signal: child.signalCode, status: child.exitCode });
+      }
+    },
+  );
+  const [result] = await Promise.all([processComplete, stderrComplete]);
   return { ...result, stderr };
 }
 

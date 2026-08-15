@@ -106,6 +106,23 @@ interface PublicationLockRecord {
   readonly owner: TransactionOwner;
 }
 
+interface PublicationLockStageRecord {
+  readonly schemaVersion: 1;
+  readonly owner: TransactionOwner;
+  readonly stage: UnjournaledStage;
+}
+
+interface PublicationLockState {
+  readonly owner: TransactionOwner;
+  readonly stages: readonly UnjournaledStage[];
+}
+
+interface UnjournaledStage {
+  readonly canonicalPath: string;
+  readonly stageName: string;
+  readonly stagedIdentity: SerializedIdentity;
+}
+
 interface StagedArtifact {
   readonly destination: BoundDestination;
   readonly stageName: string;
@@ -169,6 +186,7 @@ export function publishArtifactPairWithFileSystem(
   const staged: StagedArtifact[] = [];
   const journalName = transactionJournalName(bound);
   let durablyCommitted = false;
+  let preserveRecoveryEvidence = false;
   let removePublicationLockWhenFinished = false;
   try {
     publicationLock = acquirePublicationLock(bound, journalName, filesystem);
@@ -183,7 +201,7 @@ export function publishArtifactPairWithFileSystem(
         throw new TypeError('artifact transaction requires exactly two destinations and contents');
       }
       assertPublicationLockOwned(publicationLock, filesystem);
-      staged.push(stageArtifact(destination, artifactContents, filesystem));
+      staged.push(stageArtifact(destination, artifactContents, transactionOwner, publicationLock, filesystem));
     }
     const prepared = transactionJournal(staged, 'prepared', transactionOwner);
     writeJournalCopies(bound, journalName, prepared, publicationLock, filesystem);
@@ -194,16 +212,20 @@ export function publishArtifactPairWithFileSystem(
       assertPublicationLockOwned(publicationLock, filesystem);
       moveOriginalToBackup(artifact, filesystem);
     }
+    for (const artifact of staged) assertOriginalMoved(artifact, filesystem);
     for (const artifact of staged) {
       assertPublicationLockOwned(publicationLock, filesystem);
       moveStageToDestination(artifact, filesystem);
     }
+    for (const artifact of staged) assertPublishedArtifact(artifact, filesystem);
     syncDirectories(bound, filesystem);
+    for (const artifact of staged) assertPublishedArtifact(artifact, filesystem);
     for (const destination of bound) assertBoundRoute(destination, filesystem);
     const committed = { ...prepared, state: 'committed' } as const;
     for (const directory of uniqueDirectories(bound)) {
       writeBoundFile(directory, committedJournalName(journalName), encodeJournal(committed), filesystem);
       filesystem.fsync(directory.directoryDescriptor);
+      for (const artifact of staged) assertPublishedArtifact(artifact, filesystem);
       durablyCommitted = true;
     }
     assertPublicationLockOwned(publicationLock, filesystem);
@@ -211,13 +233,15 @@ export function publishArtifactPairWithFileSystem(
     removePublicationLockWhenFinished = true;
   } catch (error: unknown) {
     if (publicationLock === undefined) throw error;
-    if (!publicationLockIsOwned(publicationLock, filesystem)) {
+    const ownedPublicationLock = publicationLock;
+    if (!publicationLockIsOwned(ownedPublicationLock, filesystem)) {
       throw new TypeError('artifact publication lock identity changed', { cause: error });
     }
     if (durablyCommitted) {
+      for (const artifact of staged) assertPublishedArtifact(artifact, filesystem);
       try {
         if (transactionOwner !== undefined) {
-          finishCommittedTransaction(staged, bound, journalName, transactionOwner, publicationLock, filesystem);
+          finishCommittedTransaction(staged, bound, journalName, transactionOwner, ownedPublicationLock, filesystem);
           removePublicationLockWhenFinished = true;
         }
       } catch (cleanupError: unknown) {
@@ -225,20 +249,38 @@ export function publishArtifactPairWithFileSystem(
       }
       return;
     }
-    const rollbackError = rollback(staged, bound, publicationLock, filesystem);
+    const rollbackError = rollback(staged, bound, ownedPublicationLock, filesystem);
+    let unjournaledCleanupError: Error | undefined;
+    if (rollbackError === undefined && transactionOwner !== undefined) {
+      try {
+        recoverUnjournaledStages(bound, ownedPublicationLock, filesystem);
+      } catch (cleanupError: unknown) {
+        unjournaledCleanupError = cleanupError instanceof Error ? cleanupError : new TypeError(String(cleanupError));
+      }
+    }
     const journalCleanupError =
-      transactionOwner === undefined
-        ? undefined
-        : removeCurrentJournalCopies(bound, journalName, transactionOwner, publicationLock, filesystem);
-    if (rollbackError !== undefined || journalCleanupError !== undefined) {
-      const detail = rollbackError?.message ?? journalCleanupError?.message ?? 'unknown recovery failure';
+      rollbackError === undefined && unjournaledCleanupError === undefined && transactionOwner !== undefined
+        ? removeCurrentJournalCopies(bound, journalName, transactionOwner, ownedPublicationLock, filesystem)
+        : undefined;
+    if (rollbackError !== undefined || journalCleanupError !== undefined || unjournaledCleanupError !== undefined) {
+      preserveRecoveryEvidence = true;
+      const detail =
+        rollbackError?.message ??
+        journalCleanupError?.message ??
+        unjournaledCleanupError?.message ??
+        'unknown recovery failure';
       throw new TypeError(`artifact publication failed and rollback failed: ${detail}`, { cause: error });
     }
     removePublicationLockWhenFinished = transactionOwner !== undefined;
     throw error;
   } finally {
     try {
-      if (!durablyCommitted && publicationLock !== undefined && publicationLockIsOwned(publicationLock, filesystem)) {
+      if (
+        !durablyCommitted &&
+        !preserveRecoveryEvidence &&
+        publicationLock !== undefined &&
+        publicationLockIsOwned(publicationLock, filesystem)
+      ) {
         for (const artifact of staged) cleanupUnpublishedFiles(artifact, publicationLock, filesystem);
       }
       if (
@@ -315,29 +357,46 @@ function acquirePublicationLock(
   }
 }
 
-function readPublicationLockOwner(
+function readPublicationLockState(
   publicationLock: PublicationLock,
   filesystem: ArtifactFileSystem,
-): TransactionOwner | undefined {
+): PublicationLockState | undefined {
   assertPublicationLockOwned(publicationLock, filesystem);
   const source = filesystem.read(childPath(publicationLock.destination, publicationLock.name));
   assertPublicationLockOwned(publicationLock, filesystem);
   if (source.length === 0) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(source);
-  } catch (error: unknown) {
-    throw new TypeError('artifact publication lock record is corrupt', { cause: error });
-  }
+  if (!source.endsWith('\n')) throw new TypeError('artifact publication lock record is corrupt');
+  const records = source.slice(0, -1).split('\n').map(decodePublicationLockLine);
+  const first = records[0];
   if (
-    !isRecord(parsed) ||
-    !hasExactKeys(parsed, ['owner', 'schemaVersion']) ||
-    parsed['schemaVersion'] !== 1 ||
-    !isTransactionOwner(parsed['owner'])
+    first === undefined ||
+    !isRecord(first) ||
+    !hasExactKeys(first, ['owner', 'schemaVersion']) ||
+    first['schemaVersion'] !== 1 ||
+    !isTransactionOwner(first['owner'])
   ) {
     throw new TypeError('artifact publication lock record is invalid');
   }
-  return parsed['owner'];
+  const owner = first['owner'];
+  const stages: UnjournaledStage[] = [];
+  for (const record of records.slice(1)) {
+    if (
+      !isRecord(record) ||
+      !hasExactKeys(record, ['owner', 'schemaVersion', 'stage']) ||
+      record['schemaVersion'] !== 1 ||
+      !isTransactionOwner(record['owner']) ||
+      !sameTransactionOwner(record['owner'], owner)
+    ) {
+      throw new TypeError('artifact publication lock stage record is invalid');
+    }
+    const stage = decodeUnjournaledStage(record['stage']);
+    if (stages.some((entry) => entry.canonicalPath === stage.canonicalPath || entry.stageName === stage.stageName)) {
+      throw new TypeError('artifact publication lock has duplicate stage records');
+    }
+    stages.push(stage);
+  }
+  if (stages.length > 2) throw new TypeError('artifact publication lock has too many stage records');
+  return { owner, stages };
 }
 
 function writePublicationLockOwner(
@@ -351,6 +410,26 @@ function writePublicationLockOwner(
   filesystem.write(publicationLock.descriptor, `${JSON.stringify(record)}\n`);
   filesystem.fsync(publicationLock.descriptor);
   filesystem.fsync(publicationLock.destination.directoryDescriptor);
+  assertPublicationLockOwned(publicationLock, filesystem);
+}
+
+function recordUnjournaledStage(
+  publicationLock: PublicationLock,
+  owner: TransactionOwner,
+  stage: UnjournaledStage,
+  filesystem: ArtifactFileSystem,
+): void {
+  const state = readPublicationLockState(publicationLock, filesystem);
+  if (state === undefined || !sameTransactionOwner(state.owner, owner)) {
+    throw new TypeError('artifact publication lock owner changed');
+  }
+  if (state.stages.length >= 2 || state.stages.some((entry) => entry.canonicalPath === stage.canonicalPath)) {
+    throw new TypeError('artifact publication lock cannot record another stage');
+  }
+  const record: PublicationLockStageRecord = { schemaVersion: 1, owner, stage };
+  assertPublicationLockOwned(publicationLock, filesystem);
+  filesystem.write(publicationLock.descriptor, `${JSON.stringify(record)}\n`);
+  filesystem.fsync(publicationLock.descriptor);
   assertPublicationLockOwned(publicationLock, filesystem);
 }
 
@@ -443,12 +522,25 @@ function bindDestination(destination: ArtifactDestination, filesystem: ArtifactF
 function stageArtifact(
   destination: BoundDestination,
   contents: string,
+  owner: TransactionOwner,
+  publicationLock: PublicationLock,
   filesystem: ArtifactFileSystem,
 ): StagedArtifact {
   assertBoundRoute(destination, filesystem);
   const stageName = transactionName(destination.filename, 'stage');
   const backupName = transactionName(destination.filename, 'backup');
-  const stagedIdentity = writeBoundFile(destination, stageName, contents, filesystem);
+  const stagedIdentity = writeBoundFile(destination, stageName, contents, filesystem, (createdIdentity) => {
+    recordUnjournaledStage(
+      publicationLock,
+      owner,
+      {
+        canonicalPath: destination.canonicalPath,
+        stageName,
+        stagedIdentity: serializeIdentity(createdIdentity),
+      },
+      filesystem,
+    );
+  });
   return {
     destination,
     stageName,
@@ -465,6 +557,7 @@ function writeBoundFile(
   name: string,
   contents: string,
   filesystem: ArtifactFileSystem,
+  afterOpen?: (identity: FileIdentity) => void,
 ): FileIdentity {
   const path = childPath(destination, name);
   const descriptor = filesystem.open(
@@ -472,10 +565,18 @@ function writeBoundFile(
     constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | platformConstant('O_NOFOLLOW'),
     0o666,
   );
+  let openedIdentity: FileIdentity | undefined;
   try {
+    const metadata = filesystem.fstat(descriptor);
+    if (!metadata.isFile()) throw new TypeError('artifact transaction target must be a regular file');
+    openedIdentity = identity(metadata);
+    afterOpen?.(openedIdentity);
     filesystem.write(descriptor, contents);
     filesystem.fsync(descriptor);
     const writtenIdentity = identity(filesystem.fstat(descriptor));
+    if (!sameIdentity(writtenIdentity, openedIdentity)) {
+      throw new TypeError('artifact transaction file descriptor identity changed');
+    }
     filesystem.close(descriptor);
     return writtenIdentity;
   } catch (error: unknown) {
@@ -484,7 +585,7 @@ function writeBoundFile(
     } catch (closeError: unknown) {
       void closeError;
     }
-    removeKnownFile(destination, name, fileIdentity(path, filesystem), filesystem);
+    removeKnownFile(destination, name, openedIdentity, filesystem);
     throw error;
   }
 }
@@ -512,20 +613,40 @@ function assertDestinationUnchanged(artifact: StagedArtifact, filesystem: Artifa
 }
 
 function moveOriginalToBackup(artifact: StagedArtifact, filesystem: ArtifactFileSystem): void {
-  if (artifact.originalIdentity === undefined) return;
+  if (artifact.originalIdentity === undefined) {
+    assertFileAbsent(artifact.destination, artifact.destination.filename, 'artifact destination changed', filesystem);
+    return;
+  }
+  assertKnownFile(artifact.destination, artifact.destination.filename, artifact.originalIdentity, filesystem);
+  assertFileAbsent(artifact.destination, artifact.backupName, 'artifact backup changed', filesystem);
   filesystem.rename(
     childPath(artifact.destination, artifact.destination.filename),
     childPath(artifact.destination, artifact.backupName),
   );
   artifact.originalMoved = true;
+  assertOriginalMoved(artifact, filesystem);
+}
+
+function assertOriginalMoved(artifact: StagedArtifact, filesystem: ArtifactFileSystem): void {
+  assertFileAbsent(artifact.destination, artifact.destination.filename, 'artifact destination changed', filesystem);
+  if (artifact.originalIdentity !== undefined) {
+    assertKnownFile(artifact.destination, artifact.backupName, artifact.originalIdentity, filesystem);
+  }
 }
 
 function moveStageToDestination(artifact: StagedArtifact, filesystem: ArtifactFileSystem): void {
+  assertKnownFile(artifact.destination, artifact.stageName, artifact.stagedIdentity, filesystem);
+  assertFileAbsent(artifact.destination, artifact.destination.filename, 'artifact destination changed', filesystem);
   filesystem.rename(
     childPath(artifact.destination, artifact.stageName),
     childPath(artifact.destination, artifact.destination.filename),
   );
   artifact.stagedMoved = true;
+  assertPublishedArtifact(artifact, filesystem);
+}
+
+function assertPublishedArtifact(artifact: StagedArtifact, filesystem: ArtifactFileSystem): void {
+  assertKnownFile(artifact.destination, artifact.destination.filename, artifact.stagedIdentity, filesystem);
 }
 
 function rollback(
@@ -548,10 +669,19 @@ function rollback(
           throw new TypeError('artifact rollback backup identity changed');
         }
         assertPublicationLockOwned(publicationLock, filesystem);
+        assertFileAbsent(
+          artifact.destination,
+          artifact.destination.filename,
+          'artifact rollback destination changed',
+          filesystem,
+        );
         filesystem.rename(
           childPath(artifact.destination, artifact.backupName),
           childPath(artifact.destination, artifact.destination.filename),
         );
+        if (artifact.originalIdentity !== undefined) {
+          assertKnownFile(artifact.destination, artifact.destination.filename, artifact.originalIdentity, filesystem);
+        }
         artifact.originalMoved = false;
       }
     }
@@ -586,9 +716,11 @@ function finishCommittedTransaction(
 ): void {
   for (const artifact of artifacts) {
     assertPublicationLockOwned(publicationLock, filesystem);
+    assertPublishedArtifact(artifact, filesystem);
     removeKnownFile(artifact.destination, artifact.backupName, artifact.originalIdentity, filesystem);
     artifact.originalMoved = false;
   }
+  for (const artifact of artifacts) assertPublishedArtifact(artifact, filesystem);
   assertPublicationLockOwned(publicationLock, filesystem);
   syncDirectories(destinations, filesystem);
   const journalCleanupError = removeCurrentJournalCopies(destinations, journalName, owner, publicationLock, filesystem);
@@ -638,7 +770,10 @@ function recoverBoundArtifactPair(
       }
       return { ...copy, identity: journalIdentity };
     });
-  if (copies.length === 0) return;
+  if (copies.length === 0) {
+    recoverUnjournaledStages(destinations, publicationLock, filesystem);
+    return;
+  }
   const journals = copies.map(({ path }) => decodeJournal(filesystem.read(path)));
   const first = journals[0];
   if (first === undefined) throw new TypeError('artifact transaction journal disappeared');
@@ -652,7 +787,7 @@ function recoverBoundArtifactPair(
       throw new TypeError('artifact transaction journal identity changed');
     }
   }
-  const lockOwner = readPublicationLockOwner(publicationLock, filesystem);
+  const lockOwner = readPublicationLockState(publicationLock, filesystem)?.owner;
   if (lockOwner === undefined) {
     if (transactionOwnerIsLive(first.owner)) {
       throw new TypeError('artifact transaction journal belongs to a live foreign publisher');
@@ -670,6 +805,38 @@ function recoverBoundArtifactPair(
   syncDirectories(destinations, filesystem);
   const cleanupError = removeCurrentJournalCopies(destinations, journalName, first.owner, publicationLock, filesystem);
   if (cleanupError !== undefined) throw cleanupError;
+  syncDirectories(destinations, filesystem);
+}
+
+function recoverUnjournaledStages(
+  destinations: readonly BoundDestination[],
+  publicationLock: PublicationLock,
+  filesystem: ArtifactFileSystem,
+): void {
+  const state = readPublicationLockState(publicationLock, filesystem);
+  if (state === undefined || state.stages.length === 0) return;
+  const recoverable: {
+    readonly destination: BoundDestination;
+    readonly identity: FileIdentity;
+    readonly name: string;
+  }[] = [];
+  for (const stage of state.stages) {
+    const destination = destinations.find((entry) => entry.canonicalPath === stage.canonicalPath);
+    if (destination === undefined || !isTransactionName(stage.stageName, 'stage', destination.filename)) {
+      throw new TypeError('artifact publication lock names an invalid stage');
+    }
+    const expected = deserializeIdentity(stage.stagedIdentity);
+    const actual = fileIdentity(childPath(destination, stage.stageName), filesystem);
+    if (actual === undefined) continue;
+    if (!sameIdentity(actual, expected)) {
+      throw new TypeError('artifact transaction file identity changed');
+    }
+    recoverable.push({ destination, identity: expected, name: stage.stageName });
+  }
+  for (const stage of recoverable) {
+    assertPublicationLockOwned(publicationLock, filesystem);
+    removeKnownFile(stage.destination, stage.name, stage.identity, filesystem);
+  }
   syncDirectories(destinations, filesystem);
 }
 
@@ -757,9 +924,23 @@ function recoverArtifact(
   }
   if (sameOptionalIdentity(artifact.destinationIdentity, artifact.stagedIdentity)) {
     assertPublicationLockOwned(publicationLock, filesystem);
+    assertKnownFile(artifact.destination, artifact.destination.filename, artifact.stagedIdentity, filesystem);
+    assertFileAbsent(
+      artifact.destination,
+      artifact.journal.stageName,
+      'prepared artifact transaction stage path changed',
+      filesystem,
+    );
     filesystem.rename(
       childPath(artifact.destination, artifact.destination.filename),
       childPath(artifact.destination, artifact.journal.stageName),
+    );
+    assertKnownFile(artifact.destination, artifact.journal.stageName, artifact.stagedIdentity, filesystem);
+    assertFileAbsent(
+      artifact.destination,
+      artifact.destination.filename,
+      'prepared artifact transaction destination changed',
+      filesystem,
     );
   }
   if (
@@ -767,10 +948,18 @@ function recoverArtifact(
     sameOptionalIdentity(artifact.backupIdentity, artifact.originalIdentity)
   ) {
     assertPublicationLockOwned(publicationLock, filesystem);
+    assertKnownFile(artifact.destination, artifact.journal.backupName, artifact.originalIdentity, filesystem);
+    assertFileAbsent(
+      artifact.destination,
+      artifact.destination.filename,
+      'prepared artifact transaction destination changed',
+      filesystem,
+    );
     filesystem.rename(
       childPath(artifact.destination, artifact.journal.backupName),
       childPath(artifact.destination, artifact.destination.filename),
     );
+    assertKnownFile(artifact.destination, artifact.destination.filename, artifact.originalIdentity, filesystem);
   }
   assertPublicationLockOwned(publicationLock, filesystem);
   removeKnownFile(artifact.destination, artifact.journal.stageName, artifact.stagedIdentity, filesystem);
@@ -778,6 +967,31 @@ function recoverArtifact(
 
 function encodeJournal(journal: TransactionJournal): string {
   return `${JSON.stringify(journal)}\n`;
+}
+
+function decodePublicationLockLine(source: string): unknown {
+  try {
+    return JSON.parse(source);
+  } catch (error: unknown) {
+    throw new TypeError('artifact publication lock record is corrupt', { cause: error });
+  }
+}
+
+function decodeUnjournaledStage(value: unknown): UnjournaledStage {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['canonicalPath', 'stageName', 'stagedIdentity']) ||
+    typeof value['canonicalPath'] !== 'string' ||
+    typeof value['stageName'] !== 'string' ||
+    !isSerializedIdentity(value['stagedIdentity'])
+  ) {
+    throw new TypeError('artifact publication lock stage is invalid');
+  }
+  return {
+    canonicalPath: value['canonicalPath'],
+    stageName: value['stageName'],
+    stagedIdentity: value['stagedIdentity'],
+  };
 }
 
 function decodeJournal(source: string): TransactionJournal {
@@ -1004,6 +1218,27 @@ function removeKnownFile(
   if (actual === undefined) return;
   if (!sameIdentity(actual, expected)) throw new TypeError('artifact transaction file identity changed');
   filesystem.remove(path);
+}
+
+function assertKnownFile(
+  destination: BoundDestination,
+  name: string,
+  expected: FileIdentity,
+  filesystem: ArtifactFileSystem,
+): void {
+  const actual = fileIdentity(childPath(destination, name), filesystem);
+  if (actual === undefined || !sameIdentity(actual, expected)) {
+    throw new TypeError('artifact transaction file identity changed');
+  }
+}
+
+function assertFileAbsent(
+  destination: BoundDestination,
+  name: string,
+  message: string,
+  filesystem: ArtifactFileSystem,
+): void {
+  if (fileIdentity(childPath(destination, name), filesystem) !== undefined) throw new TypeError(message);
 }
 
 function assertBoundRoute(destination: BoundDestination, filesystem: ArtifactFileSystem): void {

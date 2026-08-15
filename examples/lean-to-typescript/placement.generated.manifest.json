@@ -6,7 +6,7 @@
     "TSLean.Examples.Placement.choosePlacement"
   ],
   "semanticIrSha256": "sha256:1eed8008e7d38c37b789a16c221ff25eeb20e23d49eddd9a18d22a2c0a785cc7",
-  "inputClosureSha256": "sha256:2d856d79f5edad892a5402de023112c7b4ea85d1e1a0a7237566b374155f6812",
+  "inputClosureSha256": "sha256:b40b480ad463da1c4c8608b2ef2d4a2fa99fd50822fd9f0cbf830c0b70d787e2",
   "generatedBodySha256": "sha256:748344172b982c1d98064e3a40ae88ab88edfc304bae5f19d0bc684c38b9bd57",
   "inputs": [
     {
@@ -42,7 +42,7 @@
     {
       "kind": "compiler",
       "identity": "compiler:artifact-transaction",
-      "sha256": "sha256:065cbbd1f4735335ea37114149ea35d6f94c051476a54919265e8320231cf085"
+      "sha256": "sha256:b041d85ba6c49d0266c035e928c0d810c570067e236878dc078ce6fb4f1e3b8b"
     },
     {
       "kind": "compiler",
