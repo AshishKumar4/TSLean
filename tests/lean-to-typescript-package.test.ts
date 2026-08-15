@@ -13,6 +13,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,12 +28,67 @@ import {
   type ArtifactDestination,
   type ArtifactFileSystem,
 } from '../src/lean-to-typescript/artifact-transaction.js';
+import { runLeanToTypeScriptCli } from '../src/lean-to-typescript/cli.js';
+import { compileLeanToTypeScriptWithInputs } from '../src/lean-to-typescript/compiler.js';
+import { compareCodePoints } from '../src/lean-to-typescript/ordering.js';
 import { createLeanProjectFixture } from './helpers/lean-project-fixture.js';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const PACKED_COMPILER_TIMEOUT_MS = 60_000;
 
 describe('published Lean to TypeScript API', () => {
+  test('rejects unsupported platforms before compiler or publication mutation', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-unsupported-platform-'));
+    const nonexistentProjectRoot = join(temporaryRoot, 'project');
+    const outputRoot = join(temporaryRoot, 'output');
+    const destinations = transactionDestinations(outputRoot);
+    const unsupportedPlatform = { name: 'darwin' } as const;
+    try {
+      expect(() =>
+        compileLeanToTypeScriptWithInputs(
+          {
+            projectRoot: nonexistentProjectRoot,
+            moduleName: 'Fixture',
+            sourcePath: join(nonexistentProjectRoot, 'Fixture.lean'),
+            declarations: ['Fixture.decide'],
+          },
+          unsupportedPlatform,
+        ),
+      ).toThrowError(/Lean-to-TypeScript v1 requires Linux/u);
+      expect(() =>
+        publishArtifactPairWithFileSystem(
+          destinations,
+          ['generated output\n', 'generated manifest\n'],
+          nodeArtifactFileSystem,
+          unsupportedPlatform,
+        ),
+      ).toThrowError(/Lean-to-TypeScript v1 requires Linux/u);
+      expect(() =>
+        runLeanToTypeScriptCli(
+          [
+            '--project-root',
+            nonexistentProjectRoot,
+            '--module',
+            'Fixture',
+            '--source',
+            join(nonexistentProjectRoot, 'Fixture.lean'),
+            '--declaration',
+            'Fixture.decide',
+            '--output',
+            destinations[0].path,
+            '--manifest',
+            destinations[1].path,
+          ],
+          unsupportedPlatform,
+        ),
+      ).toThrowError(/Lean-to-TypeScript v1 requires Linux/u);
+      expect(existsSync(nonexistentProjectRoot)).toBe(false);
+      expect(existsSync(outputRoot)).toBe(false);
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
   test('rejects aliased artifact destinations before compilation without modifying existing bytes', () => {
     const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-cli-destinations-'));
     const destinationPath = join(temporaryRoot, 'artifact.ts');
@@ -143,6 +199,57 @@ describe('published Lean to TypeScript API', () => {
       }
     },
   );
+
+  test.each([1, 2, 3])('retries recovery after the recovery process crashes on rename %i', (occurrence) => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-recovery-crash-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    const oldContents = ['old output\n', 'old manifest\n'] as const;
+    writeFileSync(destinations[0].path, oldContents[0]);
+    writeFileSync(destinations[1].path, oldContents[1]);
+    try {
+      const publisher = crashArtifactTransaction(
+        temporaryRoot,
+        destinations,
+        ['new output\n', 'new manifest\n'],
+        'rename',
+        3,
+      );
+      expect(publisher.signal).toBe('SIGKILL');
+      const recovery = crashArtifactRecovery(temporaryRoot, destinations, 'rename', occurrence);
+      expect(recovery.signal).toBe('SIGKILL');
+
+      recoverArtifactPairWithFileSystem(destinations, nodeArtifactFileSystem);
+
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe(oldContents[0]);
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
+      expect(transactionFiles(temporaryRoot)).toEqual([]);
+      expect(readdirSync(temporaryRoot).filter((name) => name.endsWith('.lock'))).toEqual([]);
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  test.each([1, 2, 3, 4])('retries committed recovery after removal %i crashes', (occurrence) => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-committed-recovery-crash-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    const newContents = ['new output\n', 'new manifest\n'] as const;
+    writeFileSync(destinations[0].path, 'old output\n');
+    writeFileSync(destinations[1].path, 'old manifest\n');
+    try {
+      const publisher = crashArtifactTransaction(temporaryRoot, destinations, newContents, 'fsync', 10);
+      expect(publisher.signal).toBe('SIGKILL');
+      const recovery = crashArtifactRecovery(temporaryRoot, destinations, 'remove', occurrence);
+      expect(recovery.signal).toBe('SIGKILL');
+
+      recoverArtifactPairWithFileSystem(destinations, nodeArtifactFileSystem);
+
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe(newContents[0]);
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe(newContents[1]);
+      expect(transactionFiles(temporaryRoot)).toEqual([]);
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
 
   test.each(['--output', '--manifest'] as const)(
     'rejects an existing directory as %s before compilation without modifying the companion artifact',
@@ -264,6 +371,7 @@ describe('published Lean to TypeScript API', () => {
     ['write', 2, 'old'],
     ['write', 3, 'old'],
     ['write', 4, 'old'],
+    ['write', 5, 'old'],
     ['rename', 1, 'old'],
     ['rename', 2, 'old'],
     ['rename', 3, 'old'],
@@ -275,8 +383,12 @@ describe('published Lean to TypeScript API', () => {
     ['fsync', 5, 'old'],
     ['fsync', 6, 'old'],
     ['fsync', 7, 'old'],
-    ['fsync', 8, 'new'],
-    ['fsync', 9, 'new'],
+    ['fsync', 8, 'old'],
+    ['fsync', 9, 'old'],
+    ['fsync', 10, 'old'],
+    ['fsync', 11, 'old'],
+    ['fsync', 12, 'new'],
+    ['fsync', 13, 'new'],
   ] as const)(
     'keeps a complete recoverable pair when %s operation %i fails',
     (operation, occurrence, expectedVersion) => {
@@ -316,11 +428,13 @@ describe('published Lean to TypeScript API', () => {
     ['rename', 4, 'old'],
     ['fsync', 3, 'old'],
     ['fsync', 4, 'old'],
-    ['fsync', 5, 'old'],
-    ['fsync', 6, 'new'],
-    ['fsync', 7, 'new'],
-    ['fsync', 8, 'new'],
-    ['fsync', 9, 'new'],
+    ['fsync', 7, 'old'],
+    ['fsync', 8, 'old'],
+    ['fsync', 9, 'old'],
+    ['fsync', 10, 'new'],
+    ['fsync', 11, 'new'],
+    ['fsync', 12, 'new'],
+    ['fsync', 13, 'new'],
   ] as const)(
     'recovers a complete pair after a process crash immediately after %s operation %i',
     (operation, occurrence, expectedVersion) => {
@@ -345,6 +459,379 @@ describe('published Lean to TypeScript API', () => {
       }
     },
   );
+
+  test('blocks a live contender, then recovers and publishes after the owner crashes', async () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-contender-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    const oldContents = ['old output\n', 'old manifest\n'] as const;
+    const newContents = ['new output\n', 'new manifest\n'] as const;
+    writeFileSync(destinations[0].path, oldContents[0]);
+    writeFileSync(destinations[1].path, oldContents[1]);
+    const owner = startPausedCrashingArtifactTransaction(temporaryRoot, destinations, newContents);
+    try {
+      await waitForPath(owner.readyPath, owner.child);
+      const contender = startObservedArtifactTransaction(temporaryRoot, destinations, [
+        'contender output\n',
+        'contender manifest\n',
+      ]);
+      await waitForPath(contender.attemptedPath, contender.child);
+      await waitForProcessTurn();
+      expect(existsSync(contender.acquiredPath)).toBe(false);
+      expect(contender.child.exitCode).toBe(null);
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe(oldContents[0]);
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
+      writeFileSync(owner.releasePath, 'continue\n');
+      const crashed = await collectChild(owner.child);
+      expect(crashed.signal).toBe('SIGKILL');
+      const published = await collectChild(contender.child);
+      expect(published.status).toBe(0);
+      expect(readFileSync(contender.acquiredPath, 'utf8')).toBe('1\n');
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe('contender output\n');
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe('contender manifest\n');
+      expect(transactionFiles(temporaryRoot)).toEqual([]);
+    } finally {
+      writeFileSync(owner.releasePath, 'cleanup\n');
+      if (owner.child.exitCode === null && owner.child.signalCode === null) {
+        owner.child.kill('SIGKILL');
+        await collectChild(owner.child);
+      }
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  test.each([
+    ['same-directory order', false],
+    ['reversed cross-directory order', true],
+  ] as const)(
+    'rebinds a blocked contender after a successful owner removes the lock in %s',
+    async (_name, crossDirectory) => {
+      const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-successful-handoff-'));
+      const outputRoot = crossDirectory ? join(temporaryRoot, 'z-output') : temporaryRoot;
+      const manifestRoot = crossDirectory ? join(temporaryRoot, 'a-manifest') : outputRoot;
+      if (crossDirectory) {
+        mkdirSync(outputRoot);
+        mkdirSync(manifestRoot);
+      }
+      const destinations = transactionDestinations(outputRoot, manifestRoot);
+      const contenderDestinations = crossDirectory ? ([destinations[1], destinations[0]] as const) : destinations;
+      const contenderContents = crossDirectory
+        ? (['contender manifest\n', 'contender output\n'] as const)
+        : (['contender output\n', 'contender manifest\n'] as const);
+      writeFileSync(destinations[0].path, 'old output\n');
+      writeFileSync(destinations[1].path, 'old manifest\n');
+      const owner = startPausedCrashingArtifactTransaction(
+        temporaryRoot,
+        destinations,
+        ['owner output\n', 'owner manifest\n'],
+        false,
+      );
+      try {
+        await waitForPath(owner.readyPath, owner.child);
+        const contender = startObservedArtifactTransaction(temporaryRoot, contenderDestinations, contenderContents);
+        await waitForPath(contender.attemptedPath, contender.child);
+        expect(readFileSync(contender.attemptedPath, 'utf8')).toBe('1\n');
+        await waitForProcessTurn();
+        expect(existsSync(contender.acquiredPath)).toBe(false);
+        expect(contender.child.exitCode).toBe(null);
+
+        writeFileSync(owner.releasePath, 'continue\n');
+        const firstPublication = await collectChild(owner.child);
+        expect(firstPublication.status).toBe(0);
+        const secondPublication = await collectChild(contender.child);
+        expect(secondPublication.status).toBe(0);
+        expect(readFileSync(contender.acquiredPath, 'utf8')).toBe('2\n');
+        expect(readFileSync(destinations[0].path, 'utf8')).toBe('contender output\n');
+        expect(readFileSync(destinations[1].path, 'utf8')).toBe('contender manifest\n');
+        expect([...transactionFiles(outputRoot), ...transactionFiles(manifestRoot)]).toEqual([]);
+        expect(
+          [outputRoot, manifestRoot].flatMap((root) => readdirSync(root).filter((name) => name.endsWith('.lock'))),
+        ).toEqual([]);
+      } finally {
+        writeFileSync(owner.releasePath, 'cleanup\n');
+        if (owner.child.exitCode === null && owner.child.signalCode === null) {
+          owner.child.kill('SIGKILL');
+          await collectChild(owner.child);
+        }
+        rmSync(temporaryRoot, { force: true, recursive: true });
+      }
+    },
+  );
+
+  test('serializes a cross-directory pair independent of destination order', async () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-cross-directory-contender-'));
+    const outputRoot = join(temporaryRoot, 'output');
+    const manifestRoot = join(temporaryRoot, 'manifest');
+    mkdirSync(outputRoot);
+    mkdirSync(manifestRoot);
+    const destinations = transactionDestinations(outputRoot, manifestRoot);
+    const reversedDestinations = [destinations[1], destinations[0]] as const;
+    const oldContents = ['old output\n', 'old manifest\n'] as const;
+    writeFileSync(destinations[0].path, oldContents[0]);
+    writeFileSync(destinations[1].path, oldContents[1]);
+    const owner = startPausedCrashingArtifactTransaction(temporaryRoot, destinations, [
+      'new output\n',
+      'new manifest\n',
+    ]);
+    try {
+      await waitForPath(owner.readyPath, owner.child);
+
+      const contender = startObservedArtifactTransaction(temporaryRoot, reversedDestinations, [
+        'contender manifest\n',
+        'contender output\n',
+      ]);
+      await waitForPath(contender.attemptedPath, contender.child);
+      await waitForProcessTurn();
+      expect(existsSync(contender.acquiredPath)).toBe(false);
+      expect(contender.child.exitCode).toBe(null);
+      writeFileSync(owner.releasePath, 'continue\n');
+      const crashed = await collectChild(owner.child);
+      expect(crashed.signal).toBe('SIGKILL');
+      const published = await collectChild(contender.child);
+      expect(published.status).toBe(0);
+      expect(readFileSync(contender.acquiredPath, 'utf8')).toBe('1\n');
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe('contender output\n');
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe('contender manifest\n');
+      expect([...transactionFiles(outputRoot), ...transactionFiles(manifestRoot)]).toEqual([]);
+    } finally {
+      writeFileSync(owner.releasePath, 'cleanup\n');
+      if (owner.child.exitCode === null && owner.child.signalCode === null) {
+        owner.child.kill('SIGKILL');
+        await collectChild(owner.child);
+      }
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('fails closed when a blocked contender wakes after a foreign process replaces the lock path', async () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-foreign-lock-handoff-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    const oldContents = ['old output\n', 'old manifest\n'] as const;
+    writeFileSync(destinations[0].path, oldContents[0]);
+    writeFileSync(destinations[1].path, oldContents[1]);
+    const owner = startPausedCrashingArtifactTransaction(
+      temporaryRoot,
+      destinations,
+      ['owner output\n', 'owner manifest\n'],
+      false,
+    );
+    let replacement: ReturnType<typeof startForeignPublicationLockReplacement> | undefined;
+    try {
+      await waitForPath(owner.readyPath, owner.child);
+      const contender = startObservedArtifactTransaction(temporaryRoot, destinations, [
+        'contender output\n',
+        'contender manifest\n',
+      ]);
+      await waitForPath(contender.attemptedPath, contender.child);
+      expect(readFileSync(contender.attemptedPath, 'utf8')).toBe('1\n');
+      await waitForProcessTurn();
+      expect(existsSync(contender.acquiredPath)).toBe(false);
+
+      const lockPath = join(temporaryRoot, `${transactionJournalFilename(destinations)}.lock`);
+      replacement = startForeignPublicationLockReplacement(temporaryRoot, lockPath);
+      await waitForPath(replacement.readyPath, replacement.child);
+      const foreignLock = readFileSync(lockPath);
+      const transactionState = transactionFiles(temporaryRoot).map(
+        (name) => [name, readFileSync(join(temporaryRoot, name))] as const,
+      );
+
+      writeFileSync(owner.releasePath, 'continue\n');
+      const displacedOwner = await collectChild(owner.child);
+      expect(displacedOwner.status).not.toBe(0);
+      expect(displacedOwner.stderr).toMatch(/artifact publication lock identity changed/u);
+      await waitForFileContents(contender.attemptedPath, '2\n', contender.child);
+      expect(readFileSync(contender.acquiredPath, 'utf8')).toBe('1\n');
+      expect(contender.child.exitCode).toBe(null);
+
+      writeFileSync(replacement.releasePath, 'continue\n');
+      const foreignProcess = await collectChild(replacement.child);
+      expect(foreignProcess.status).toBe(0);
+      const rejectedContender = await collectChild(contender.child);
+      expect(rejectedContender.status).not.toBe(0);
+      expect(rejectedContender.stderr).toMatch(/journal owner does not match the publication lock/u);
+      expect(readFileSync(contender.acquiredPath, 'utf8')).toBe('2\n');
+      expect(readFileSync(lockPath)).toEqual(foreignLock);
+      expect(
+        transactionFiles(temporaryRoot).map((name) => [name, readFileSync(join(temporaryRoot, name))] as const),
+      ).toEqual(transactionState);
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe(oldContents[0]);
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
+    } finally {
+      writeFileSync(owner.releasePath, 'cleanup\n');
+      if (owner.child.exitCode === null && owner.child.signalCode === null) {
+        owner.child.kill('SIGKILL');
+        await collectChild(owner.child);
+      }
+      if (replacement !== undefined) {
+        writeFileSync(replacement.releasePath, 'cleanup\n');
+        if (replacement.child.exitCode === null && replacement.child.signalCode === null) {
+          replacement.child.kill('SIGKILL');
+          await collectChild(replacement.child);
+        }
+      }
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('fails closed when a live owner lock is deleted and recovers only after that owner exits', async () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-lock-deletion-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    const oldContents = ['old output\n', 'old manifest\n'] as const;
+    writeFileSync(destinations[0].path, oldContents[0]);
+    writeFileSync(destinations[1].path, oldContents[1]);
+    const owner = startPausedCrashingArtifactTransaction(temporaryRoot, destinations, [
+      'new output\n',
+      'new manifest\n',
+    ]);
+    try {
+      await waitForPath(owner.readyPath, owner.child);
+      const lockNames = readdirSync(temporaryRoot).filter((name) => name.endsWith('.lock'));
+      expect(lockNames).toHaveLength(1);
+      const lockName = lockNames[0];
+      if (lockName === undefined) throw new TypeError('publication lock disappeared');
+      unlinkSync(join(temporaryRoot, lockName));
+
+      expect(() =>
+        publishArtifactPairWithFileSystem(
+          destinations,
+          ['contender output\n', 'contender manifest\n'],
+          nodeArtifactFileSystem,
+        ),
+      ).toThrowError(/journal belongs to a live foreign publisher/u);
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe(oldContents[0]);
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
+
+      writeFileSync(owner.releasePath, 'continue\n');
+      const failedOwner = await collectChild(owner.child);
+      expect(failedOwner.status).not.toBe(0);
+      recoverArtifactPairWithFileSystem(destinations, nodeArtifactFileSystem);
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe(oldContents[0]);
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
+      expect(transactionFiles(temporaryRoot)).toEqual([]);
+      expect(readdirSync(temporaryRoot).filter((name) => name.endsWith('.lock'))).toEqual([]);
+    } finally {
+      writeFileSync(owner.releasePath, 'cleanup\n');
+      if (owner.child.exitCode === null && owner.child.signalCode === null) {
+        owner.child.kill('SIGKILL');
+        await collectChild(owner.child);
+      }
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('preserves committed journals when the lock path is replaced during cleanup', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-committed-lock-replacement-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    const lockPath = join(temporaryRoot, `${transactionJournalFilename(destinations)}.lock`);
+    writeFileSync(destinations[0].path, 'old output\n');
+    writeFileSync(destinations[1].path, 'old manifest\n');
+    let backupRemovals = 0;
+    let replaceOnNextSynchronization = false;
+    let foreignLock: Buffer | undefined;
+    const filesystem: ArtifactFileSystem = {
+      ...nodeArtifactFileSystem,
+      fsync(descriptor) {
+        nodeArtifactFileSystem.fsync(descriptor);
+        if (!replaceOnNextSynchronization) return;
+        replaceOnNextSynchronization = false;
+        const lock: unknown = JSON.parse(readFileSync(lockPath, 'utf8'));
+        if (!isRecord(lock) || !isRecord(lock['owner'])) throw new TypeError('publication lock is invalid');
+        lock['owner']['transactionId'] = '00000000-0000-4000-8000-000000000000';
+        const replacementPath = `${lockPath}.foreign`;
+        writeFileSync(replacementPath, `${JSON.stringify(lock)}\n`);
+        renameSync(replacementPath, lockPath);
+        foreignLock = readFileSync(lockPath);
+      },
+      remove(path) {
+        nodeArtifactFileSystem.remove(path);
+        if (path.includes('.tslean-backup-')) {
+          backupRemovals += 1;
+          replaceOnNextSynchronization = backupRemovals === 2;
+        }
+      },
+    };
+    try {
+      expect(() =>
+        publishArtifactPairWithFileSystem(destinations, ['new output\n', 'new manifest\n'], filesystem),
+      ).toThrowError(/artifact publication lock identity changed/u);
+      expect(foreignLock).toBeDefined();
+      expect(readFileSync(lockPath)).toEqual(foreignLock);
+      expect(transactionFiles(temporaryRoot)).toEqual([
+        transactionJournalFilename(destinations),
+        `${transactionJournalFilename(destinations)}.committed`,
+      ]);
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe('new output\n');
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe('new manifest\n');
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('reuses and removes a stale publication lock left by a crashed owner', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-stale-lock-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    writeFileSync(destinations[0].path, 'old output\n');
+    writeFileSync(destinations[1].path, 'old manifest\n');
+    try {
+      const staleOwner = crashArtifactTransaction(
+        temporaryRoot,
+        destinations,
+        ['abandoned output\n', 'abandoned manifest\n'],
+        'fsync',
+        3,
+      );
+      expect(staleOwner.signal).toBe('SIGKILL');
+      const lockNames = readdirSync(temporaryRoot).filter((name) => name.endsWith('.lock'));
+      expect(lockNames).toHaveLength(1);
+
+      publishArtifactPairWithFileSystem(destinations, ['second output\n', 'second manifest\n'], nodeArtifactFileSystem);
+
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe('second output\n');
+      expect(readFileSync(destinations[1].path, 'utf8')).toBe('second manifest\n');
+      expect(readdirSync(temporaryRoot).filter((name) => name.endsWith('.lock'))).toEqual([]);
+      expect(transactionFiles(temporaryRoot)).toEqual([]);
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('rejects a foreign lock owner without changing the crashed transaction', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-foreign-lock-'));
+    const destinations = transactionDestinations(temporaryRoot);
+    writeFileSync(destinations[0].path, 'old output\n');
+    writeFileSync(destinations[1].path, 'old manifest\n');
+    try {
+      const crashed = crashArtifactTransaction(
+        temporaryRoot,
+        destinations,
+        ['new output\n', 'new manifest\n'],
+        'rename',
+        3,
+      );
+      expect(crashed.signal).toBe('SIGKILL');
+      const lockPath = join(temporaryRoot, `${transactionJournalFilename(destinations)}.lock`);
+      const lock: unknown = JSON.parse(readFileSync(lockPath, 'utf8'));
+      if (!isRecord(lock) || !isRecord(lock['owner'])) throw new TypeError('crash probe lock is invalid');
+      lock['owner']['transactionId'] = '00000000-0000-4000-8000-000000000000';
+      writeFileSync(lockPath, `${JSON.stringify(lock)}\n`);
+      const beforeOutput = readFileSync(destinations[0].path);
+      const beforeManifest = existsSync(destinations[1].path) ? readFileSync(destinations[1].path) : undefined;
+      const beforeTransactionFiles = transactionFiles(temporaryRoot).map(
+        (name) => [name, readFileSync(join(temporaryRoot, name))] as const,
+      );
+
+      expect(() => recoverArtifactPairWithFileSystem(destinations, nodeArtifactFileSystem)).toThrowError(
+        /journal owner does not match the publication lock/u,
+      );
+      expect(readFileSync(destinations[0].path)).toEqual(beforeOutput);
+      expect(existsSync(destinations[1].path)).toBe(beforeManifest !== undefined);
+      if (beforeManifest !== undefined) expect(readFileSync(destinations[1].path)).toEqual(beforeManifest);
+      expect(
+        transactionFiles(temporaryRoot).map((name) => [name, readFileSync(join(temporaryRoot, name))] as const),
+      ).toEqual(beforeTransactionFiles);
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
 
   test('fails closed on a corrupt recovery journal without touching either artifact', () => {
     const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-corrupt-'));
@@ -399,12 +886,12 @@ describe('published Lean to TypeScript API', () => {
   });
 
   test.each([
-    ['write', 4, 'old'],
-    ['fsync', 6, 'old'],
+    ['write', 5, 'old'],
+    ['fsync', 10, 'old'],
     ['rename', 4, 'old'],
-    ['write', 6, 'new'],
-    ['fsync', 11, 'new'],
-    ['fsync', 12, 'new'],
+    ['write', 7, 'new'],
+    ['fsync', 15, 'new'],
+    ['fsync', 16, 'new'],
   ] as const)(
     'keeps cross-directory publication recoverable when %s operation %i fails',
     (operation, occurrence, expectedVersion) => {
@@ -979,15 +1466,189 @@ function crashArtifactTransaction(
   return spawnSync('bun', [scriptPath], { cwd: root, encoding: 'utf8' });
 }
 
+function crashArtifactRecovery(
+  root: string,
+  destinations: readonly [ArtifactDestination, ArtifactDestination],
+  operation: 'remove' | 'rename',
+  occurrence: number,
+): ReturnType<typeof spawnSync> {
+  const moduleUrl = pathToFileURL(join(repositoryRoot, 'src', 'lean-to-typescript', 'artifact-transaction.ts')).href;
+  const scriptPath = join(root, 'crash-recovery.mjs');
+  writeFileSync(
+    scriptPath,
+    [
+      `import { nodeArtifactFileSystem, recoverArtifactPairWithFileSystem } from ${JSON.stringify(moduleUrl)};`,
+      `const destinations = ${JSON.stringify(destinations)};`,
+      `const operation = ${JSON.stringify(operation)};`,
+      `const occurrence = ${occurrence};`,
+      'let removals = 0;',
+      'let renames = 0;',
+      'const filesystem = {',
+      '  ...nodeArtifactFileSystem,',
+      '  rename(from, to) {',
+      '    nodeArtifactFileSystem.rename(from, to);',
+      "    if (operation === 'rename' && ++renames === occurrence) process.kill(process.pid, 'SIGKILL');",
+      '  },',
+      '  remove(path) {',
+      '    nodeArtifactFileSystem.remove(path);',
+      "    if (operation === 'remove' && ++removals === occurrence) process.kill(process.pid, 'SIGKILL');",
+      '  },',
+      '};',
+      'recoverArtifactPairWithFileSystem(destinations, filesystem);',
+      '',
+    ].join('\n'),
+  );
+  return spawnSync('bun', [scriptPath], { cwd: root, encoding: 'utf8' });
+}
+
+function startPausedCrashingArtifactTransaction(
+  root: string,
+  destinations: readonly [ArtifactDestination, ArtifactDestination],
+  contents: readonly [string, string],
+  crashAfterThirdRename = true,
+): { readonly child: ReturnType<typeof spawn>; readonly readyPath: string; readonly releasePath: string } {
+  const moduleUrl = pathToFileURL(join(repositoryRoot, 'src', 'lean-to-typescript', 'artifact-transaction.ts')).href;
+  const scriptPath = join(root, 'paused-crash-transaction.mjs');
+  const readyPath = join(root, 'owner-ready');
+  const releasePath = join(root, 'owner-release');
+  writeFileSync(
+    scriptPath,
+    [
+      "import { existsSync, writeFileSync } from 'node:fs';",
+      `import { nodeArtifactFileSystem, publishArtifactPairWithFileSystem } from ${JSON.stringify(moduleUrl)};`,
+      `const destinations = ${JSON.stringify(destinations)};`,
+      `const contents = ${JSON.stringify(contents)};`,
+      `const crashAfterThirdRename = ${JSON.stringify(crashAfterThirdRename)};`,
+      `const readyPath = ${JSON.stringify(readyPath)};`,
+      `const releasePath = ${JSON.stringify(releasePath)};`,
+      'let renames = 0;',
+      'const filesystem = {',
+      '  ...nodeArtifactFileSystem,',
+      '  write(descriptor, value) {',
+      '    nodeArtifactFileSystem.write(descriptor, value);',
+      '    if (value.includes(\'"state":"prepared"\')) {',
+      "      writeFileSync(readyPath, 'ready\\n');",
+      '      while (!existsSync(releasePath)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);',
+      '    }',
+      '  },',
+      '  rename(from, to) {',
+      '    nodeArtifactFileSystem.rename(from, to);',
+      '    renames += 1;',
+      "    if (crashAfterThirdRename && renames === 3) process.kill(process.pid, 'SIGKILL');",
+      '  },',
+      '};',
+      'publishArtifactPairWithFileSystem(destinations, contents, filesystem);',
+      '',
+    ].join('\n'),
+  );
+  return {
+    child: spawn('bun', [scriptPath], { cwd: root, stdio: ['ignore', 'ignore', 'pipe'] }),
+    readyPath,
+    releasePath,
+  };
+}
+
+function startObservedArtifactTransaction(
+  root: string,
+  destinations: readonly [ArtifactDestination, ArtifactDestination],
+  contents: readonly [string, string],
+): {
+  readonly acquiredPath: string;
+  readonly attemptedPath: string;
+  readonly child: ReturnType<typeof spawn>;
+} {
+  const moduleUrl = pathToFileURL(join(repositoryRoot, 'src', 'lean-to-typescript', 'artifact-transaction.ts')).href;
+  const scriptPath = join(root, 'observed-transaction.mjs');
+  const attemptedPath = `${scriptPath}.attempted`;
+  const acquiredPath = `${scriptPath}.acquired`;
+  writeFileSync(
+    scriptPath,
+    [
+      "import { writeFileSync } from 'node:fs';",
+      `import { nodeArtifactFileSystem, publishArtifactPairWithFileSystem } from ${JSON.stringify(moduleUrl)};`,
+      `const destinations = ${JSON.stringify(destinations)};`,
+      `const contents = ${JSON.stringify(contents)};`,
+      `const attemptedPath = ${JSON.stringify(attemptedPath)};`,
+      `const acquiredPath = ${JSON.stringify(acquiredPath)};`,
+      'let lockAttempts = 0;',
+      'const filesystem = {',
+      '  ...nodeArtifactFileSystem,',
+      '  lock(descriptor) {',
+      '    lockAttempts += 1;',
+      "    writeFileSync(attemptedPath, String(lockAttempts) + '\\n');",
+      '    nodeArtifactFileSystem.lock(descriptor);',
+      "    writeFileSync(acquiredPath, String(lockAttempts) + '\\n');",
+      '  },',
+      '};',
+      'publishArtifactPairWithFileSystem(destinations, contents, filesystem);',
+      '',
+    ].join('\n'),
+  );
+  return {
+    acquiredPath,
+    attemptedPath,
+    child: spawn('bun', [scriptPath], { cwd: root, stdio: ['ignore', 'ignore', 'pipe'] }),
+  };
+}
+
+function startForeignPublicationLockReplacement(
+  root: string,
+  lockPath: string,
+): { readonly child: ReturnType<typeof spawn>; readonly readyPath: string; readonly releasePath: string } {
+  const moduleUrl = pathToFileURL(join(repositoryRoot, 'src', 'lean-to-typescript', 'artifact-transaction.ts')).href;
+  const scriptPath = join(root, 'foreign-lock-replacement.mjs');
+  const readyPath = `${scriptPath}.ready`;
+  const releasePath = `${scriptPath}.release`;
+  writeFileSync(
+    scriptPath,
+    [
+      "import { constants, existsSync, readFileSync, writeFileSync } from 'node:fs';",
+      "import { randomUUID } from 'node:crypto';",
+      `import { nodeArtifactFileSystem } from ${JSON.stringify(moduleUrl)};`,
+      `const lockPath = ${JSON.stringify(lockPath)};`,
+      `const readyPath = ${JSON.stringify(readyPath)};`,
+      `const releasePath = ${JSON.stringify(releasePath)};`,
+      "const processStat = readFileSync('/proc/' + process.pid + '/stat', 'utf8');",
+      "const commandEnd = processStat.lastIndexOf(') ');",
+      'const processStartTime = processStat.slice(commandEnd + 2).trim().split(/\\s+/u)[19];',
+      "if (processStartTime === undefined) throw new TypeError('foreign process identity is unavailable');",
+      "const replacementPath = lockPath + '.replacement-' + process.pid;",
+      'const descriptor = nodeArtifactFileSystem.open(',
+      '  replacementPath,',
+      '  constants.O_RDWR | constants.O_CREAT | constants.O_EXCL,',
+      '  0o600,',
+      ');',
+      'nodeArtifactFileSystem.lock(descriptor);',
+      'nodeArtifactFileSystem.write(',
+      '  descriptor,',
+      "  JSON.stringify({ schemaVersion: 1, owner: { processId: process.pid, processStartTime, transactionId: randomUUID() } }) + '\\n',",
+      ');',
+      'nodeArtifactFileSystem.fsync(descriptor);',
+      'nodeArtifactFileSystem.rename(replacementPath, lockPath);',
+      "writeFileSync(readyPath, 'ready\\n');",
+      'while (!existsSync(releasePath)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);',
+      'nodeArtifactFileSystem.close(descriptor);',
+      '',
+    ].join('\n'),
+  );
+  return {
+    child: spawn('bun', [scriptPath], { cwd: root, stdio: ['ignore', 'ignore', 'pipe'] }),
+    readyPath,
+    releasePath,
+  };
+}
+
 function transactionJournalFilename(destinations: readonly [ArtifactDestination, ArtifactDestination]): string {
   const digest = createHash('sha256')
-    .update(JSON.stringify(destinations.map((destination) => destination.canonicalPath)))
+    .update(JSON.stringify(destinations.map((destination) => destination.canonicalPath).sort(compareCodePoints)))
     .digest('hex');
   return `.tslean-transaction-${digest}.json`;
 }
 
 function transactionFiles(root: string): readonly string[] {
-  return readdirSync(root).filter((name) => name.includes('.tslean-'));
+  return readdirSync(root)
+    .filter((name) => name.includes('.tslean-') && !name.endsWith('.lock'))
+    .sort(compareCodePoints);
 }
 
 function runSourceCompiler(
@@ -1050,19 +1711,37 @@ async function waitForPath(path: string, child: ReturnType<typeof spawn>): Promi
   }
 }
 
+async function waitForFileContents(path: string, expected: string, child: ReturnType<typeof spawn>): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!existsSync(path) || readFileSync(path, 'utf8') !== expected) {
+    if (child.exitCode !== null) throw new TypeError('process exited before reaching the expected checkpoint');
+    if (Date.now() >= deadline) throw new TypeError('process did not reach the expected checkpoint');
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+  }
+}
+
+async function waitForProcessTurn(): Promise<void> {
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+}
+
 async function collectChild(
   child: ReturnType<typeof spawn>,
-): Promise<{ readonly status: number | null; readonly stderr: string }> {
+): Promise<{ readonly signal: NodeJS.Signals | null; readonly status: number | null; readonly stderr: string }> {
   let stderr = '';
   child.stderr?.setEncoding('utf8');
   child.stderr?.on('data', (chunk: string) => {
     stderr += chunk;
   });
-  const status = await new Promise<number | null>((resolvePromise, rejectPromise) => {
-    child.once('error', rejectPromise);
-    child.once('exit', resolvePromise);
-  });
-  return { status, stderr };
+  const result =
+    child.exitCode !== null || child.signalCode !== null
+      ? { signal: child.signalCode, status: child.exitCode }
+      : await new Promise<{ readonly signal: NodeJS.Signals | null; readonly status: number | null }>(
+          (resolvePromise, rejectPromise) => {
+            child.once('error', rejectPromise);
+            child.once('exit', (status, signal) => resolvePromise({ signal, status }));
+          },
+        );
+  return { ...result, stderr };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

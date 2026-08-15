@@ -2,8 +2,14 @@
 
 import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { publishArtifactPair } from './artifact-transaction.js';
 import { compileLeanToTypeScriptWithInputs } from './compiler.js';
+import {
+  assertLeanToTypeScriptPlatform,
+  hostLeanToTypeScriptPlatform,
+  type LeanToTypeScriptPlatform,
+} from './platform.js';
 
 interface CompilerArguments {
   readonly projectRoot: string;
@@ -30,11 +36,16 @@ interface FilesystemIdentity extends NamedPath {
 
 type FilesystemRelationship = 'same' | 'ancestor' | 'descendant' | 'disjoint';
 
-function main(arguments_: readonly string[]): void {
+export function runLeanToTypeScriptCli(
+  arguments_: readonly string[],
+  platform: LeanToTypeScriptPlatform = hostLeanToTypeScriptPlatform,
+): void {
   if (arguments_.includes('--help')) {
     process.stdout.write(`${usage()}\n`);
     return;
   }
+
+  assertLeanToTypeScriptPlatform(platform);
 
   const options = parseArguments(arguments_);
   const projectRoot = resolve(options.projectRoot);
@@ -46,12 +57,15 @@ function main(arguments_: readonly string[]): void {
     { name: '--manifest', path: manifestPath },
   ] as const;
   const initialDestinations = assertArtifactPathsAreIsolated(destinations, [{ name: '--source', path: sourcePath }]);
-  const compilation = compileLeanToTypeScriptWithInputs({
-    projectRoot,
-    moduleName: options.moduleName,
-    sourcePath,
-    declarations: options.declarations,
-  });
+  const compilation = compileLeanToTypeScriptWithInputs(
+    {
+      projectRoot,
+      moduleName: options.moduleName,
+      sourcePath,
+      declarations: options.declarations,
+    },
+    platform,
+  );
   const currentDestinations = assertArtifactPathsAreIsolated(
     destinations,
     compilation.inputs.map(({ identity, path }) => ({ name: identity, path })),
@@ -63,7 +77,7 @@ function main(arguments_: readonly string[]): void {
     assertCurrent(currentDestinations[0].canonicalPath, artifact.code);
     assertCurrent(currentDestinations[1].canonicalPath, manifest);
   } else {
-    publishArtifactPair(currentDestinations, [artifact.code, manifest]);
+    publishArtifactPair(currentDestinations, [artifact.code, manifest], platform);
   }
 }
 
@@ -287,9 +301,12 @@ function usage(): string {
   ].join('\n');
 }
 
-try {
-  main(process.argv.slice(2));
-} catch (error: unknown) {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
+const entrypoint = process.argv[1];
+if (entrypoint !== undefined && import.meta.url === pathToFileURL(realpathSync(entrypoint)).href) {
+  try {
+    runLeanToTypeScriptCli(process.argv.slice(2));
+  } catch (error: unknown) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  }
 }

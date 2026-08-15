@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import ts from 'typescript';
-import { describe, expect, test } from 'vitest';
+import { beforeAll, describe, expect, test } from 'vitest';
 import {
   compileLeanToTypeScript,
   UnsupportedLeanFragmentError,
@@ -67,6 +67,16 @@ const adversarialSource = [
   'end Fixture',
   '',
 ].join('\n');
+
+beforeAll(() => {
+  const result = spawnSync('lake', ['build', 'TSLean.Examples.Placement'], {
+    cwd: leanRoot,
+    encoding: 'utf8',
+  });
+  if (result.status !== 0) {
+    throw new TypeError(`Lean placement oracle prerequisite failed: ${spawnFailure(result)}`);
+  }
+});
 
 describe('Lean to TypeScript checked-fragment compiler', () => {
   test('emits deterministic ergonomic TypeScript with content-bound provenance', () => {
@@ -878,7 +888,7 @@ function evaluateLeanPlacement(): readonly string[] {
       maxBuffer: 4 * 1024 * 1024,
     });
     if (result.status !== 0) {
-      throw new TypeError(`Lean placement oracle failed: ${result.stderr}`);
+      throw new TypeError(`Lean placement oracle failed: ${spawnFailure(result)}`);
     }
     const line = result.stdout.split(/\r?\n/u).find((candidate) => candidate.startsWith('["'));
     if (line === undefined) throw new TypeError('Lean placement oracle emitted no result');
@@ -890,6 +900,15 @@ function evaluateLeanPlacement(): readonly string[] {
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
+}
+
+function spawnFailure(result: ReturnType<typeof spawnSync>): string {
+  const details: string[] = [];
+  if (result.error !== undefined) details.push(result.error.message);
+  if (result.signal !== null) details.push(`signal ${result.signal}`);
+  if (typeof result.stdout === 'string' && result.stdout.trim().length > 0) details.push(result.stdout.trim());
+  if (typeof result.stderr === 'string' && result.stderr.trim().length > 0) details.push(result.stderr.trim());
+  return details.join('\n') || `exit status ${result.status ?? 'unknown'}`;
 }
 
 function compileInChild(locale: string): string {

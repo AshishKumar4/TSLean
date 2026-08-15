@@ -14,6 +14,8 @@ bun run lean-to-typescript:generate
 
 Published packages expose the general `lean-to-typescript` executable for compiling a
 separate Lean project; the command above is the repository's canonical pilot workflow.
+Version 0.1 requires Linux with procfs and util-linux `/usr/bin/flock` and rejects other
+operating systems before compilation or publication mutation.
 
 The generator accepts only the declared pure, total, first-order fragment. Passing the
 tests means the generated decision agreed with Lean on this example's complete 4,096-case

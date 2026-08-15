@@ -41,6 +41,12 @@ total, first-order functions over booleans, finite nullary inductives, immutable
 records, and non-nested options. Unsupported declarations fail before TypeScript is
 emitted.
 
+Version 0.1 is Linux-only. Both the library compiler and CLI reject other operating
+systems before creating compilation or output files, and the package declares that
+boundary in its `os` metadata. Generation requires procfs at `/proc` and util-linux
+`flock` at `/usr/bin/flock`; these provide the process, directory-handle, and exclusive
+publication guarantees used by the compiler.
+
 ```typescript
 import { compileLeanToTypeScript, verifyLeanToTypeScriptArtifact } from 'tslean/lean-to-typescript';
 
@@ -392,7 +398,7 @@ Use `--strict` to reject any output that carries a `sorry` or `default` placehol
 
 ## Building
 
-**Requirements:** Node.js ≥ 18, Bun, Lean 4.29.0
+**Requirements:** Linux with procfs and util-linux `flock`, Node.js ≥ 18, Bun, Lean 4.29.0
 
 ```bash
 bun install              # Install dependencies

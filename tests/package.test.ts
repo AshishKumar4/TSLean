@@ -12,6 +12,13 @@ describe('package contents', () => {
     expect(packageJson['scripts']['verify']).toContain('bun run build && bun run lean-to-typescript:check');
   });
 
+  it('declares the compiler package Linux-only', () => {
+    const repository = resolve(import.meta.dirname, '..');
+    const packageJson: unknown = JSON.parse(readFileSync(resolve(repository, 'package.json'), 'utf8'));
+    if (!isRecord(packageJson)) throw new TypeError('package metadata is missing');
+    expect(packageJson['os']).toEqual(['linux']);
+  });
+
   it('does not restore the deleted rival compiler', () => {
     const repository = resolve(import.meta.dirname, '..');
     for (const path of [

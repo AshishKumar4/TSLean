@@ -134,6 +134,9 @@
   "engines": {
     "node": ">=18"
   },
+  "os": [
+    "linux"
+  ],
   "dependencies": {
     "typescript": "6.0.2"
   },

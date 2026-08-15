@@ -153,16 +153,25 @@ invocation restores the prior pair from a prepared journal or completes the publ
 durable committed marker before starting a new transaction. Parent-path swaps are detected, and
 descriptor-relative operations cannot be redirected through a replacement path. Corrupt, stale,
 or mutually inconsistent journal copies fail closed before recovery changes either destination.
+An exclusive kernel lock serializes each unordered canonical artifact pair. The lock and journal
+carry the same transaction, process, and process-start identity, so a contender cannot clean up a
+live or foreign transaction; an interrupted owner is recovered only after that exact process is
+gone. A replaced lock path invalidates the original publisher before destination replacement or
+transaction cleanup.
 
 `spec/lean-to-typescript/compiler-registry.json` is the single W-3 registry. Its model entry binds
 the Lean entry point, transitive checked fragment, exhaustive oracle operation, generated source
 and manifest, runtime adapter, and explicit 4,096-case bounds artifact. The release tests reject a
 stale path, selector, target, adapter, non-canonical registry, or inconsistent cardinality.
 
-The checked-in pilot provenance is canonical for the recorded Linux release environment and
-intentionally includes the exact Node, Lean, and Lake executable bytes. Another platform may
-produce the same semantic IR and TypeScript body with different honest provenance; it cannot
-publish that result as the canonical artifact without regenerating and ratifying the evidence.
+Version 0.1 is explicitly Linux-only in package metadata and at the public compiler and CLI
+boundary. It depends on Linux loader tracing, procfs process and directory-handle identities,
+`O_DIRECTORY`/`O_NOFOLLOW`, and util-linux `/usr/bin/flock`. An unsupported operating system fails
+before compiler or CLI filesystem mutation; a missing Linux mechanism fails closed when its
+protected operation begins. The checked-in pilot provenance includes the exact Node, Lean, and
+Lake executable bytes from its Linux release environment. Supporting another platform requires
+equivalent toolchain-closure and crash-safe publication mechanisms plus newly ratified evidence;
+matching semantic IR alone is insufficient.
 
 ## Evidence boundary
 
@@ -223,7 +232,8 @@ generated, its handwritten twin must be removed and a static gate must reject it
 
 Each phase lands independently and keeps earlier fragments closed.
 
-1. Add deterministic generation on a second platform.
+1. Define and verify portable equivalents for Linux toolchain closure, bound directory handles,
+   process identity, and crash-safe pair locking before admitting a second platform.
 2. Add payload-carrying algebraic data and pattern matching.
 3. Add exact numeric representations with boundary tests against Lean.
 4. Add structurally recursive lists and trees with a checked recursion rule.

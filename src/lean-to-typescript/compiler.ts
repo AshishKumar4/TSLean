@@ -24,6 +24,11 @@ import type { LeanToTypeScriptArtifact, LeanToTypeScriptInput, LeanToTypeScriptM
 import { emitTypeScript } from './emitter.js';
 import { decodeLeanSemanticProgram } from './ir.js';
 import { compareCodePoints } from './ordering.js';
+import {
+  assertLeanToTypeScriptPlatform,
+  hostLeanToTypeScriptPlatform,
+  type LeanToTypeScriptPlatform,
+} from './platform.js';
 
 export interface LeanToTypeScriptRequest {
   readonly projectRoot: string;
@@ -102,7 +107,11 @@ export function compileLeanToTypeScript(request: LeanToTypeScriptRequest): LeanT
   return compileLeanToTypeScriptWithInputs(request).artifact;
 }
 
-export function compileLeanToTypeScriptWithInputs(request: LeanToTypeScriptRequest): LeanToTypeScriptCompilation {
+export function compileLeanToTypeScriptWithInputs(
+  request: LeanToTypeScriptRequest,
+  platform: LeanToTypeScriptPlatform = hostLeanToTypeScriptPlatform,
+): LeanToTypeScriptCompilation {
+  assertLeanToTypeScriptPlatform(platform);
   assertRuntimeInputsUnchanged();
   const normalized = normalizeRequest(request);
   const directory = mkdtempSync(join(tmpdir(), 'tslean-compilation-'));
