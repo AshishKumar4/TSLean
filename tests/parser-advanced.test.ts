@@ -618,7 +618,7 @@ describe('Parser: regular expressions', () => {
     expect(code).toMatch(/def isAlpha/);
   });
 
-  it('no holes from regex in self-host files', () => {
+  it('no holes from regex in the compiler\'s own source', () => {
     // The parser's own source uses regex; verify zero holes
     const mod = parsedInline(`
       function fileToModuleName(filePath: string): string {
@@ -638,7 +638,10 @@ describe('Parser: regular expressions', () => {
 
 // ─── Parser completeness ────────────────────────────────────────────────────
 
-describe('Parser: self-host completeness', () => {
+// Parsing the compiler's own source is the widest real TypeScript the parser is
+// asked to handle, so a hole here is a parser gap, not a self-hosting claim: the
+// IR these produce is never compiled, only counted.
+describe('Parser: the compiler\'s own source', () => {
   it('parser/index.ts produces zero holes', () => {
     const mod = parseFile({ fileName: 'src/parser/index.ts' });
     let holes = 0;
@@ -679,7 +682,7 @@ describe('Parser: self-host completeness', () => {
     expect(holes).toBe(0);
   });
 
-  it('the other 10 self-host files produce zero holes', () => {
+  it('every other compiler source file produces zero holes', () => {
     const files = [
       'src/ir/types.ts', 'src/parser/index.ts', 'src/codegen/index.ts',
       'src/effects/index.ts', 'src/rewrite/index.ts', 'src/stdlib/index.ts',

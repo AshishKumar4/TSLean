@@ -2,9 +2,7 @@
 // TSLean CLI — TypeScript → Lean 4 transpiler.
 //
 // Usage:
-//   tslean compile <file|dir> [--output <dir>] [--verify] [--watch] [--self-host] [--namespace <ns>]
-//   tslean self-host             — run the self-hosting pipeline
-//   tslean verify                — run fixpoint verification
+//   tslean compile <file|dir> [--output <dir>] [--verify] [--watch] [--namespace <ns>]
 //   tslean init [dir]            — scaffold a tslean project
 //
 // Legacy (still works):
@@ -58,8 +56,6 @@ ${c.bold('tslean')} — TypeScript → Lean 4 transpiler
 
 ${c.bold('USAGE')}
   tslean compile <file|dir>  [options]   Transpile TypeScript to Lean 4
-  tslean self-host                       Run the self-hosting pipeline
-  tslean verify                          Run fixpoint verification
   tslean init [dir]                      Scaffold a new tslean project
 
 ${c.bold('OPTIONS')}
@@ -70,8 +66,6 @@ ${c.bold('OPTIONS')}
    --verify               Generate proof obligations
    --veil                 Generate Veil transition system stubs for DO classes
   --project <path>       Use tsconfig.json for multi-file compilation
-  --self-host            Enable self-host transforms
-  --base-name <name>     Module base name (self-host mode)
   --namespace <ns>       Root namespace (default: TSLean.Generated)
   --lakefile/--no-lakefile  Generate/skip lakefile.toml
   --timing               Show phase-by-phase timing breakdown
@@ -89,8 +83,6 @@ interface CompileOpts {
   veil: boolean;
   watch: boolean;
   ns: string;
-  selfHost: boolean;
-  baseName: string;
   isDir: boolean;
   genLakefile: boolean;
   tsconfigPath: string;
@@ -100,8 +92,6 @@ interface CompileOpts {
 
 type Command =
   | { cmd: 'compile'; opts: CompileOpts }
-  | { cmd: 'self-host' }
-  | { cmd: 'verify' }
   | { cmd: 'init'; dir: string }
   | { cmd: 'help' }
   | { cmd: 'version' };
@@ -118,16 +108,14 @@ function parseArgs(argv: string[]): Command {
 
   const sub = args[0];
 
-  if (sub === 'self-host') return { cmd: 'self-host' };
-  if (sub === 'verify')    return { cmd: 'verify' };
-  if (sub === 'init')      return { cmd: 'init', dir: args[1] ?? '.' };
+  if (sub === 'init') return { cmd: 'init', dir: args[1] ?? '.' };
 
   // "compile" subcommand or legacy mode (positional file / --project)
   const isCompile = sub === 'compile';
   const rest = isCompile ? args.slice(1) : args;
 
   let input = '', output = '', verify = false, veil = false, watch = false, strict = false, timing = false;
-  let ns = 'TSLean.Generated', selfHost = false, baseName = '';
+  let ns = 'TSLean.Generated';
   let isDir = false, genLakefile = true, tsconfigPath = '';
 
   for (let i = 0; i < rest.length; i++) {
@@ -138,8 +126,6 @@ function parseArgs(argv: string[]): Command {
     else if (a === '--veil')     { veil = true; }
     else if (a === '-w' || a === '--watch') { watch = true; }
     else if (a === '--namespace'){ ns = rest[++i] ?? ns; }
-    else if (a === '--self-host'){ selfHost = true; }
-    else if (a === '--base-name'){ baseName = rest[++i] ?? ''; }
     else if (a === '--no-color') { noColor = true; }
     else if (a === '--lakefile') { genLakefile = true; }
     else if (a === '--no-lakefile') { genLakefile = false; }
@@ -164,7 +150,7 @@ function parseArgs(argv: string[]): Command {
       : input.replace(/\.tsx?$/, '.lean');
   }
 
-  return { cmd: 'compile', opts: { input, output, verify, veil, watch, ns, selfHost, baseName, isDir, genLakefile, tsconfigPath, strict, timing } };
+  return { cmd: 'compile', opts: { input, output, verify, veil, watch, ns, isDir, genLakefile, tsconfigPath, strict, timing } };
 }
 
 // ─── Output helpers ──────────────────────────────────────────────────────────
@@ -205,7 +191,7 @@ function reportDegradation(markers: readonly DegradationMarker[], strict: boolea
 // ─── Compile: single file ────────────────────────────────────────────────────
 
 function compileSingle(opts: CompileOpts): boolean {
-  const { input, output, verify, veil, selfHost, baseName, strict, timing } = opts;
+  const { input, output, verify, veil, strict, timing } = opts;
   if (!fs.existsSync(input)) {
     error(`File not found: ${input}`);
     return false;
@@ -222,10 +208,7 @@ function compileSingle(opts: CompileOpts): boolean {
     const rw  = rewriteModule(mod);
 
     timer.start('codegen');
-    const { code: rawCode, degradations } = generateLeanTracked(
-      rw,
-      selfHost ? { selfHost: true, baseName } : undefined,
-    );
+    const { code: rawCode, degradations } = generateLeanTracked(rw);
     let code = rawCode;
 
     if (verify) {
@@ -391,46 +374,6 @@ function watchMode(opts: CompileOpts): void {
   }
 }
 
-// ─── Self-host command ───────────────────────────────────────────────────────
-
-function selfHost(): boolean {
-  const scriptPath = path.join(__dirname, '..', 'scripts', 'self-host.sh');
-
-  if (!fs.existsSync(scriptPath)) {
-    error('Self-host script not found. Expected: scripts/self-host.sh');
-    return false;
-  }
-
-  info('Running self-hosting pipeline...');
-  try {
-    execFileSync('bash', [scriptPath], { stdio: 'inherit', cwd: path.join(__dirname, '..') });
-    return true;
-  } catch {
-    error('Self-hosting pipeline failed.');
-    return false;
-  }
-}
-
-// ─── Verify (fixpoint) command ───────────────────────────────────────────────
-
-function fixpointVerify(): boolean {
-  const scriptPath = path.join(__dirname, '..', 'scripts', 'fixpoint-verify.sh');
-
-  if (!fs.existsSync(scriptPath)) {
-    error('Fixpoint verify script not found. Expected: scripts/fixpoint-verify.sh');
-    return false;
-  }
-
-  info('Running fixpoint verification...');
-  try {
-    execFileSync('bash', [scriptPath], { stdio: 'inherit', cwd: path.join(__dirname, '..') });
-    return true;
-  } catch {
-    error('Fixpoint verification failed.');
-    return false;
-  }
-}
-
 // ─── Init command ────────────────────────────────────────────────────────────
 
 function initProject(dir: string): boolean {
@@ -500,10 +443,6 @@ function main(): void {
     process.stdout.write(HELP);
   } else if (cmd === 'version') {
     process.stdout.write(`tslean ${getVersion()}\n`);
-  } else if (cmd === 'self-host') {
-    if (!selfHost()) process.exit(1);
-  } else if (cmd === 'verify') {
-    if (!fixpointVerify()) process.exit(1);
   } else if (cmd === 'init') {
     if (!initProject(command.dir)) process.exit(1);
   } else if (cmd === 'compile') {

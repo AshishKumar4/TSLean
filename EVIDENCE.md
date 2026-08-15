@@ -1621,3 +1621,74 @@ specific emitted file to `TSLean.JS`; that is a different theorem over different
 compiler reachable through `TSLean.Main`, and the fabricated `Generated/SelfHost/` tree it certifies --
 is entangled with the `self-host` CLI subcommand, three test files and `lean/TSLean.lean`'s import
 list, so it is deliberately left for its own change rather than bundled here.
+
+## Deleting a rival compiler, and fixing four live Math defects
+
+### The rival compiler
+
+A second, complete compiler existed in the tree, reachable as a `lean_exe` rooted at
+`lean/TSLean/Main.lean`: `src/preprocessor/tsc-to-json.ts` as its frontend, `JsonAST.lean` as its
+reader, `V2/FromJSON.lean` (13 `sorry`) and `V2/Printer.lean` (8 `sorry`) as its backend, driven by
+`scripts/fixpoint-verify.sh`. It also carried two further IRType renderers, `Codegen.lean` and
+`V2/Lower.lean`, both still holding the non-recursive `Promise` and arity-dropping `Dependent` bugs
+that were fixed on the TypeScript side. Hard confirmation it never ran: no `.olean` existed anywhere
+under `lean/.lake/` for `Main`, `JsonAST`, `Parser`, `Codegen` or `V2`. Only the self-host tree had
+ever been compiled, and three of its driver scripts export a hardcoded
+`/opt/lean4/lean-4.29.0-linux/bin` that does not exist here.
+
+8,194 lines deleted. `lake build` moves 191 to 180 jobs, and the delta was verified job-by-job rather
+than assumed: minus the 13 `SelfHost.*` modules, plus the two new `Math` modules below. The
+differential oracle still spawns and passes 29 of 29, which was the one binary that had to survive.
+
+Coverage genuinely lost, stated rather than glossed: the `.d.ts` stub reader went with its only
+caller, and two CLI tests that proved subcommand dispatch did not shell-interpret a checkout path
+containing `$(printf injected) ; literal`. That surface no longer exists -- the only remaining spawn
+passes no path argument -- but the guarantee is no longer tested. Preserved deliberately: the
+`selfhost-typemap-one-hole` corpus todo, whose mechanism is `parseFile` over the compiler's own
+source and which survived the deletion intact; re-measured afterwards, still exactly one hole.
+
+Two dead modules were deliberately left. `External/Typescript.lean` and `Runtime/JSTypes.lean` are now
+unreachable, but `JSTypes.lean` carries `axiom get_set_same` and `has_set_same` inside the default
+build target, and deleting axioms as a side effect of a deletion slice is the wrong boundary -- that is
+the audit-scope work, and it should be done there deliberately.
+
+### Four Math defects, all live, all inside green fixtures
+
+`src/stdlib/index.ts` mapped about thirty `Math.*` names straight onto Lean `Float.*` with no
+justification. Four were wrong, measured against Node on exact bits:
+
+| input         | Node                 | Lean before          | Lean after           |
+| ------------- | -------------------- | -------------------- | -------------------- |
+| `max(1, NaN)` | `0x7ff8000000000000` | `0x3ff0000000000000` | `0x7ff8000000000000` |
+| `max(+0, -0)` | `0x0000000000000000` | `0x8000000000000000` | `0x0000000000000000` |
+| `min(+0, -0)` | `0x8000000000000000` | `0x0000000000000000` | `0x8000000000000000` |
+| `round(-0.5)` | `0x8000000000000000` | `0xbff0000000000000` | `0x8000000000000000` |
+
+Two more surfaced while confirming the cause: `max NaN 1.0` _is_ NaN, so the defect was
+order-dependent exactly as `max a b = if a ≤ b then b else a` predicts against a false NaN
+comparison; and `Float.round (-1.5)` gave `-2` where Node gives `-1`, the same halves-away-from-zero
+root cause. None of the six was in the corpus, and `Math.max` and `Math.sqrt` are used by two
+build-gate fixtures that were green throughout.
+
+Why it survived is worth recording: `Float`'s comparison and rounding are `@[extern]` primitives the
+kernel cannot reduce, so the divergence was unobservable to any theorem and visible only by
+execution.
+
+The repair is three tiers, following the committed `Float.lean` template. Tier 1 is proved with zero
+assumptions -- the six constants as exact encodings, and `abs`, `sign`, `trunc`, `floor`, `ceil`,
+`round`, `max`, `min` computed from the binary64 encoding by exact integer arithmetic over the existing
+`finiteRatio` machinery, touching no `Float` primitive. `max`/`min` rest on a bit-level ordering with
+NaN poisoning and zero preference handled ahead of it, so order-independence is structural rather than
+patched, and `round` routes halves through a single comparison so `round(-0.5) = -0` falls out of the
+rule. **Three of the four defects are fixed by construction.** Tier 2 is exactly one assumed law,
+`Sqrt`, because IEEE-754 mandates a correctly-rounded square root. Tier 3 -- `exp`, `log`, `log2`,
+`log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `pow`, `cbrt`, `hypot` -- is removed
+rather than mapped, because ECMA-262 permits implementation-dependent results and claiming
+bit-equality with Node would be false; those now degrade visibly, and no green fixture broke.
+
+Coverage moves to 263 audited refinement proofs with 250 required, and the differential suite from
+7264 to 7587 comparisons through a new 323-vector `math-operations` scenario seeded adversarially with
+NaN in both positions, both zeros in both orders, infinities, subnormals, max finite, and the exact
+half-values including `0.49999999999999994` and `±(2^52 − 0.5)`. Every vector matches Node. The
+inventory defence was demonstrated, not asserted: weakening `Math.max_nan` to `True` leaves the
+production module building and fails the inventory with a type mismatch naming the expected statement.

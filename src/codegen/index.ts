@@ -12,11 +12,10 @@
  */
 
 import type { IRModule } from '../ir/types.js';
-import { buildLeanFile, type CodegenOptions } from './v2.js';
+import { buildLeanFile } from './v2.js';
 import { printFile } from './printer.js';
 import { scanDegradation, type DegradationMarker } from './degradation.js';
 import { resetTracker, type SorryTracker } from '../sorry-tracker.js';
-export type { CodegenOptions } from './v2.js';
 export type { SorryTracker, SorryEntry } from '../sorry-tracker.js';
 export type { DegradationMarker } from './degradation.js';
 
@@ -45,8 +44,8 @@ export function generateLean(mod: IRModule): string {
  * every caller emits the same bytes and every caller can see the same
  * degradation.
  */
-export function generateLeanTracked(mod: IRModule, opts?: CodegenOptions): GenerateResult {
+export function generateLeanTracked(mod: IRModule): GenerateResult {
   const tracker = resetTracker();
-  const file = buildLeanFile(mod, opts);
+  const file = buildLeanFile(mod);
   return { code: printFile(file), tracker, degradations: scanDegradation(file) };
 }

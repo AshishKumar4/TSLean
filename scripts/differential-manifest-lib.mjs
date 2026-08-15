@@ -4,6 +4,57 @@ import { resolve } from 'node:path';
 
 const operations = ['add', 'sub', 'mul', 'div', 'rem', 'lt', 'le', 'gt', 'ge'];
 const operatorStrings = ['', '0', '-1', '1.5', '0x10', '9007199254740993', 'not-a-number', '\ud800'];
+// Adversarial binary64 corpus for the ECMAScript Math operations: both zeros, both
+// infinities, NaN, the subnormal and finite boundaries, and the exact halves whose
+// rounding direction ECMA-262 fixes and Lean's own rounding gets wrong.
+const mathNumbers = [
+  ['pos-zero', '0'],
+  ['neg-zero', '9223372036854775808'],
+  ['pos-infinity', '9218868437227405312'],
+  ['neg-infinity', '18442240474082181120'],
+  ['nan', '9221120237041090560'],
+  ['min-subnormal', '1'],
+  ['neg-min-subnormal', '9223372036854775809'],
+  ['max-subnormal', '4503599627370495'],
+  ['min-normal', '4503599627370496'],
+  ['max-finite', '9218868437227405311'],
+  ['neg-max-finite', '18442240474082181119'],
+  ['one', '4607182418800017408'],
+  ['neg-one', '13830554455654793216'],
+  ['half', '4602678819172646912'],
+  ['neg-half', '13826050856027422720'],
+  ['three-halves', '4609434218613702656'],
+  ['neg-three-halves', '13832806255468478464'],
+  ['five-halves', '4612811918334230528'],
+  ['neg-five-halves', '13836183955189006336'],
+  ['below-half', '4602678819172646911'],
+  ['two-pow-52', '4841369599423283200'],
+  ['half-below-two-pow-52', '4841369599423283199'],
+  ['neg-half-below-two-pow-52', '14064741636278059007'],
+];
+// `max` and `min` are compared over every ordered pair of this subset, so NaN and each
+// zero appear in both argument positions.
+const mathSelectionNames = new Set([
+  'pos-zero',
+  'neg-zero',
+  'nan',
+  'pos-infinity',
+  'neg-infinity',
+  'one',
+  'neg-one',
+  'min-subnormal',
+  'max-finite',
+]);
+const mathUnaryOperations = [
+  'math-abs',
+  'math-sign',
+  'math-trunc',
+  'math-floor',
+  'math-ceil',
+  'math-round',
+  'math-sqrt',
+];
+const mathBinaryOperations = ['math-max', 'math-min'];
 const maximumUInt64 = 18446744073709551615n;
 const canonicalUnsignedDecimal = /^(?:0|[1-9][0-9]*)$/;
 const canonicalBigIntDecimal = /^(?:0|-?[1-9][0-9]*)$/;
@@ -704,6 +755,25 @@ function expandGenerator(scenario, generator, graphs) {
           replay(index),
         ),
       );
+    }
+  } else if (generator.algorithm === 'math-operations-v1') {
+    const selection = mathNumbers.filter(([name]) => mathSelectionNames.has(name));
+    const push = (id, operation, fixtures) =>
+      result.push(vector(id, scenario.id, operation, fixtures, graphs, [], replay(result.length)));
+    for (const operation of mathUnaryOperations) {
+      for (const [name, bits] of mathNumbers) {
+        push(`${scenario.id}-${operation}-${name}`, operation, [{ kind: 'number', bits }]);
+      }
+    }
+    for (const operation of mathBinaryOperations) {
+      for (const [leftName, leftBits] of selection) {
+        for (const [rightName, rightBits] of selection) {
+          push(`${scenario.id}-${operation}-${leftName}-over-${rightName}`, operation, [
+            { kind: 'number', bits: leftBits },
+            { kind: 'number', bits: rightBits },
+          ]);
+        }
+      }
     }
   } else {
     throw new Error(`unknown differential generator: ${generator.algorithm}`);

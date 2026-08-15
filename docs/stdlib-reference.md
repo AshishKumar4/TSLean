@@ -363,14 +363,3 @@ These are generated as opaque types with axiomatized functions in `lean/TSLean/S
 
 ### console (`TSLean.Stubs.Console`)
 Delegates to `IO.println` and `IO.eprintln`.
-
-## Custom .d.ts Stub Generation
-
-The `src/stubs/dts-reader.ts` module can read `.d.ts` files from npm packages and generate Lean stub modules. Usage:
-
-```bash
-# Generates lean/TSLean/Stubs/SomePackage.lean from the package's type declarations
-npx tsx src/cli.ts --generate-stubs some-package
-```
-
-This produces opaque types and axiomatized functions, cached in `.tslean-cache/stubs/`.

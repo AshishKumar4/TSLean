@@ -1,10 +1,10 @@
 {
   "schemaVersion": 2,
   "suite": "combined",
-  "schemaHash": "56b02d325dbf3bc88630cc3c10fe7a624a08c437b69e8ac4d8220902c94395dc",
-  "sourceHash": "07eb27df693f96180331aa564ffb3dcc22b1f7914b9b2303598fa83934c48034",
+  "schemaHash": "9b73e522d8d562e3d8533f81c87459e2501d30d3d3f1908f56904d0beca81ebe",
+  "sourceHash": "bf58f99bb28b9198086959aebf57f6c0f36a05140cb1a7c07c5495cfc9b82a78",
   "sourceHashes": {
-    "primitive": "97657576a7555a3f3471589318b8a0c6d218043e2a3482632cb1e81d0e1ae3b1",
+    "primitive": "41298b7dc345fb297299b2b58e8b5926404763aa24875d481d76e27ba3e1a7b7",
     "abstract-operations": "7d2c215c9caece8e553e93b53ec18a654e9b5fd3e88b141306c55fbbfb4b66bc"
   },
   "corpusCoverageHash": "2451345a9454bd958f0cebdfd76277ea86e689eb2cac1f925b9a692603cddd87",
@@ -167,6 +167,60 @@
       "domain": "primitive",
       "arity": 2,
       "sourceHash": "c6feaaadf7f4c4fb531c929c68e2aeff8c9971beb5faafd0cf16f70c986ba742"
+    },
+    {
+      "id": "math-abs",
+      "domain": "primitive",
+      "arity": 1,
+      "sourceHash": "7b9354d3674ed31de99fb8ebc25d5e4228da7be8e0934bca4faee25efa1e4c5e"
+    },
+    {
+      "id": "math-ceil",
+      "domain": "primitive",
+      "arity": 1,
+      "sourceHash": "fb942dfa8f444e3ce4d50b1941e1d2cd5fdfccc8ced3fa13665d8cc8916da86f"
+    },
+    {
+      "id": "math-floor",
+      "domain": "primitive",
+      "arity": 1,
+      "sourceHash": "2ffbd33f05b7b1775f462628aaf5e38a47b4967de4df4c59821839bf080a8e58"
+    },
+    {
+      "id": "math-max",
+      "domain": "primitive",
+      "arity": 2,
+      "sourceHash": "2feba0bcac86f744d973ed3fdfaff1c4d7b0c055a1ebd53c51e4a6c1fea85076"
+    },
+    {
+      "id": "math-min",
+      "domain": "primitive",
+      "arity": 2,
+      "sourceHash": "78340c209d8e0fb6dc748d33cc5fd6055223267cc4429ed367197d1c094012d8"
+    },
+    {
+      "id": "math-round",
+      "domain": "primitive",
+      "arity": 1,
+      "sourceHash": "6bd82408f7415855bb58cbb064aed075b0da57397be538bd2fed9bd614daac66"
+    },
+    {
+      "id": "math-sign",
+      "domain": "primitive",
+      "arity": 1,
+      "sourceHash": "5a8a79ec1a62be390a9bea8630f2c2134235b705535fd6876a43c3dd2a18a034"
+    },
+    {
+      "id": "math-sqrt",
+      "domain": "primitive",
+      "arity": 1,
+      "sourceHash": "83a3db92e8e0a04bb1bf1a230560890d345903e65023003d46173b2f7f9bc89a"
+    },
+    {
+      "id": "math-trunc",
+      "domain": "primitive",
+      "arity": 1,
+      "sourceHash": "d3cf6e7aaed2a320ddfb8635fb41e6303dd4f7b7d02ee79d16e92e812c75f2e0"
     },
     {
       "id": "mul",
@@ -346,13 +400,13 @@
   "bounds": {
     "aggregateDenseArrayCells": 65536
   },
-  "scenarioCount": 16,
+  "scenarioCount": 17,
   "fixedCount": 734,
-  "generatedCount": 6530,
-  "vectorCount": 7264,
-  "comparisonCount": 7264,
-  "totalCount": 7264,
-  "uniqueOperationInputCount": 6088,
+  "generatedCount": 6853,
+  "vectorCount": 7587,
+  "comparisonCount": 7587,
+  "totalCount": 7587,
+  "uniqueOperationInputCount": 6411,
   "parityDuplicateCount": 1176,
   "duplicatePolicy": "preserved-for-v1-parity",
   "scenarioCounts": {
@@ -370,6 +424,7 @@
     "corpus-model-probes": 14,
     "curated-operators": 23,
     "format": 278,
+    "math-operations": 323,
     "parse": 322,
     "seeded-operators": 6000
   },
@@ -399,6 +454,15 @@
     "logical-or": 1,
     "loose": 441,
     "lt": 670,
+    "math-abs": 23,
+    "math-ceil": 23,
+    "math-floor": 23,
+    "math-max": 81,
+    "math-min": 81,
+    "math-round": 23,
+    "math-sign": 23,
+    "math-sqrt": 23,
+    "math-trunc": 23,
     "mul": 684,
     "mutate-intrinsic-prototype": 1,
     "mutate-wrapper-prototype": 1,
@@ -505,6 +569,11 @@
       "vectorHash": "8e4eb09e72c2e2e69c3e83740bb7c2f3295faeb7abd5a6842c65e3caed1e4cef"
     },
     {
+      "id": "math-operations",
+      "vectorCount": 323,
+      "vectorHash": "2dacd7f57ea9bb2ab3389c3d54827fe3e9654d11e3acd1a4b31b231e2815ce2b"
+    },
+    {
       "id": "parse",
       "vectorCount": 322,
       "vectorHash": "68ed78b4d04bcffd1567b59635167ebb3f55f80de8fe61bd3a294526031db732"
@@ -522,6 +591,13 @@
       "version": 1,
       "seed": "1311768467463790320",
       "count": 260
+    },
+    {
+      "scenario": "math-operations",
+      "algorithm": "math-operations-v1",
+      "version": 1,
+      "seed": "none",
+      "count": 323
     },
     {
       "scenario": "parse",
@@ -545,5 +621,5 @@
       "count": 6000
     }
   ],
-  "vectorStreamHash": "22627c2f8f79a9149d7cbe94de572da1592c50c08bf309c7c68704edcccf2722"
+  "vectorStreamHash": "2af115de286de725715a5d433b03e81fdc74eb36e7dbb3986501fe701f061ef2"
 }

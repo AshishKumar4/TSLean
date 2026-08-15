@@ -7,10 +7,6 @@ name = "TSLean"
 roots = ["TSLean"]
 
 [[lean_exe]]
-name = "tslean"
-root = "TSLean.Main"
-
-[[lean_exe]]
 name = "js-array-scale-tests"
 root = "TSLean.JS.ArrayScaleTests"
 

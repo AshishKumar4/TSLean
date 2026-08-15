@@ -223,29 +223,6 @@ describe('Utility type handling', () => {
   });
 });
 
-// ─── Inexpressible types fallback ───────────────────────────────────────────────
-
-describe('Inexpressible generic types', () => {
-  it('Partial<T> with type var → String fallback', () => {
-    const code = generateLean(mod([{
-      tag: 'TypeAlias', name: 'PartialT', typeParams: [tp('T')],
-      body: TyRef('Partial', [TyVar('T')]),
-    }]));
-    // Should not produce invalid Lean — either sorry or String
-    expect(code).toContain('abbrev PartialT');
-  });
-
-  it('ReturnType<T> with type var → String fallback', () => {
-    const code = generateLean(mod([{
-      tag: 'FuncDef', name: 'test', typeParams: [tp('T')],
-      params: [{ name: 'x', type: TyRef('ReturnType', [TyVar('T')]) }],
-      retType: TyString, effect: Pure, body: varExpr('x'),
-    }]));
-    // The ReturnType<T> param should map to String (not invalid ReturnType identifier)
-    expect(code).toContain('(x : String)');
-  });
-});
-
 // ─── Multi-param generics ───────────────────────────────────────────────────────
 
 describe('Multi-parameter generics', () => {

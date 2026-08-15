@@ -14,13 +14,13 @@
   },
   "counts": {
     "tests": {
-      "files": 46,
-      "passed": 1691,
+      "files": 45,
+      "passed": 1682,
       "failed": 0,
       "todo": 10
     },
     "lean": {
-      "jobs": 191,
+      "jobs": 180,
       "status": "passed"
     },
     "corpus": {
@@ -29,11 +29,11 @@
     },
     "auditedTheorems": 603,
     "differential": {
-      "scenarioGroups": 16,
+      "scenarioGroups": 17,
       "fixed": 734,
-      "generated": 6530,
-      "comparisons": 7264,
-      "uniqueOperationInputs": 6088,
+      "generated": 6853,
+      "comparisons": 7587,
+      "uniqueOperationInputs": 6411,
       "preservedDuplicates": 1176,
       "legacyInventoryIds": 97,
       "coverage": {
@@ -50,9 +50,9 @@
     "build": "passed"
   },
   "refinementProofs": {
-    "audited": 239,
-    "required": 226,
-    "registryHash": "sha256:77cd66554ae05fb4128c8c92e5ff998dea65a1b741cecb853099ea75d12c902c"
+    "audited": 263,
+    "required": 250,
+    "registryHash": "sha256:a25b0f56ea9842c53404d6c2f64bfb1646bbc6f70476d63dc08827312339384e"
   },
   "executableAssumptions": {
     "statement": "These eight executable trusted-computing-base assumptions exactly record the Float refinement runtime contracts. They are not proof axioms and introduce no additional runtime contract.",
@@ -167,12 +167,12 @@
     }
   ],
   "hashes": {
-    "source": "sha256:afbf8821841e0948873117ebadd47ce95866550f92c2c80114c73b3c714c91b2",
-    "jsRuntime": "sha256:f1e1ddb081af8a5fad5917df5e1b8b25a2b40ee17067399a762f4095e786c32b",
-    "refinementRuntimeAndBarrel": "sha256:9a55a9bc6f0e7281fd4b427f12e1042dc19a9664010baa23699a6e928b556df8",
-    "refinementTestsAuditRegistry": "sha256:f3d8d31eade65e8baff5bd30546b4280279c816c42b7018674c769009b193d36",
-    "corpus": "sha256:d5f43e3f1ba87f38067db592e464a6aacfba71b75235905d0e08148b4472b887",
-    "differentialSpecHarness": "sha256:3f41a8ed43125df941d923c0f683a9194177ccb307b71d6d47bbeff5abed5ae6",
-    "trustEvidenceInfrastructure": "sha256:021e776606db32a21fcaecfe2490d10452ed2852ced9801b91c27366c576dbd9"
+    "source": "sha256:165eb474983872ff69ec2da7fe073226247f61c723a6f1c8e31a9c2b322da203",
+    "jsRuntime": "sha256:0548554dfa0803092cb6cb784558019708bc0aad6ebfa8c33d1711fa408e3d33",
+    "refinementRuntimeAndBarrel": "sha256:65ac151e483e7803ecea297427f47d3e282b364345c541306d26281d73a19619",
+    "refinementTestsAuditRegistry": "sha256:362ef6a302c3afde878cb632ee4b3736173a1790f7c0938f945101c546f8b47b",
+    "corpus": "sha256:813ba0e3fa8d02912872c4451cf33773aa0fc627dac24f68f770e25506fa1903",
+    "differentialSpecHarness": "sha256:a60e709b193d859da6521ab4179c645fd0c33cb50cfa9d1fba9f486a4feb6eb5",
+    "trustEvidenceInfrastructure": "sha256:41909a11f17d351840f5eaa7d089fd13e1634c5de598944f886992575353a123"
   }
 }

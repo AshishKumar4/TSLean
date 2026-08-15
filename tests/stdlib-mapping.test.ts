@@ -13,74 +13,81 @@ function inline(src: string): string {
 
 // ─── Bug 1: Math.*/console.*/JSON.* → Lean stdlib ────────────────────────────
 
+// The Math table is tiered: proved carriers, one assumed carrier, and nothing at all for
+// the operations ECMA-262 leaves implementation-approximated. Each tier is asserted here
+// because the difference between them is the difference between a justified translation
+// and a plausible-looking one.
+
 describe('Stdlib mapping: Math property access', () => {
-  it('Math.PI → 3.14159265358979', () => {
+  it('Math.PI → the proved exact encoding, not a decimal literal', () => {
     const code = inline('const pi = Math.PI;');
-    expect(code).toContain('3.14159265358979');
-    expect(code).not.toContain('Math.PI');
+    expect(code).toContain('TSLean.Stdlib.Numeric.Math.PI');
+    expect(code).toContain('import TSLean.Stdlib.Numeric');
+    expect(code).not.toContain('3.14159265358979');
   });
 
-  it('Math.E → Float.exp 1 or similar', () => {
-    // Math.E may not be in the table — check graceful handling
+  it('Math.E → the proved exact encoding', () => {
     const code = inline('const e = Math.E;');
-    // Should either map or pass through as FieldAccess
-    expect(code).toBeDefined();
+    expect(code).toContain('TSLean.Stdlib.Numeric.Math.E');
+    expect(code).not.toContain('2.718281828459045');
   });
 });
 
 describe('Stdlib mapping: Math function calls', () => {
-  it('Math.max(a, b) → max a b', () => {
-    const code = inline('function bigger(a: number, b: number): number { return Math.max(a, b); }');
-    expect(code).toContain('max a b');
-    expect(code).not.toContain('Math.max');
+  const tierOne: ReadonlyArray<[string, string]> = [
+    ['max', 'function bigger(a: number, b: number): number { return Math.max(a, b); }'],
+    ['min', 'function smaller(a: number, b: number): number { return Math.min(a, b); }'],
+    ['floor', 'function flr(x: number): number { return Math.floor(x); }'],
+    ['ceil', 'function up(x: number): number { return Math.ceil(x); }'],
+    ['round', 'function rnd(x: number): number { return Math.round(x); }'],
+    ['abs', 'function magnitude(x: number): number { return Math.abs(x); }'],
+    ['trunc', 'function cut(x: number): number { return Math.trunc(x); }'],
+    ['sign', 'function direction(x: number): number { return Math.sign(x); }'],
+  ];
+
+  for (const [operation, source] of tierOne) {
+    it(`Math.${operation} → the proved TSLean.Stdlib.Numeric.Math carrier`, () => {
+      const code = inline(source);
+      expect(code).toContain(`TSLean.Stdlib.Numeric.Math.${operation}`);
+      expect(code).toContain('import TSLean.Stdlib.Numeric');
+      expect(code).not.toContain('default');
+    });
+  }
+
+  it('Math.max and Math.min do not lower to Lean max/min, which disagree on NaN and -0', () => {
+    const code = inline('function pick(a: number, b: number): number { return Math.max(a, Math.min(a, b)); }');
+    expect(code).not.toMatch(/(?<!Math\.)\bmax a\b/);
+    expect(code).not.toMatch(/(?<!Math\.)\bmin a\b/);
   });
 
-  it('Math.min(a, b) → min a b', () => {
-    const code = inline('function smaller(a: number, b: number): number { return Math.min(a, b); }');
-    expect(code).toContain('min a b');
-    expect(code).not.toContain('Math.min');
-  });
-
-  it('Math.sqrt(x) → Float.sqrt x', () => {
+  it('Math.sqrt(x) → Float.sqrt x, the one assumed carrier', () => {
     const code = inline('function root(x: number): number { return Math.sqrt(x); }');
     expect(code).toContain('Float.sqrt x');
     expect(code).not.toContain('Math.sqrt');
   });
 
-  it('Math.floor(x) → Float.floor x', () => {
-    const code = inline('function flr(x: number): number { return Math.floor(x); }');
-    expect(code).toContain('Float.floor x');
-    expect(code).not.toContain('Math.floor');
-  });
-
-  it('Math.ceil(x) → Float.ceil x', () => {
-    const code = inline('function up(x: number): number { return Math.ceil(x); }');
-    expect(code).toContain('Float.ceil x');
-    expect(code).not.toContain('Math.ceil');
-  });
-
-  it('Math.round(x) → Float.round x', () => {
-    const code = inline('function rnd(x: number): number { return Math.round(x); }');
-    expect(code).toContain('Float.round x');
-    expect(code).not.toContain('Math.round');
-  });
-
-  it('Math.abs(x) → Float.abs x', () => {
-    const code = inline('function abs(x: number): number { return Math.abs(x); }');
-    expect(code).toContain('Float.abs x');
-    expect(code).not.toContain('Math.abs');
-  });
-
-  it('Math.pow(x, n) → Float.pow x n', () => {
-    const code = inline('function power(x: number, n: number): number { return Math.pow(x, n); }');
-    expect(code).toContain('Float.pow x n');
-    expect(code).not.toContain('Math.pow');
-  });
-
-  it('Math.log(x) → Float.log x', () => {
-    const code = inline('function ln(x: number): number { return Math.log(x); }');
-    expect(code).toContain('Float.log x');
-    expect(code).not.toContain('Math.log');
+  it('implementation-approximated Math operations are unmapped and degrade', () => {
+    const unmapped: ReadonlyArray<[string, string]> = [
+      ['pow', 'function power(x: number, n: number): number { return Math.pow(x, n); }'],
+      ['log', 'function ln(x: number): number { return Math.log(x); }'],
+      ['log2', 'function lg(x: number): number { return Math.log2(x); }'],
+      ['log10', 'function lg10(x: number): number { return Math.log10(x); }'],
+      ['exp', 'function ex(x: number): number { return Math.exp(x); }'],
+      ['sin', 'function s(x: number): number { return Math.sin(x); }'],
+      ['cos', 'function c(x: number): number { return Math.cos(x); }'],
+      ['tan', 'function t(x: number): number { return Math.tan(x); }'],
+      ['asin', 'function asn(x: number): number { return Math.asin(x); }'],
+      ['acos', 'function acs(x: number): number { return Math.acos(x); }'],
+      ['atan', 'function atn(x: number): number { return Math.atan(x); }'],
+      ['atan2', 'function at2(y: number, x: number): number { return Math.atan2(y, x); }'],
+      ['cbrt', 'function cb(x: number): number { return Math.cbrt(x); }'],
+      ['hypot', 'function hy(a: number, b: number): number { return Math.hypot(a, b); }'],
+    ];
+    for (const [operation, source] of unmapped) {
+      const code = inline(source);
+      expect(code, `Math.${operation} must not emit a carrier`).toContain('default');
+      expect(code, `Math.${operation} must not emit a Float primitive`).not.toContain(`Float.${operation}`);
+    }
   });
 });
 
@@ -141,8 +148,7 @@ describe('Stdlib mapping: combined usage', () => {
         }
       }
     `);
-    expect(code).toContain('3.14159265358979');
-    expect(code).not.toContain('Math.PI');
+    expect(code).toContain('TSLean.Stdlib.Numeric.Math.PI');
   });
 });
 
@@ -269,8 +275,7 @@ describe('Regenerated fixture: discriminated-unions', () => {
       }
     `);
     // Math.PI mapped
-    expect(code).toContain('3.14159265358979');
-    expect(code).not.toContain('Math.PI');
+    expect(code).toContain('TSLean.Stdlib.Numeric.Math.PI');
     // No wildcard on exhaustive 3-arm match
     const matchSection = code.slice(code.indexOf('match'));
     expect(matchSection).not.toContain('| _ =>');

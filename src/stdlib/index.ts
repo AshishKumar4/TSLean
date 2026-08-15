@@ -124,36 +124,39 @@ const GLOBALS: Record<string, GlobalTx> = {
   'console.warn':   { leanExpr: 'IO.eprintln',          io: true },
   'console.info':   { leanExpr: 'IO.println',           io: true },
   'Date.now':       { leanExpr: '0' },
-  'Math.floor':     { leanExpr: 'Float.floor' },
-  'Math.ceil':      { leanExpr: 'Float.ceil' },
-  'Math.round':     { leanExpr: 'Float.round' },
-  'Math.abs':       { leanExpr: 'Float.abs' },
+  // Math.* sits in three tiers, and only two of them can name a carrier honestly.
+  //
+  // Tier 1 — proved. TSLean.Refinement.Math computes these from the binary64 encoding by
+  // exact integer arithmetic, so what they return is a theorem rather than a property of
+  // a runtime primitive. Lean's own operators are not these functions: `max 1 NaN` is 1,
+  // `max 0 (-0)` is -0, `min 0 (-0)` is +0 and `Float.round (-0.5)` is -1, where Node
+  // gives NaN, +0, -0 and -0. The constants are emitted as exact encodings rather than
+  // decimal literals because the literal route is `Float.ofScientific`, whose rounding
+  // this model already declines to trust at binary64 boundaries.
+  'Math.abs':       { leanExpr: 'TSLean.Stdlib.Numeric.Math.abs' },
+  'Math.sign':      { leanExpr: 'TSLean.Stdlib.Numeric.Math.sign' },
+  'Math.trunc':     { leanExpr: 'TSLean.Stdlib.Numeric.Math.trunc' },
+  'Math.floor':     { leanExpr: 'TSLean.Stdlib.Numeric.Math.floor' },
+  'Math.ceil':      { leanExpr: 'TSLean.Stdlib.Numeric.Math.ceil' },
+  'Math.round':     { leanExpr: 'TSLean.Stdlib.Numeric.Math.round' },
+  'Math.max':       { leanExpr: 'TSLean.Stdlib.Numeric.Math.max' },
+  'Math.min':       { leanExpr: 'TSLean.Stdlib.Numeric.Math.min' },
+  'Math.PI':        { leanExpr: 'TSLean.Stdlib.Numeric.Math.PI' },
+  'Math.E':         { leanExpr: 'TSLean.Stdlib.Numeric.Math.E' },
+  'Math.LN2':       { leanExpr: 'TSLean.Stdlib.Numeric.Math.LN2' },
+  'Math.LN10':      { leanExpr: 'TSLean.Stdlib.Numeric.Math.LN10' },
+  'Math.SQRT2':     { leanExpr: 'TSLean.Stdlib.Numeric.Math.SQRT2' },
+  'Math.SQRT1_2':   { leanExpr: 'TSLean.Stdlib.Numeric.Math.SQRT1_2' },
+  // Tier 2 — one assumption. IEEE-754 mandates a correctly rounded square root, so
+  // TSLean.Refinement.Math.Sqrt is the whole of what this mapping asks to be believed.
   'Math.sqrt':      { leanExpr: 'Float.sqrt' },
-  'Math.max':       { leanExpr: 'max' },
-  'Math.min':       { leanExpr: 'min' },
-  'Math.pow':       { leanExpr: 'Float.pow' },
-  'Math.log':       { leanExpr: 'Float.log' },
-  'Math.log2':      { leanExpr: 'TSLean.Stdlib.Numeric.FloatExt.log2' },
-  'Math.log10':     { leanExpr: 'TSLean.Stdlib.Numeric.FloatExt.log10' },
-  'Math.exp':       { leanExpr: 'Float.exp' },
-  'Math.sin':       { leanExpr: 'Float.sin' },
-  'Math.cos':       { leanExpr: 'Float.cos' },
-  'Math.tan':       { leanExpr: 'Float.tan' },
-  'Math.atan2':     { leanExpr: 'Float.atan2' },
-  'Math.asin':      { leanExpr: 'Float.asin' },
-  'Math.acos':      { leanExpr: 'Float.acos' },
-  'Math.atan':      { leanExpr: 'Float.atan' },
-  'Math.trunc':     { leanExpr: 'TSLean.Stdlib.Numeric.FloatExt.trunc' },
-  'Math.sign':      { leanExpr: 'TSLean.Stdlib.Numeric.sign ∘ Float.toUInt64 ∘ fun x => x' },
+  // Tier 3 — absent. ECMA-262 leaves exp, log, log2, log10, sin, cos, tan, asin, acos,
+  // atan, atan2, pow, cbrt and hypot implementation-approximated, so no Lean carrier can
+  // claim Node's bits. They stay unmapped and degrade visibly instead.
+  //
+  // random is IO, and clz32/fround/imul are integer or float32 operations that this
+  // Number model does not cover; all four remain unjustified stubs.
   'Math.random':    { leanExpr: 'IO.rand',              io: true },
-  'Math.PI':        { leanExpr: '3.141592653589793' },
-  'Math.E':         { leanExpr: '2.718281828459045' },
-  'Math.LN2':       { leanExpr: '0.6931471805599453' },
-  'Math.LN10':      { leanExpr: '2.302585092994046' },
-  'Math.SQRT2':     { leanExpr: '1.4142135623730951' },
-  'Math.SQRT1_2':   { leanExpr: '0.7071067811865476' },
-  'Math.hypot':     { leanExpr: 'fun a b => Float.sqrt (a * a + b * b)' },
-  'Math.cbrt':      { leanExpr: 'fun x => Float.pow x (1.0 / 3.0)' },
   'Math.clz32':     { leanExpr: 'fun _ => 0' },
   'Math.fround':    { leanExpr: 'id' },
   'Math.imul':      { leanExpr: 'fun a b => a * b' },

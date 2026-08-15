@@ -262,8 +262,6 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 
 ```
 tslean compile <file|dir>  [options]   Transpile TypeScript to Lean 4
-tslean self-host                       Run the self-hosting pipeline
-tslean verify                          Run fixpoint verification
 tslean init [dir]                      Scaffold a new tslean project
 ```
 
@@ -333,7 +331,7 @@ Pre-built Lean stubs for common Node.js APIs (axiomatized for verification):
 | **console** | log, error, warn, info, debug, time, timeEnd, assert, table, trace |
 | **process** | env, argv, exit, cwd, stdout, stderr, stdin, platform, arch |
 
-Unknown npm packages can be stubbed automatically via the `.d.ts` reader (`src/stubs/dts-reader.ts`).
+Unknown npm packages have no stub path: an import that resolves to none of the above keeps its name as `TSLean.External.<Name>`, which the lowerer then declines to emit as an import.
 
 ## Limitations
 
@@ -348,18 +346,6 @@ TSLean is honest about what it can and cannot express. Some TypeScript features 
 | Generators / `yield` | `sorry` | Use arrays or recursion |
 
 Use `--strict` to reject any output that carries a `sorry` or `default` placeholder — the check scans the emitted Lean, so it also catches placeholders the lowerer never recorded. See [docs/limitations.md](docs/limitations.md) for the full list.
-
-## Self-Hosting
-
-TSLean can transpile all 12 of its own source modules to Lean 4. The fixpoint verification confirms that the TS and Lean transpiler pipelines produce identical output for 9 out of 10 target files. The remaining file (`lower.ts`) has ~90 structural diffs from self-referential patterns.
-
-```bash
-# Run the self-hosting pipeline
-bun run src/cli.ts self-host
-
-# Verify fixpoint
-bash scripts/fixpoint-verify.sh
-```
 
 ## Documentation
 
@@ -383,7 +369,7 @@ bun run verify           # Format, lint, tests, TypeScript build, and Lean build
 
 ## Project Stats
 
-Current measured counts are generated in [`evidence/baseline-manifest.json`](evidence/baseline-manifest.json) rather than duplicated here. Historical Agents SDK transpilation and fixpoint runs are not completeness or correctness evidence.
+Current measured counts are generated in [`evidence/baseline-manifest.json`](evidence/baseline-manifest.json) rather than duplicated here. Historical Agents SDK transpilation runs are not completeness or correctness evidence.
 
 ## License
 

@@ -366,10 +366,7 @@ describe('Generated Lean file quality', () => {
     function checkDir(d: string) {
       for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
         const full = path.join(d, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name === 'SelfHost') continue;  // SelfHost files are stretch goals
-          checkDir(full); continue;
-        }
+        if (entry.isDirectory()) { checkDir(full); continue; }
         if (!entry.name.endsWith('.lean')) continue;
         const code = fs.readFileSync(full, 'utf8');
         let depth = 0;

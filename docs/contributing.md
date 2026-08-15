@@ -73,7 +73,6 @@ TSLean/
 │   │   ├── v2.ts               V2 pipeline entry (112 lines)
 │   │   └── index.ts            Public API (47 lines)
 │   ├── stdlib/               JS stdlib → Lean mapping tables (240 lines)
-│   ├── stubs/                .d.ts reader for npm packages (330 lines)
 │   ├── do-model/             Cloudflare DO ambient types (125 lines)
 │   ├── project/              Multi-file compilation
 │   │   ├── index.ts            Orchestrator (147 lines)
@@ -81,7 +80,6 @@ TSLean/
 │   │   ├── module-resolver.ts  File → Lean module name (158 lines)
 │   │   ├── reader.ts           tsconfig.json reader (180 lines)
 │   │   └── lakefile-gen.ts     lakefile.toml generator (67 lines)
-│   ├── preprocessor/         TSC-to-JSON serializer (520 lines)
 │   ├── verification/         Proof obligation generator (112 lines)
 │   ├── errors.ts             Structured error codes (172 lines)
 │   ├── sorry-tracker.ts      Sorry/degradation tracking (75 lines)
@@ -364,32 +362,17 @@ lake build
 lake clean && lake build
 ```
 
-The Lean build compiles all modules in `lean/TSLean/`, including the `Proofs/` directory which contains transpiler correctness theorems. Build failure indicates either a syntax error in the Lean files or an incompatibility introduced by source changes.
-
-## Running the Fixpoint Verification
-
-The fixpoint compares output from the TypeScript transpiler and its self-hosted Lean equivalent for 10 target source files. It is a structural regression check, not a semantic correctness proof:
-
-```bash
-export PATH="/opt/lean4/lean-4.29.0-linux/bin:$PATH"
-cd lean && lake build tslean && cd ..
-bash scripts/fixpoint-verify.sh
-```
-
-**Expected result:** 9/10 files identical. `lower.ts` has known structural diffs (~90 lines) due to `this.method()` resolution limitations in the self-hosted pipeline.
-
-A fixpoint regression (fewer than 9/10 identical) means your changes broke the self-hosting pipeline and must be investigated.
+The Lean build compiles every module reachable from `lean/TSLean.lean`. Build failure indicates either a syntax error in the Lean files or an incompatibility introduced by source changes.
 
 ## Code Quality Rules
 
 1. **Strict DRY** — no duplicated logic. Extract shared behavior.
 2. **`bun run test` must pass** — all active tests green and known semantic gaps remain explicit todos.
 3. **`lake build` must pass** — the Lean library compiles cleanly.
-4. **Fixpoint must not regress** — maintain 9/10 identical files.
-5. **Every `sorry` tracked** — each sorry emitted by the lowerer must have a `SorryEntry` with category and hint via `src/sorry-tracker.ts`.
-6. **No `as any` without justification** — TypeScript type safety matters in a transpiler.
-7. **Strict TypeScript** — `tsc --noEmit` must pass.
-8. **Simplicity over cleverness** — complexity must be justified.
+4. **Every `sorry` tracked** — each sorry emitted by the lowerer must have a `SorryEntry` with category and hint via `src/sorry-tracker.ts`.
+5. **No `as any` without justification** — TypeScript type safety matters in a transpiler.
+6. **Strict TypeScript** — `tsc --noEmit` must pass.
+7. **Simplicity over cleverness** — complexity must be justified.
 
 ## Commit Style
 

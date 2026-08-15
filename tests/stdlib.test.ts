@@ -46,9 +46,10 @@ describe('lookupMethod – Set', () => {
 describe('lookupGlobal', () => {
   it('console.log (io)',   () => { const g = lookupGlobal('console.log'); expect(g?.leanExpr).toBe('IO.println'); expect(g?.io).toBe(true); });
   it('console.error (io)', () => expect(lookupGlobal('console.error')?.io).toBe(true));
-  it('Math.floor (pure)',  () => { const g = lookupGlobal('Math.floor'); expect(g?.leanExpr).toBe('Float.floor'); expect(g?.io).toBeFalsy(); });
+  it('Math.floor (pure)',  () => { const g = lookupGlobal('Math.floor'); expect(g?.leanExpr).toBe('TSLean.Stdlib.Numeric.Math.floor'); expect(g?.io).toBeFalsy(); });
   it('Math.sqrt',          () => expect(lookupGlobal('Math.sqrt')?.leanFn ?? lookupGlobal('Math.sqrt')?.leanExpr).toBe('Float.sqrt'));
-  it('Math.max',           () => expect(lookupGlobal('Math.max')?.leanExpr).toBe('max'));
+  it('Math.max',           () => expect(lookupGlobal('Math.max')?.leanExpr).toBe('TSLean.Stdlib.Numeric.Math.max'));
+  it('Math.pow (unmapped)', () => expect(lookupGlobal('Math.pow')).toBeUndefined());
   it('Math.random (io)',   () => expect(lookupGlobal('Math.random')?.io).toBe(true));
   it('Date.now (io)',      () => expect(lookupGlobal('Date.now')).toBeDefined());
   it('parseInt',           () => expect(lookupGlobal('parseInt')?.leanExpr).toContain('parseInt'));

@@ -170,7 +170,7 @@ Pretty-prints LeanAST to valid Lean 4 source text. Purely structural — no heur
 
 ### `src/codegen/v2.ts`, `src/codegen/index.ts` and `src/codegen/degradation.ts`
 
-The public codegen API. `buildLeanFile()` calls `lowerModule()` plus the optional self-host transforms (which remap namespaces and imports for the self-hosting pipeline); `generateLeanV2()` prints it. `generateLeanTracked()` is the single code path — it returns that same text plus the degradation the artifact carries, and `generateLean()` returns its `code`, so single-file and project mode emit identical bytes.
+The public codegen API. `buildLeanFile()` calls `lowerModule()`; `generateLeanV2()` prints it. `generateLeanTracked()` is the single code path — it returns that same text plus the degradation the artifact carries, and `generateLean()` returns its `code`, so single-file and project mode emit identical bytes.
 
 `scanDegradation()` walks the printed LeanAST and reports every `sorry` and `default` placeholder with the declaration carrying it. It is what `--strict` rejects on: the tracker only records the few sites that call it, whereas the scan is a property of the output. `Raw`, `StandaloneInstance` and `Theorem` carry text the AST never saw — that is how `⟨sorry⟩` reaches the output for mutually recursive types — so their code is tokenized, skipping comments and string literals.
 
@@ -209,10 +209,6 @@ Multi-file transpilation orchestrator:
 - **`reader.ts`** (180 lines) — Reads `tsconfig.json`, discovers source files, creates a shared `ts.Program` for cross-file type checking.
 - **`lakefile-gen.ts`** (67 lines) — Generates `lakefile.toml`, `lean-toolchain`, and root barrel `.lean` module.
 
-### `src/stubs/dts-reader.ts` (330 lines)
-
-Reads `.d.ts` files from npm packages and generates Lean stub modules with opaque types and axiomatized functions. Includes caching in `.tslean-cache/stubs/`.
-
 ### `src/errors.ts` (172 lines)
 
 Structured error reporting with 15 error codes in ranges: TSL001–005 (parser), TSL100–103 (types), TSL200–205 (lowering), TSL300–302 (project), TSL400–401 (Lean build). Each diagnostic carries a code, severity, location, message, auto-populated explanation, and suggestion. `DiagnosticCollector` aggregates errors across the pipeline.
@@ -225,10 +221,6 @@ Records *why* the lowerer degraded an expression, for the sites that call it. Ei
 
 Pipeline timing instrumentation. `PipelineTimer` tracks elapsed time for each phase (parse, rewrite, codegen, verify, write). Enabled with the `--timing` CLI flag; prints a bar chart report.
 
-### `src/preprocessor/tsc-to-json.ts` (520 lines)
-
-Standalone CLI tool that serializes a TypeScript AST with rich type information to JSON (v2 format). Used for debugging and as an alternative front-end.
-
 ### `src/cli.ts` (468 lines)
 
 The CLI entry point. Parses arguments and dispatches to commands:
@@ -240,8 +232,6 @@ The CLI entry point. Parses arguments and dispatches to commands:
 | Watch | `-w / --watch` | Recompile on file change (250ms debounce) |
 | Watch + lake | `--watch --lake` | Recompile + auto `lake build` |
 | Verify | `--verify` | Generate proof obligation stubs |
-| Self-host | `--self-host` | Run the self-hosting pipeline |
-| Fixpoint | (via script) | Verify self-hosted output matches |
 | Init | `tslean init [dir]` | Scaffold project with `tslean.json` |
 | Timing | `--timing` | Print per-phase timing report |
 | Strict | `--strict` | Reject output containing `sorry`/`default` placeholders (single-file and project mode) |
@@ -303,16 +293,7 @@ lean/TSLean/
 ├── External/             Third-party package stubs
 │   ├── Fs.lean             Extended filesystem stubs
 │   ├── Path.lean           Extended path stubs
-│   └── Typescript.lean     TS compiler API stubs (for self-hosting)
-├── Proofs/               Transpiler correctness proofs
-│   ├── TypeMapping.lean      Type mapping preservation
-│   ├── TypePreservation.lean Type safety through pipeline
-│   ├── ExprPreservation.lean Expression lowering correctness
-│   ├── EffectPreservation.lean Effect lattice correctness
-│   ├── RewritePreservation.lean Rewrite pass preservation
-│   ├── SemanticPreservation.lean End-to-end composition
-│   ├── StdlibProperties.lean 61 algebraic laws for stdlib modules
-│   └── ...
+│   └── Typescript.lean     TS compiler API stubs (nothing imports these)
 ├── Generated/            Transpiler output (auto-generated)
 └── Veil/                 Veil DSL for DO specification
 ```

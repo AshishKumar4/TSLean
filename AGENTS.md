@@ -15,9 +15,6 @@ npx tsx src/cli.ts input.ts -o output.lean
 # Build the Lean runtime library
 export PATH="$HOME/.elan/bin:$PATH"
 cd lean && lake build
-
-# Benchmark Agents SDK compilation (64 files)
-bash scripts/bench65.sh
 ```
 
 ## Project Structure
@@ -83,16 +80,10 @@ Key lowering decisions:
 - `{ ...a, ...b }` → `AssocMap.mergeWith (fun _ b => b) a b`
 - Struct fields with function types → `Inhabited` only (no Repr/BEq deriving)
 
-## Agents SDK Compilation Benchmark
-
-Target: 64 core Agents SDK .ts files from `/workspace/agents-sdk/packages/agents/src/`.
+## Checking a single file against Lean
 
 ```bash
-# Run the benchmark
 export PATH="$HOME/.elan/bin:$PATH"
-bash scripts/bench65.sh
-
-# Quick single-file check
 npx tsx src/cli.ts path/to/file.ts -o /tmp/test.lean
 cd lean && lake env lean /tmp/test.lean
 ```
@@ -110,7 +101,6 @@ cd lean && lake env lean /tmp/test.lean
 - No duplicated logic; keep the transpiler DRY
 - Test with `npx vitest run` before committing
 - Verify Lean build with `lake build` before committing
-- Always check benchmark score after changes: `bash scripts/bench65.sh`
 - Prefer fixing root causes in the lowerer over post-processing hacks
 
 ## Multi-Agent Safety

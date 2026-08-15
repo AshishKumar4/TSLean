@@ -324,11 +324,6 @@ function mapTypeRef(t: ts.TypeReference, checker: ts.TypeChecker, depth: number)
     case 'Readonly':      case 'NonNullable':   return map1();
     // Utility types that are transparent (pass through inner type)
     case 'Required':                            return map1();
-    // Utility types that reduce to known IR types
-    case 'Partial':                             return TyRef('Partial', [map1()]);
-    case 'Pick':          case 'Omit':          return TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
-    case 'ReturnType':    case 'Parameters':    return TyRef(name, [map1()]);
-    case 'Exclude':       case 'Extract':       return TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
     default: {
       if (LEAN_CARRIER_TYPES.has(name)) {
         return args.length === 0 ? TyRef(name) : TyRef(name, args.map(a => mapType(a, checker, depth + 1)));

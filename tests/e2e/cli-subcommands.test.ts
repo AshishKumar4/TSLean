@@ -1,8 +1,7 @@
 // E2E tests for the new CLI subcommand interface.
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { execFileSync, type ExecFileSyncOptions } from 'node:child_process';
-import { createRequire } from 'node:module';
+import { type ExecFileSyncOptions } from 'node:child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -10,7 +9,6 @@ import { runCli } from '../helpers/run-cli.js';
 
 const ROOT = process.cwd();
 const FIX  = path.join(ROOT, 'tests/fixtures');
-const TSX_CLI = createRequire(import.meta.url).resolve('tsx/cli');
 
 const execOpts: ExecFileSyncOptions = { stdio: 'pipe', env: { ...process.env, NO_COLOR: '1' } };
 
@@ -22,24 +20,6 @@ function tmpDir(): string {
   const d = path.join(os.tmpdir(), `tslean_sub_${Date.now()}_${Math.random().toString(36).slice(2)}`);
   fs.mkdirSync(d, { recursive: true });
   return d;
-}
-
-function runScriptSubcommand(command: 'self-host' | 'verify', scriptName: string): string {
-  const parent = tmpDir();
-  cleanup.push(parent);
-  const checkout = path.join(parent, 'checkout space $(printf injected) ; literal');
-  const scripts = path.join(checkout, 'scripts');
-  fs.mkdirSync(scripts, { recursive: true });
-  fs.cpSync(path.join(ROOT, 'src'), path.join(checkout, 'src'), { recursive: true });
-  fs.symlinkSync(path.join(ROOT, 'node_modules'), path.join(checkout, 'node_modules'), 'dir');
-  fs.writeFileSync(path.join(checkout, 'package.json'), '{"type":"module"}\n');
-  fs.writeFileSync(path.join(scripts, scriptName), `printf 'script cwd: %s\\n' "$PWD"\n`);
-
-  return execFileSync(
-    process.execPath,
-    [TSX_CLI, path.join(checkout, 'src', 'cli.ts'), command],
-    execOpts,
-  ).toString();
 }
 
 const cleanup: string[] = [];
@@ -57,8 +37,6 @@ describe('CLI: help and version', () => {
     const out = runCli(['--help'], execOpts).toString();
     expect(out).toContain('tslean');
     expect(out).toContain('compile');
-    expect(out).toContain('self-host');
-    expect(out).toContain('verify');
     expect(out).toContain('init');
   });
 
@@ -80,20 +58,6 @@ describe('CLI: help and version', () => {
   it('-v shows version', () => {
     const out = runCli(['-v'], execOpts).toString();
     expect(out).toMatch(/^tslean \d+\.\d+\.\d+/);
-  });
-});
-
-describe('CLI: script subcommands', () => {
-  it('runs the self-host script from a checkout path with shell metacharacters', () => {
-    const out = runScriptSubcommand('self-host', 'self-host.sh');
-    expect(out).toContain('script cwd: ');
-    expect(out).toContain('checkout space $(printf injected) ; literal');
-  });
-
-  it('runs the fixpoint script from a checkout path with shell metacharacters', () => {
-    const out = runScriptSubcommand('verify', 'fixpoint-verify.sh');
-    expect(out).toContain('script cwd: ');
-    expect(out).toContain('checkout space $(printf injected) ; literal');
   });
 });
 

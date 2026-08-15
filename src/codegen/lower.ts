@@ -32,7 +32,7 @@ import { currentTracker } from '../sorry-tracker.js';
 
 // ─── Hardcoded type-name sets ───────────────────────────────────────────────────
 //
-// Four sets of TS type names decide type-related behaviour and they overlap. They
+// Three sets of TS type names decide type-related behaviour and they overlap. They
 // are not interchangeable: each answers a different question, and none of them
 // answers the one that decides what Lean type gets emitted.
 //
@@ -46,17 +46,15 @@ import { currentTracker } from '../sorry-tracker.js';
 //     answer. `NO_LEAN_CARRIER_NAMES` holds the measured residue it cannot
 //     express: types the transpiled program reopens, types that never resolve
 //     under the parser's lib, and generics whose arguments must not be discarded.
-//   Which need type-level computation?  INEXPRESSIBLE_UTILITY_TYPES, consulted by
-//     lowerType alone and only when an argument is a type variable.
 //   Which have real Lean field accessors?  LEAN_BUILTIN_TYPES, consulted at the
 //     value level and never for rendering. It holds IR spellings, so `Any` sits
 //     beside `TSAny`: the parser emits `TyRef('Any')` for a missing symbol, while
 //     `TSAny` is the only carrier name ever emitted.
 //   Which receivers are TypeScript compiler API objects?  TS_API_TYPES, also
-//     value level only, AUTHORITATIVE for the self-host boundary. Since mapType
-//     now erases those types, an IR TypeRef reaching it is already `TSAny`, which
-//     the set also holds — the remaining names cover a receiver whose type the
-//     parser could not resolve.
+//     value level only, and AUTHORITATIVE for that question. Since mapType now
+//     erases those types, an IR TypeRef reaching it is already `TSAny`, which the
+//     set also holds — the remaining names cover a receiver whose type the parser
+//     could not resolve.
 //
 // The overlaps, measured, so the next slice need not re-derive them:
 //   - TS_API_TYPES ∩ LEAN_BUILTIN_TYPES = {Any, TSAny}. Intended: both questions
@@ -70,29 +68,21 @@ import { currentTracker } from '../sorry-tracker.js';
 //     elaborates. `URL` shows what the fix looks like: it is allowlisted in
 //     `LEAN_CARRIER_TYPES` because the lowerer does map its constructor and fields
 //     onto the Lean structure.
-//   - A fifth set used to exist: a render-time copy of the carrier question inside
-//     typemap's `typeStr`, reached from type-alias bodies and explicit type
-//     arguments only. Deleting that renderer deleted it, which turned 23 alias
-//     bodies from `abbrev X := String` into `abbrev X := <the TS name>` — 23 of 23
-//     rejected by `lake env lean`, whether or not the alias was used. Provenance
-//     closes all 23 at mapType and does not need the name-based collapse that
-//     would have erased a program's own types to do it.
-//
-// TS utility types that require type-level computation (keyof, infer, conditional)
-// and cannot be expressed in Lean 4 when their arguments contain type variables.
-// The erasure is unrecorded: lowerType returns TSAny's `String` carrier for them.
-//
-// The branch is dead as things stand: the checker resolves each of these before
-// the IR exists, so none arrives as `TyRef('Partial', …)`. Measured — `Partial<T>`
-// and `Pick<T, keyof T>` arrive as TSAny, `ReturnType<T>` and `Awaited<T>` as the
-// type variable itself, and `Partial<Conf>` as `AssocMap String TSAny`. Removing
-// it is a separate slice: mapTypeRef's matching cases would go with it.
-const INEXPRESSIBLE_UTILITY_TYPES = new Set([
-  'Partial', 'Required', 'Pick', 'Omit',
-  'ReturnType', 'Parameters', 'ConstructorParameters', 'InstanceType',
-  'Extract', 'Exclude', 'ThisParameterType', 'OmitThisParameter', 'ThisType',
-  'Awaited',
-]);
+//   - Two further sets used to exist. One was a render-time copy of the carrier
+//     question inside typemap's `typeStr`, reached from type-alias bodies and
+//     explicit type arguments only. Deleting that renderer deleted it, which turned
+//     23 alias bodies from `abbrev X := String` into `abbrev X := <the TS name>` —
+//     23 of 23 rejected by `lake env lean`, whether or not the alias was used.
+//     Provenance closes all 23 at mapType and does not need the name-based collapse
+//     that would have erased a program's own types to do it.
+//   - The other was INEXPRESSIBLE_UTILITY_TYPES: the TS utility types needing
+//     type-level computation (keyof, infer, conditional), which lowerType collapsed
+//     to TSAny's `String` carrier, unrecorded, when an argument was a type variable.
+//     The checker resolves each of them before the IR exists, so none ever arrived
+//     as `TyRef('Partial', …)` — measured, `Partial<T>` and `Pick<T, keyof T>`
+//     arrive as TSAny, `ReturnType<T>` and `Awaited<T>` as the type variable itself,
+//     and `Partial<Conf>` as `AssocMap String TSAny`. It went together with
+//     mapTypeRef's seven matching cases, which never fired either.
 
 // Lean built-in types that have valid field accessors — don't collapse these to
 // default. IR spellings, never emitted; see the overlap note above.
@@ -1435,15 +1425,11 @@ class LowerCtx {
 
   /**
    * Render an IR type as a Lean type.  This is the only IRType → Lean renderer
-   * in the TypeScript pipeline: every type in the output — parameters, fields,
-   * returns, alias bodies, explicit type arguments — comes from here, as a
-   * `LeanTy` node that only the printer turns into text.
-   *
-   * Two more renderers exist elsewhere in the repository and both still carry
-   * the bugs fixed below — `lean/TSLean/Codegen.lean`'s `irTypeToLean` (the
-   * self-hosted port) and the Lean definitions `scripts/selfhost-adapter.ts`
-   * injects for the typemap module (dead now: they define the functions this
-   * pipeline no longer has, and nothing references them).
+   * in the repository: every type in the output — parameters, fields, returns,
+   * alias bodies, explicit type arguments — comes from here, as a `LeanTy` node
+   * that only the printer turns into text.  The three rival renderers that used
+   * to carry the bugs fixed below went with the second compiler and the
+   * fabricated self-host bootstrap.
    *
    * Two carrier decisions are load-bearing and easy to get wrong in isolation,
    * so they are stated here rather than at each caller:
@@ -1515,14 +1501,6 @@ class LowerCtx {
           return { tag: 'TyName', name: 'TSAny' };
         // `Any` is the parser's spelling for "no symbol"; `TSAny` is the carrier.
         const name = t.name === 'Any' ? 'TSAny' : t.name;
-        // A utility type applied to a type variable needs type-level computation
-        // Lean has no equivalent for, so the carrier collapses to TSAny's `String`.
-        // Emitting a type-level `sorry` is not an option: `LeanTy` has no such
-        // node, and this loss is not recorded anywhere — see the erasure note on
-        // INEXPRESSIBLE_UTILITY_TYPES.
-        if (INEXPRESSIBLE_UTILITY_TYPES.has(name) && t.args.some(a => a.tag === 'TypeVar')) {
-          return { tag: 'TyName', name: 'String' };
-        }
         if (t.args.length === 0) return { tag: 'TyName', name };
         // Check if this type alias has fewer params than args (unused params stripped)
         const aliasDecl = this.typeAliases?.get(name);

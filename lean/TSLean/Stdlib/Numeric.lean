@@ -1,4 +1,6 @@
 -- TSLean.Stdlib.Numeric
+import TSLean.Refinement.Math
+
 namespace TSLean.Stdlib.Numeric
 
 def clamp (x lo hi : Int) : Int := max lo (min x hi)
@@ -144,5 +146,19 @@ theorem FloatExt.floor_le_concrete : FloatExt.floor 3.7 ≤ 3.7 := by native_dec
 theorem FloatExt.ceil_ge_concrete  : FloatExt.ceil 3.2 ≥ 3.2 := by native_decide
 theorem FloatExt.round_half_concrete : FloatExt.round 2.5 == 3.0 := by native_decide
 theorem FloatExt.safeDiv_zero : FloatExt.safeDiv 1.0 0.0 == 0.0 := by native_decide
+
+/-! ## ECMAScript `Math`
+
+The names the transpiler emits for `Math.*`. Each one is the carrier proved (or, for
+`sqrt`, assumed) correct in `TSLean.Refinement.Math`; they are re-exported here because
+this is the module generated code imports for numeric built-ins. `FloatExt` above keeps
+Lean's own rounding and selection semantics and is not an ECMAScript model.
+-/
+namespace Math
+
+export TSLean.Refinement.Math
+  (PI E LN2 LN10 SQRT2 SQRT1_2 abs sign trunc floor ceil round max min)
+
+end Math
 
 end TSLean.Stdlib.Numeric

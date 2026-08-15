@@ -164,15 +164,7 @@ describe('Codegen depth: single-renderer carriers', () => {
     expect(leanTypeOf(TyRef('__type'))).toBe('AssocMap String TSAny');
   });
 
-  // Normalisation, not live behaviour: the checker resolves every TS utility type
-  // before the IR is built — `Partial<T>` arrives as TSAny and `Partial<Conf>` as
-  // AssocMap String TSAny — so no producer builds `TyRef('Partial', …)`. What is
-  // pinned here is only that the erasure branch is the one that answers.
-  it('Partial over a type variable erases (unreachable input)', () => {
-    expect(leanTypeOf(TyRef('Partial', [TyVar('T')]))).toBe('String');
-  });
-
-  // Also normalisation: `Dependent`, `Subtype` and `Universe` have no producer.
+  // Normalisation: `Dependent`, `Subtype` and `Universe` have no producer.
   // `LeanTy` has no dependent arrow, so the binder is dropped — but the arity is
   // not, since dropping the parameter would change what the type accepts.
   it('Dependent type → the non-dependent arrow', () => {

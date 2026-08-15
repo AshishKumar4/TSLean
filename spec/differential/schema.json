@@ -135,7 +135,13 @@
       "required": ["algorithm", "seed", "count"],
       "properties": {
         "algorithm": {
-          "enum": ["decimal-cases-v1", "trim-code-units-v1", "finite-binary64-v1", "primitive-operators-v1"]
+          "enum": [
+            "decimal-cases-v1",
+            "trim-code-units-v1",
+            "finite-binary64-v1",
+            "primitive-operators-v1",
+            "math-operations-v1"
+          ]
         },
         "seed": { "type": "string", "minLength": 1 },
         "count": { "type": "integer", "minimum": 1 }

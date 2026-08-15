@@ -18,6 +18,21 @@ private def binary (request : Request) (values : Array Primitive) : Except Proto
   | #[left, right] => .ok (left, right)
   | _ => invalid request "invalid-arity" "operation requires two fixtures"
 
+-- The Math operations are modelled over the Number domain only, so a non-Number fixture is
+-- a protocol error here rather than a silent coercion.
+private def mathUnary (request : Request) (symbols : Array String) (values : Array Primitive)
+    (operation : JSNumber → JSNumber) : Except ProtocolError Lean.Json := do
+  match ← unary request values with
+  | .number value => return normalObservation (primitiveDatum symbols (.number (operation value)))
+  | _ => invalid request "invalid-fixture" "Math operations require number fixtures"
+
+private def mathBinary (request : Request) (symbols : Array String) (values : Array Primitive)
+    (operation : JSNumber → JSNumber → JSNumber) : Except ProtocolError Lean.Json := do
+  match ← binary request values with
+  | (.number left, .number right) =>
+      return normalObservation (primitiveDatum symbols (.number (operation left right)))
+  | _ => invalid request "invalid-fixture" "Math operations require number fixtures"
+
 def evaluatePrimitive (request : Request) : Except ProtocolError Lean.Json := do
   let arity ← match operationArity? request.operation with
     | some arity => pure arity
@@ -47,6 +62,15 @@ def evaluatePrimitive (request : Request) : Except ProtocolError Lean.Json := do
   | "loose" =>
       let (left, right) ← binary request materialized.values
       return normalObservation (primitiveDatum symbols (.boolean (left.looseEqual right)))
+  | "math-abs" => mathUnary request symbols materialized.values JSNumber.Math.abs
+  | "math-sign" => mathUnary request symbols materialized.values JSNumber.Math.sign
+  | "math-trunc" => mathUnary request symbols materialized.values JSNumber.Math.trunc
+  | "math-floor" => mathUnary request symbols materialized.values JSNumber.Math.floor
+  | "math-ceil" => mathUnary request symbols materialized.values JSNumber.Math.ceil
+  | "math-round" => mathUnary request symbols materialized.values JSNumber.Math.round
+  | "math-sqrt" => mathUnary request symbols materialized.values JSNumber.Math.sqrt
+  | "math-max" => mathBinary request symbols materialized.values JSNumber.Math.max
+  | "math-min" => mathBinary request symbols materialized.values JSNumber.Math.min
   | operation =>
       let (left, right) ← binary request materialized.values
       match operation with

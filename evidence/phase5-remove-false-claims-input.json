@@ -5,13 +5,13 @@
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": {
-      "files": 46,
-      "passed": 1691,
+      "files": 45,
+      "passed": 1682,
       "failed": 0,
       "todo": 10
     },
     "lean": {
-      "jobs": 191,
+      "jobs": 180,
       "status": "passed"
     },
     "corpus": {
@@ -20,11 +20,11 @@
     },
     "auditedTheorems": 603,
     "differential": {
-      "scenarioGroups": 16,
+      "scenarioGroups": 17,
       "fixed": 734,
-      "generated": 6530,
-      "comparisons": 7264,
-      "uniqueOperationInputs": 6088,
+      "generated": 6853,
+      "comparisons": 7587,
+      "uniqueOperationInputs": 6411,
       "preservedDuplicates": 1176,
       "legacyInventoryIds": 97,
       "coverage": {
@@ -41,9 +41,9 @@
     "build": "passed"
   },
   "refinementProofs": {
-    "audited": 239,
-    "required": 226,
-    "registryHash": "sha256:77cd66554ae05fb4128c8c92e5ff998dea65a1b741cecb853099ea75d12c902c"
+    "audited": 263,
+    "required": 250,
+    "registryHash": "sha256:a25b0f56ea9842c53404d6c2f64bfb1646bbc6f70476d63dc08827312339384e"
   },
   "executableAssumptions": {
     "statement": "These eight executable trusted-computing-base assumptions exactly record the Float refinement runtime contracts. They are not proof axioms and introduce no additional runtime contract.",
@@ -297,6 +297,7 @@
         "lean/TSLean/Refinement/Execution.lean",
         "lean/TSLean/Refinement/Float.lean",
         "lean/TSLean/Refinement/Heap.lean",
+        "lean/TSLean/Refinement/Math.lean",
         "lean/TSLean/Refinement/Primitive.lean",
         "lean/TSLean/Refinement/Record.lean",
         "lean/TSLean/Refinement/String.lean"

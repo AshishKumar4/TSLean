@@ -33,6 +33,9 @@ def canonicalNaN : JSNumber := ⟨0x7ff8000000000000⟩
 /-- The Number value one. -/
 def one : JSNumber := ⟨0x3ff0000000000000⟩
 
+/-- The Number value minus one. -/
+def negativeOne : JSNumber := ⟨0xbff0000000000000⟩
+
 /-- Reports whether the encoding is any positive or negative zero. -/
 def isZero (value : JSNumber) : Bool :=
   (value.bits &&& ~~~signMask) == 0
@@ -77,12 +80,12 @@ def sameValueZero (left right : JSNumber) : Bool :=
   else left.bits == right.bits
 
 /-!
-`Float.toBits`, `Float.ofBits`, arithmetic, comparison, and `Float.ofScientific` are
-executable runtime primitives. Decimal parsing checks the `Float.ofScientific`
-candidate against bounded exact integer rounding because the runtime bridge differs
-at known binary64 boundaries. Formatting is an integer algorithm and does not call
-`Float.toString`. No theorem in this model assigns ECMAScript semantics or roundtrip
-laws to any Float primitive.
+`Float.toBits`, `Float.ofBits`, arithmetic, comparison, `Float.sqrt`, and
+`Float.ofScientific` are executable runtime primitives. Decimal parsing checks the
+`Float.ofScientific` candidate against bounded exact integer rounding because the
+runtime bridge differs at known binary64 boundaries. Formatting is an integer
+algorithm and does not call `Float.toString`. No theorem in this model assigns
+ECMAScript semantics or roundtrip laws to any Float primitive.
 -/
 
 /-- Encodes a Lean `Float` by its binary64 bits, replacing every NaN encoding by `canonicalNaN`. -/
@@ -473,6 +476,133 @@ def format (value : JSNumber) : JSString :=
   else if value.isInfinite then ascii (if value.sign then "-Infinity" else "Infinity")
   else if value.isZero then ascii "0"
   else ascii (renderFinite value)
+
+/-!
+## The ECMAScript `Math` object over the Number domain
+
+Every operation below except `sqrt` is computed from the binary64 encoding by exact
+integer arithmetic, so its result is fixed by this model rather than by a runtime
+primitive. `sqrt` is the one exception: IEEE-754 mandates a correctly rounded square
+root and this model executes the platform's, so the relation between `Float.sqrt` and
+`Math.sqrt` is a runtime law rather than a theorem (see `TSLean.Refinement.Math.Sqrt`).
+
+ECMA-262 leaves `exp`, `log`, `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`,
+`atan`, `atan2`, `pow`, `cbrt`, and `hypot` implementation-approximated, so no
+bit-exact model of them can be stated here and none is offered.
+-/
+
+namespace Math
+
+/-- The Number value of `Math.PI`. -/
+def PI : JSNumber := ⟨0x400921fb54442d18⟩
+
+/-- The Number value of `Math.E`. -/
+def E : JSNumber := ⟨0x4005bf0a8b145769⟩
+
+/-- The Number value of `Math.LN2`. -/
+def LN2 : JSNumber := ⟨0x3fe62e42fefa39ef⟩
+
+/-- The Number value of `Math.LN10`. -/
+def LN10 : JSNumber := ⟨0x40026bb1bbb55516⟩
+
+/-- The Number value of `Math.SQRT2`. -/
+def SQRT2 : JSNumber := ⟨0x3ff6a09e667f3bcd⟩
+
+/-- The Number value of `Math.SQRT1_2`. -/
+def SQRT1_2 : JSNumber := ⟨0x3fe6a09e667f3bcd⟩
+
+/-- Encodes a signed integral magnitude, preserving the sign of a zero result. -/
+private def signedIntegral (negative : Bool) (magnitude : Nat) : JSNumber :=
+  exactPositiveRatio negative magnitude 1
+
+/--
+Applies an integral rounding rule to the magnitude of a Number, passing NaN, the
+infinities, the zeros, and the integral values through unchanged. The rule receives the
+sign, the truncated magnitude, and how the discarded fraction compares to one half.
+-/
+private def roundMagnitude (adjust : Bool → Nat → Ordering → Nat) (value : JSNumber) : JSNumber :=
+  if value.isNaN then canonicalNaN
+  else if value.isInfinite || value.isZero then value
+  else
+    let (numerator, denominator) := finiteRatio value
+    let remainder := numerator % denominator
+    if remainder = 0 then value
+    else
+      signedIntegral value.sign
+        (adjust value.sign (numerator / denominator) (compare (2 * remainder) denominator))
+
+/-- ECMAScript `Math.abs`. The sign bit is cleared, including for zeros and infinities. -/
+def abs (value : JSNumber) : JSNumber :=
+  if value.isNaN then canonicalNaN else ⟨value.bits &&& ~~~signMask⟩
+
+/-- ECMAScript `Math.sign`. Both zeros keep their sign and NaN is canonicalized. -/
+def sign (value : JSNumber) : JSNumber :=
+  if value.isNaN then canonicalNaN
+  else if value.isZero then value
+  else if value.sign then negativeOne else one
+
+/-- ECMAScript `Math.trunc`. The magnitude is rounded towards zero. -/
+def trunc (value : JSNumber) : JSNumber :=
+  roundMagnitude (fun _ quotient _ => quotient) value
+
+/-- ECMAScript `Math.floor`. Fractional magnitudes are rounded towards `-∞`. -/
+def floor (value : JSNumber) : JSNumber :=
+  roundMagnitude (fun negative quotient _ => if negative then quotient + 1 else quotient) value
+
+/-- ECMAScript `Math.ceil`. Fractional magnitudes are rounded towards `+∞`. -/
+def ceil (value : JSNumber) : JSNumber :=
+  roundMagnitude (fun negative quotient _ => if negative then quotient else quotient + 1) value
+
+/--
+ECMAScript `Math.round`. Halves are rounded towards `+∞`, so a negative half keeps the
+magnitude it truncates to: `round (-0.5)` is `-0` and `round (-1.5)` is `-1`.
+-/
+def round (value : JSNumber) : JSNumber :=
+  roundMagnitude (fun negative quotient half =>
+    if negative then
+      if half = .gt then quotient + 1 else quotient
+    else
+      if half = .lt then quotient else quotient + 1) value
+
+/--
+Strict IEEE ordering between two non-NaN Numbers, read from the encoding alone: a
+negative operand precedes a nonnegative one, and same-signed encodings order by their
+unsigned bits, reversed when both are negative. The two zeros are unordered.
+-/
+def orderedLess (left right : JSNumber) : Bool :=
+  if left.isZero && right.isZero then false
+  else if left.sign != right.sign then left.sign
+  else if left.sign then right.bits.toNat < left.bits.toNat
+  else left.bits.toNat < right.bits.toNat
+
+/--
+ECMAScript `Math.max`. NaN poisons either argument position, and `+0` is preferred over
+`-0` regardless of argument order.
+-/
+def max (left right : JSNumber) : JSNumber :=
+  if left.isNaN || right.isNaN then canonicalNaN
+  else if left.isZero && right.isZero then
+    (if left.sign && right.sign then negativeZero else positiveZero)
+  else if orderedLess left right then right else left
+
+/--
+ECMAScript `Math.min`. NaN poisons either argument position, and `-0` is preferred over
+`+0` regardless of argument order.
+-/
+def min (left right : JSNumber) : JSNumber :=
+  if left.isNaN || right.isNaN then canonicalNaN
+  else if left.isZero && right.isZero then
+    (if left.sign || right.sign then negativeZero else positiveZero)
+  else if orderedLess right left then right else left
+
+/--
+ECMAScript `Math.sqrt`, executed through Lean's binary64 runtime primitive because
+IEEE-754 fixes the correctly rounded result. NaN is canonicalized.
+-/
+def sqrt (value : JSNumber) : JSNumber :=
+  if value.isNaN then canonicalNaN else canonicalize (Float.sqrt value.toFloat)
+
+end Math
 
 end JSNumber
 end TSLean.JS

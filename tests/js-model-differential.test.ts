@@ -205,13 +205,13 @@ describe('generic model differential infrastructure', () => {
     expect([...new Set(vectors.map(({ operation }) => operation))].sort(compareCodeUnits))
       .toEqual(manifest.operationRegistry.map(({ id }) => id));
     expect(suite.registry.some(({ source }) => /\b(?:process|require|fetch|setTimeout|setInterval)\b/.test(source))).toBe(false);
-    expect(manifest.scenarioCount).toBe(16);
+    expect(manifest.scenarioCount).toBe(17);
     expect(manifest.fixedCount).toBe(734);
-    expect(manifest.generatedCount).toBe(6_530);
-    expect(manifest.vectorCount).toBe(7_264);
-    expect(manifest.comparisonCount).toBe(7_264);
-    expect(manifest.totalCount).toBe(7_264);
-    expect(manifest.uniqueOperationInputCount).toBe(6_088);
+    expect(manifest.generatedCount).toBe(6_853);
+    expect(manifest.vectorCount).toBe(7_587);
+    expect(manifest.comparisonCount).toBe(7_587);
+    expect(manifest.totalCount).toBe(7_587);
+    expect(manifest.uniqueOperationInputCount).toBe(6_411);
     expect(manifest.parityDuplicateCount).toBe(1_176);
     expect(manifest.duplicatePolicy).toBe('preserved-for-v1-parity');
     expect(manifest.scenarioCounts).toEqual({
@@ -229,6 +229,7 @@ describe('generic model differential infrastructure', () => {
       'conversion-equality': 504,
       'corpus-model-probes': 14,
       format: 278,
+      'math-operations': 323,
       parse: 322,
       'seeded-operators': 6_000,
     });
@@ -266,6 +267,7 @@ describe('generic model differential infrastructure', () => {
     expect(manifest.vectorStreamHash).toBe(vectorHash(vectors));
     expect(manifest.generators).toEqual([
       { scenario: 'format', algorithm: 'finite-binary64-v1', version: 1, seed: '1311768467463790320', count: 260 },
+      { scenario: 'math-operations', algorithm: 'math-operations-v1', version: 1, seed: 'none', count: 323 },
       { scenario: 'parse', algorithm: 'decimal-cases-v1', version: 1, seed: '1831565813', count: 220 },
       { scenario: 'parse', algorithm: 'trim-code-units-v1', version: 1, seed: 'none', count: 50 },
       { scenario: 'seeded-operators', algorithm: 'primitive-operators-v1', version: 1, seed: '11400714819323198485', count: 6_000 },
@@ -1009,7 +1011,7 @@ describe('generic model differential infrastructure', () => {
     expect(observationMismatch('synthetic', observation, changed)).toContain('synthetic');
   });
 
-  it('matches Node and Lean for all 7,264 model vectors', async () => {
+  it('matches Node and Lean for all 7,587 model vectors', async () => {
     const oracle = new LeanOracle(root);
     const responses = await oracle.requestBatch(vectors.map(request));
     await oracle.close();
@@ -1024,7 +1026,7 @@ describe('generic model differential infrastructure', () => {
       const mismatch = observationMismatch(vector.id, node, response.observation);
       if (mismatch !== undefined) mismatches.push(mismatch);
     });
-    expect(responses).toHaveLength(7_264);
+    expect(responses).toHaveLength(7_587);
     expect(mismatches).toEqual([]);
   }, 120_000);
 

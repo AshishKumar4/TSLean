@@ -173,12 +173,6 @@ Mutable variables (`let x = 0; x = 1;`) are modeled via `StateT` or `IO.Ref`. Th
 
 **Workaround:** Prefer `const` bindings and functional patterns (map/filter/reduce) over imperative mutation. The transpiler handles `const` bindings as pure `let` expressions with no monad overhead.
 
-### Self-Hosting Structural Diffs
-
-When the transpiler transpiles its own source code (self-hosting / fixpoint verification), `this.method()` calls on class instances may not fully resolve in all contexts. The known diff is ~90 lines in `lower.ts`.
-
-**Impact:** Self-hosting achieves 9/10 files identical; `lower.ts` has structural differences that do not affect correctness.
-
 ### Number Precision
 
 TypeScript's `number` is IEEE 754 double. Lean's `Float` is also IEEE 754 double, but `Nat`/`Int` are arbitrary precision. The transpiler defaults to `Float`, which can lose precision for large integers.

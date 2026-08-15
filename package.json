@@ -12,8 +12,6 @@
     "dist/",
     "scripts/*.mjs",
     "scripts/*.d.mts",
-    "scripts/*.ts",
-    "scripts/*.sh",
     "lean/**/*.lean",
     "lean/lakefile.toml",
     "lean/lean-toolchain",

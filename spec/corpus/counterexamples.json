@@ -1156,7 +1156,7 @@
           "expected": { "kind": "rejection", "value": "Comment contents cannot introduce Lean declarations; strict output must reject or safely escape this source." },
           "priorLean": { "kind": "acceptance", "value": "Generated Lean compiled with axiom injected : False; example : False := injected also compiled." },
           "severity": "critical",
-          "provenance": [{ "sourceRevision": "uncommitted-lost-attempt", "transcript": "msg_f6b00748a00176gAb0QLc0Jwvr:Fourth semantic fidelity audit@39915", "sourceRefs": ["src/parser/index.ts:6586-6607", "src/codegen/printer.ts:162-165", "src/stubs/dts-reader.ts:326", "src/stubs/dts-reader.ts:368-369"] }],
+          "provenance": [{ "sourceRevision": "uncommitted-lost-attempt", "transcript": "msg_f6b00748a00176gAb0QLc0Jwvr:Fourth semantic fidelity audit@39915", "sourceRefs": ["src/parser/index.ts:6586-6607", "src/codegen/printer.ts:162-165"] }],
           "status": "red"
         },
         {

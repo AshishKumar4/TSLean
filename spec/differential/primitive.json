@@ -57,6 +57,60 @@
       "domain": "primitive"
     },
     {
+      "id": "math-abs",
+      "arity": 1,
+      "source": "Math.abs(value)",
+      "domain": "primitive"
+    },
+    {
+      "id": "math-ceil",
+      "arity": 1,
+      "source": "Math.ceil(value)",
+      "domain": "primitive"
+    },
+    {
+      "id": "math-floor",
+      "arity": 1,
+      "source": "Math.floor(value)",
+      "domain": "primitive"
+    },
+    {
+      "id": "math-max",
+      "arity": 2,
+      "source": "Math.max(left, right)",
+      "domain": "primitive"
+    },
+    {
+      "id": "math-min",
+      "arity": 2,
+      "source": "Math.min(left, right)",
+      "domain": "primitive"
+    },
+    {
+      "id": "math-round",
+      "arity": 1,
+      "source": "Math.round(value)",
+      "domain": "primitive"
+    },
+    {
+      "id": "math-sign",
+      "arity": 1,
+      "source": "Math.sign(value)",
+      "domain": "primitive"
+    },
+    {
+      "id": "math-sqrt",
+      "arity": 1,
+      "source": "Math.sqrt(value)",
+      "domain": "primitive"
+    },
+    {
+      "id": "math-trunc",
+      "arity": 1,
+      "source": "Math.trunc(value)",
+      "domain": "primitive"
+    },
+    {
       "id": "mul",
       "arity": 2,
       "source": "left * right",
@@ -1017,6 +1071,31 @@
         }
       ],
       "expectedCount": 278,
+      "corpusIds": []
+    },
+    {
+      "id": "math-operations",
+      "operations": [
+        "math-abs",
+        "math-ceil",
+        "math-floor",
+        "math-max",
+        "math-min",
+        "math-round",
+        "math-sign",
+        "math-sqrt",
+        "math-trunc"
+      ],
+      "vectors": [],
+      "fixtures": [],
+      "generators": [
+        {
+          "algorithm": "math-operations-v1",
+          "seed": "none",
+          "count": 323
+        }
+      ],
+      "expectedCount": 323,
       "corpusIds": []
     },
     {
