@@ -1,0 +1,95 @@
+AGENTS.md
+  s_83d89105b42f5d::t_258137214df842 83
+EVIDENCE.md
+  s_ecd6eb42c0f104::t_336ccb4e5d7513 1624-1694
+README.md
+  s_83d89105b42f5d::t_665db0456a6e9d 334,372
+docs/architecture.md
+  s_83d89105b42f5d::t_71181563779e1c 173,296
+docs/contributing.md
+  s_83d89105b42f5d::t_a95eca1352ef13 365,372-375
+evidence/phase5-remove-false-claims-input.json
+  s_ecd6eb42c0f104::t_e3cbee2b74c79e 8-9,14,23,25-27,44-46,300
+evidence/phase5-remove-false-claims-manifest.json
+  s_ecd6eb42c0f104::t_5e6bb4a9937f72 17-18,23,32,34-36,53-55,170-176
+lean/TSLean/JS/Number.lean
+  s_83d89105b42f5d::t_ec5cb011b80b3e 36-38,83-88,480-606
+lean/TSLean/JS/Oracle/Registry.lean
+  s_9203b165445de1::t_de76b2c178d762 13,16-17
+lean/TSLean/Refinement.lean
+  s_83d89105b42f5d::t_539629016a456d 6
+lean/TSLean/Refinement/AxiomAudit.lean
+  s_83d89105b42f5d::t_7c8ca1dba4acc6 6
+lean/TSLean/Refinement/Math.lean
+  s_9203b165445de1::t_2f349b839e0fca 1-295
+lean/TSLean/Refinement/Tests/Math.lean
+  s_83d89105b42f5d::t_08f6112e1e191a 1-252
+lean/TSLean/Stdlib/Numeric.lean
+  s_83d89105b42f5d::t_166f8c05d06203 2-3,150-163
+scripts/differential-manifest-lib.mjs
+  s_83d89105b42f5d::t_f0b3c1b0fd87a3 7-57,759-777
+scripts/refinement-proof-registry.mjs
+  s_83d89105b42f5d::t_7be717d972547a 137-159,236
+spec/corpus/counterexamples.json
+  s_83d89105b42f5d::t_3816a7e68d27d6 1159
+spec/differential/manifest.json
+  s_9203b165445de1::t_2c0349eeda27f7 4-5,7,171-224,403,405-409,427,457-465,571-575,595-601,624
+spec/differential/primitive.json
+  s_83d89105b42f5d::t_32f556bcd6d664 59-112,1076-1100
+spec/differential/schema.json
+  s_83d89105b42f5d::t_867ad7a01b7333 138-144
+src/cli.ts
+  s_83d89105b42f5d::t_c43aa852a7aae2 5,111,118,153,194,211
+src/codegen/index.ts
+  s_83d89105b42f5d::t_a0ef9674e4f9ab 15,47,49
+src/codegen/lower.ts
+  s_83d89105b42f5d::t_31d78d3e9264e0 35,54-57,71-85,1428-1432
+src/codegen/v2.ts
+  s_83d89105b42f5d::t_d49207e4deb2a0 11,19-20,26-27
+src/stdlib/index.ts
+  s_9203b165445de1::t_b3cef9f355e2f4 127-151,153-158
+tests/codegen-depth.test.ts
+  s_83d89105b42f5d::t_ffde2128e69954 167
+tests/e2e/cli-subcommands.test.ts
+  s_83d89105b42f5d::t_0509e0764c88b1 4
+tests/js-model-differential.test.ts
+  s_9203b165445de1::t_a18f869700b787 208,210-214,232,270,1014,1029
+tests/package.test.ts
+  s_83d89105b42f5d::t_709b6f177e73e4 22-23
+tests/parser-advanced.test.ts
+  s_83d89105b42f5d::t_97c8588772c784 621,641-644,685
+tests/parser-types.test.ts
+  s_83d89105b42f5d::t_af77dce690f360 369
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "110c1296e1dce0f67601c13e5863e13ee9252eac",
+  "prompts": {},
+  "sessions": {
+    "s_83d89105b42f5d": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_ffd64a31bffe5lIm3cEHuBWdrL",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_9203b165445de1": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_ffd6444a5ffeJGfu032m5My40k",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    },
+    "s_ecd6eb42c0f104": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_09941a719ffegk5CvArJXx9tWM",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    }
+  }
+}
