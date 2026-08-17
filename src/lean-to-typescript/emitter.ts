@@ -98,6 +98,7 @@ interface TypePlan {
 }
 
 interface PreludeNames {
+  readonly dataBoundary: string;
   readonly isDataObject: string;
   readonly dataFields: string;
   readonly requireBoolean: string;
@@ -181,6 +182,7 @@ function planProgram(program: LeanSemanticProgram): EmitContext {
   // validator, so only names a Lean body can actually refer to are reserved against it.
   const reserved = allocator.allocated();
   const prelude: PreludeNames = {
+    dataBoundary: allocator.allocate('GeneratedData'),
     isDataObject: allocator.allocate('isDataObject'),
     dataFields: allocator.allocate('dataFields'),
     requireBoolean: allocator.allocate('requireBoolean'),
@@ -785,16 +787,10 @@ function emitEnumFromData(
   const nullary = declaration.constructors.every((constructor) => constructor.fields.length === 0);
   const constructorCase = (entry: CasePlan): ts.Expression =>
     ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier(plan.typeName), entry.constructor.name);
+  // A nullary constructor's data image is its own tag, so the switch decides the whole domain: no
+  // `typeof` pre-check is needed, and anything the tags do not name falls to the default refusal.
   const statements: readonly ts.Statement[] = nullary
     ? [
-        guard(
-          ts.factory.createBinaryExpression(
-            ts.factory.createTypeOfExpression(value),
-            ts.SyntaxKind.ExclamationEqualsEqualsToken,
-            ts.factory.createStringLiteral('string'),
-          ),
-          `${plan.typeName} data must be a string`,
-        ),
         ts.factory.createSwitchStatement(
           value,
           ts.factory.createCaseBlock([
@@ -1067,12 +1063,7 @@ function emitPrelude(context: EmitContext): readonly ts.Statement[] {
   const value = ts.factory.createIdentifier(locals.value);
   const name = ts.factory.createIdentifier(locals.name);
   const fields = ts.factory.createIdentifier(locals.fields);
-  const dataRecord = ts.factory.createTypeReferenceNode('Readonly', [
-    ts.factory.createTypeReferenceNode('Record', [
-      ts.factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword),
-      ts.factory.createKeywordTypeNode(ts.SyntaxKind.UnknownKeyword),
-    ]),
-  ]);
+  const dataRecord = dataRecordType(prelude.dataBoundary);
   const decoders: ts.Statement[] = [];
   for (const [leanName, emitted] of [...prelude.decoders].sort(([left], [right]) => compareCodePoints(left, right))) {
     if (!context.used.has(emitted)) continue;
@@ -1086,18 +1077,19 @@ function emitPrelude(context: EmitContext): readonly ts.Statement[] {
         undefined,
         prelude.requireBoolean,
         undefined,
-        [unknownParameter(locals.value), stringParameter(locals.name)],
+        [dataParameter(locals.value, context), stringParameter(locals.name)],
         ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
         block(
-          guard(
-            ts.factory.createBinaryExpression(
-              ts.factory.createTypeOfExpression(value),
-              ts.SyntaxKind.ExclamationEqualsEqualsToken,
-              ts.factory.createStringLiteral('boolean'),
-            ),
-            namedMessage(context, 'must be a boolean'),
+          // Decided by value, not by `typeof`: the boundary union already names every arrival, so
+          // the two inhabitants of Bool are recognised directly and everything else is rejected.
+          ts.factory.createIfStatement(
+            disjunction([
+              ts.factory.createBinaryExpression(value, ts.SyntaxKind.EqualsEqualsEqualsToken, ts.factory.createTrue()),
+              ts.factory.createBinaryExpression(value, ts.SyntaxKind.EqualsEqualsEqualsToken, ts.factory.createFalse()),
+            ]),
+            block(ts.factory.createReturnStatement(value)),
           ),
-          ts.factory.createReturnStatement(value),
+          throwNamed(context, 'must be a boolean'),
         ),
       ),
     );
@@ -1111,7 +1103,7 @@ function emitPrelude(context: EmitContext): readonly ts.Statement[] {
         prelude.dataFields,
         undefined,
         [
-          unknownParameter(locals.value),
+          dataParameter(locals.value, context),
           stringParameter(locals.name),
           ts.factory.createParameterDeclaration(
             undefined,
@@ -1189,7 +1181,7 @@ function emitPrelude(context: EmitContext): readonly ts.Statement[] {
         undefined,
         prelude.isDataObject,
         undefined,
-        [unknownParameter(locals.value)],
+        [dataParameter(locals.value, context)],
         ts.factory.createTypePredicateNode(undefined, ts.factory.createIdentifier(locals.value), dataRecord),
         block(
           ts.factory.createReturnStatement(
@@ -1218,7 +1210,17 @@ function emitPrelude(context: EmitContext): readonly ts.Statement[] {
       ),
     );
   }
-  return [...isDataObjectDeclaration, ...dataFieldsDeclaration, ...requireBooleanDeclaration, ...decoders];
+  // Built last: the alias is emitted only once some validator above has actually referenced it.
+  const boundaryDeclaration: ts.Statement[] = context.used.has(prelude.dataBoundary)
+    ? [emitDataBoundaryAlias(prelude.dataBoundary)]
+    : [];
+  return [
+    ...boundaryDeclaration,
+    ...isDataObjectDeclaration,
+    ...dataFieldsDeclaration,
+    ...requireBooleanDeclaration,
+    ...decoders,
+  ];
 }
 
 function emitStructuralDecoder(leanName: string, emitted: string, context: EmitContext): ts.Statement {
@@ -1298,7 +1300,7 @@ function emitStructuralDecoder(leanName: string, emitted: string, context: EmitC
     undefined,
     emitted,
     undefined,
-    [unknownParameter(context.locals.value), stringParameter(context.locals.name)],
+    [dataParameter(context.locals.value, context), stringParameter(context.locals.name)],
     ts.factory.createTypeReferenceNode(plan.typeName),
     block(...statements),
   );
@@ -1509,7 +1511,7 @@ function emitExpression(expression: LeanExpression, scope: readonly Binding[], c
       return constructor.fields.length === 0 ? member : ts.factory.createCallExpression(member, undefined, values);
     }
     case 'match':
-      throw new TypeError('a match outside dot-notation dispatch position is outside this fragment version');
+      return emitTagMatch(expression, scope, context);
     case 'record': {
       const plan = requiredTypePlan(context, expression.type);
       const literal = ts.factory.createObjectLiteralExpression(
@@ -1540,6 +1542,67 @@ function emitExpression(expression: LeanExpression, scope: readonly Binding[], c
       );
     }
   }
+}
+
+/**
+ * A `match` on a tag union, in any expression position: the representation of a nullary-only
+ * structural enum is its own tag, so the alternatives lower to strict-equality conditionals in
+ * declaration order. The IR has already proved the match decides every constructor exactly once,
+ * which is what makes the final alternative an unconditional fallback rather than a guess.
+ *
+ * The scrutinee is read once per test, so only a binding or a field read is admitted: anything
+ * that computes has to be named by a `let` first rather than be silently re-evaluated per arm.
+ * A value object keeps its dot-notation dispatch, and a payload-carrying union still needs one,
+ * because neither can be decided by comparing the scrutinee against a tag.
+ */
+function emitTagMatch(
+  expression: Extract<LeanExpression, { kind: 'match' }>,
+  scope: readonly Binding[],
+  context: EmitContext,
+): ts.Expression {
+  const plan = requiredTypePlan(context, expression.type);
+  if (plan.declaration.kind !== 'enum') {
+    throw new TypeError(`match scrutinee ${plan.typeName} is not an inductive`);
+  }
+  if (plan.nominal) {
+    throw new TypeError(
+      `a match on the value object ${plan.typeName} outside dot-notation dispatch position is outside this fragment version`,
+    );
+  }
+  if (plan.declaration.constructors.some((constructor) => constructor.fields.length > 0)) {
+    throw new TypeError(
+      `a match on the payload-carrying union ${plan.typeName} outside dot-notation dispatch position is outside this fragment version`,
+    );
+  }
+  if (expression.scrutinee.kind !== 'variable' && expression.scrutinee.kind !== 'field') {
+    throw new TypeError(
+      `a match on a computed ${plan.typeName} is outside this fragment version: bind the scrutinee with let first`,
+    );
+  }
+  const scrutinee = emitExpression(expression.scrutinee, scope, context);
+  const arms = expression.cases.map((entry) => ({
+    tag: entry.constructor,
+    value: emitExpression(entry.value, scope, context),
+  }));
+  const fallback = arms.at(-1);
+  if (fallback === undefined) throw new TypeError(`match on ${plan.typeName} decides no alternative`);
+  return arms
+    .slice(0, -1)
+    .reduceRight(
+      (alternate, arm) =>
+        ts.factory.createConditionalExpression(
+          ts.factory.createBinaryExpression(
+            scrutinee,
+            ts.SyntaxKind.EqualsEqualsEqualsToken,
+            ts.factory.createStringLiteral(arm.tag),
+          ),
+          undefined,
+          arm.value,
+          undefined,
+          alternate,
+        ),
+      fallback.value,
+    );
 }
 
 function emitBinding(binding: Binding): ts.Expression {
@@ -1768,14 +1831,55 @@ function requiredValue(values: readonly ts.Expression[], index: number, field: s
   return value;
 }
 
-function unknownParameter(name: string): ts.ParameterDeclaration {
-  return ts.factory.createParameterDeclaration(
-    undefined,
-    undefined,
+/**
+ * Every generated codec reads from one named boundary type instead of `unknown`: a decoder that
+ * takes `unknown` forces its caller to prove nothing, and a consumer whose own lint forbids
+ * unparsed parameters cannot adopt the artifact at all. The union admits every value a JSON
+ * document can deliver — including the `undefined` an absent property yields — so narrowing stays
+ * the decoder's job and never the caller's.
+ */
+function dataParameter(name: string, context: EmitContext): ts.ParameterDeclaration {
+  return ts.factory.createParameterDeclaration(undefined, undefined, name, undefined, dataBoundaryType(context));
+}
+
+function dataBoundaryType(context: EmitContext): ts.TypeNode {
+  context.used.add(context.prelude.dataBoundary);
+  return ts.factory.createTypeReferenceNode(context.prelude.dataBoundary);
+}
+
+function emitDataBoundaryAlias(name: string): ts.Statement {
+  return ts.factory.createTypeAliasDeclaration(
+    [modifier(ts.SyntaxKind.ExportKeyword)],
     name,
     undefined,
-    ts.factory.createKeywordTypeNode(ts.SyntaxKind.UnknownKeyword),
+    ts.factory.createUnionTypeNode([
+      ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
+      ts.factory.createKeywordTypeNode(ts.SyntaxKind.NumberKeyword),
+      ts.factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword),
+      ts.factory.createLiteralTypeNode(ts.factory.createNull()),
+      ts.factory.createKeywordTypeNode(ts.SyntaxKind.UndefinedKeyword),
+      ts.factory.createTypeOperatorNode(
+        ts.SyntaxKind.ReadonlyKeyword,
+        ts.factory.createArrayTypeNode(ts.factory.createTypeReferenceNode(name)),
+      ),
+      dataRecordType(name),
+    ]),
   );
+}
+
+/**
+ * The one shape a decoded data object has, shared by the boundary union and every validator. A
+ * readonly index signature rather than `Readonly<Record<…>>`: the boundary union refers to itself
+ * through this node, and a homomorphic mapped type cannot carry that reference.
+ */
+function dataRecordType(boundary: string): ts.TypeNode {
+  return ts.factory.createTypeLiteralNode([
+    ts.factory.createIndexSignature(
+      [modifier(ts.SyntaxKind.ReadonlyKeyword)],
+      [stringParameter('key')],
+      ts.factory.createTypeReferenceNode(boundary),
+    ),
+  ]);
 }
 
 function stringParameter(name: string): ts.ParameterDeclaration {
@@ -1800,7 +1904,7 @@ function staticMethod(
     name,
     undefined,
     undefined,
-    [unknownParameter(context.locals.value)],
+    [dataParameter(context.locals.value, context)],
     result,
     block(...statements),
   );

@@ -1612,7 +1612,10 @@ describe('published Lean to TypeScript API', () => {
           `from './${basename(String(target['source']), '.ts')}.js'`,
         );
       } else {
-        expect(generatedSource).toContain('public static fromData(value: unknown)');
+        // The codec's own boundary is a named union, never `unknown`: a consumer whose lint
+        // forbids unparsed parameters has to be able to adopt the artifact unmodified.
+        expect(generatedSource).toContain('public static fromData(value: GeneratedData)');
+        expect(generatedSource).not.toMatch(/:\s*unknown\b/u);
       }
 
       const bounds: unknown = JSON.parse(readFileSync(join(repositoryRoot, String(model['boundsArtifact'])), 'utf8'));

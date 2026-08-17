@@ -38,7 +38,7 @@ const enforcementRequest = {
   projectRoot: leanRoot,
   moduleName: 'AgentCore.Facets.Enforcement',
   sourcePath: join(leanRoot, 'AgentCore', 'Facets', 'Enforcement.lean'),
-  declarations: ['AgentCore.Facets.Impact.enforcementFloor', 'AgentCore.Facets.Impact.claimHonorsEnforcementFloor'],
+  declarations: ['AgentCore.Facets.enforcementFloor', 'AgentCore.Facets.claimHonorsEnforcementFloor'],
 } satisfies LeanToTypeScriptRequest;
 const IMPACT_KINDS = ['observe', 'mutate', 'externalSend', 'execute', 'delegate', 'administer'] as const;
 const adversarialSource = [
@@ -1111,54 +1111,171 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     });
   });
 
-  test('refuses a match that is not dot-notation dispatch on its own type', () => {
+  test('refuses a match on a computed scrutinee outside dot-notation dispatch', () => {
+    // A tag union is decided by comparing the scrutinee against each tag, so a scrutinee that
+    // computes would be re-evaluated per alternative. It has to be named by a `let` first.
     const source = [
       'inductive Choice where',
       '  | first',
       '  | second',
-      'def rejected (choice : Choice) : Bool :=',
+      'def flip (choice : Choice) : Choice :=',
       '  match choice with',
+      '  | .first => .second',
+      '  | .second => .first',
+      'def rejected (choice : Choice) : Bool :=',
+      '  match Fixture.flip choice with',
       '  | .first => true',
       '  | .second => false',
     ].join('\n');
     expect(unsupportedSourceError(source, 'Fixture.rejected')).toMatchObject({
       code: 'UNSUPPORTED_LEAN_FRAGMENT',
       declaration: 'Fixture.rejected',
-      diagnostic: expect.stringContaining('outside dot-notation dispatch position'),
+      diagnostic: expect.stringContaining('bind the scrutinee with let first'),
     });
   });
 
   test('generated enforcement floor agrees with Lean on the complete finite input domain', () => {
     const artifact = compileLeanToTypeScript(enforcementRequest);
     const generated = evaluateGeneratedModuleExports(artifact.code);
-    const impact = requireConstructor(generated, 'Impact');
-    const from = requireStatic(impact, 'from');
-    const fromData = requireStatic(impact, 'fromData');
-    const impacts = IMPACT_KINDS.map((kind) => from(kind));
+    const floor = requireFunction(generated, 'enforcementFloor');
+    const honors = requireFunction(generated, 'claimHonorsEnforcementFloor');
     const rows: string[] = [];
-    for (const value of impacts) {
+    for (const impact of IMPACT_KINDS) {
       for (const turnOwnedSession of [true, false]) {
         for (const sessionFilesystemTarget of [true, false]) {
-          rows.push(String(requireMethod(value, 'enforcementFloor')(turnOwnedSession, sessionFilesystemTarget)));
+          rows.push(String(floor(impact, turnOwnedSession, sessionFilesystemTarget)));
         }
       }
     }
-    for (const claimed of impacts) {
-      for (const derived of impacts) {
+    for (const claimed of IMPACT_KINDS) {
+      for (const derived of IMPACT_KINDS) {
         for (const sessionFilesystemTarget of [true, false]) {
-          rows.push(String(requireMethod(claimed, 'claimHonorsEnforcementFloor')(derived, sessionFilesystemTarget)));
+          rows.push(String(honors(claimed, derived, sessionFilesystemTarget)));
         }
       }
     }
     expect(rows).toHaveLength(96);
     expect(rows).toEqual(evaluateLeanEnforcement());
-    // The representation is its own codec: the tag decides the value and the value reports the tag.
-    for (const kind of IMPACT_KINDS) {
-      expect(requireProperty(from(kind), 'kind')).toBe(kind);
-      expect(requireMethod(fromData(kind), 'toData')()).toBe(kind);
-      expect(requireMethod(from(kind), 'equals')(fromData(kind))).toBe(true);
+    // The whole surface is substitutable for the handwritten module: a closed tag vocabulary and
+    // free functions over it, so no value object stands between a consumer and the decision.
+    expect(artifact.code).toContain(
+      'export type Impact = "observe" | "mutate" | "externalSend" | "execute" | "delegate" | "administer";',
+    );
+    expect(artifact.code).toContain('export type EnforcementTier = "direct" | "mediated";');
+    expect(artifact.code).toContain(
+      'export function enforcementFloor(impact: Impact, turnOwnedSession: boolean, sessionFilesystemTarget: boolean): EnforcementTier {',
+    );
+    expect(artifact.code).not.toContain('class');
+  });
+
+  test('lowers a behaviour-carrying nullary inductive to singletons with a total tag codec', () => {
+    const fixture = createLeanProjectFixture(
+      [
+        'namespace Fixture',
+        'inductive Tier where',
+        '  | direct',
+        '  | mediated',
+        'def Tier.escalates (tier : Tier) : Bool :=',
+        '  match tier with',
+        '  | .direct => true',
+        '  | .mediated => false',
+        'def decide (tier : Tier) : Bool := tier.escalates',
+        'end Fixture',
+        '',
+      ].join('\n'),
+    );
+    try {
+      const artifact = compileLeanToTypeScript({
+        projectRoot: fixture.projectRoot,
+        moduleName: 'Fixture',
+        sourcePath: fixture.sourcePath,
+        declarations: ['Fixture.decide'],
+      });
+      // A nullary constructor has exactly one inhabitant, so `from` is total on the tag and
+      // reference equality is Lean equality; the codec reads its boundary union, never `unknown`.
+      expect(artifact.code).toContain('public static from(kind: Tier["kind"]): Tier');
+      expect(artifact.code).toContain('public static fromData(value: GeneratedData): Tier');
+      expect(artifact.code).not.toMatch(/:\s*unknown\b/u);
+      expect(artifact.code).not.toContain('typeof');
+
+      const generated = evaluateGeneratedModuleExports(artifact.code);
+      const tier = requireConstructor(generated, 'Tier');
+      const from = requireStatic(tier, 'from');
+      const fromData = requireStatic(tier, 'fromData');
+      for (const kind of ['direct', 'mediated'] as const) {
+        expect(requireProperty(from(kind), 'kind')).toBe(kind);
+        expect(requireMethod(fromData(kind), 'toData')()).toBe(kind);
+        expect(requireMethod(from(kind), 'equals')(fromData(kind))).toBe(true);
+        expect(fromData(kind)).toBe(from(kind));
+      }
+      expect(requireFunction(generated, 'decide')(from('direct'))).toBe(true);
+      expect(requireFunction(generated, 'decide')(from('mediated'))).toBe(false);
+      // Every non-tag arrival is refused by the same default, so the decoder stays total without
+      // a `typeof` pre-check.
+      expect(() => fromData('sudo')).toThrowError(/Tier data must name a constructor/u);
+      expect(() => fromData(7)).toThrowError(/Tier data must name a constructor/u);
+      expect(() => fromData(null)).toThrowError(/Tier data must name a constructor/u);
+    } finally {
+      fixture.dispose();
     }
-    expect(() => fromData('sudo')).toThrowError(/Impact data must name a constructor/u);
+  });
+
+  test('lowers a match on a tag union outside dispatch position to equality conditionals', () => {
+    const fixture = createLeanProjectFixture(
+      [
+        'namespace Fixture',
+        'inductive Seam where',
+        '  | inSession',
+        '  | crossSession',
+        '  | external',
+        'def admits (seam : Seam) (trusted : Bool) : Bool :=',
+        '  match seam with',
+        '  | .inSession => true',
+        '  | .crossSession => trusted',
+        '  | .external => false',
+        'end Fixture',
+        '',
+      ].join('\n'),
+    );
+    try {
+      const artifact = compileLeanToTypeScript({
+        projectRoot: fixture.projectRoot,
+        moduleName: 'Fixture',
+        sourcePath: fixture.sourcePath,
+        declarations: ['Fixture.admits'],
+      });
+      expect(artifact.code).toContain('export type Seam = "inSession" | "crossSession" | "external";');
+      expect(artifact.code).toContain(
+        'return seam === "inSession" ? true : seam === "crossSession" ? trusted : false;',
+      );
+      expect(artifact.code).not.toContain('class');
+      const admits = requireFunction(evaluateGeneratedModuleExports(artifact.code), 'admits');
+      expect([
+        admits('inSession', false),
+        admits('crossSession', true),
+        admits('crossSession', false),
+        admits('external', true),
+      ]).toEqual([true, true, false, false]);
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test('refuses a match on a payload-carrying union outside dispatch position', () => {
+    const source = [
+      'inductive Lease where',
+      '  | unheld',
+      '  | held (exclusive : Bool)',
+      'def rejected (lease : Lease) : Bool :=',
+      '  match lease with',
+      '  | .unheld => false',
+      '  | .held exclusive => exclusive',
+    ].join('\n');
+    expect(unsupportedSourceError(source, 'Fixture.rejected')).toMatchObject({
+      code: 'UNSUPPORTED_LEAN_FRAGMENT',
+      declaration: 'Fixture.rejected',
+      diagnostic: expect.stringContaining('payload-carrying union'),
+    });
   });
 
   test('the checked-in enforcement artifact matches the source compiler', () => {
@@ -1440,10 +1557,10 @@ function evaluateLeanEnforcement(): readonly string[] {
     '  | .mediated => "mediated"',
     'def floorRows : List String := impacts.flatMap fun impact =>',
     '  [true, false].flatMap fun owned => [true, false].map fun own =>',
-    '    tierName (impact.enforcementFloor owned own)',
+    '    tierName (enforcementFloor impact owned own)',
     'def claimRows : List String := impacts.flatMap fun claimed =>',
     '  impacts.flatMap fun derived => [true, false].map fun own =>',
-    '    toString (claimed.claimHonorsEnforcementFloor derived own)',
+    '    toString (claimHonorsEnforcementFloor claimed derived own)',
     '#eval IO.println (Lean.Json.arr ((floorRows ++ claimRows).map Lean.Json.str).toArray).compress',
     '',
   ]);

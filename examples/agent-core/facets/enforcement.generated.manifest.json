@@ -4,8 +4,8 @@
     "fragmentVersion": "tslean-structural-first-order-v4",
     "sourceModule": "AgentCore.Facets.Enforcement",
     "declarations": [
-      "AgentCore.Facets.Impact.claimHonorsEnforcementFloor",
-      "AgentCore.Facets.Impact.enforcementFloor"
+      "AgentCore.Facets.claimHonorsEnforcementFloor",
+      "AgentCore.Facets.enforcementFloor"
     ],
     "leanToolchain": {
       "identity": "leanprover/lean4:v4.29.0",
@@ -51,7 +51,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:emitter",
-        "sha256": "sha256:858a20669df6d4027898b29b748db9498d31759c3cf14d8bc33d6e4415d02c2e"
+        "sha256": "sha256:b41ddfd183474e78e2b131ea62320a0bd2ff1d8c9f661bca83550729ce496066"
       },
       {
         "kind": "compiler-source",
@@ -86,7 +86,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:package",
-        "sha256": "sha256:209b8801b0713e065c07c0a720e8af40d4e3acd901df594eda404effd27c9ff9"
+        "sha256": "sha256:aee2d1fa339aa6bcf4a4866893ccfb7c1dcb0a812fd74a63835648214e00a0b6"
       },
       {
         "kind": "compiler-source",
@@ -101,12 +101,12 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:spec:compiler-registry.json",
-        "sha256": "sha256:83ec41fe33760ec3eae8836ce11556da73bea83a7817f3054febb2ce17301671"
+        "sha256": "sha256:f9f3149145a901491341ca7f568a0f23ae7fbb52102e4dd0228fa9bc63c0a605"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:spec:enforcement.bounds.json",
-        "sha256": "sha256:2ebd135c3373f815820895ba3db8883a6f42b2f3b91af6d25e5c39dceaa198d3"
+        "sha256": "sha256:080bc73df7bc9c37349650298f602157f3e32576bfb881a07ef0d97b62dee67b"
       },
       {
         "kind": "compiler-source",
@@ -116,7 +116,7 @@
       {
         "kind": "lean-source",
         "identity": "source:AgentCore.Facets.Enforcement",
-        "sha256": "sha256:6a848068e29a235d8ebf5e2ea67f6beb9a9a3603a9b24e66a06b31531bd19198"
+        "sha256": "sha256:0cd11685988721d43ef4181e09ee42c92ca94be80868b0a8dd9724f1da5663a5"
       },
       {
         "kind": "lean-source",
@@ -139,9 +139,9 @@
         "sha256": "sha256:651c8accb402b0c071cd336e9d3dc0a55516b1bfb434ddc4801f14936785b1d2"
       }
     ],
-    "inputClosureSha256": "sha256:120465166908a2f61f2dc025ca9057014e8b52b414cfd3d9dabb6fdfd6c1422b",
-    "semanticIrSha256": "sha256:f412c9e3b6b69101b752d289fea38c6ce1373634ca5c89c6597f2d3c1b17b9b1",
-    "generatedBodySha256": "sha256:fba73201f5d9a31aa72e8ce13994589b32a653bebd308a42b94c1ec860498e25"
+    "inputClosureSha256": "sha256:dca07c0c62447c349182cbfac1b405e4f270ce91b8bbec37fae1a719dff9c700",
+    "semanticIrSha256": "sha256:e2e0e309931ee47d70c6f6a7930e3c9a14e32964f80280cc50aa8ea41eaaad4b",
+    "generatedBodySha256": "sha256:b3221ed478a774ea669388799a9b2e03566d3734b232befcdc258b7925d3d309"
   },
   "environment": {
     "runtime": "node:v22.22.3",
@@ -166,7 +166,7 @@
       {
         "kind": "lean-module",
         "identity": "module:AgentCore.Facets.Enforcement",
-        "sha256": "sha256:b57c465c53e333a0267d00e16747bddf9ca031cec1801139d1df00b8c87b31fa"
+        "sha256": "sha256:c0d0907ee949bdf810d9d8f0f7dea55643e07369b38ef4d4766fad0b20e9b318"
       },
       {
         "kind": "lean-module",
@@ -804,6 +804,6 @@
         "sha256": "sha256:bb6ee7e709ae60426e30b8d393df4d939ee61407794b4f053ce6338d6eaa8c63"
       }
     ],
-    "inputClosureSha256": "sha256:ea5a69d42cae7a25ab28557a77cfe83261274b8b68adddca3aed7fc3b2748356"
+    "inputClosureSha256": "sha256:bb96d63ab6491cde54799a4dfcbe2d0596ffd59794bb3a6fff34d1fb46018929"
   }
 }

@@ -3,7 +3,7 @@
   "model": "enforcement-v1",
   "operations": [
     {
-      "name": "Impact.enforcementFloor",
+      "name": "enforcementFloor",
       "dimensions": [
         {
           "name": "impact",
@@ -21,7 +21,7 @@
       "cases": 24
     },
     {
-      "name": "Impact.claimHonorsEnforcementFloor",
+      "name": "claimHonorsEnforcementFloor",
       "dimensions": [
         {
           "name": "claimed",

@@ -29,8 +29,8 @@
         "module": "AgentCore.Facets.Enforcement",
         "source": "lean/AgentCore/Facets/Enforcement.lean",
         "declarations": [
-          "AgentCore.Facets.Impact.claimHonorsEnforcementFloor",
-          "AgentCore.Facets.Impact.enforcementFloor"
+          "AgentCore.Facets.claimHonorsEnforcementFloor",
+          "AgentCore.Facets.enforcementFloor"
         ]
       },
       "fragmentClosure": ["lean/AgentCore/Facets/Enforcement.lean"],

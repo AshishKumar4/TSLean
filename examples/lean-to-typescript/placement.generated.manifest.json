@@ -50,7 +50,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:emitter",
-        "sha256": "sha256:858a20669df6d4027898b29b748db9498d31759c3cf14d8bc33d6e4415d02c2e"
+        "sha256": "sha256:bd777e08816c6cdfba6492e2aa3103696439b7532f559bc389966f262c1b1221"
       },
       {
         "kind": "compiler-source",
@@ -138,9 +138,9 @@
         "sha256": "sha256:651c8accb402b0c071cd336e9d3dc0a55516b1bfb434ddc4801f14936785b1d2"
       }
     ],
-    "inputClosureSha256": "sha256:3938d1b60533329e15a0eebbf1f256adcfeb9e851f01ab2e687ce157791da14e",
+    "inputClosureSha256": "sha256:ea2cecc9ff421e1c1c2b1d3382666d1965e1a74bda873b01713c74bbcd7c55d1",
     "semanticIrSha256": "sha256:5c98e7bcf10723c0e56b3871319af7cb8af77f8899aa9f95ff904d7fe8a34c33",
-    "generatedBodySha256": "sha256:7000d0aa8fd677502bfe998aa759eb1fff8409f1b3887a991d24cd16d737c4a4"
+    "generatedBodySha256": "sha256:cae734266b3c3d3ddbd10e528bc6f85ef290baca088cc1907064d0073314618f"
   },
   "environment": {
     "runtime": "node:v22.22.3",

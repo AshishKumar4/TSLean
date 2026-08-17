@@ -2,7 +2,18 @@
 Agent Core SPEC §7.1-§7.2: Operation impact and the enforcement-tier floor.
 
 One Lean module lowers to one TypeScript file. This module owns exactly the concepts
-`packages/agent-core/src/facets/enforcement.ts` owns, in the order they are emitted.
+`packages/agent-core/src/facets/contribution.ts` declares above `OperationDescriptor` —
+`Impact`, `EnforcementTier`, `enforcementFloor` and `claimHonorsEnforcementFloor` — in the
+order they are emitted, so the generated module is substitutable for that surface. The tier
+`policies.tiers` may request on top of the floor is applied by `src/definition/policy.ts`
+and the mediated-admission conjunction by `src/composition/authority.ts`; neither is modelled
+here.
+
+`Impact` deliberately carries no dot-notation method. A Lean inductive that owns behaviour
+lowers to a value object, and a value object cannot key `Readonly<Partial<Record<Impact,
+EnforcementTier>>>` the way `policies.tiers` needs. §7.1 is also explicit that the host
+derives the impact and the host decides the tier: the callee's claim is never authoritative,
+so the decision is not the impact's to own.
 -/
 
 namespace AgentCore.Facets
@@ -35,7 +46,7 @@ Whether this impact may ever be served directly (SPEC §7.2): `observe` always m
 `execute` only inside a Turn-owned Session; `mutate` only against that Session's own
 filesystem; `externalSend`, `delegate`, and `administer` never may.
 -/
-def Impact.admitsDirect (impact : Impact) (turnOwnedSession sessionFilesystemTarget : Bool) : Bool :=
+def admitsDirect (impact : Impact) (turnOwnedSession sessionFilesystemTarget : Bool) : Bool :=
   match impact with
   | .observe => true
   | .mutate => turnOwnedSession && sessionFilesystemTarget
@@ -48,9 +59,9 @@ def Impact.admitsDirect (impact : Impact) (turnOwnedSession sessionFilesystemTar
 SPEC §7.2's enforcement floor: the weakest tier this impact admits under the given
 session conditions. Policy only tightens this floor; it never lowers it.
 -/
-def Impact.enforcementFloor (impact : Impact) (turnOwnedSession sessionFilesystemTarget : Bool) :
+def enforcementFloor (impact : Impact) (turnOwnedSession sessionFilesystemTarget : Bool) :
     EnforcementTier :=
-  if impact.admitsDirect turnOwnedSession sessionFilesystemTarget then .direct else .mediated
+  if admitsDirect impact turnOwnedSession sessionFilesystemTarget then .direct else .mediated
 
 /--
 Whether a claim honors the derived impact's floor under one fixed session condition: the
@@ -59,8 +70,8 @@ have been mediated.
 -/
 def honorsFloorUnder (claimed derived : Impact) (turnOwnedSession sessionFilesystemTarget : Bool) :
     Bool :=
-  !claimed.admitsDirect turnOwnedSession sessionFilesystemTarget
-    || derived.admitsDirect turnOwnedSession sessionFilesystemTarget
+  !admitsDirect claimed turnOwnedSession sessionFilesystemTarget
+    || admitsDirect derived turnOwnedSession sessionFilesystemTarget
 
 /--
 SPEC §7.1 (C13-POLICY-IMPACT-BOUNDARY): a callee's own claim may replace the derived
@@ -70,7 +81,7 @@ discovery or install time — has to hold safe at every call site it is later us
 `sessionFilesystemTarget` is fixed per caller: pass `false` for a seam whose target is
 never a Turn-owned Session's own filesystem.
 -/
-def Impact.claimHonorsEnforcementFloor (claimed derived : Impact) (sessionFilesystemTarget : Bool) :
+def claimHonorsEnforcementFloor (claimed derived : Impact) (sessionFilesystemTarget : Bool) :
     Bool :=
   honorsFloorUnder claimed derived true sessionFilesystemTarget
     && honorsFloorUnder claimed derived false sessionFilesystemTarget
