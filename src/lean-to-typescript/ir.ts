@@ -2,7 +2,7 @@ import ts from 'typescript';
 import { compareCodePoints } from './ordering.js';
 
 export const LEAN_TO_TYPESCRIPT_SCHEMA_VERSION = 1;
-export const LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION = 'tslean-pure-first-order-v1';
+export const LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION = 'tslean-pure-first-order-v2';
 
 export type LeanType =
   | { readonly kind: 'boolean' }
@@ -31,22 +31,40 @@ export type LeanExpression =
       readonly type: string;
       readonly fields: readonly { readonly name: string; readonly value: LeanExpression }[];
     }
+  | {
+      readonly kind: 'match';
+      readonly type: string;
+      readonly scrutinee: LeanExpression;
+      readonly cases: readonly { readonly constructor: string; readonly value: LeanExpression }[];
+    }
   | { readonly kind: 'call'; readonly function: string; readonly arguments: readonly LeanExpression[] };
 
+export interface LeanDocumented {
+  readonly doc?: string;
+}
+
+export interface LeanEnumConstructor extends LeanDocumented {
+  readonly name: string;
+}
+
 export type LeanDeclaration =
-  | { readonly kind: 'enum'; readonly name: string; readonly constructors: readonly string[] }
-  | {
+  | ({
+      readonly kind: 'enum';
+      readonly name: string;
+      readonly constructors: readonly LeanEnumConstructor[];
+    } & LeanDocumented)
+  | ({
       readonly kind: 'record';
       readonly name: string;
-      readonly fields: readonly { readonly name: string; readonly type: LeanType }[];
-    }
-  | {
+      readonly fields: readonly ({ readonly name: string; readonly type: LeanType } & LeanDocumented)[];
+    } & LeanDocumented)
+  | ({
       readonly kind: 'function';
       readonly name: string;
       readonly parameters: readonly { readonly name: string; readonly type: LeanType }[];
       readonly result: LeanType;
       readonly body: LeanExpression;
-    };
+    } & LeanDocumented);
 
 export interface LeanSemanticProgram {
   readonly schemaVersion: 1;
@@ -192,10 +210,40 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
         if (declaration === undefined || declaration.kind !== 'enum') {
           throw new TypeError(`${location} references unknown enum ${expression.type}`);
         }
-        if (!declaration.constructors.includes(expression.name)) {
+        if (!declaration.constructors.some((candidate) => candidate.name === expression.name)) {
           throw new TypeError(`${location} references unknown constructor ${expression.type}.${expression.name}`);
         }
         return requireType({ kind: 'named', name: expression.type }, expected, location);
+      }
+      case 'match': {
+        const declaration = declarations.get(expression.type);
+        if (declaration === undefined || declaration.kind !== 'enum') {
+          throw new TypeError(`${location} references unknown enum ${expression.type}`);
+        }
+        checkExpression(expression.scrutinee, scope, { kind: 'named', name: expression.type }, `${location}.scrutinee`);
+        const constructors = declaration.constructors.map((constructor) => constructor.name);
+        const decided = expression.cases.map((entry) => entry.constructor);
+        if (
+          decided.length !== constructors.length ||
+          constructors.some((constructor, index) => constructor !== decided[index])
+        ) {
+          throw new TypeError(
+            `${location} does not decide every constructor of ${expression.type} exactly once in declaration order`,
+          );
+        }
+        if (expected !== undefined) {
+          expression.cases.forEach((entry, index) =>
+            checkExpression(entry.value, scope, expected, `${location}.cases[${index}].value`),
+          );
+          return expected;
+        }
+        const [first, ...rest] = expression.cases;
+        if (first === undefined) throw new TypeError(`${location} decides no constructor`);
+        const result = checkExpression(first.value, scope, undefined, `${location}.cases[0].value`);
+        rest.forEach((entry, index) =>
+          checkExpression(entry.value, scope, result, `${location}.cases[${index + 1}].value`),
+        );
+        return result;
       }
       case 'record': {
         const declaration = declarations.get(expression.type);
@@ -288,30 +336,43 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
   const name = qualifiedName(declaration['name'], `${location}.name`);
   switch (kind) {
     case 'enum': {
-      exactKeys(declaration, ['kind', 'name', 'constructors'], location);
-      const constructors = stringArray(declaration['constructors'], `${location}.constructors`);
+      exactKeys(declaration, ['kind', 'name', 'constructors'], location, ['doc']);
+      const constructors = array(declaration['constructors'], `${location}.constructors`).map(
+        (constructor, index): LeanEnumConstructor => {
+          const decoded = object(constructor, `${location}.constructors[${index}]`);
+          exactKeys(decoded, ['name'], `${location}.constructors[${index}]`, ['doc']);
+          return {
+            name: identifier(decoded['name'], `${location}.constructors[${index}].name`),
+            ...documentation(decoded, `${location}.constructors[${index}]`),
+          };
+        },
+      );
       if (constructors.length === 0) throw new TypeError(`${location} has no constructors`);
-      requireUnique(constructors, `${location}.constructors`);
-      return { kind, name, constructors };
+      requireUnique(
+        constructors.map((constructor) => constructor.name),
+        `${location}.constructors`,
+      );
+      return { kind, name, constructors, ...documentation(declaration, location) };
     }
     case 'record': {
-      exactKeys(declaration, ['kind', 'name', 'fields'], location);
+      exactKeys(declaration, ['kind', 'name', 'fields'], location, ['doc']);
       const fields = array(declaration['fields'], `${location}.fields`).map((field, index) => {
         const decoded = object(field, `${location}.fields[${index}]`);
-        exactKeys(decoded, ['name', 'type'], `${location}.fields[${index}]`);
+        exactKeys(decoded, ['name', 'type'], `${location}.fields[${index}]`, ['doc']);
         return {
           name: identifier(decoded['name'], `${location}.fields[${index}].name`),
           type: decodeType(decoded['type'], `${location}.fields[${index}].type`),
+          ...documentation(decoded, `${location}.fields[${index}]`),
         };
       });
       requireUnique(
         fields.map((field) => field.name),
         `${location}.fields`,
       );
-      return { kind, name, fields };
+      return { kind, name, fields, ...documentation(declaration, location) };
     }
     case 'function': {
-      exactKeys(declaration, ['kind', 'name', 'parameters', 'result', 'body'], location);
+      exactKeys(declaration, ['kind', 'name', 'parameters', 'result', 'body'], location, ['doc']);
       const parameters = array(declaration['parameters'], `${location}.parameters`).map((parameter, index) => {
         const decoded = object(parameter, `${location}.parameters[${index}]`);
         exactKeys(decoded, ['name', 'type'], `${location}.parameters[${index}]`);
@@ -326,6 +387,7 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
         parameters,
         result: decodeType(declaration['result'], `${location}.result`),
         body: decodeExpression(declaration['body'], `${location}.body`),
+        ...documentation(declaration, location),
       };
     }
     default:
@@ -442,6 +504,28 @@ function decodeExpression(value: unknown, location: string): LeanExpression {
         fields,
       };
     }
+    case 'match': {
+      exactKeys(expression, ['kind', 'type', 'scrutinee', 'cases'], location);
+      const cases = array(expression['cases'], `${location}.cases`).map((entry, index) => {
+        const decoded = object(entry, `${location}.cases[${index}]`);
+        exactKeys(decoded, ['constructor', 'value'], `${location}.cases[${index}]`);
+        return {
+          constructor: identifier(decoded['constructor'], `${location}.cases[${index}].constructor`),
+          value: decodeExpression(decoded['value'], `${location}.cases[${index}].value`),
+        };
+      });
+      if (cases.length === 0) throw new TypeError(`${location} decides no constructor`);
+      requireUnique(
+        cases.map((entry) => entry.constructor),
+        `${location}.cases`,
+      );
+      return {
+        kind,
+        type: qualifiedName(expression['type'], `${location}.type`),
+        scrutinee: decodeExpression(expression['scrutinee'], `${location}.scrutinee`),
+        cases,
+      };
+    }
     case 'call':
       exactKeys(expression, ['kind', 'function', 'arguments'], location);
       return {
@@ -512,12 +596,29 @@ function stringArray(value: unknown, location: string): readonly string[] {
   return array(value, location).map((item, index) => string(item, `${location}[${index}]`));
 }
 
-function exactKeys(value: Record<string, unknown>, expected: readonly string[], location: string): void {
-  const actual = Object.keys(value).sort(compareCodePoints);
-  const canonical = [...expected].sort(compareCodePoints);
-  if (actual.length !== canonical.length || actual.some((key, index) => key !== canonical[index])) {
-    throw new TypeError(`${location} fields must be exactly ${canonical.join(', ')}`);
+function exactKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  location: string,
+  optional: readonly string[] = [],
+): void {
+  const admitted = new Set([...required, ...optional]);
+  const unexpected = Object.keys(value).some((key) => !admitted.has(key));
+  const missing = required.some((key) => !Object.hasOwn(value, key));
+  if (unexpected || missing) {
+    const canonical = [...required].sort(compareCodePoints).join(', ');
+    const admittedOptional = [...optional].sort(compareCodePoints).join(', ');
+    const suffix = optional.length === 0 ? '' : ` with optional ${admittedOptional}`;
+    throw new TypeError(`${location} fields must be exactly ${canonical}${suffix}`);
   }
+}
+
+function documentation(value: Record<string, unknown>, location: string): LeanDocumented {
+  if (!Object.hasOwn(value, 'doc')) return {};
+  const doc = string(value['doc'], `${location}.doc`);
+  if (doc.length === 0) throw new TypeError(`${location}.doc must not be empty`);
+  if (doc.includes('*/')) throw new TypeError(`${location}.doc must not close a block comment`);
+  return { doc };
 }
 
 function requireUnique(values: readonly string[], location: string): void {

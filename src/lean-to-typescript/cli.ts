@@ -3,6 +3,13 @@
 import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type { LeanToTypeScriptManifest } from './artifact.js';
+import {
+  decodeManifest,
+  environmentAttestationDigest,
+  environmentAttestationDrift,
+  semanticIdentityDigest,
+} from './manifest.js';
 import { publishArtifactPair } from './artifact-transaction.js';
 import { compileLeanToTypeScriptWithInputs } from './compiler.js';
 import {
@@ -19,6 +26,7 @@ interface CompilerArguments {
   readonly outputPath: string;
   readonly manifestPath: string;
   readonly check: boolean;
+  readonly requireAttestation: boolean;
 }
 
 interface NamedPath {
@@ -73,12 +81,48 @@ export function runLeanToTypeScriptCli(
   assertSameDestinationIdentities(initialDestinations, currentDestinations);
   const { artifact } = compilation;
   const manifest = `${JSON.stringify(artifact.manifest, null, 2)}\n`;
-  if (options.check) {
-    assertCurrent(currentDestinations[0].canonicalPath, artifact.code);
-    assertCurrent(currentDestinations[1].canonicalPath, manifest);
-  } else {
+  if (!options.check) {
     publishArtifactPair(currentDestinations, [artifact.code, manifest], platform);
+    return;
   }
+  assertCurrent(currentDestinations[0].canonicalPath, artifact.code);
+  const recorded = readManifest(currentDestinations[1].canonicalPath);
+  if (semanticIdentityDigest(recorded.semantic) !== semanticIdentityDigest(artifact.manifest.semantic)) {
+    throw new TypeError(`generated artifact is stale: ${currentDestinations[1].canonicalPath}`);
+  }
+  reportEnvironmentAttestation(
+    currentDestinations[1].canonicalPath,
+    recorded,
+    artifact.manifest,
+    options.requireAttestation,
+  );
+}
+
+/**
+ * The committed manifest has to agree with a recompilation on semantics, not on the machine
+ * that ran it: the environment attestation records one generation, so its drift is reported
+ * and cleared by re-attesting the manifest, never by editing the artifact.
+ */
+function reportEnvironmentAttestation(
+  manifestPath: string,
+  recorded: LeanToTypeScriptManifest,
+  fresh: LeanToTypeScriptManifest,
+  fatal: boolean,
+): void {
+  const drift = environmentAttestationDrift(recorded.environment, fresh.environment);
+  if (drift.length === 0) {
+    process.stdout.write(`environment attestation matches: ${environmentAttestationDigest(fresh.environment)}\n`);
+    return;
+  }
+  const report = `environment attestation drift in ${manifestPath}:\n${drift.map((entry) => `  ${entry}`).join('\n')}`;
+  if (fatal) throw new TypeError(report);
+  process.stdout.write(`${report}\n`);
+}
+
+function readManifest(manifestPath: string): LeanToTypeScriptManifest {
+  if (!existsSync(manifestPath)) throw new TypeError(`generated artifact is stale: ${manifestPath}`);
+  const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  return decodeManifest(parsed);
 }
 
 function assertArtifactPathsAreIsolated(
@@ -229,13 +273,16 @@ function parseArguments(arguments_: readonly string[]): CompilerArguments {
   let outputPath: string | undefined;
   let manifestPath: string | undefined;
   let check = false;
+  let requireAttestation = false;
   const declarations: string[] = [];
 
   for (let index = 0; index < arguments_.length;) {
     const option = arguments_[index];
-    if (option === '--check') {
-      if (check) throw new TypeError('--check may be specified only once');
-      check = true;
+    if (option === '--check' || option === '--require-attestation') {
+      const already = option === '--check' ? check : requireAttestation;
+      if (already) throw new TypeError(`${option} may be specified only once`);
+      if (option === '--check') check = true;
+      else requireAttestation = true;
       index += 1;
       continue;
     }
@@ -267,6 +314,7 @@ function parseArguments(arguments_: readonly string[]): CompilerArguments {
   }
 
   if (declarations.length === 0) throw new TypeError('at least one --declaration is required');
+  if (requireAttestation && !check) throw new TypeError('--require-attestation requires --check');
   return {
     projectRoot: requiredValue(projectRoot, '--project-root'),
     moduleName: requiredValue(moduleName, '--module'),
@@ -275,6 +323,7 @@ function parseArguments(arguments_: readonly string[]): CompilerArguments {
     outputPath: requiredValue(outputPath, '--output'),
     manifestPath: requiredValue(manifestPath, '--manifest'),
     check,
+    requireAttestation,
   };
 }
 
@@ -297,7 +346,8 @@ function assertCurrent(absolutePath: string, expected: string): void {
 function usage(): string {
   return [
     'Usage: lean-to-typescript --project-root <path> --module <name> --source <path>',
-    '  --declaration <name> [--declaration <name> ...] --output <path> --manifest <path> [--check]',
+    '  --declaration <name> [--declaration <name> ...] --output <path> --manifest <path>',
+    '  [--check [--require-attestation]]',
   ].join('\n');
 }
 

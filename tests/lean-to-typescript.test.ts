@@ -7,6 +7,8 @@ import ts from 'typescript';
 import { beforeAll, describe, expect, test } from 'vitest';
 import {
   compileLeanToTypeScript,
+  environmentAttestationDrift,
+  semanticIdentityDigest,
   UnsupportedLeanFragmentError,
   verifyLeanToTypeScriptArtifact,
   type LeanToTypeScriptRequest,
@@ -36,7 +38,7 @@ const adversarialSource = [
   'def unsupportedHigherOrder (predicate : Bool → Bool) (value : Bool) : Bool := predicate value',
   'def unsupportedOptionEquality (left right : Option Bool) : Bool :=',
   '  if left = right then true else false',
-  'def unsupportedMatch : Choice → Bool',
+  'def hygienicEquationBinder : Choice → Bool',
   '  | .first => true',
   '  | .second => false',
   'def unsupportedNestedOption (value : Option (Option Bool)) : Option (Option Bool) := value',
@@ -87,41 +89,108 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     expect(first.code).toContain('export type Placement = "bundled" | "provider" | "dynamic";');
     expect(first.code).toContain('export interface PlacementSet');
     expect(first.code).toContain('export function choosePlacement(');
-    expect(first.manifest.leanToolchain.identity).toBe('leanprover/lean4:v4.29.0');
-    expect(first.manifest.leanToolchain.leanVersion).toContain('Lean (version 4.29.0');
-    expect(first.manifest.leanToolchain.lakeVersion).toContain('Lake version 5.0.0');
-    expect(first.manifest.semanticIrSha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
-    expect(first.manifest.inputClosureSha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
-    expect(first.manifest.generatedBodySha256).toBe(sha256(generatedBody(first.code)));
-    expect(first.manifest.typescriptVersion).toBe(ts.version);
-    expect(first.manifest.runtime).toMatch(/^(?:bun|node):/u);
-    expect(first.manifest.inputs).toEqual(
+    expect(first.manifest.schemaVersion).toBe(2);
+    expect(first.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.29.0');
+    expect(first.manifest.semantic.leanToolchain.leanVersion).toContain('Lean (version 4.29.0');
+    expect(first.manifest.semantic.leanToolchain.lakeVersion).toContain('Lake version 5.0.0');
+    expect(first.manifest.semantic.semanticIrSha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(first.manifest.semantic.inputClosureSha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(first.manifest.semantic.generatedBodySha256).toBe(sha256(generatedBody(first.code)));
+    expect(first.manifest.environment.typescriptVersion).toBe(ts.version);
+    expect(first.manifest.environment.runtime).toMatch(/^(?:bun|node):/u);
+    expect(first.manifest.environment.platform).toBe(`${process.platform}-${process.arch}`);
+    expect(first.manifest.semantic.inputs).toEqual(
       expect.arrayContaining([
         {
           kind: 'lean-source',
           identity: 'source:TSLean.Examples.Placement',
           sha256: sha256(readFileSync(sourcePath)),
         },
-        expect.objectContaining({ kind: 'compiler', identity: 'compiler:lean-exporter' }),
-        expect.objectContaining({ kind: 'lean-module', identity: 'module:TSLean.Examples.Placement' }),
+        expect.objectContaining({ kind: 'compiler-source', identity: 'compiler:lean-exporter' }),
         expect.objectContaining({ kind: 'lean-project', identity: 'target-project:lean-toolchain' }),
-        expect.objectContaining({ kind: 'typescript', identity: 'typescript:compiler' }),
       ]),
     );
-    const identities = first.manifest.inputs.map((input) => input.identity);
-    expect(
-      identities.every((identity, index) => {
-        const previous = identities[index - 1];
-        return previous === undefined || previous < identity;
-      }),
-    ).toBe(true);
-    expect(new Set(identities).size).toBe(identities.length);
+    expect(first.manifest.environment.inputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'lean-module', identity: 'module:TSLean.Examples.Placement' }),
+        expect.objectContaining({ kind: 'compiler-runtime', identity: 'typescript:compiler' }),
+        expect.objectContaining({ kind: 'lean-toolchain', identity: 'target-toolchain:lean-executable' }),
+      ]),
+    );
+    for (const inputs of [first.manifest.semantic.inputs, first.manifest.environment.inputs]) {
+      const identities = inputs.map((input) => input.identity);
+      expect(
+        identities.every((identity, index) => {
+          const previous = identities[index - 1];
+          return previous === undefined || previous < identity;
+        }),
+      ).toBe(true);
+      expect(new Set(identities).size).toBe(identities.length);
+    }
     expect(() => verifyLeanToTypeScriptArtifact(first)).not.toThrow();
     const compilerModules = readdirSync(join(repositoryRoot, 'src', 'lean-to-typescript'), { withFileTypes: true })
       .filter((entry) => entry.isFile() && extname(entry.name) === '.ts')
       .map((entry) => `compiler:${basename(entry.name, '.ts')}`)
       .sort();
-    expect(identities.filter((identity) => compilerModules.includes(identity))).toEqual(compilerModules);
+    const semanticIdentities = first.manifest.semantic.inputs.map((input) => input.identity);
+    expect(semanticIdentities.filter((identity) => compilerModules.includes(identity))).toEqual(compilerModules);
+  });
+
+  test('keeps the generating environment out of the artifact bytes', () => {
+    const artifact = compileLeanToTypeScript(request);
+    const header = artifact.code.slice(0, artifact.code.indexOf(' */'));
+    expect(header).not.toContain(artifact.manifest.environment.runtime);
+    expect(header).not.toContain(artifact.manifest.environment.typescriptVersion);
+    expect(header).not.toContain(artifact.manifest.environment.inputClosureSha256);
+    expect(header).toContain(` * Semantic identity: ${semanticIdentityDigest(artifact.manifest.semantic)}`);
+    // Re-attesting a different environment leaves the code and the semantic identity intact.
+    const reattested = {
+      code: artifact.code,
+      manifest: {
+        ...artifact.manifest,
+        environment: { ...artifact.manifest.environment, runtime: 'node:v0.0.0-attestation-probe' },
+      },
+    };
+    expect(() => verifyLeanToTypeScriptArtifact(reattested)).not.toThrow();
+    expect(environmentAttestationDrift(artifact.manifest.environment, reattested.manifest.environment)).toEqual([
+      `runtime ${artifact.manifest.environment.runtime} -> node:v0.0.0-attestation-probe`,
+    ]);
+  });
+
+  test('rejects a manifest whose input is filed under the other identity plane', () => {
+    const artifact = compileLeanToTypeScript(request);
+    const [semanticInput] = artifact.manifest.semantic.inputs;
+    if (semanticInput === undefined) throw new TypeError('semantic input closure is empty');
+    const misfiled = {
+      code: artifact.code,
+      manifest: {
+        ...artifact.manifest,
+        environment: {
+          ...artifact.manifest.environment,
+          inputs: [semanticInput, ...artifact.manifest.environment.inputs],
+        },
+      },
+    };
+    expect(() => verifyLeanToTypeScriptArtifact(misfiled)).toThrowError(
+      /input .* belongs to the other identity plane/u,
+    );
+  });
+
+  test('generates byte-identical artifacts under a different generating runtime', () => {
+    const node = compileInChild('C');
+    const bun = compileInChild('C', 'bun');
+    const nodeArtifact: unknown = JSON.parse(node);
+    const bunArtifact: unknown = JSON.parse(bun);
+    verifyLeanToTypeScriptArtifact(nodeArtifact);
+    verifyLeanToTypeScriptArtifact(bunArtifact);
+    expect(bunArtifact.code).toBe(nodeArtifact.code);
+    expect(semanticIdentityDigest(bunArtifact.manifest.semantic)).toBe(
+      semanticIdentityDigest(nodeArtifact.manifest.semantic),
+    );
+    expect(bunArtifact.manifest.environment.runtime).not.toBe(nodeArtifact.manifest.environment.runtime);
+    expect(environmentAttestationDrift(nodeArtifact.manifest.environment, bunArtifact.manifest.environment)).toContain(
+      `runtime ${nodeArtifact.manifest.environment.runtime} -> ${bunArtifact.manifest.environment.runtime}`,
+    );
   });
 
   test('binds provenance to the imported module source', () => {
@@ -215,7 +284,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       if (typeof choosePlacement !== 'function') throw new TypeError('generated choosePlacement is not callable');
       expect(choosePlacement(false)).toBe(false);
       expect(choosePlacement(true)).toBe(true);
-      expect(artifact.manifest.inputs).toContainEqual({
+      expect(artifact.manifest.semantic.inputs).toContainEqual({
         kind: 'lean-source',
         identity: `source:${moduleName}`,
         sha256: sha256(readFileSync(fixture.sourcePath)),
@@ -298,7 +367,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       const first = compileLeanToTypeScript({ ...base, declarations: ['Fixture.a', 'Fixture.A'] });
       const second = compileLeanToTypeScript({ ...base, declarations: ['Fixture.A', 'Fixture.a'] });
       expect(first).toEqual(second);
-      expect(first.manifest.declarations).toEqual(['Fixture.A', 'Fixture.a']);
+      expect(first.manifest.semantic.declarations).toEqual(['Fixture.A', 'Fixture.a']);
     } finally {
       fixture.dispose();
     }
@@ -359,15 +428,13 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.root'],
       });
-      expect(artifact.manifest.inputs).toEqual(
-        expect.arrayContaining([
-          {
-            kind: 'lean-source',
-            identity: 'source:Fixture.Dependency',
-            sha256: sha256(readFileSync(dependencyPath)),
-          },
-          expect.objectContaining({ kind: 'lean-module', identity: 'module:Fixture.Dependency' }),
-        ]),
+      expect(artifact.manifest.semantic.inputs).toContainEqual({
+        kind: 'lean-source',
+        identity: 'source:Fixture.Dependency',
+        sha256: sha256(readFileSync(dependencyPath)),
+      });
+      expect(artifact.manifest.environment.inputs).toContainEqual(
+        expect.objectContaining({ kind: 'lean-module', identity: 'module:Fixture.Dependency' }),
       );
     } finally {
       fixture.dispose();
@@ -413,24 +480,26 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       if (typeof decide !== 'function') throw new TypeError('generated decide is not callable');
       expect(decide(false)).toBe(false);
       expect(decide(true)).toBe(true);
-      expect(artifact.manifest.inputs).toContainEqual(
+      expect(artifact.manifest.environment.inputs).toContainEqual(
         expect.objectContaining({
-          kind: 'compiler',
+          kind: 'lean-toolchain',
           identity: 'toolchain-launcher:lake',
           sha256: sha256(readFileSync(wrapperPath)),
         }),
       );
-      expect(artifact.manifest.inputs.some((input) => input.identity.startsWith('toolchain-runtime:'))).toBe(true);
+      expect(
+        artifact.manifest.environment.inputs.some((input) => input.identity.startsWith('toolchain-runtime:')),
+      ).toBe(true);
       const canonicalLake = spawnSync(launcherPath, ['env', 'which', 'lake'], {
         cwd: fixture.projectRoot,
         encoding: 'utf8',
       }).stdout.trim();
-      expect(artifact.manifest.inputs).toContainEqual({
-        kind: 'compiler',
+      expect(artifact.manifest.environment.inputs).toContainEqual({
+        kind: 'lean-toolchain',
         identity: 'target-toolchain:lake-executable',
         sha256: sha256(readFileSync(canonicalLake)),
       });
-      expect(artifact.manifest.inputs).toContainEqual({
+      expect(artifact.manifest.semantic.inputs).toContainEqual({
         kind: 'lean-source',
         identity: 'source:Fixture',
         sha256: sha256(readFileSync(fixture.sourcePath)),
@@ -507,8 +576,8 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.decide'],
       });
-      expect(artifact.manifest.leanToolchain.identity).toBe('leanprover/lean4:v4.29.0');
-      expect(artifact.manifest.leanToolchain.leanVersion).toContain('Lean (version 4.29.0');
+      expect(artifact.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.29.0');
+      expect(artifact.manifest.semantic.leanToolchain.leanVersion).toContain('Lean (version 4.29.0');
     } finally {
       if (originalToolchain === undefined) {
         delete process.env['ELAN_TOOLCHAIN'];
@@ -537,14 +606,17 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       /generated TypeScript body does not match its manifest/u,
     );
 
-    const manifestSubstitution = { ...artifact.manifest, sourceModule: 'Substituted.Module' };
+    const manifestSubstitution = {
+      ...artifact.manifest,
+      semantic: { ...artifact.manifest.semantic, sourceModule: 'Substituted.Module' },
+    };
     expect(() => verifyLeanToTypeScriptArtifact({ code: artifact.code, manifest: manifestSubstitution })).toThrowError(
       /generated TypeScript provenance header does not match its manifest/u,
     );
 
     const headerSubstitution = artifact.code.replace(
-      / \* Manifest: sha256:[0-9a-f]{64}/u,
-      ` * Manifest: ${'sha256:'.padEnd(71, '0')}`,
+      / \* Semantic identity: sha256:[0-9a-f]{64}/u,
+      ` * Semantic identity: ${'sha256:'.padEnd(71, '0')}`,
     );
     if (headerSubstitution === artifact.code) throw new TypeError('provenance header mutation did not apply');
     expect(() => verifyLeanToTypeScriptArtifact({ ...artifact, code: headerSubstitution })).toThrowError(
@@ -567,7 +639,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     ['Fixture.unsupportedAxiom', 'Fixture.unsupportedAxiom'],
     ['Fixture.unsupportedHigherOrder', 'Fixture.unsupportedHigherOrder'],
     ['Fixture.unsupportedOptionEquality', 'Fixture.unsupportedOptionEquality'],
-    ['Fixture.unsupportedMatch', 'Fixture.Choice.casesOn'],
+    ['Fixture.hygienicEquationBinder', 'Fixture.hygienicEquationBinder'],
     ['Fixture.unsupportedNestedOption', 'Fixture.unsupportedNestedOption'],
     ['Fixture.throughImplementedBy', 'Fixture.implementedByDependency'],
     ['Fixture.unsupportedNoncomputable', 'Fixture.unsupportedNoncomputable'],
@@ -911,7 +983,7 @@ function spawnFailure(result: ReturnType<typeof spawnSync>): string {
   return details.join('\n') || `exit status ${result.status ?? 'unknown'}`;
 }
 
-function compileInChild(locale: string): string {
+function compileInChild(locale: string, runtime: 'bun' | 'node' = 'node'): string {
   const script = [
     "import { compileLeanToTypeScript } from './src/lean-to-typescript/index.ts';",
     "import { resolve } from 'node:path';",
@@ -924,7 +996,11 @@ function compileInChild(locale: string): string {
     '});',
     'process.stdout.write(JSON.stringify(artifact));',
   ].join('\n');
-  const result = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', script], {
+  const invocation =
+    runtime === 'bun'
+      ? { executable: 'bun', arguments_: ['--eval', script] }
+      : { executable: process.execPath, arguments_: ['--import', 'tsx', '--input-type=module', '--eval', script] };
+  const result = spawnSync(invocation.executable, invocation.arguments_, {
     cwd: repositoryRoot,
     encoding: 'utf8',
     env: { ...process.env, LC_ALL: locale, LANG: locale },

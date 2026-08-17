@@ -1,10 +1,14 @@
 name = "TSLean"
 version = "0.1.0"
-defaultTargets = ["TSLean"]
+defaultTargets = ["TSLean", "AgentCore"]
 
 [[lean_lib]]
 name = "TSLean"
 roots = ["TSLean"]
+
+[[lean_lib]]
+name = "AgentCore"
+roots = ["AgentCore"]
 
 [[lean_exe]]
 name = "js-array-scale-tests"

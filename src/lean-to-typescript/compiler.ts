@@ -20,7 +20,12 @@ import { basename, delimiter, dirname, extname, isAbsolute, join, relative, reso
 import { fileURLToPath } from 'node:url';
 import { assertRuntimeInputsUnchanged, runtimeInputSnapshots } from './runtime-provenance.js';
 import ts from 'typescript';
-import type { LeanToTypeScriptArtifact, LeanToTypeScriptInput, LeanToTypeScriptManifest } from './artifact.js';
+import {
+  LEAN_TO_TYPESCRIPT_INPUT_PLANES,
+  type LeanToTypeScriptArtifact,
+  type LeanToTypeScriptEnvironmentAttestation,
+  type LeanToTypeScriptInput,
+} from './artifact.js';
 import { emitTypeScript } from './emitter.js';
 import { decodeLeanSemanticProgram } from './ir.js';
 import { compareCodePoints } from './ordering.js';
@@ -118,7 +123,7 @@ export function compileLeanToTypeScriptWithInputs(
   try {
     const layout = compilationLayout(normalized, join(directory, 'compiler'), join(directory, 'target'));
     const launcher = snapshotInputs([
-      { kind: 'compiler', identity: 'toolchain-launcher:lake', path: findExecutableOnPath('lake') },
+      { kind: 'lean-toolchain', identity: 'toolchain-launcher:lake', path: findExecutableOnPath('lake') },
     ])[0];
     if (launcher === undefined) throw new TypeError('Lake launcher snapshot is missing');
     const compilerCandidate = resolveToolchain(layout.compilerLeanRoot, launcher, 'compiler-toolchain');
@@ -212,23 +217,24 @@ function compileNormalized(
   if (!sameStrings(program.roots, normalized.declarations)) {
     throw new TypeError('Lean semantic exporter returned different roots than requested');
   }
-  const toolchain = toolchainManifest(targetToolchain);
-  const inputs = snapshots.map(({ kind, identity, sha256: digest }) => ({
-    kind,
-    identity,
-    sha256: digest,
-  }));
+  const inputs = snapshots.map(({ kind, identity, sha256: digest }) => ({ kind, identity, sha256: digest }));
+  const semanticInputs = inputs.filter((input) => LEAN_TO_TYPESCRIPT_INPUT_PLANES[input.kind] === 'semantic');
+  const environmentInputs = inputs.filter((input) => LEAN_TO_TYPESCRIPT_INPUT_PLANES[input.kind] === 'environment');
   const artifact = emitTypeScript(program, {
-    schemaVersion: 1,
-    fragmentVersion: program.fragmentVersion,
-    sourceModule: normalized.moduleName,
-    declarations: normalized.declarations,
-    semanticIrSha256: sha256(JSON.stringify(program)),
-    inputClosureSha256: sha256(JSON.stringify(inputs)),
-    inputs,
-    typescriptVersion: ts.version,
-    runtime: runtimeIdentity(),
-    leanToolchain: toolchain,
+    semantic: {
+      fragmentVersion: program.fragmentVersion,
+      sourceModule: normalized.moduleName,
+      declarations: normalized.declarations,
+      leanToolchain: {
+        identity: targetToolchain.identity,
+        leanVersion: targetToolchain.leanVersion,
+        lakeVersion: targetToolchain.lakeVersion,
+      },
+      inputs: semanticInputs,
+      inputClosureSha256: sha256(JSON.stringify(semanticInputs)),
+      semanticIrSha256: sha256(JSON.stringify(program)),
+    },
+    environment: hostEnvironmentAttestation(environmentInputs),
   });
   assertTypeChecks(artifact.code, directory);
   assertSameModuleClosure(moduleFiles, collectModuleFiles(targetRequest, layout, compilerToolchain, targetToolchain));
@@ -380,7 +386,7 @@ function compilerLeanSources(projectRoot: string): readonly InputFile[] {
   const sourceRoot = join(projectRoot, 'TSLean', 'LeanToTypeScript');
   const exporterPath = realpathSync(join(sourceRoot, 'Export.lean'));
   return filesRecursively(sourceRoot, '.lean').map((path) => ({
-    kind: 'compiler',
+    kind: 'compiler-source',
     identity:
       path === exporterPath
         ? 'compiler:lean-exporter'
@@ -470,10 +476,10 @@ function commonProjectRoot(snapshots: readonly InputSnapshot[], targetSourcePath
 
 function resolveToolchain(projectRoot: string, launcher: InputSnapshot, prefix: string): LeanToolchain {
   const lakePath = executableReportedByLake(launcher, projectRoot, 'lake');
-  const lake = snapshotInputs([{ kind: 'compiler', identity: `${prefix}:lake-executable`, path: lakePath }])[0];
+  const lake = snapshotInputs([{ kind: 'lean-toolchain', identity: `${prefix}:lake-executable`, path: lakePath }])[0];
   if (lake === undefined) throw new TypeError(`${prefix} Lake executable snapshot is missing`);
   const leanPath = executableReportedByLake(lake, projectRoot, 'lean');
-  const lean = snapshotInputs([{ kind: 'compiler', identity: `${prefix}:lean-executable`, path: leanPath }])[0];
+  const lean = snapshotInputs([{ kind: 'lean-toolchain', identity: `${prefix}:lean-executable`, path: leanPath }])[0];
   if (lean === undefined) throw new TypeError(`${prefix} Lean executable snapshot is missing`);
   const identity = readFileSync(join(projectRoot, 'lean-toolchain'), 'utf8').trim();
   if (identity.length === 0) throw new TypeError('lean-toolchain is empty');
@@ -504,7 +510,7 @@ function toolchainClosure(toolchain: LeanToolchain): readonly InputFile[] {
     compareCodePoints,
   );
   return paths.map((path, index) => ({
-    kind: 'compiler',
+    kind: 'lean-toolchain',
     identity: `toolchain-runtime:${index.toString().padStart(2, '0')}:${basename(path)}`,
     path,
   }));
@@ -811,11 +817,14 @@ function assertTypeChecks(code: string, directory: string): void {
   }
 }
 
-function toolchainManifest(toolchain: LeanToolchain): LeanToTypeScriptManifest['leanToolchain'] {
+function hostEnvironmentAttestation(inputs: readonly LeanToTypeScriptInput[]): LeanToTypeScriptEnvironmentAttestation {
+  const bunVersion = process.versions['bun'];
   return {
-    identity: toolchain.identity,
-    leanVersion: toolchain.leanVersion,
-    lakeVersion: toolchain.lakeVersion,
+    runtime: bunVersion === undefined ? `node:${process.version}` : `bun:${bunVersion}`,
+    typescriptVersion: ts.version,
+    platform: `${process.platform}-${process.arch}`,
+    inputs,
+    inputClosureSha256: sha256(JSON.stringify(inputs)),
   };
 }
 
@@ -901,11 +910,6 @@ function sanitizedProcessEnvironment(): NodeJS.ProcessEnv {
     }
   }
   return environment;
-}
-
-function runtimeIdentity(): string {
-  const bunVersion = process.versions['bun'];
-  return bunVersion === undefined ? `node:${process.version}` : `bun:${bunVersion}`;
 }
 
 function assertStagedProjectsUnchanged(layout: CompilationLayout): void {

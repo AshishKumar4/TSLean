@@ -4,7 +4,7 @@ namespace TSLean.LeanToTypeScript
 
 open Lean
 
-private def fragmentVersion := "tslean-pure-first-order-v1"
+private def fragmentVersion := "tslean-pure-first-order-v2"
 
 private def array (items : List Json) : Json := .arr items.toArray
 
@@ -12,6 +12,11 @@ private def object (fields : List (String × Json)) : Json := .mkObj fields
 
 private def node (kind : String) (fields : List (String × Json) := []) : Json :=
   object (("kind", .str kind) :: fields)
+
+private def documentationFields (environment : Environment) (name : Name) : List (String × Json) :=
+  match docStringExt.find? (level := .server) environment name with
+  | some documentation => [("doc", .str documentation)]
+  | none => []
 
 private def nameTextLt (left right : Name) : Bool := left.toString < right.toString
 
@@ -178,6 +183,63 @@ private def isMatchingBoolDecision (condition decision : Expr) : Bool :=
           | _ => false
       | _ => false
 
+/--
+Reads which constructor each alternative of a `match` auxiliary matcher decides, from the
+matcher's own declared type. Alternative `i` is typed `motive Ctor`, behind its own declared
+parameters, so the constructor is recovered structurally instead of assuming the source arm
+order.
+-/
+private def matcherAlternativeConstructors (environment : Environment) (matcherName : Name)
+    (info : Meta.MatcherInfo) : Except String (List Name) := do
+  let some constantInfo := environment.find? matcherName
+    | throw s!"matcher {matcherName} is absent from the elaborated environment"
+  let mut telescope := constantInfo.type
+  for _ in [0 : info.numParams + 1 + info.numDiscrs] do
+    match telescope.consumeMData with
+    | .forallE _ _ body _ => telescope := body
+    | _ => throw s!"matcher {matcherName} does not expose the expected discriminant telescope"
+  let alternativeParameters := info.altNumParams
+  let mut constructors := []
+  for index in [0 : info.numAlts] do
+    match telescope.consumeMData with
+    | .forallE _ binderType body _ =>
+        let some parameterCount := alternativeParameters[index]?
+          | throw s!"matcher {matcherName} has no parameter count for alternative {index}"
+        let mut applied := binderType
+        for _ in [0 : parameterCount] do
+          match applied.consumeMData with
+          | .forallE _ _ inner _ => applied := inner
+          | _ => throw s!"matcher {matcherName} alternative {index} has an unexpected telescope"
+        let (head, arguments) := appView applied.consumeMData
+        let .bvar _ := head
+          | throw s!"matcher {matcherName} alternative is not an application of its motive"
+        let [pattern] := arguments
+          | throw s!"matcher {matcherName} alternative does not decide exactly one discriminant"
+        let .const constructorName _ := pattern.consumeMData
+          | throw s!"matcher {matcherName} alternative pattern is not a constructor"
+        constructors := constructorName :: constructors
+        telescope := body
+    | _ => throw s!"matcher {matcherName} does not expose the expected alternative telescope"
+  pure constructors.reverse
+
+private def alternativeIndexOf (constructors : List Name) (constructorName : Name) : Option Nat :=
+  let rec search (remaining : List Name) (index : Nat) : Option Nat :=
+    match remaining with
+    | [] => none
+    | head :: rest => if head == constructorName then some index else search rest (index + 1)
+  search constructors 0
+
+private def enumConstructors (environment : Environment) (targetModules : NameSet) (name : Name) :
+    Except String (List Name) := do
+  let declaration ← ordinaryDataInfo environment targetModules name
+  unless declaration.numParams = 0 && declaration.numIndices = 0 do
+    throw s!"generic or indexed data type {name} cannot be matched in this fragment version"
+  if isStructure environment name then
+    throw s!"structure {name} cannot be matched in this fragment version"
+  if declaration.ctors.isEmpty then
+    throw s!"inductive data type {name} has no constructors"
+  pure declaration.ctors
+
 private partial def expressionNode (environment : Environment) (targetModules : NameSet)
     (expression : Expr) (allowLeadingLet : Bool := false) : Except String Json := do
   let expression := expression.consumeMData
@@ -243,6 +305,64 @@ private partial def expressionNode (environment : Environment) (targetModules : 
       else if name == ``Option.none then
         let [_] := arguments | throw "Option.none received an unsupported elaborated shape"
         pure (node "none")
+      else if let some matcherInfo := Meta.getMatcherInfoCore? environment name then
+        unless declaredInModules environment targetModules name do
+          throw s!"matcher {name} is outside the frozen target module closure"
+        unless matcherInfo.numParams = 0 do
+          throw "matchers over parameterized or indexed discriminants are outside the checked fragment"
+        unless matcherInfo.numDiscrs = 1 do
+          throw "matches on more than one discriminant are outside this fragment version"
+        unless matcherInfo.getNumDiscrEqs = 0 do
+          throw "matches binding discriminant equations are outside the checked fragment"
+        unless matcherInfo.overlaps.isEmpty do
+          throw "matches with overlapping alternatives are outside the checked fragment"
+        for alternative in matcherInfo.altInfos do
+          unless alternative.numFields = 0 && alternative.numOverlaps = 0 do
+            throw "match alternatives binding constructor data are outside this fragment version"
+        unless arguments.length = matcherInfo.arity do
+          throw s!"matcher {name} received an unsupported elaborated shape"
+        let some motive := arguments[matcherInfo.getMotivePos]?
+          | throw s!"matcher {name} received no motive"
+        let .lam _ discriminantType motiveBody _ := motive.consumeMData
+          | throw s!"matcher {name} motive is not a discriminant abstraction"
+        if containsBoundVariable motiveBody then
+          throw "dependent match result types are outside the checked fragment"
+        let .const dataName _ := discriminantType.consumeMData
+          | throw s!"matcher {name} discriminant type is not an inductive data type"
+        let constructors ← enumConstructors environment targetModules dataName
+        let alternatives ← matcherAlternativeConstructors environment name matcherInfo
+        unless alternatives.length = constructors.length do
+          throw s!"match on {dataName} does not decide every constructor exactly once"
+        let some discriminant := arguments[matcherInfo.getFirstDiscrPos]?
+          | throw s!"matcher {name} received no discriminant"
+        let mut cases := []
+        for constructorName in constructors do
+          let some alternativeIndex := alternativeIndexOf alternatives constructorName
+            | throw s!"match on {dataName} does not decide {constructorName}"
+          let some alternative := matcherInfo.altInfos[alternativeIndex]?
+            | throw s!"matcher {name} has no alternative {alternativeIndex}"
+          let some encoded := arguments[matcherInfo.getFirstAltPos + alternativeIndex]?
+            | throw s!"matcher {name} received no alternative for {constructorName}"
+          -- Lean thunks a nullary alternative behind an unused `Unit` binder; the fragment
+          -- admits it only when the alternative genuinely ignores that binder.
+          let value ← if alternative.hasUnitThunk then
+              match encoded.consumeMData with
+              | .lam _ _ thunkBody _ =>
+                  if thunkBody.hasLooseBVar 0 then
+                    throw s!"matcher {name} alternative uses its unit thunk binder"
+                  pure (thunkBody.lowerLooseBVars 1 1)
+              | _ => throw s!"matcher {name} thunked alternative is not an abstraction"
+            else pure encoded
+          ensureAsciiIdentifier constructorName.getString! "constructor name"
+          cases := object [
+            ("constructor", .str constructorName.getString!),
+            ("value", ← expressionNode environment targetModules value)
+          ] :: cases
+        pure (node "match" [
+          ("type", .str dataName.toString),
+          ("scrutinee", ← expressionNode environment targetModules discriminant),
+          ("cases", array cases.reverse)
+        ])
       else
         let some info := environment.find? name
           | throw s!"constant {name} is absent from the elaborated environment"
@@ -301,7 +421,8 @@ private def fieldDeclaration (environment : Environment) (targetModules : NameSe
     | throw s!"structure field projection {fieldInfo.projFn} is absent from the environment"
   ensureAsciiIdentifier fieldName.getString! "structure field"
   let (_, fieldType) ← parametersAndResult environment targetModules info.type
-  pure (object [("name", .str fieldName.getString!), ("type", fieldType)])
+  pure (object ([("name", .str fieldName.getString!), ("type", fieldType)]
+    ++ documentationFields environment fieldInfo.projFn))
 
 private def dataDeclaration (environment : Environment) (targetModules : NameSet)
     (name : Name) : Except String Json := do
@@ -310,10 +431,10 @@ private def dataDeclaration (environment : Environment) (targetModules : NameSet
     throw s!"generic or indexed data type {name} is outside this fragment version"
   if isStructure environment name then
     let fields := getStructureFields environment name
-    pure (node "record" [
+    pure (node "record" ([
       ("name", .str name.toString),
       ("fields", array (← fields.toList.mapM (fieldDeclaration environment targetModules name)))
-    ])
+    ] ++ documentationFields environment name))
   else
     unless !declaration.ctors.isEmpty do
       throw s!"inductive data type {name} has no constructors"
@@ -324,11 +445,12 @@ private def dataDeclaration (environment : Environment) (targetModules : NameSet
         | throw s!"constructor {constructorName} is absent"
       unless constructor.numFields = 0 do
         throw s!"constructor {constructorName} carries data outside this fragment version"
-      constructors := .str constructorName.getString! :: constructors
-    pure (node "enum" [
+      constructors := object ([("name", .str constructorName.getString!)]
+        ++ documentationFields environment constructorName) :: constructors
+    pure (node "enum" ([
       ("name", .str name.toString),
       ("constructors", array constructors.reverse)
-    ])
+    ] ++ documentationFields environment name))
 
 private def functionDeclaration (environment : Environment) (targetModules : NameSet) (name : Name) :
     Except String Json := do
@@ -350,12 +472,12 @@ private def functionDeclaration (environment : Environment) (targetModules : Nam
     ensureAsciiIdentifier lambdaName "parameter name"
   let parameters := List.zipWith (fun parameter lambdaName =>
     object [("name", .str lambdaName), ("type", parameter.type)]) parameters lambdaNames
-  pure (node "function" [
+  pure (node "function" ([
     ("name", .str name.toString),
     ("parameters", array parameters),
     ("result", result),
     ("body", ← expressionNode environment targetModules body true)
-  ])
+  ] ++ documentationFields environment name))
 
 private def declarationDependencies (environment : Environment) (name : Name) : List Name :=
   match environment.find? name with
@@ -434,7 +556,11 @@ private partial def collectDeclarationsAux (environment : Environment) (targetMo
         | .ctorInfo constructor =>
             collectDeclarationsAux environment targetModules (constructor.induct :: rest) seen ordered
         | .defnInfo _ =>
-            if let some structureName := environment.getProjectionStructureName? name then
+            if (Meta.getMatcherInfoCore? environment name).isSome then
+              -- Matchers are inlined at their application sites; the discriminant type and
+              -- every value the alternatives use are reached through the enclosing definition.
+              collectDeclarationsAux environment targetModules rest seen ordered
+            else if let some structureName := environment.getProjectionStructureName? name then
               collectDeclarationsAux environment targetModules (structureName :: rest) seen ordered
             else
               collectDeclarationsAux environment targetModules

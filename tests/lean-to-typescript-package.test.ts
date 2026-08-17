@@ -1506,12 +1506,14 @@ describe('published Lean to TypeScript API', () => {
         execFileSync(compilerExecutable, compilerArguments, { cwd: consumerRoot, stdio: 'pipe' });
         const installedCode = readFileSync(generatedPath, 'utf8');
         const installedManifest: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
-        if (!isRecord(installedManifest) || !Array.isArray(installedManifest['inputs'])) {
-          throw new TypeError('packed generator emitted a malformed manifest');
+        if (!isRecord(installedManifest)) throw new TypeError('packed generator emitted a malformed manifest');
+        const installedSemantic = installedManifest['semantic'];
+        if (!isRecord(installedSemantic) || !Array.isArray(installedSemantic['inputs'])) {
+          throw new TypeError('packed generator emitted a malformed semantic identity');
         }
         expect(installedCode).toContain('export function decide(value: boolean): boolean');
-        expect(installedManifest['inputClosureSha256']).toBe(sha256(JSON.stringify(installedManifest['inputs'])));
-        expect(installedCode).toContain(` * Manifest: ${sha256(JSON.stringify(installedManifest))}`);
+        expect(installedSemantic['inputClosureSha256']).toBe(sha256(JSON.stringify(installedSemantic['inputs'])));
+        expect(installedCode).toContain(` * Semantic identity: ${sha256(JSON.stringify(installedSemantic))}`);
         expect(spawnSync(compilerExecutable, [...compilerArguments, '--check']).status).toBe(0);
         writeFileSync(generatedPath, `${installedCode}\n`);
         const stale = spawnSync(compilerExecutable, [...compilerArguments, '--check'], { encoding: 'utf8' });
@@ -1543,8 +1545,10 @@ describe('published Lean to TypeScript API', () => {
         if (!isRecord(parsed) || typeof parsed['code'] !== 'string' || !isRecord(parsed['manifest'])) {
           throw new TypeError('packed compiler emitted a malformed artifact');
         }
+        const packedSemantic = parsed['manifest']['semantic'];
+        if (!isRecord(packedSemantic)) throw new TypeError('packed compiler emitted a malformed semantic identity');
         expect(parsed['code']).toContain('export function decide(value: boolean): boolean');
-        expect(parsed['manifest']['sourceModule']).toBe('Consumer');
+        expect(packedSemantic['sourceModule']).toBe('Consumer');
         expect(
           readFileSync(
             join(consumerRoot, 'node_modules', 'tslean', 'lean', 'TSLean', 'LeanToTypeScript', 'Export.lean'),
@@ -1631,13 +1635,15 @@ describe('published Lean to TypeScript API', () => {
     const target = model['generatedTarget'];
     if (!isRecord(target)) throw new TypeError('compiler registry target is invalid');
     const manifest: unknown = JSON.parse(readFileSync(join(repositoryRoot, String(target['manifest'])), 'utf8'));
-    if (!isRecord(manifest) || !Array.isArray(manifest['inputs'])) {
-      throw new TypeError('registered generated manifest is invalid');
+    if (!isRecord(manifest)) throw new TypeError('registered generated manifest is invalid');
+    const semantic = manifest['semantic'];
+    if (!isRecord(semantic) || !Array.isArray(semantic['inputs'])) {
+      throw new TypeError('registered generated semantic identity is invalid');
     }
-    expect(manifest['sourceModule']).toBe('TSLean.Examples.Placement');
-    expect(manifest['declarations']).toEqual(['TSLean.Examples.Placement.choosePlacement']);
+    expect(semantic['sourceModule']).toBe('TSLean.Examples.Placement');
+    expect(semantic['declarations']).toEqual(['TSLean.Examples.Placement.choosePlacement']);
     expect(
-      manifest['inputs']
+      semantic['inputs']
         .filter(isRecord)
         .map((input) => input['identity'])
         .filter((identity): identity is string => typeof identity === 'string'),

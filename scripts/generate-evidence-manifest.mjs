@@ -3,11 +3,15 @@ import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { lstatSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { argv } from 'node:process';
+import { argv, stdout } from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const usage = 'Usage: generate-evidence-manifest.mjs --input <json> [--check]';
+const usage = 'Usage: generate-evidence-manifest.mjs --input <json> [--check [--require-attestation]]';
+// The manifest's `toolchain` block attests the machine that generated it. A patch bump of a
+// tool that changed no evidence must not make the snapshot stale, so `--check` compares the
+// evidence itself and reports attestation drift separately.
+const attestationKey = 'toolchain';
 
 function fail(message) {
   throw new Error(`Cannot generate evidence manifest: ${message}`);
@@ -16,6 +20,7 @@ function fail(message) {
 function parseArgs(args) {
   let input;
   let check = false;
+  let requireAttestation = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === '--input' && input === undefined) {
@@ -24,12 +29,26 @@ function parseArgs(args) {
       index += 1;
     } else if (argument === '--check' && !check) {
       check = true;
+    } else if (argument === '--require-attestation' && !requireAttestation) {
+      requireAttestation = true;
     } else {
       fail(`${usage}; unexpected argument ${argument}`);
     }
   }
   if (input === undefined) fail(usage);
-  return { check, input };
+  if (requireAttestation && !check) fail(`${usage}; --require-attestation requires --check`);
+  return { check, input, requireAttestation };
+}
+
+function evidenceText(manifest) {
+  return `${JSON.stringify({ ...manifest, [attestationKey]: undefined }, null, 2)}\n`;
+}
+
+function attestationDrift(recorded, current) {
+  const names = [...new Set([...Object.keys(object(recorded, 'recorded toolchain')), ...Object.keys(current)])].sort();
+  return names
+    .filter((name) => recorded[name] !== current[name])
+    .map((name) => `  ${name}: ${recorded[name] ?? '<missing>'} -> ${current[name] ?? '<missing>'}`);
 }
 
 function object(value, label) {
@@ -484,7 +503,7 @@ function validateEvidence(input) {
   return expectedTodos;
 }
 
-const { check, input: inputArgument } = parseArgs(argv.slice(2));
+const { check, input: inputArgument, requireAttestation } = parseArgs(argv.slice(2));
 const inputPath = repositoryPath(inputArgument, '--input');
 const input = JSON.parse(readFileSync(inputPath, 'utf8'));
 const revisionKey = input.baseRevision === undefined ? 'upstreamRevision' : 'baseRevision';
@@ -548,17 +567,32 @@ const canonical = `${JSON.stringify(manifest, null, 2)}\n`;
 const outputPath = repositoryPath(input.outputPath, 'outputPath');
 
 if (check) {
-  const checkedIn = readFileSync(outputPath, 'utf8');
-  if (checkedIn !== canonical) {
-    const checkedInLines = checkedIn.split('\n');
-    const canonicalLines = canonical.split('\n');
-    const line = canonicalLines.findIndex((value, index) => value !== checkedInLines[index]);
+  let recorded;
+  try {
+    recorded = object(JSON.parse(readFileSync(outputPath, 'utf8')), `${input.outputPath}`);
+  } catch (error) {
+    fail(`${input.outputPath} is unreadable: ${error.message}`);
+  }
+  const recordedEvidence = evidenceText(recorded);
+  const currentEvidence = evidenceText(manifest);
+  if (recordedEvidence !== currentEvidence) {
+    const recordedLines = recordedEvidence.split('\n');
+    const currentLines = currentEvidence.split('\n');
+    const line = currentLines.findIndex((value, index) => value !== recordedLines[index]);
     fail(
-      `${input.outputPath} is stale at line ${line + 1}\n` +
-        `- ${checkedInLines[line] ?? '<missing>'}\n` +
-        `+ ${canonicalLines[line] ?? '<missing>'}\n` +
+      `${input.outputPath} is stale at evidence line ${line + 1}\n` +
+        `- ${recordedLines[line] ?? '<missing>'}\n` +
+        `+ ${currentLines[line] ?? '<missing>'}\n` +
         `Run \`bun scripts/generate-evidence-manifest.mjs --input ${inputArgument}\` to update it.`,
     );
+  }
+  const drift = attestationDrift(recorded[attestationKey], manifest[attestationKey]);
+  if (drift.length === 0) {
+    stdout.write(`${input.outputPath}: evidence current, attestation matches\n`);
+  } else if (requireAttestation) {
+    fail(`${input.outputPath} attestation drift:\n${drift.join('\n')}`);
+  } else {
+    stdout.write(`${input.outputPath}: evidence current, attestation drift:\n${drift.join('\n')}\n`);
   }
 } else {
   writeFileSync(outputPath, canonical);

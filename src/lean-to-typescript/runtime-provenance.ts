@@ -19,22 +19,22 @@ export const runtimeInputSnapshots: readonly RuntimeInputSnapshot[] = capture([
   ...readdirSync(compilerDirectory, { withFileTypes: true })
     .filter((entry) => entry.isFile() && extname(entry.name) === extension)
     .map((entry) => ({
-      kind: 'compiler' as const,
+      kind: 'compiler-source' as const,
       identity: `compiler:${entry.name.slice(0, -extension.length)}`,
       path: realpathSync(join(compilerDirectory, entry.name)),
     })),
-  { kind: 'compiler', identity: 'compiler:package', path: realpathSync(join(packageRoot, 'package.json')) },
-  { kind: 'compiler', identity: 'compiler:registry', path: registryPath('compiler-registry.json') },
-  { kind: 'compiler', identity: 'compiler:bounds:placement-v1', path: registryPath('placement.bounds.json') },
-  { kind: 'compiler', identity: 'compiler:runtime', path: realpathSync(process.execPath) },
-  { kind: 'typescript', identity: 'typescript:compiler', path: typescriptPath },
+  { kind: 'compiler-source', identity: 'compiler:package', path: realpathSync(join(packageRoot, 'package.json')) },
+  { kind: 'compiler-source', identity: 'compiler:registry', path: registryPath('compiler-registry.json') },
+  { kind: 'compiler-source', identity: 'compiler:bounds:placement-v1', path: registryPath('placement.bounds.json') },
+  { kind: 'compiler-runtime', identity: 'compiler:runtime', path: realpathSync(process.execPath) },
+  { kind: 'compiler-runtime', identity: 'typescript:compiler', path: typescriptPath },
   {
-    kind: 'typescript',
+    kind: 'compiler-runtime',
     identity: 'typescript:package',
     path: realpathSync(join(dirname(typescriptPath), '..', 'package.json')),
   },
   ...['lib.decorators.d.ts', 'lib.decorators.legacy.d.ts', 'lib.es5.d.ts'].map((name) => ({
-    kind: 'typescript' as const,
+    kind: 'compiler-runtime' as const,
     identity: `typescript:library:${name}`,
     path: realpathSync(join(dirname(typescriptPath), name)),
   })),
