@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "semantic": {
-    "fragmentVersion": "tslean-pure-first-order-v3",
+    "fragmentVersion": "tslean-structural-first-order-v4",
     "sourceModule": "AgentCore.Facets.Enforcement",
     "declarations": [
       "AgentCore.Facets.Impact.claimHonorsEnforcementFloor",
@@ -51,7 +51,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:emitter",
-        "sha256": "sha256:7d16c9b2f7c7098563f78662329ac96c27fe09b97dddaa3d4265dea0fc757d25"
+        "sha256": "sha256:858a20669df6d4027898b29b748db9498d31759c3cf14d8bc33d6e4415d02c2e"
       },
       {
         "kind": "compiler-source",
@@ -66,12 +66,12 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:ir",
-        "sha256": "sha256:15b24f5c337773f22f7323f71fe5aab7b71040347794acef59a3a5d8aeca15a0"
+        "sha256": "sha256:d562e221054db357db54506ce37a690ffbf0e5ccc718d7de6e10649062db2ee0"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-exporter",
-        "sha256": "sha256:49bd99721d89a686dba769b3ad4d1cef035bdd3bfc342153cf6df4e3f6da307b"
+        "sha256": "sha256:65ec4e7e296a68f97c0a17eb3720d3b2a51b567259915b5b4daf715ade08b55c"
       },
       {
         "kind": "compiler-source",
@@ -121,7 +121,7 @@
       {
         "kind": "lean-source",
         "identity": "source:TSLean.LeanToTypeScript.Export",
-        "sha256": "sha256:49bd99721d89a686dba769b3ad4d1cef035bdd3bfc342153cf6df4e3f6da307b"
+        "sha256": "sha256:65ec4e7e296a68f97c0a17eb3720d3b2a51b567259915b5b4daf715ade08b55c"
       },
       {
         "kind": "lean-project",
@@ -139,8 +139,8 @@
         "sha256": "sha256:651c8accb402b0c071cd336e9d3dc0a55516b1bfb434ddc4801f14936785b1d2"
       }
     ],
-    "inputClosureSha256": "sha256:a29a15ab3c4e17cfd29114350ff27612b1ba66a6a09c78aeedc1a76a6fdec9cb",
-    "semanticIrSha256": "sha256:521a6f88b6228ff49cbe0fe5b0d69983f9de91ddef505316fb7aee8d7c7d18cd",
+    "inputClosureSha256": "sha256:120465166908a2f61f2dc025ca9057014e8b52b414cfd3d9dabb6fdfd6c1422b",
+    "semanticIrSha256": "sha256:f412c9e3b6b69101b752d289fea38c6ce1373634ca5c89c6597f2d3c1b17b9b1",
     "generatedBodySha256": "sha256:fba73201f5d9a31aa72e8ce13994589b32a653bebd308a42b94c1ec860498e25"
   },
   "environment": {
@@ -181,7 +181,7 @@
       {
         "kind": "lean-module",
         "identity": "module:TSLean.LeanToTypeScript.Export",
-        "sha256": "sha256:5c847f62014675c326bd5bbbfbc2786ff1b3cc4ad79a10aa5074217fb1f9983b"
+        "sha256": "sha256:4a2bdb3b592ad2bba42b258d9bab61fb7aa038e6fa4d58624801e1d2106709e7"
       },
       {
         "kind": "lean-toolchain",
@@ -804,6 +804,6 @@
         "sha256": "sha256:bb6ee7e709ae60426e30b8d393df4d939ee61407794b4f053ce6338d6eaa8c63"
       }
     ],
-    "inputClosureSha256": "sha256:5e201c43c6d2793588c46f65f67d79388464df8afc1353ca58691c378ffe6232"
+    "inputClosureSha256": "sha256:ea5a69d42cae7a25ab28557a77cfe83261274b8b68adddca3aed7fc3b2748356"
   }
 }

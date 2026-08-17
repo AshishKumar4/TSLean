@@ -4,7 +4,7 @@ namespace TSLean.LeanToTypeScript
 
 open Lean
 
-private def fragmentVersion := "tslean-pure-first-order-v3"
+private def fragmentVersion := "tslean-structural-first-order-v4"
 
 private def array (items : List Json) : Json := .arr items.toArray
 
@@ -492,7 +492,53 @@ private def dataDeclaration (environment : Environment) (targetModules : NameSet
       ("constructors", array constructors.reverse)
     ] ++ documentationFields environment name))
 
-private def functionDeclaration (environment : Environment) (targetModules : NameSet) (name : Name) :
+/--
+The parameter Lean itself proved a definition recurses structurally on, read from the elaborator's
+own record. A recursive definition with no such record used well-founded recursion or none at all,
+and is refused: its termination argument does not lower to a TypeScript call.
+-/
+private def structuralRecursionArgument? (environment : Environment) (name : Name) : Option Nat :=
+  (Lean.Elab.Structural.eqnInfoExt.find? environment name).map (·.recArgPos)
+
+/-- Mutual recursion has no single decreasing argument to lower, so it is refused by name. -/
+private def isMutuallyRecursive (environment : Environment) (name : Name) : Bool :=
+  (Lean.Elab.Structural.eqnInfoExt.find? environment name).any (·.declNames.size > 1)
+
+/-- The pre-compilation body of a structurally recursive definition, which still names itself. -/
+private def structuralRecursionValue? (environment : Environment) (name : Name) : Option Expr :=
+  (Lean.Elab.Structural.eqnInfoExt.find? environment name).map (·.value)
+
+/--
+Reads a structurally recursive definition's body out of its kernel-checked unfolding theorem
+`f.eq_def : ∀ xs, f xs = body`, rather than out of the `brecOn` term the compiler built or the
+elaborator's own record of the body. The theorem is proved by the kernel, so the exported body is
+equal to the definition by the same authority that accepted the definition.
+-/
+private def unfoldingEquationBody (name : Name) (parameterCount : Nat) (equationType : Expr) :
+    Except String (List String × Expr) := do
+  let mut telescope := equationType
+  let mut names := []
+  for _ in [0 : parameterCount] do
+    match telescope.consumeMData with
+    | .forallE binderName _ body _ =>
+        names := binderName.toString :: names
+        telescope := body
+    | _ => throw s!"unfolding theorem for {name} does not abstract every parameter"
+  let (head, arguments) := appView telescope.consumeMData
+  unless head.isConstOf ``Eq do
+    throw s!"unfolding theorem for {name} is not an equation"
+  let [_, left, right] := arguments
+    | throw s!"unfolding theorem for {name} has an unsupported equation shape"
+  let (leftHead, leftArguments) := appView left.consumeMData
+  unless leftHead.isConstOf name do
+    throw s!"unfolding theorem for {name} does not unfold {name}"
+  let expected := (List.range parameterCount).map fun position => Expr.bvar (parameterCount - 1 - position)
+  unless leftArguments.map Expr.consumeMData == expected do
+    throw s!"unfolding theorem for {name} does not apply it to its own parameters"
+  pure (names.reverse, right)
+
+private def functionDeclaration (environment : Environment) (targetModules : NameSet) (name : Name)
+    (unfoldingEquation? : Option Expr) :
     Except String Json := do
   let some info := environment.find? name
     | throw s!"declaration {name} is absent from the elaborated environment"
@@ -502,10 +548,25 @@ private def functionDeclaration (environment : Environment) (targetModules : Nam
   | .safe => pure ()
   | .partial => throw "partial definitions are outside the checked fragment"
   | .unsafe => throw "unsafe definitions are outside the checked fragment"
-  if declaration.value.getUsedConstants.contains name then
-    throw "recursive definitions are outside this fragment version"
   let (parameters, result) ← parametersAndResult environment targetModules declaration.type
-  let (lambdaNames, body) := lambdaBody declaration.value
+  let recursionArgument? := structuralRecursionArgument? environment name
+  let selfReferential := declaration.value.getUsedConstants.contains name
+    || (structuralRecursionValue? environment name).any (·.getUsedConstants.contains name)
+  let (lambdaNames, body, recursionFields) ←
+    match recursionArgument?, unfoldingEquation? with
+    | some argument, some equationType =>
+        if isMutuallyRecursive environment name then
+          throw "mutual recursion is outside the checked fragment"
+        unless argument < parameters.length do
+          throw s!"structural recursion argument {argument} is outside {name}'s parameters"
+        let (names, body) ← unfoldingEquationBody name parameters.length equationType
+        pure (names, body, [("recursion", object [("argument", .num argument)])])
+    | some _, none => throw s!"unfolding theorem for {name} is unavailable"
+    | none, _ =>
+        if selfReferential then
+          throw "recursion Lean did not establish structurally is outside the checked fragment"
+        let (names, body) := lambdaBody declaration.value
+        pure (names, body, [])
   unless lambdaNames.length = parameters.length do
     throw "definition value does not expose the declared first-order parameters"
   for lambdaName in lambdaNames do
@@ -515,16 +576,25 @@ private def functionDeclaration (environment : Environment) (targetModules : Nam
   pure (node "function" ([
     ("name", .str name.toString),
     ("parameters", array parameters),
-    ("result", result),
+    ("result", result)
+  ] ++ recursionFields ++ [
     ("body", ← expressionNode environment targetModules body true)
   ] ++ documentationFields environment name))
 
+/--
+What a declaration's own text depends on. A structurally recursive definition is read through its
+unfolding theorem, so its dependencies are the ones its own body names, not the `brecOn` scaffolding
+the compiler built to justify it.
+-/
 private def declarationDependencies (environment : Environment) (name : Name) : List Name :=
   match environment.find? name with
   | none => []
   | some info =>
       let expressions := match info with
-        | .defnInfo declaration => [declaration.type, declaration.value]
+        | .defnInfo declaration =>
+            match structuralRecursionValue? environment name with
+            | some value => [declaration.type, value]
+            | none => [declaration.type, declaration.value]
         | .inductInfo declaration => declaration.type :: declaration.ctors.filterMap fun constructorName =>
             match environment.find? constructorName with
             | some constructor => some constructor.type
@@ -550,6 +620,12 @@ private def executableMetadataDiagnostic? (environment : Environment) (name : Na
   else
     none
 
+/--
+Every constant the emitted program depends on, transitively and across the boundary of the target
+module: a compiler-level replacement anywhere in that closure means the executable Lean differs
+from the definitions this compiler read, so the whole closure is audited rather than the local
+part of it plus one hop.
+-/
 private partial def auditExecutableMetadataAux (environment : Environment) (targetModules : NameSet)
     (pending : List Name) (seen : NameSet) : Except String Unit := do
   match pending with
@@ -569,13 +645,7 @@ private partial def auditExecutableMetadataAux (environment : Environment) (targ
               | some structureName => structureName :: declarationDependencies environment name
               | none => declarationDependencies environment name
           | _ => declarationDependencies environment name
-        for dependency in dependencies do
-          let some _ := environment.find? dependency
-            | throw s!"{dependency}: declaration is absent from the elaborated environment"
-          if let some diagnostic := executableMetadataDiagnostic? environment dependency then
-            throw s!"{dependency}: {diagnostic}"
-        let localNames := dependencies.filter (declaredInModules environment targetModules)
-        auditExecutableMetadataAux environment targetModules (localNames ++ rest) (seen.insert name)
+        auditExecutableMetadataAux environment targetModules (dependencies ++ rest) (seen.insert name)
 
 private def auditExecutableMetadata (environment : Environment) (targetModules : NameSet)
     (roots : List Name) : Except String Unit :=
@@ -636,13 +706,25 @@ private def exportPackage (sourceModule : Name) (targetModules : NameSet) (roots
     match ensureDeclarationName name with
     | .ok () => pure ()
     | .error message => throwError "{name}: {message}"
+  -- Realizing the unfolding theorem type-checks it, so a recursive body is exported only behind a
+  -- kernel-accepted equation.
+  let mut unfoldingEquations : Std.HashMap Name Expr := {}
+  for name in names do
+    if (structuralRecursionArgument? environment name).isSome then
+      let equationType ← Meta.MetaM.run' do
+        let some equationName ← Meta.getUnfoldEqnFor? name | pure none
+        pure ((← getEnv).find? equationName |>.map ConstantInfo.type)
+      match equationType with
+      | some equationType => unfoldingEquations := unfoldingEquations.insert name equationType
+      | none => throwError "{name}: no unfolding theorem is available for its recursion"
   let mut declarations := []
   for name in names do
     let some info := environment.find? name
       | throwError "declaration {name} disappeared from the environment"
     let encoded ← match info with
       | .inductInfo _ => pure (dataDeclaration environment targetModules name)
-      | .defnInfo _ => pure (functionDeclaration environment targetModules name)
+      | .defnInfo _ =>
+          pure (functionDeclaration environment targetModules name unfoldingEquations[name]?)
       | _ => pure (.error s!"declaration {name} has an unsupported kind")
     match encoded with
     | .ok value => declarations := value :: declarations

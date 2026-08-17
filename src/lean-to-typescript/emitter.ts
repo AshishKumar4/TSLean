@@ -1570,11 +1570,15 @@ function orderedDeclarations(program: LeanSemanticProgram): readonly LeanDeclara
   const visited = new Set<string>();
   const visit = (name: string): void => {
     if (visited.has(name)) return;
-    if (visiting.has(name)) throw new TypeError(`recursive function cycle is outside the fragment: ${name}`);
+    // Direct self-recursion is admitted where Lean proved it structural; a cycle through another
+    // declaration has no such proof and no ordering.
+    if (visiting.has(name)) throw new TypeError(`mutual recursion is outside the fragment: ${name}`);
     const declaration = functions.get(name);
     if (declaration === undefined) return;
     visiting.add(name);
-    for (const dependency of calledFunctions(declaration.body)) visit(dependency);
+    for (const dependency of calledFunctions(declaration.body)) {
+      if (dependency !== name) visit(dependency);
+    }
     visiting.delete(name);
     visited.add(name);
     orderedFunctions.push(declaration);

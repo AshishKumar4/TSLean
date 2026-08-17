@@ -671,12 +671,14 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
   });
 
   test.each([
-    ['Nat', 'def rejected (value : Nat) : Nat := value'],
-    ['String', 'def rejected (value : String) : String := value'],
-  ])('rejects unsupported built-in data type %s in the Lean exporter', (_type, declarationSource) => {
+    ['Nat', 'def rejected (value : Nat) : Nat := value', 'Fixture.rejected'],
+    // `String`'s own closure carries an `extern` implementation, so the metadata audit refuses it
+    // before the type rule is reached; both refusals are fail-closed and attributable.
+    ['String', 'def rejected (value : String) : String := value', 'String.ofByteArray'],
+  ])('rejects unsupported built-in data type %s in the Lean exporter', (_type, declarationSource, declaration) => {
     expect(unsupportedSourceError(declarationSource, 'Fixture.rejected')).toMatchObject({
       code: 'UNSUPPORTED_LEAN_FRAGMENT',
-      declaration: 'Fixture.rejected',
+      declaration,
     });
   });
 
@@ -825,6 +827,93 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     } finally {
       fixture.dispose();
     }
+  });
+
+  test('lowers structural recursion to dispatch on a strictly smaller value', () => {
+    const fixture = createLeanProjectFixture(
+      [
+        'namespace Fixture',
+        'inductive Path where',
+        '  | leaf',
+        '  | step (rest : Path)',
+        'def Path.evenDepth (path : Path) : Bool :=',
+        '  match path with',
+        '  | .leaf => true',
+        '  | .step rest => !rest.evenDepth',
+        'def decide (path : Path) : Bool := path.evenDepth',
+        'end Fixture',
+        '',
+      ].join('\n'),
+    );
+    try {
+      const artifact = compileLeanToTypeScript({
+        projectRoot: fixture.projectRoot,
+        moduleName: 'Fixture',
+        sourcePath: fixture.sourcePath,
+        declarations: ['Fixture.decide'],
+      });
+      expect(artifact.code).toContain('return !this.rest.evenDepth();');
+      const generated = evaluateGeneratedModuleExports(artifact.code);
+      const path = requireConstructor(generated, 'Path');
+      const step = requireStatic(path, 'step');
+      const decide = requireFunction(generated, 'decide');
+      let value: unknown = requireProperty(path, 'leaf');
+      for (const expected of [true, false, true, false, true]) {
+        expect(decide(value)).toBe(expected);
+        value = step(value);
+      }
+      // The representation of a recursive inductive is recursive too, and its codec round-trips.
+      const nested = step(step(requireProperty(path, 'leaf')));
+      expect(requireMethod(nested, 'toData')()).toEqual({
+        kind: 'step',
+        rest: { kind: 'step', rest: { kind: 'leaf' } },
+      });
+      expect(requireMethod(requireStatic(path, 'fromData')(requireMethod(nested, 'toData')()), 'equals')(nested)).toBe(
+        true,
+      );
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test.each([
+    [
+      'recursion Lean settles by well-founded descent',
+      [
+        'inductive Path where',
+        '  | leaf',
+        '  | step (rest : Path)',
+        'def Path.size (path : Path) : Bool :=',
+        '  match path with',
+        '  | .leaf => true',
+        '  | .step rest => Path.size rest',
+        'termination_by path',
+        'def rejected (path : Path) : Bool := path.size',
+      ],
+    ],
+    [
+      'mutual recursion',
+      [
+        'inductive Path where',
+        '  | leaf',
+        '  | step (rest : Path)',
+        'mutual',
+        'def Path.even (path : Path) : Bool :=',
+        '  match path with',
+        '  | .leaf => true',
+        '  | .step rest => Path.odd rest',
+        'def Path.odd (path : Path) : Bool :=',
+        '  match path with',
+        '  | .leaf => false',
+        '  | .step rest => Path.even rest',
+        'end',
+        'def rejected (path : Path) : Bool := path.even',
+      ],
+    ],
+  ])('rejects %s', (_case, declarationLines) => {
+    expect(unsupportedSourceError(declarationLines.join('\n'), 'Fixture.rejected')).toMatchObject({
+      code: 'UNSUPPORTED_LEAN_FRAGMENT',
+    });
   });
 
   test('lowers a payload inductive with no behaviour to a discriminated union', () => {
@@ -984,6 +1073,22 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
   ])('rejects %s', (_case, declarationLines, root) => {
     expect(unsupportedSourceError(declarationLines.join('\n'), root)).toMatchObject({
       code: 'UNSUPPORTED_LEAN_FRAGMENT',
+    });
+  });
+
+  test('rejects a compiler replacement two hops behind an admitted external constant', () => {
+    // `if value = true` decides through `instDecidableEqBool`, whose own definition uses
+    // `Bool.decEq`: a replacement there changes what executable Lean runs without appearing as a
+    // direct dependency of anything this compiler emits.
+    const source = [
+      'def boolDecEqTarget (left right : Bool) : Decidable (left = right) := Bool.decEq left right',
+      'axiom transitiveExternalCsimpProof : @Bool.decEq = @boolDecEqTarget',
+      'attribute [csimp] transitiveExternalCsimpProof',
+      'def rejected (value : Bool) : Bool := if value = true then true else false',
+    ].join('\n');
+    expect(unsupportedSourceError(source, 'Fixture.rejected')).toMatchObject({
+      code: 'UNSUPPORTED_LEAN_FRAGMENT',
+      declaration: 'Bool.decEq',
     });
   });
 

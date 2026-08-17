@@ -2,7 +2,7 @@ import ts from 'typescript';
 import { compareCodePoints } from './ordering.js';
 
 export const LEAN_TO_TYPESCRIPT_SCHEMA_VERSION = 1;
-export const LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION = 'tslean-pure-first-order-v3';
+export const LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION = 'tslean-structural-first-order-v4';
 
 export type LeanType =
   | { readonly kind: 'boolean' }
@@ -74,6 +74,8 @@ export type LeanDeclaration =
       readonly name: string;
       readonly parameters: readonly { readonly name: string; readonly type: LeanType }[];
       readonly result: LeanType;
+      /** Present exactly when Lean proved the definition recurses structurally on that parameter. */
+      readonly recursion?: { readonly argument: number };
       readonly body: LeanExpression;
     } & LeanDocumented);
 
@@ -319,6 +321,7 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
     }
   };
   for (const declaration of program.declarations) {
+    if (declaration.kind === 'function') validateStructuralRecursion(declaration, declarations);
     if (declaration.kind === 'record') {
       declaration.fields.forEach((field, index) =>
         validateType(field.type, `${declaration.name}.fields[${index}].type`),
@@ -344,6 +347,166 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
       );
     }
   }
+}
+
+type RecursionSlot = 'other' | 'recursive' | 'smaller';
+
+/**
+ * A self-call is admitted only where it passes a strictly smaller value at the parameter Lean
+ * proved the recursion decreases on: the recursion parameter's own constructor fields, taken from
+ * a match on it. That is the same structural argument Lean checked, restated over the emitted
+ * program, so the generated recursion terminates for the reason the Lean definition does.
+ */
+function validateStructuralRecursion(
+  declaration: Extract<LeanDeclaration, { kind: 'function' }>,
+  declarations: ReadonlyMap<string, LeanDeclaration>,
+): void {
+  const recursion = declaration.recursion;
+  if (recursion === undefined) {
+    if (callsSelf(declaration)) {
+      throw new TypeError(`${declaration.name} calls itself without a structural recursion argument`);
+    }
+    return;
+  }
+  const parameter = declaration.parameters[recursion.argument];
+  if (parameter === undefined || parameter.type.kind !== 'named') {
+    throw new TypeError(`${declaration.name} recurses on a parameter that carries no inductive data`);
+  }
+  const recursiveType = parameter.type.name;
+  const data = declarations.get(recursiveType);
+  if (data === undefined || data.kind !== 'enum') {
+    throw new TypeError(`${declaration.name} recurses on ${recursiveType}, which is not an inductive data type`);
+  }
+  const initial: RecursionSlot[] = declaration.parameters.map((_, index) =>
+    index === recursion.argument ? 'recursive' : 'other',
+  );
+  initial.reverse();
+  const visit = (expression: LeanExpression, scope: readonly RecursionSlot[]): void => {
+    switch (expression.kind) {
+      case 'call': {
+        if (expression.function === declaration.name) {
+          const decreasing = expression.arguments[recursion.argument];
+          if (decreasing === undefined || decreasing.kind !== 'variable' || scope[decreasing.index] !== 'smaller') {
+            throw new TypeError(
+              `${declaration.name} recurses on a value that is not a constructor field of its ${recursiveType} argument`,
+            );
+          }
+        }
+        expression.arguments.forEach((argument) => visit(argument, scope));
+        return;
+      }
+      case 'match': {
+        visit(expression.scrutinee, scope);
+        const scrutinee = expression.scrutinee;
+        const decides =
+          expression.type === recursiveType &&
+          scrutinee.kind === 'variable' &&
+          (scope[scrutinee.index] === 'recursive' || scope[scrutinee.index] === 'smaller');
+        const enumeration = declarations.get(expression.type);
+        expression.cases.forEach((entry, index) => {
+          const constructor =
+            enumeration !== undefined && enumeration.kind === 'enum' ? enumeration.constructors[index] : undefined;
+          const fields = constructor?.fields ?? [];
+          const bindings: RecursionSlot[] = fields.map((field) =>
+            decides && field.type.kind === 'named' && field.type.name === recursiveType ? 'smaller' : 'other',
+          );
+          bindings.reverse();
+          visit(entry.value, [...bindings, ...scope]);
+        });
+        return;
+      }
+      case 'let':
+        visit(expression.value, scope);
+        visit(expression.body, ['other', ...scope]);
+        return;
+      case 'field':
+        visit(expression.target, scope);
+        return;
+      case 'if':
+        visit(expression.condition, scope);
+        visit(expression.consequent, scope);
+        visit(expression.alternate, scope);
+        return;
+      case 'equals':
+      case 'and':
+      case 'or':
+        visit(expression.left, scope);
+        visit(expression.right, scope);
+        return;
+      case 'not':
+        visit(expression.operand, scope);
+        return;
+      case 'some':
+        visit(expression.value, scope);
+        return;
+      case 'record':
+        expression.fields.forEach((field) => visit(field.value, scope));
+        return;
+      case 'variant':
+        expression.arguments.forEach((argument) => visit(argument, scope));
+        return;
+      case 'variable':
+      case 'boolean':
+      case 'none':
+        return;
+    }
+  };
+  visit(declaration.body, initial);
+  if (!callsSelf(declaration)) {
+    throw new TypeError(`${declaration.name} declares a structural recursion argument but never recurses`);
+  }
+}
+
+function callsSelf(declaration: Extract<LeanDeclaration, { kind: 'function' }>): boolean {
+  let found = false;
+  const visit = (expression: LeanExpression): void => {
+    switch (expression.kind) {
+      case 'call':
+        if (expression.function === declaration.name) found = true;
+        expression.arguments.forEach(visit);
+        return;
+      case 'match':
+        visit(expression.scrutinee);
+        expression.cases.forEach((entry) => visit(entry.value));
+        return;
+      case 'let':
+        visit(expression.value);
+        visit(expression.body);
+        return;
+      case 'field':
+        visit(expression.target);
+        return;
+      case 'if':
+        visit(expression.condition);
+        visit(expression.consequent);
+        visit(expression.alternate);
+        return;
+      case 'equals':
+      case 'and':
+      case 'or':
+        visit(expression.left);
+        visit(expression.right);
+        return;
+      case 'not':
+        visit(expression.operand);
+        return;
+      case 'some':
+        visit(expression.value);
+        return;
+      case 'record':
+        expression.fields.forEach((field) => visit(field.value));
+        return;
+      case 'variant':
+        expression.arguments.forEach(visit);
+        return;
+      case 'variable':
+      case 'boolean':
+      case 'none':
+        return;
+    }
+  };
+  visit(declaration.body);
+  return found;
 }
 
 function sameType(left: LeanType, right: LeanType): boolean {
@@ -405,7 +568,7 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
       };
     }
     case 'function': {
-      exactKeys(declaration, ['kind', 'name', 'parameters', 'result', 'body'], location, ['doc']);
+      exactKeys(declaration, ['kind', 'name', 'parameters', 'result', 'body'], location, ['doc', 'recursion']);
       const parameters = array(declaration['parameters'], `${location}.parameters`).map((parameter, index) => {
         const decoded = object(parameter, `${location}.parameters[${index}]`);
         exactKeys(decoded, ['name', 'type'], `${location}.parameters[${index}]`);
@@ -419,6 +582,7 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
         name,
         parameters,
         result: decodeType(declaration['result'], `${location}.result`),
+        ...decodeRecursion(declaration, parameters.length, location),
         body: decodeExpression(declaration['body'], `${location}.body`),
         ...documentation(declaration, location),
       };
@@ -426,6 +590,21 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
     default:
       throw new TypeError(`${location}.kind is unsupported: ${kind}`);
   }
+}
+
+function decodeRecursion(
+  declaration: Record<string, unknown>,
+  parameterCount: number,
+  location: string,
+): { readonly recursion?: { readonly argument: number } } {
+  if (!Object.hasOwn(declaration, 'recursion')) return {};
+  const recursion = object(declaration['recursion'], `${location}.recursion`);
+  exactKeys(recursion, ['argument'], `${location}.recursion`);
+  const argument = recursion['argument'];
+  if (!Number.isSafeInteger(argument) || Number(argument) < 0 || Number(argument) >= parameterCount) {
+    throw new TypeError(`${location}.recursion.argument is not one of the declared parameters`);
+  }
+  return { recursion: { argument: Number(argument) } };
 }
 
 function decodeFields(value: unknown, location: string): readonly LeanField[] {
