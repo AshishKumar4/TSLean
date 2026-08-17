@@ -1,0 +1,35 @@
+EVIDENCE.md
+  s_ecd6eb42c0f104::t_2b19c7b5805a98 1695-1741
+evidence/phase5-emitted-tcb-input.json
+  s_ecd6eb42c0f104::t_3a71ec492bc988 1-345
+evidence/phase5-emitted-tcb-manifest.json
+  s_ecd6eb42c0f104::t_2c502f7ac487fa 1-178
+evidence/phase5-remove-false-claims-input.json
+  s_ecd6eb42c0f104::t_076bfa876b53e3 282-283,287-288,291-292,307-308,318-319,322-323,334-335,349-350
+lean/TSLean/Runtime/Basic.lean
+  s_ecd6eb42c0f104::t_202bca7e51d6a9 63-68
+lean/TSLean/Runtime/Coercions.lean
+  s_ecd6eb42c0f104::t_7b59f82618f7e0 62-67
+lean/TSLean/Runtime/Monad.lean
+  s_ecd6eb42c0f104::t_692af2146dac9a 33-45
+lean/TSLean/Stdlib/Numeric.lean
+  s_ecd6eb42c0f104::t_083203bbc97096 33-35,64-68,139-146
+package.json
+  s_ecd6eb42c0f104::t_46f85e025c710a 34-37,96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "8d6e40817375a6cfa283d024cab20f357e830391",
+  "prompts": {},
+  "sessions": {
+    "s_ecd6eb42c0f104": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_09941a719ffegk5CvArJXx9tWM",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Ashish Kumar Singh <ashishsingh@cloudflare.com>"
+    }
+  }
+}
