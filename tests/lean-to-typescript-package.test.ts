@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, test } from 'vitest';
-import { choosePlacementFromUnknown } from '../examples/lean-to-typescript/placement.adapter.js';
+import { choosePlacementFromData } from '../examples/lean-to-typescript/placement.adapter.js';
 import {
   nodeArtifactFileSystem,
   publishArtifactPairWithFileSystem,
@@ -1667,11 +1667,11 @@ describe('published Lean to TypeScript API', () => {
   test('keeps the registered runtime adapter explicit and fail-closed', () => {
     const all = { bundled: true, dynamic: true, provider: true };
     const provider = { bundled: false, dynamic: false, provider: true };
-    expect(choosePlacementFromUnknown(all, all, all, provider)).toBe('provider');
-    expect(() => choosePlacementFromUnknown({ bundled: true }, all, all, all)).toThrowError(
+    expect(choosePlacementFromData(all, all, all, provider)).toBe('provider');
+    expect(() => choosePlacementFromData({ bundled: true }, all, all, all)).toThrowError(
       /PlacementSet data fields must be exactly bundled, provider, dynamic/u,
     );
-    expect(() => choosePlacementFromUnknown([], all, all, all)).toThrowError(/PlacementSet data must be an object/u);
+    expect(() => choosePlacementFromData([], all, all, all)).toThrowError(/PlacementSet data must be an object/u);
   });
 });
 

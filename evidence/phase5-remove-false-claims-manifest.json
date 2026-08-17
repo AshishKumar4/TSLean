@@ -168,7 +168,7 @@
   ],
   "hashes": {
     "source": "sha256:d6528c4bf9ac4e77d528c9ea2e5504202e4c4994c6588c12fc1e12623d37afa7",
-    "leanToTypeScriptCompiler": "sha256:934efa860b6e76ab237449157a8e1d166af776074a30fc571152434a9d315f35",
+    "leanToTypeScriptCompiler": "sha256:0939c0ed4fc096f9fddfb500da954c552df19b4e079f8538ee693dbbb197bc2b",
     "jsRuntime": "sha256:de59f2c8c1cfbd7865cfbe8f677e98159a2a47b1aeeee6015fb39b77a742b662",
     "refinementRuntimeAndBarrel": "sha256:65ac151e483e7803ecea297427f47d3e282b364345c541306d26281d73a19619",
     "refinementTestsAuditRegistry": "sha256:899396394e4f924f6b2ea65b448b15a6f2bef1be558b12ac931e2c9a24b6df57",
