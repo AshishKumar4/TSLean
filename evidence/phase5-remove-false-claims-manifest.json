@@ -4,9 +4,9 @@
   "branch": "rebuild/semantic-core",
   "toolchain": {
     "bun": "1.3.14",
-    "node": "v22.21.1",
+    "node": "v22.22.3",
     "typescript": "6.0.2",
-    "vitest": "vitest/4.1.2 linux-x64 node-v22.21.1",
+    "vitest": "vitest/4.1.2 linux-x64 node-v22.22.3",
     "prettier": "3.9.6",
     "eslint": "v10.8.1",
     "lean": "Lean (version 4.29.0, x86_64-unknown-linux-gnu, commit 98dc76e3c0a9b856c9b98726b713fb04fab16740, Release)",
@@ -15,12 +15,12 @@
   "counts": {
     "tests": {
       "files": 49,
-      "passed": 1829,
+      "passed": 1875,
       "failed": 0,
       "todo": 10
     },
     "lean": {
-      "jobs": 180,
+      "jobs": 184,
       "status": "passed"
     },
     "corpus": {
@@ -167,13 +167,13 @@
     }
   ],
   "hashes": {
-    "source": "sha256:dbde364ce277ca4d25a00788b35ae2f716a7f5233cd1b40c978e813be5b870b8",
-    "leanToTypeScriptCompiler": "sha256:9e9af6379377b319a879d0b518d50cbf90d896d9dc6d1319c73f93e875001465",
+    "source": "sha256:224d2279b43597aeaebdbc69fb0f0f80de59ad82df9a0f97e37fd6d9082a1aad",
+    "leanToTypeScriptCompiler": "sha256:dbd2852cc04485cc660df52e12eb932057264102815674ffd9cae2f9ecfd8721",
     "jsRuntime": "sha256:de59f2c8c1cfbd7865cfbe8f677e98159a2a47b1aeeee6015fb39b77a742b662",
     "refinementRuntimeAndBarrel": "sha256:65ac151e483e7803ecea297427f47d3e282b364345c541306d26281d73a19619",
     "refinementTestsAuditRegistry": "sha256:899396394e4f924f6b2ea65b448b15a6f2bef1be558b12ac931e2c9a24b6df57",
     "corpus": "sha256:813ba0e3fa8d02912872c4451cf33773aa0fc627dac24f68f770e25506fa1903",
     "differentialSpecHarness": "sha256:a60e709b193d859da6521ab4179c645fd0c33cb50cfa9d1fba9f486a4feb6eb5",
-    "trustEvidenceInfrastructure": "sha256:348d79aa8d91bbad65dc033c660242447d1de40e9846186a28911ac9ed3f6d52"
+    "trustEvidenceInfrastructure": "sha256:18ee47e256022886882df5c1b0846eaccdfba1ec757ec4ae20a017ea0185f67a"
   }
 }

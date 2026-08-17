@@ -6,12 +6,12 @@
   "counts": {
     "tests": {
       "files": 49,
-      "passed": 1829,
+      "passed": 1875,
       "failed": 0,
       "todo": 10
     },
     "lean": {
-      "jobs": 180,
+      "jobs": 184,
       "status": "passed"
     },
     "corpus": {
