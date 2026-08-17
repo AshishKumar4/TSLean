@@ -1,4 +1,5 @@
-export { compileLeanToTypeScript, UnsupportedLeanFragmentError, type LeanToTypeScriptRequest } from './compiler.js';
+export { compileLeanToTypeScript, type LeanToTypeScriptRequest } from './compiler.js';
+export { UnsupportedLeanFragmentError } from './fragment.js';
 export type {
   LeanToTypeScriptArtifact,
   LeanToTypeScriptEnvironmentAttestation,

@@ -1657,9 +1657,9 @@ describe('published Lean to TypeScript API', () => {
     const provider = { bundled: false, dynamic: false, provider: true };
     expect(choosePlacementFromUnknown(all, all, all, provider)).toBe('provider');
     expect(() => choosePlacementFromUnknown({ bundled: true }, all, all, all)).toThrowError(
-      /manifest must be a plain PlacementSet/u,
+      /PlacementSet data fields must be exactly bundled, provider, dynamic/u,
     );
-    expect(() => choosePlacementFromUnknown([], all, all, all)).toThrowError(/manifest must be a plain PlacementSet/u);
+    expect(() => choosePlacementFromUnknown([], all, all, all)).toThrowError(/PlacementSet data must be an object/u);
   });
 });
 

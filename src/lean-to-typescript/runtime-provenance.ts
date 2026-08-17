@@ -33,11 +33,15 @@ export const runtimeInputSnapshots: readonly RuntimeInputSnapshot[] = capture([
     identity: 'typescript:package',
     path: realpathSync(join(dirname(typescriptPath), '..', 'package.json')),
   },
-  ...['lib.decorators.d.ts', 'lib.decorators.legacy.d.ts', 'lib.es5.d.ts'].map((name) => ({
-    kind: 'compiler-runtime' as const,
-    identity: `typescript:library:${name}`,
-    path: realpathSync(join(dirname(typescriptPath), name)),
-  })),
+  // Every ambient library the generated program could be checked against, so the surface it is
+  // allowed to assume is pinned rather than sampled.
+  ...readdirSync(dirname(typescriptPath), { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.startsWith('lib.') && entry.name.endsWith('.d.ts'))
+    .map((entry) => ({
+      kind: 'compiler-runtime' as const,
+      identity: `typescript:library:${entry.name}`,
+      path: realpathSync(join(dirname(typescriptPath), entry.name)),
+    })),
 ]);
 
 export function assertRuntimeInputsUnchanged(): void {

@@ -2,7 +2,7 @@ import ts from 'typescript';
 import { compareCodePoints } from './ordering.js';
 
 export const LEAN_TO_TYPESCRIPT_SCHEMA_VERSION = 1;
-export const LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION = 'tslean-pure-first-order-v2';
+export const LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION = 'tslean-pure-first-order-v3';
 
 export type LeanType =
   | { readonly kind: 'boolean' }
@@ -25,7 +25,12 @@ export type LeanExpression =
   | { readonly kind: 'not'; readonly operand: LeanExpression }
   | { readonly kind: 'some'; readonly value: LeanExpression }
   | { readonly kind: 'none' }
-  | { readonly kind: 'variant'; readonly type: string; readonly name: string }
+  | {
+      readonly kind: 'variant';
+      readonly type: string;
+      readonly name: string;
+      readonly arguments: readonly LeanExpression[];
+    }
   | {
       readonly kind: 'record';
       readonly type: string;
@@ -43,8 +48,14 @@ export interface LeanDocumented {
   readonly doc?: string;
 }
 
+export interface LeanField extends LeanDocumented {
+  readonly name: string;
+  readonly type: LeanType;
+}
+
 export interface LeanEnumConstructor extends LeanDocumented {
   readonly name: string;
+  readonly fields: readonly LeanField[];
 }
 
 export type LeanDeclaration =
@@ -56,7 +67,7 @@ export type LeanDeclaration =
   | ({
       readonly kind: 'record';
       readonly name: string;
-      readonly fields: readonly ({ readonly name: string; readonly type: LeanType } & LeanDocumented)[];
+      readonly fields: readonly LeanField[];
     } & LeanDocumented)
   | ({
       readonly kind: 'function';
@@ -210,9 +221,20 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
         if (declaration === undefined || declaration.kind !== 'enum') {
           throw new TypeError(`${location} references unknown enum ${expression.type}`);
         }
-        if (!declaration.constructors.some((candidate) => candidate.name === expression.name)) {
+        const constructor = declaration.constructors.find((candidate) => candidate.name === expression.name);
+        if (constructor === undefined) {
           throw new TypeError(`${location} references unknown constructor ${expression.type}.${expression.name}`);
         }
+        if (constructor.fields.length !== expression.arguments.length) {
+          throw new TypeError(
+            `${location} passes ${expression.arguments.length} fields to ${expression.type}.${expression.name}; expected ${constructor.fields.length}`,
+          );
+        }
+        expression.arguments.forEach((argument, index) => {
+          const field = constructor.fields[index];
+          if (field === undefined) throw new TypeError(`${location} has an unmatched constructor field`);
+          checkExpression(argument, scope, field.type, `${location}.arguments[${index}]`);
+        });
         return requireType({ kind: 'named', name: expression.type }, expected, location);
       }
       case 'match': {
@@ -231,17 +253,27 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
             `${location} does not decide every constructor of ${expression.type} exactly once in declaration order`,
           );
         }
+        // A payload-carrying alternative binds its constructor's fields, innermost binder last,
+        // so the arm's scope is the constructor's field types reversed onto the enclosing scope.
+        const armScope = (index: number): readonly LeanType[] => {
+          const constructor = declaration.constructors[index];
+          if (constructor === undefined) throw new TypeError(`${location} has an unmatched alternative`);
+          return constructor.fields
+            .map((field) => field.type)
+            .reverse()
+            .concat(scope);
+        };
         if (expected !== undefined) {
           expression.cases.forEach((entry, index) =>
-            checkExpression(entry.value, scope, expected, `${location}.cases[${index}].value`),
+            checkExpression(entry.value, armScope(index), expected, `${location}.cases[${index}].value`),
           );
           return expected;
         }
         const [first, ...rest] = expression.cases;
         if (first === undefined) throw new TypeError(`${location} decides no constructor`);
-        const result = checkExpression(first.value, scope, undefined, `${location}.cases[0].value`);
+        const result = checkExpression(first.value, armScope(0), undefined, `${location}.cases[0].value`);
         rest.forEach((entry, index) =>
-          checkExpression(entry.value, scope, result, `${location}.cases[${index + 1}].value`),
+          checkExpression(entry.value, armScope(index + 1), result, `${location}.cases[${index + 1}].value`),
         );
         return result;
       }
@@ -292,6 +324,13 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
         validateType(field.type, `${declaration.name}.fields[${index}].type`),
       );
     }
+    if (declaration.kind === 'enum') {
+      for (const constructor of declaration.constructors) {
+        constructor.fields.forEach((field, index) =>
+          validateType(field.type, `${declaration.name}.${constructor.name}.fields[${index}].type`),
+        );
+      }
+    }
     if (declaration.kind === 'function') {
       declaration.parameters.forEach((parameter, index) =>
         validateType(parameter.type, `${declaration.name}.parameters[${index}].type`),
@@ -339,11 +378,13 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
       exactKeys(declaration, ['kind', 'name', 'constructors'], location, ['doc']);
       const constructors = array(declaration['constructors'], `${location}.constructors`).map(
         (constructor, index): LeanEnumConstructor => {
-          const decoded = object(constructor, `${location}.constructors[${index}]`);
-          exactKeys(decoded, ['name'], `${location}.constructors[${index}]`, ['doc']);
+          const constructorLocation = `${location}.constructors[${index}]`;
+          const decoded = object(constructor, constructorLocation);
+          exactKeys(decoded, ['name', 'fields'], constructorLocation, ['doc']);
           return {
-            name: identifier(decoded['name'], `${location}.constructors[${index}].name`),
-            ...documentation(decoded, `${location}.constructors[${index}]`),
+            name: identifier(decoded['name'], `${constructorLocation}.name`),
+            fields: decodeFields(decoded['fields'], constructorLocation),
+            ...documentation(decoded, constructorLocation),
           };
         },
       );
@@ -356,20 +397,12 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
     }
     case 'record': {
       exactKeys(declaration, ['kind', 'name', 'fields'], location, ['doc']);
-      const fields = array(declaration['fields'], `${location}.fields`).map((field, index) => {
-        const decoded = object(field, `${location}.fields[${index}]`);
-        exactKeys(decoded, ['name', 'type'], `${location}.fields[${index}]`, ['doc']);
-        return {
-          name: identifier(decoded['name'], `${location}.fields[${index}].name`),
-          type: decodeType(decoded['type'], `${location}.fields[${index}].type`),
-          ...documentation(decoded, `${location}.fields[${index}]`),
-        };
-      });
-      requireUnique(
-        fields.map((field) => field.name),
-        `${location}.fields`,
-      );
-      return { kind, name, fields, ...documentation(declaration, location) };
+      return {
+        kind,
+        name,
+        fields: decodeFields(declaration['fields'], location),
+        ...documentation(declaration, location),
+      };
     }
     case 'function': {
       exactKeys(declaration, ['kind', 'name', 'parameters', 'result', 'body'], location, ['doc']);
@@ -393,6 +426,24 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
     default:
       throw new TypeError(`${location}.kind is unsupported: ${kind}`);
   }
+}
+
+function decodeFields(value: unknown, location: string): readonly LeanField[] {
+  const fields = array(value, `${location}.fields`).map((field, index) => {
+    const fieldLocation = `${location}.fields[${index}]`;
+    const decoded = object(field, fieldLocation);
+    exactKeys(decoded, ['name', 'type'], fieldLocation, ['doc']);
+    return {
+      name: identifier(decoded['name'], `${fieldLocation}.name`),
+      type: decodeType(decoded['type'], `${fieldLocation}.type`),
+      ...documentation(decoded, fieldLocation),
+    };
+  });
+  requireUnique(
+    fields.map((field) => field.name),
+    `${location}.fields`,
+  );
+  return fields;
 }
 
 function decodeType(value: unknown, location: string): LeanType {
@@ -478,11 +529,14 @@ function decodeExpression(value: unknown, location: string): LeanExpression {
       exactKeys(expression, ['kind'], location);
       return { kind };
     case 'variant':
-      exactKeys(expression, ['kind', 'type', 'name'], location);
+      exactKeys(expression, ['kind', 'type', 'name', 'arguments'], location);
       return {
         kind,
         type: qualifiedName(expression['type'], `${location}.type`),
         name: identifier(expression['name'], `${location}.name`),
+        arguments: array(expression['arguments'], `${location}.arguments`).map((argument, index) =>
+          decodeExpression(argument, `${location}.arguments[${index}]`),
+        ),
       };
     case 'record': {
       exactKeys(expression, ['kind', 'type', 'fields'], location);

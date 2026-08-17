@@ -27,6 +27,7 @@ import {
   type LeanToTypeScriptInput,
 } from './artifact.js';
 import { emitTypeScript } from './emitter.js';
+import { UnsupportedLeanFragmentError } from './fragment.js';
 import { decodeLeanSemanticProgram } from './ir.js';
 import { compareCodePoints } from './ordering.js';
 import {
@@ -50,18 +51,6 @@ export interface LeanToTypeScriptCompilerInput {
 export interface LeanToTypeScriptCompilation {
   readonly artifact: LeanToTypeScriptArtifact;
   readonly inputs: readonly LeanToTypeScriptCompilerInput[];
-}
-
-export class UnsupportedLeanFragmentError extends TypeError {
-  public readonly code = 'UNSUPPORTED_LEAN_FRAGMENT';
-
-  public constructor(
-    public readonly declaration: string,
-    public readonly diagnostic: string,
-  ) {
-    super(`${declaration}: ${diagnostic}`);
-    this.name = 'UnsupportedLeanFragmentError';
-  }
 }
 
 interface InputFile {
@@ -806,7 +795,7 @@ function assertTypeChecks(code: string, directory: string): void {
     module: ts.ModuleKind.NodeNext,
     moduleResolution: ts.ModuleResolutionKind.NodeNext,
     noEmit: true,
-    lib: ['lib.es5.d.ts'],
+    lib: ['lib.es2022.d.ts'],
     strict: true,
     target: ts.ScriptTarget.ES2022,
   });

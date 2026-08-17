@@ -4,7 +4,7 @@ namespace TSLean.LeanToTypeScript
 
 open Lean
 
-private def fragmentVersion := "tslean-pure-first-order-v2"
+private def fragmentVersion := "tslean-pure-first-order-v3"
 
 private def array (items : List Json) : Json := .arr items.toArray
 
@@ -148,6 +148,28 @@ private partial def parametersAndResult (environment : Environment) (targetModul
         throw "dependent result types are outside the checked fragment"
       pure ([], ← typeNode environment targetModules result)
 
+/--
+The fields a constructor carries, read from its own declared type. A field whose type mentions an
+earlier field is refused by `typeNode`, so a constructor is admitted only when its fields are
+independent first-order data.
+-/
+private def constructorFields (environment : Environment) (targetModules : NameSet)
+    (constructorName : Name) : Except String (List Parameter) := do
+  let some (.ctorInfo constructor) := environment.find? constructorName
+    | throw s!"constructor {constructorName} is absent from the elaborated environment"
+  unless constructor.numParams = 0 do
+    throw s!"constructor {constructorName} belongs to a parameterized data type"
+  let (fields, _) ← parametersAndResult environment targetModules constructor.type
+  unless fields.length = constructor.numFields do
+    throw s!"constructor {constructorName} does not expose its fields as first-order parameters"
+  let mut seen : Std.HashSet String := {}
+  for field in fields do
+    ensureBindingIdentifier field.name "constructor field"
+    if seen.contains field.name then
+      throw s!"constructor {constructorName} declares field {field.name} more than once"
+    seen := seen.insert field.name
+  pure fields
+
 private partial def lambdaBody (expression : Expr) : List String × Expr :=
   match expression.consumeMData with
   | .lam binderName _ body _ =>
@@ -185,9 +207,10 @@ private def isMatchingBoolDecision (condition decision : Expr) : Bool :=
 
 /--
 Reads which constructor each alternative of a `match` auxiliary matcher decides, from the
-matcher's own declared type. Alternative `i` is typed `motive Ctor`, behind its own declared
-parameters, so the constructor is recovered structurally instead of assuming the source arm
-order.
+matcher's own declared type. Alternative `i` is typed `motive (Ctor f₀ … fₙ₋₁)`, behind its own
+declared parameters, so the constructor is recovered structurally instead of assuming the source
+arm order. The pattern has to apply the constructor to exactly its own binders in declaration
+order: a nested or repeated pattern is refused rather than flattened.
 -/
 private def matcherAlternativeConstructors (environment : Environment) (matcherName : Name)
     (info : Meta.MatcherInfo) : Except String (List Name) := do
@@ -215,8 +238,13 @@ private def matcherAlternativeConstructors (environment : Environment) (matcherN
           | throw s!"matcher {matcherName} alternative is not an application of its motive"
         let [pattern] := arguments
           | throw s!"matcher {matcherName} alternative does not decide exactly one discriminant"
-        let .const constructorName _ := pattern.consumeMData
+        let (patternHead, patternArguments) := appView pattern.consumeMData
+        let .const constructorName _ := patternHead
           | throw s!"matcher {matcherName} alternative pattern is not a constructor"
+        let expected := (List.range patternArguments.length).map fun position =>
+          Expr.bvar (patternArguments.length - 1 - position)
+        unless patternArguments.map Expr.consumeMData == expected do
+          throw s!"matcher {matcherName} alternative {index} does not bind each constructor field exactly once"
         constructors := constructorName :: constructors
         telescope := body
     | _ => throw s!"matcher {matcherName} does not expose the expected alternative telescope"
@@ -317,8 +345,8 @@ private partial def expressionNode (environment : Environment) (targetModules : 
         unless matcherInfo.overlaps.isEmpty do
           throw "matches with overlapping alternatives are outside the checked fragment"
         for alternative in matcherInfo.altInfos do
-          unless alternative.numFields = 0 && alternative.numOverlaps = 0 do
-            throw "match alternatives binding constructor data are outside this fragment version"
+          unless alternative.numOverlaps = 0 do
+            throw "match alternatives carrying overlap assumptions are outside the checked fragment"
         unless arguments.length = matcherInfo.arity do
           throw s!"matcher {name} received an unsupported elaborated shape"
         let some motive := arguments[matcherInfo.getMotivePos]?
@@ -344,7 +372,10 @@ private partial def expressionNode (environment : Environment) (targetModules : 
           let some encoded := arguments[matcherInfo.getFirstAltPos + alternativeIndex]?
             | throw s!"matcher {name} received no alternative for {constructorName}"
           -- Lean thunks a nullary alternative behind an unused `Unit` binder; the fragment
-          -- admits it only when the alternative genuinely ignores that binder.
+          -- admits it only when the alternative genuinely ignores that binder. A
+          -- payload-carrying alternative instead abstracts its constructor's fields in
+          -- declaration order, so peeling those binders leaves the arm's own de Bruijn indices
+          -- pointing at the fields, innermost binder last.
           let value ← if alternative.hasUnitThunk then
               match encoded.consumeMData with
               | .lam _ _ thunkBody _ =>
@@ -352,7 +383,13 @@ private partial def expressionNode (environment : Environment) (targetModules : 
                     throw s!"matcher {name} alternative uses its unit thunk binder"
                   pure (thunkBody.lowerLooseBVars 1 1)
               | _ => throw s!"matcher {name} thunked alternative is not an abstraction"
-            else pure encoded
+            else
+              let mut body := encoded
+              for _ in [0 : alternative.numFields] do
+                match body.consumeMData with
+                | .lam _ _ inner _ => body := inner
+                | _ => throw s!"matcher {name} alternative does not abstract its constructor fields"
+              pure body
           ensureAsciiIdentifier constructorName.getString! "constructor name"
           cases := object [
             ("constructor", .str constructorName.getString!),
@@ -393,12 +430,14 @@ private partial def expressionNode (environment : Environment) (targetModules : 
                 ("fields", array encodedFields.reverse)
               ])
             else
-              unless arguments.isEmpty do
-                throw s!"constructor {name} carries data outside this fragment version"
+              let fields ← constructorFields environment targetModules name
+              unless arguments.length = fields.length do
+                throw s!"constructor {name} received an unsupported elaborated shape"
               ensureAsciiIdentifier name.getString! "constructor name"
               pure (node "variant" [
                 ("type", .str constructor.induct.toString),
-                ("name", .str name.getString!)
+                ("name", .str name.getString!),
+                ("arguments", array (← arguments.mapM (expressionNode environment targetModules)))
               ])
         | .defnInfo declaration =>
             unless declaredInModules environment targetModules name do
@@ -441,12 +480,13 @@ private def dataDeclaration (environment : Environment) (targetModules : NameSet
     let mut constructors := []
     for constructorName in declaration.ctors do
       ensureAsciiDeclarationName constructorName
-      let some (.ctorInfo constructor) := environment.find? constructorName
-        | throw s!"constructor {constructorName} is absent"
-      unless constructor.numFields = 0 do
-        throw s!"constructor {constructorName} carries data outside this fragment version"
-      constructors := object ([("name", .str constructorName.getString!)]
-        ++ documentationFields environment constructorName) :: constructors
+      let fields ← constructorFields environment targetModules constructorName
+      let encodedFields := fields.map fun field =>
+        object [("name", .str field.name), ("type", field.type)]
+      constructors := object ([
+        ("name", .str constructorName.getString!),
+        ("fields", array encodedFields)
+      ] ++ documentationFields environment constructorName) :: constructors
     pure (node "enum" ([
       ("name", .str name.toString),
       ("constructors", array constructors.reverse)

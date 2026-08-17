@@ -87,7 +87,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
 
     expect(second).toEqual(first);
     expect(first.code).toContain('export type Placement = "bundled" | "provider" | "dynamic";');
-    expect(first.code).toContain('export interface PlacementSet');
+    expect(first.code).toContain('export class PlacementSet {');
     expect(first.code).toContain('export function choosePlacement(');
     expect(first.manifest.schemaVersion).toBe(2);
     expect(first.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.29.0');
@@ -600,7 +600,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
 
   test('rejects generated-body, manifest, and provenance-header substitution', () => {
     const artifact = compileLeanToTypeScript(request);
-    const bodyMutation = artifact.code.replace('left.bundled && right.bundled', 'left.bundled || right.bundled');
+    const bodyMutation = artifact.code.replace('this.bundled && right.bundled', 'this.bundled || right.bundled');
     if (bodyMutation === artifact.code) throw new TypeError('generated body mutation did not apply');
     expect(() => verifyLeanToTypeScriptArtifact({ ...artifact, code: bodyMutation })).toThrowError(
       /generated TypeScript body does not match its manifest/u,
@@ -745,6 +745,269 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     });
   });
 
+  test('lowers a behaviour-carrying inductive with payloads to a class hierarchy', () => {
+    const fixture = createLeanProjectFixture(
+      [
+        'namespace Fixture',
+        'inductive Lease where',
+        '  | unheld',
+        '  | held (exclusive : Bool) (expired : Bool)',
+        'def Lease.admitsWrite (lease : Lease) (durable : Bool) : Bool :=',
+        '  match lease with',
+        '  | .unheld => false',
+        '  | .held exclusive expired => exclusive && !expired && durable',
+        'def decide (lease : Lease) (durable : Bool) : Bool := lease.admitsWrite durable',
+        'end Fixture',
+        '',
+      ].join('\n'),
+    );
+    try {
+      const artifact = compileLeanToTypeScript({
+        projectRoot: fixture.projectRoot,
+        moduleName: 'Fixture',
+        sourcePath: fixture.sourcePath,
+        declarations: ['Fixture.decide'],
+      });
+      expect(artifact.code).toContain('export abstract class Lease');
+      expect(artifact.code).toContain('public static get unheld(): Lease');
+      expect(artifact.code).toContain('public static held(exclusive: boolean, expired: boolean): Lease');
+      expect(artifact.code).toContain('public abstract admitsWrite(durable: boolean): boolean;');
+      expect(artifact.code).toContain('return this.exclusive && !this.expired && durable;');
+      // A payload constructor has more than one inhabitant, so reference equality is not Lean
+      // equality and `from` cannot be total on the tag; neither is emitted.
+      expect(artifact.code).not.toContain('public static from(');
+      expect(artifact.code).toContain('public abstract equals(other: Lease): boolean;');
+
+      const generated = evaluateGeneratedModuleExports(artifact.code);
+      const lease = requireConstructor(generated, 'Lease');
+      const held = requireStatic(lease, 'held');
+      const unheld = requireProperty(lease, 'unheld');
+      const decide = requireFunction(generated, 'decide');
+      expect(decide(unheld, true)).toBe(false);
+      expect(decide(held(true, false), true)).toBe(true);
+      expect(decide(held(true, true), true)).toBe(false);
+      expect(decide(held(true, false), false)).toBe(false);
+
+      const value = held(true, false);
+      expect(Object.isFrozen(value)).toBe(true);
+      expect(requireMethod(value, 'equals')(held(true, false))).toBe(true);
+      expect(requireMethod(value, 'equals')(held(false, false))).toBe(false);
+      expect(requireMethod(value, 'equals')(unheld)).toBe(false);
+      expect(requireMethod(value, 'toData')()).toEqual({ kind: 'held', exclusive: true, expired: false });
+      expect(requireMethod(unheld, 'toData')()).toEqual({ kind: 'unheld' });
+
+      const fromData = requireStatic(lease, 'fromData');
+      expect(requireMethod(fromData({ kind: 'held', exclusive: true, expired: false }), 'equals')(value)).toBe(true);
+      expect(fromData({ kind: 'unheld' })).toBe(unheld);
+      expect(() => fromData({ kind: 'held', exclusive: true })).toThrowError(
+        /Lease\.held data fields must be exactly kind, exclusive, expired/u,
+      );
+      expect(() => fromData({ kind: 'held', exclusive: 'yes', expired: false })).toThrowError(
+        /Lease\.held exclusive must be a boolean/u,
+      );
+      expect(() => fromData({ kind: 'released' })).toThrowError(/Lease data must name a constructor/u);
+      expect(() => fromData(null)).toThrowError(/Lease data must be an object/u);
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test('lowers a payload inductive with no behaviour to a discriminated union', () => {
+    const fixture = createLeanProjectFixture(
+      [
+        'namespace Fixture',
+        'inductive Origin where',
+        '  | host',
+        '  | callee (trusted : Bool)',
+        'def calleeOrigin (trusted : Bool) : Origin := .callee trusted',
+        'def hostOrigin : Origin := .host',
+        'end Fixture',
+        '',
+      ].join('\n'),
+    );
+    try {
+      const artifact = compileLeanToTypeScript({
+        projectRoot: fixture.projectRoot,
+        moduleName: 'Fixture',
+        sourcePath: fixture.sourcePath,
+        declarations: ['Fixture.calleeOrigin', 'Fixture.hostOrigin'],
+      });
+      expect(artifact.code).toContain('readonly kind: "callee";');
+      expect(artifact.code).toContain('readonly trusted: boolean;');
+      expect(artifact.code).not.toContain('class Origin');
+      const generated = evaluateGeneratedModuleExports(artifact.code);
+      expect(requireFunction(generated, 'calleeOrigin')(true)).toEqual({ kind: 'callee', trusted: true });
+      expect(requireFunction(generated, 'hostOrigin')()).toEqual({ kind: 'host' });
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test('lowers a behaviour-carrying record to an immutable class with transition helpers', () => {
+    const fixture = createLeanProjectFixture(
+      [
+        'namespace Fixture',
+        'inductive Tier where',
+        '  | direct',
+        '  | mediated',
+        'structure Seam where',
+        '  turnOwned : Bool',
+        '  ownFilesystem : Bool',
+        'def Seam.tier (seam : Seam) : Tier :=',
+        '  if seam.turnOwned && seam.ownFilesystem then .direct else .mediated',
+        'def Seam.withTurnOwned (seam : Seam) (turnOwned : Bool) : Seam :=',
+        '  { seam with turnOwned := turnOwned }',
+        'def decide (seam : Seam) : Tier := (seam.withTurnOwned true).tier',
+        'end Fixture',
+        '',
+      ].join('\n'),
+    );
+    try {
+      const artifact = compileLeanToTypeScript({
+        projectRoot: fixture.projectRoot,
+        moduleName: 'Fixture',
+        sourcePath: fixture.sourcePath,
+        declarations: ['Fixture.decide'],
+      });
+      expect(artifact.code).toContain('export interface SeamInit');
+      expect(artifact.code).toContain('export class Seam');
+      expect(artifact.code).toContain('public constructor(init: SeamInit)');
+      expect(artifact.code).toContain('Object.freeze(this);');
+      expect(artifact.code).toContain('public withTurnOwned(turnOwned: boolean): Seam');
+      expect(artifact.code).toContain('return new Seam({');
+      // No behaviour lives on `Tier`, so it stays the string union agent-core codecs read.
+      expect(artifact.code).toContain('export type Tier = "direct" | "mediated";');
+
+      const generated = evaluateGeneratedModuleExports(artifact.code);
+      const seam = requireConstructor(generated, 'Seam');
+      const original = new seam({ turnOwned: false, ownFilesystem: true });
+      expect(Object.isFrozen(original)).toBe(true);
+      expect(requireFunction(generated, 'decide')(original)).toBe('direct');
+      const moved = requireMethod(original, 'withTurnOwned')(true);
+      expect(moved).not.toBe(original);
+      expect(requireProperty(original, 'turnOwned')).toBe(false);
+      expect(requireProperty(moved, 'turnOwned')).toBe(true);
+      expect(requireMethod(moved, 'equals')(new seam({ turnOwned: true, ownFilesystem: true }))).toBe(true);
+      expect(requireMethod(moved, 'toData')()).toEqual({ turnOwned: true, ownFilesystem: true });
+      const decoded = requireStatic(seam, 'fromData')({ turnOwned: true, ownFilesystem: true });
+      expect(requireMethod(decoded, 'equals')(moved)).toBe(true);
+      expect(() => requireStatic(seam, 'fromData')({ turnOwned: true })).toThrowError(
+        /Seam data fields must be exactly turnOwned, ownFilesystem/u,
+      );
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test.each([
+    [
+      'a nested constructor pattern',
+      [
+        'inductive Lease where',
+        '  | unheld',
+        '  | held (exclusive : Bool)',
+        'def Lease.rejected (lease : Lease) : Bool :=',
+        '  match lease with',
+        '  | .unheld => false',
+        '  | .held true => true',
+        '  | .held false => false',
+        'def rejected (lease : Lease) : Bool := lease.rejected',
+      ],
+      'Fixture.rejected',
+    ],
+    [
+      'a wildcard alternative',
+      [
+        'inductive Lease where',
+        '  | unheld',
+        '  | held (exclusive : Bool)',
+        'def Lease.rejected (lease : Lease) : Bool :=',
+        '  match lease with',
+        '  | .held exclusive => exclusive',
+        '  | _ => false',
+        'def rejected (lease : Lease) : Bool := lease.rejected',
+      ],
+      'Fixture.rejected',
+    ],
+    [
+      'a match on two discriminants',
+      [
+        'inductive Lease where',
+        '  | unheld',
+        '  | held (exclusive : Bool)',
+        'def rejected (left right : Lease) : Bool :=',
+        '  match left, right with',
+        '  | .unheld, .unheld => true',
+        '  | _, _ => false',
+      ],
+      'Fixture.rejected',
+    ],
+    [
+      'a match binding a discriminant equation',
+      [
+        'inductive Lease where',
+        '  | unheld',
+        '  | held (exclusive : Bool)',
+        'def Lease.rejected (lease : Lease) : Bool :=',
+        '  match h : lease with',
+        '  | .unheld => true',
+        '  | .held exclusive => exclusive',
+        'def rejected (lease : Lease) : Bool := lease.rejected',
+      ],
+      'Fixture.rejected',
+    ],
+    [
+      'a constructor field that depends on an earlier field',
+      [
+        'inductive Guard where',
+        '  | always',
+        '  | proof (flag : Bool) (evidence : flag = true)',
+        'def rejected (guard : Guard) : Bool := match guard with | .always => true | .proof flag _ => flag',
+      ],
+      'Fixture.rejected',
+    ],
+  ])('rejects %s', (_case, declarationLines, root) => {
+    expect(unsupportedSourceError(declarationLines.join('\n'), root)).toMatchObject({
+      code: 'UNSUPPORTED_LEAN_FRAGMENT',
+    });
+  });
+
+  test('refuses a structural record that carries a value object into data position', () => {
+    const source = [
+      'structure Seam where',
+      '  turnOwned : Bool',
+      'def Seam.direct (seam : Seam) : Bool := seam.turnOwned',
+      'structure Wrapper where',
+      '  seam : Seam',
+      'structure Outer where',
+      '  wrapper : Wrapper',
+      'def Outer.reads (outer : Outer) : Bool := outer.wrapper.seam.direct',
+      'def rejected (outer : Outer) : Bool := outer.reads',
+    ].join('\n');
+    expect(unsupportedSourceError(source, 'Fixture.rejected')).toMatchObject({
+      code: 'UNSUPPORTED_LEAN_FRAGMENT',
+      declaration: 'Fixture.Outer',
+      diagnostic: expect.stringContaining('carries the value object Fixture.Seam'),
+    });
+  });
+
+  test('refuses a match that is not dot-notation dispatch on its own type', () => {
+    const source = [
+      'inductive Choice where',
+      '  | first',
+      '  | second',
+      'def rejected (choice : Choice) : Bool :=',
+      '  match choice with',
+      '  | .first => true',
+      '  | .second => false',
+    ].join('\n');
+    expect(unsupportedSourceError(source, 'Fixture.rejected')).toMatchObject({
+      code: 'UNSUPPORTED_LEAN_FRAGMENT',
+      declaration: 'Fixture.rejected',
+      diagnostic: expect.stringContaining('outside dot-notation dispatch position'),
+    });
+  });
+
   test('compiles an isolated Lean project without a local TSLean exporter', () => {
     const fixture = createLeanProjectFixture(
       [
@@ -787,6 +1050,40 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     }
   });
 });
+
+type Callable = (...args: readonly unknown[]) => unknown;
+
+function requireFunction(exports: Record<string, unknown>, name: string): Callable {
+  const value = exports[name];
+  if (typeof value !== 'function') throw new TypeError(`generated module did not export ${name}`);
+  return value as Callable;
+}
+
+function requireConstructor(exports: Record<string, unknown>, name: string): new (init: unknown) => object {
+  const value = exports[name];
+  if (typeof value !== 'function') throw new TypeError(`generated module did not export class ${name}`);
+  return value as new (init: unknown) => object;
+}
+
+function requireStatic(owner: object, name: string): Callable {
+  const value = Reflect.get(owner, name);
+  if (typeof value !== 'function') throw new TypeError(`generated class has no static ${name}`);
+  return value.bind(owner) as Callable;
+}
+
+function requireMethod(owner: unknown, name: string): Callable {
+  if (typeof owner !== 'object' || owner === null) throw new TypeError('generated value is not an object');
+  const value = Reflect.get(owner, name);
+  if (typeof value !== 'function') throw new TypeError(`generated value has no method ${name}`);
+  return value.bind(owner) as Callable;
+}
+
+function requireProperty(owner: unknown, name: string): unknown {
+  if ((typeof owner !== 'object' && typeof owner !== 'function') || owner === null) {
+    throw new TypeError('generated value is not an object');
+  }
+  return Reflect.get(owner, name);
+}
 
 function sha256(value: string | Buffer): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
@@ -833,19 +1130,16 @@ function unsupportedSourceError(source: string, declaration: string): Unsupporte
 }
 
 function evaluateGeneratedModule(code: string): readonly string[] {
-  const javascript = ts.transpileModule(code, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022,
-    },
-  }).outputText;
-  const exports: Record<string, unknown> = {};
-  new Function('exports', javascript)(exports);
-  const choosePlacement = exports['choosePlacement'];
+  const generated = evaluateGeneratedModuleExports(code);
+  const choosePlacement = generated['choosePlacement'];
   if (typeof choosePlacement !== 'function') {
     throw new TypeError('generated module did not export choosePlacement');
   }
-  const sets = placementSets();
+  const decode = generated['PlacementSet'];
+  if (typeof decode !== 'function' || !('fromData' in decode) || typeof decode.fromData !== 'function') {
+    throw new TypeError('generated module did not export the PlacementSet value object');
+  }
+  const sets = placementSets().map((set) => decode.fromData(set));
   const outputs: string[] = [];
   for (const manifest of sets) {
     for (const policy of sets) {
