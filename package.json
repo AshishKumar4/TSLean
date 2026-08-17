@@ -46,6 +46,8 @@
     "differential:check": "bun scripts/generate-differential-manifest.mjs --check && bun scripts/check-differential-inventory.mjs",
     "lean-to-typescript:generate": "node dist/lean-to-typescript/cli.js --project-root lean --module TSLean.Examples.Placement --source lean/TSLean/Examples/Placement.lean --declaration TSLean.Examples.Placement.choosePlacement --output examples/lean-to-typescript/placement.generated.ts --manifest examples/lean-to-typescript/placement.generated.manifest.json",
     "lean-to-typescript:check": "bun run lean-to-typescript:generate --check",
+    "lean-to-typescript:enforcement:generate": "node dist/lean-to-typescript/cli.js --project-root lean --module AgentCore.Facets.Enforcement --source lean/AgentCore/Facets/Enforcement.lean --declaration AgentCore.Facets.Impact.enforcementFloor --declaration AgentCore.Facets.Impact.claimHonorsEnforcementFloor --output examples/agent-core/facets/enforcement.generated.ts --manifest examples/agent-core/facets/enforcement.generated.manifest.json",
+    "lean-to-typescript:enforcement:check": "bun run lean-to-typescript:enforcement:generate --check",
     "benchmark:coercion-effects": "cd lean && lake exe js-coercion-effects-benchmark",
     "evidence:generate": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase5-remove-false-claims-input.json",
     "evidence:check": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase5-remove-false-claims-input.json --check",
@@ -108,7 +110,7 @@
     "evidence:baseline:generate": "bun scripts/generate-evidence-manifest.mjs --input evidence/baseline-input.json",
     "evidence:baseline:check": "bun scripts/generate-evidence-manifest.mjs --input evidence/baseline-input.json --check",
     "js:trust": "bun scripts/check-js-axioms.mjs --evidence evidence/phase5-remove-false-claims-input.json",
-    "verify": "bun run format:check:foundation && bun run differential:check && bun run js:trust && bun run evidence:check && bun run lint && bun run build && bun run lean-to-typescript:check && bun run test && bun run lean:gate && cd lean && lake build",
+    "verify": "bun run format:check:foundation && bun run differential:check && bun run js:trust && bun run evidence:check && bun run lint && bun run build && bun run lean-to-typescript:check && bun run lean-to-typescript:enforcement:check && bun run test && bun run lean:gate && cd lean && lake build",
     "prepublishOnly": "bun run verify"
   },
   "keywords": [

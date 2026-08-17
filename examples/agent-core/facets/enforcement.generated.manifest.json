@@ -2,9 +2,10 @@
   "schemaVersion": 2,
   "semantic": {
     "fragmentVersion": "tslean-pure-first-order-v3",
-    "sourceModule": "TSLean.Examples.Placement",
+    "sourceModule": "AgentCore.Facets.Enforcement",
     "declarations": [
-      "TSLean.Examples.Placement.choosePlacement"
+      "AgentCore.Facets.Impact.claimHonorsEnforcementFloor",
+      "AgentCore.Facets.Impact.enforcementFloor"
     ],
     "leanToolchain": {
       "identity": "leanprover/lean4:v4.29.0",
@@ -114,8 +115,8 @@
       },
       {
         "kind": "lean-source",
-        "identity": "source:TSLean.Examples.Placement",
-        "sha256": "sha256:81ae658cb8d971176fb1cad071b95a3af30e2a6395c8e7f0fdf8ae770d44df0b"
+        "identity": "source:AgentCore.Facets.Enforcement",
+        "sha256": "sha256:6a848068e29a235d8ebf5e2ea67f6beb9a9a3603a9b24e66a06b31531bd19198"
       },
       {
         "kind": "lean-source",
@@ -138,9 +139,9 @@
         "sha256": "sha256:651c8accb402b0c071cd336e9d3dc0a55516b1bfb434ddc4801f14936785b1d2"
       }
     ],
-    "inputClosureSha256": "sha256:65c8414ad22d1a4e505e3cf8642e22f8b06ed2ed7fe0ae069adf5b26e240bb8e",
-    "semanticIrSha256": "sha256:d3fea5bf83dd450fa6d05b94b537973f36e89cf1fea1d5df9a88c650aafe14ae",
-    "generatedBodySha256": "sha256:7000d0aa8fd677502bfe998aa759eb1fff8409f1b3887a991d24cd16d737c4a4"
+    "inputClosureSha256": "sha256:a29a15ab3c4e17cfd29114350ff27612b1ba66a6a09c78aeedc1a76a6fdec9cb",
+    "semanticIrSha256": "sha256:521a6f88b6228ff49cbe0fe5b0d69983f9de91ddef505316fb7aee8d7c7d18cd",
+    "generatedBodySha256": "sha256:fba73201f5d9a31aa72e8ce13994589b32a653bebd308a42b94c1ec860498e25"
   },
   "environment": {
     "runtime": "node:v22.22.3",
@@ -164,6 +165,11 @@
       },
       {
         "kind": "lean-module",
+        "identity": "module:AgentCore.Facets.Enforcement",
+        "sha256": "sha256:b57c465c53e333a0267d00e16747bddf9ca031cec1801139d1df00b8c87b31fa"
+      },
+      {
+        "kind": "lean-module",
         "identity": "module:Init",
         "sha256": "sha256:7ccac48ef26289852ecb686826d9e0ce42f3ceb33ba7bdff960c38fb3d9a00c5"
       },
@@ -171,11 +177,6 @@
         "kind": "lean-module",
         "identity": "module:Lean",
         "sha256": "sha256:d6e35ad9eb0cf5a1b88fb9e26e131ddd84069baf67dc2f6f0d0ba7045e287e93"
-      },
-      {
-        "kind": "lean-module",
-        "identity": "module:TSLean.Examples.Placement",
-        "sha256": "sha256:b2f9562ef88c86f1478db50905aabe9184241d221b4af81905e413ae52588803"
       },
       {
         "kind": "lean-module",
@@ -803,6 +804,6 @@
         "sha256": "sha256:bb6ee7e709ae60426e30b8d393df4d939ee61407794b4f053ce6338d6eaa8c63"
       }
     ],
-    "inputClosureSha256": "sha256:61d59ec1aa05d12c342544a2f01ef44778e3f23d191fcc4c3785d60a6d912e68"
+    "inputClosureSha256": "sha256:5e201c43c6d2793588c46f65f67d79388464df8afc1353ca58691c378ffe6232"
   }
 }

@@ -1,22 +1,28 @@
 {
   "schemaVersion": 1,
   "model": "placement-v1",
-  "dimensions": [
+  "operations": [
     {
-      "name": "manifest",
-      "cardinality": 8
-    },
-    {
-      "name": "policy",
-      "cardinality": 8
-    },
-    {
-      "name": "substrate",
-      "cardinality": 8
-    },
-    {
-      "name": "trust",
-      "cardinality": 8
+      "name": "choosePlacement",
+      "dimensions": [
+        {
+          "name": "manifest",
+          "cardinality": 8
+        },
+        {
+          "name": "policy",
+          "cardinality": 8
+        },
+        {
+          "name": "substrate",
+          "cardinality": 8
+        },
+        {
+          "name": "trust",
+          "cardinality": 8
+        }
+      ],
+      "cases": 4096
     }
   ],
   "cases": 4096,

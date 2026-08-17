@@ -26,6 +26,21 @@ const request = {
   sourcePath,
   declarations: ['TSLean.Examples.Placement.choosePlacement'],
 } satisfies LeanToTypeScriptRequest;
+const enforcementGeneratedPath = join(repositoryRoot, 'examples', 'agent-core', 'facets', 'enforcement.generated.ts');
+const enforcementManifestPath = join(
+  repositoryRoot,
+  'examples',
+  'agent-core',
+  'facets',
+  'enforcement.generated.manifest.json',
+);
+const enforcementRequest = {
+  projectRoot: leanRoot,
+  moduleName: 'AgentCore.Facets.Enforcement',
+  sourcePath: join(leanRoot, 'AgentCore', 'Facets', 'Enforcement.lean'),
+  declarations: ['AgentCore.Facets.Impact.enforcementFloor', 'AgentCore.Facets.Impact.claimHonorsEnforcementFloor'],
+} satisfies LeanToTypeScriptRequest;
+const IMPACT_KINDS = ['observe', 'mutate', 'externalSend', 'execute', 'delegate', 'administer'] as const;
 const adversarialSource = [
   'namespace Fixture',
   'inductive Choice where',
@@ -1008,6 +1023,47 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     });
   });
 
+  test('generated enforcement floor agrees with Lean on the complete finite input domain', () => {
+    const artifact = compileLeanToTypeScript(enforcementRequest);
+    const generated = evaluateGeneratedModuleExports(artifact.code);
+    const impact = requireConstructor(generated, 'Impact');
+    const from = requireStatic(impact, 'from');
+    const fromData = requireStatic(impact, 'fromData');
+    const impacts = IMPACT_KINDS.map((kind) => from(kind));
+    const rows: string[] = [];
+    for (const value of impacts) {
+      for (const turnOwnedSession of [true, false]) {
+        for (const sessionFilesystemTarget of [true, false]) {
+          rows.push(String(requireMethod(value, 'enforcementFloor')(turnOwnedSession, sessionFilesystemTarget)));
+        }
+      }
+    }
+    for (const claimed of impacts) {
+      for (const derived of impacts) {
+        for (const sessionFilesystemTarget of [true, false]) {
+          rows.push(String(requireMethod(claimed, 'claimHonorsEnforcementFloor')(derived, sessionFilesystemTarget)));
+        }
+      }
+    }
+    expect(rows).toHaveLength(96);
+    expect(rows).toEqual(evaluateLeanEnforcement());
+    // The representation is its own codec: the tag decides the value and the value reports the tag.
+    for (const kind of IMPACT_KINDS) {
+      expect(requireProperty(from(kind), 'kind')).toBe(kind);
+      expect(requireMethod(fromData(kind), 'toData')()).toBe(kind);
+      expect(requireMethod(from(kind), 'equals')(fromData(kind))).toBe(true);
+    }
+    expect(() => fromData('sudo')).toThrowError(/Impact data must name a constructor/u);
+  });
+
+  test('the checked-in enforcement artifact matches the source compiler', () => {
+    const artifact = compileLeanToTypeScript(enforcementRequest);
+    const checkedCode = readFileSync(enforcementGeneratedPath, 'utf8');
+    const checkedManifest: unknown = JSON.parse(readFileSync(enforcementManifestPath, 'utf8'));
+    expect(() => verifyLeanToTypeScriptArtifact({ code: checkedCode, manifest: checkedManifest })).not.toThrow();
+    expect(generatedBody(checkedCode)).toBe(generatedBody(artifact.code));
+  });
+
   test('compiles an isolated Lean project without a local TSLean exporter', () => {
     const fixture = createLeanProjectFixture(
       [
@@ -1225,47 +1281,67 @@ function placementSets(): readonly {
 }
 
 function evaluateLeanPlacement(): readonly string[] {
-  const directory = mkdtempSync(join(tmpdir(), 'tslean-placement-oracle-'));
-  const driver = join(directory, 'PlacementOracle.lean');
+  return leanOracleRows([
+    'import TSLean.Examples.Placement',
+    'import Lean.Data.Json',
+    'open TSLean.Examples.Placement',
+    'def sets : List PlacementSet := (List.range 8).map fun bits =>',
+    '  { bundled := bits % 2 = 1, provider := bits / 2 % 2 = 1, dynamic := bits / 4 % 2 = 1 }',
+    'def outputName : Option Placement → String',
+    '  | some .bundled => "bundled"',
+    '  | some .provider => "provider"',
+    '  | some .dynamic => "dynamic"',
+    '  | none => "undefined"',
+    'def outputs : List String := sets.flatMap fun manifest =>',
+    '  sets.flatMap fun policy => sets.flatMap fun substrate => sets.map fun trust =>',
+    '    outputName (choosePlacement manifest policy substrate trust)',
+    '#eval IO.println (Lean.Json.arr (outputs.map Lean.Json.str).toArray).compress',
+    '',
+  ]);
+}
+
+/** Runs one `#eval` driver against the real toolchain and reads the row list it prints. */
+function leanOracleRows(driverLines: readonly string[]): readonly string[] {
+  const directory = mkdtempSync(join(tmpdir(), 'tslean-lean-oracle-'));
+  const driver = join(directory, 'Oracle.lean');
   try {
-    writeFileSync(
-      driver,
-      [
-        'import TSLean.Examples.Placement',
-        'import Lean.Data.Json',
-        'open TSLean.Examples.Placement',
-        'def sets : List PlacementSet := (List.range 8).map fun bits =>',
-        '  { bundled := bits % 2 = 1, provider := bits / 2 % 2 = 1, dynamic := bits / 4 % 2 = 1 }',
-        'def outputName : Option Placement → String',
-        '  | some .bundled => "bundled"',
-        '  | some .provider => "provider"',
-        '  | some .dynamic => "dynamic"',
-        '  | none => "undefined"',
-        'def outputs : List String := sets.flatMap fun manifest =>',
-        '  sets.flatMap fun policy => sets.flatMap fun substrate => sets.map fun trust =>',
-        '    outputName (choosePlacement manifest policy substrate trust)',
-        '#eval IO.println (Lean.Json.arr (outputs.map Lean.Json.str).toArray).compress',
-        '',
-      ].join('\n'),
-    );
+    writeFileSync(driver, driverLines.join('\n'));
     const result = spawnSync('lake', ['env', 'lean', driver], {
       cwd: leanRoot,
       encoding: 'utf8',
       maxBuffer: 4 * 1024 * 1024,
     });
-    if (result.status !== 0) {
-      throw new TypeError(`Lean placement oracle failed: ${spawnFailure(result)}`);
-    }
+    if (result.status !== 0) throw new TypeError(`Lean oracle failed: ${spawnFailure(result)}`);
     const line = result.stdout.split(/\r?\n/u).find((candidate) => candidate.startsWith('["'));
-    if (line === undefined) throw new TypeError('Lean placement oracle emitted no result');
+    if (line === undefined) throw new TypeError('Lean oracle emitted no result');
     const parsed: unknown = JSON.parse(line);
     if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === 'string')) {
-      throw new TypeError('Lean placement oracle emitted a malformed result');
+      throw new TypeError('Lean oracle emitted a malformed result');
     }
     return parsed;
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
+}
+
+function evaluateLeanEnforcement(): readonly string[] {
+  return leanOracleRows([
+    'import AgentCore.Facets.Enforcement',
+    'import Lean.Data.Json',
+    'open AgentCore.Facets',
+    'def impacts : List Impact := [.observe, .mutate, .externalSend, .execute, .delegate, .administer]',
+    'def tierName : EnforcementTier → String',
+    '  | .direct => "direct"',
+    '  | .mediated => "mediated"',
+    'def floorRows : List String := impacts.flatMap fun impact =>',
+    '  [true, false].flatMap fun owned => [true, false].map fun own =>',
+    '    tierName (impact.enforcementFloor owned own)',
+    'def claimRows : List String := impacts.flatMap fun claimed =>',
+    '  impacts.flatMap fun derived => [true, false].map fun own =>',
+    '    toString (claimed.claimHonorsEnforcementFloor derived own)',
+    '#eval IO.println (Lean.Json.arr ((floorRows ++ claimRows).map Lean.Json.str).toArray).compress',
+    '',
+  ]);
 }
 
 function spawnFailure(result: ReturnType<typeof spawnSync>): string {

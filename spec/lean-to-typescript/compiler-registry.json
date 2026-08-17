@@ -21,6 +21,29 @@
       },
       "runtimeAdapter": "examples/lean-to-typescript/placement.adapter.ts",
       "boundsArtifact": "spec/lean-to-typescript/placement.bounds.json"
+    },
+    {
+      "id": "enforcement-v1",
+      "entrypoint": {
+        "projectRoot": "lean",
+        "module": "AgentCore.Facets.Enforcement",
+        "source": "lean/AgentCore/Facets/Enforcement.lean",
+        "declarations": [
+          "AgentCore.Facets.Impact.claimHonorsEnforcementFloor",
+          "AgentCore.Facets.Impact.enforcementFloor"
+        ]
+      },
+      "fragmentClosure": ["lean/AgentCore/Facets/Enforcement.lean"],
+      "oracleOperation": {
+        "command": "bunx vitest run tests/lean-to-typescript.test.ts",
+        "selector": "generated enforcement floor agrees with Lean on the complete finite input domain",
+        "verdict": "exactly-equal"
+      },
+      "generatedTarget": {
+        "source": "examples/agent-core/facets/enforcement.generated.ts",
+        "manifest": "examples/agent-core/facets/enforcement.generated.manifest.json"
+      },
+      "boundsArtifact": "spec/lean-to-typescript/enforcement.bounds.json"
     }
   ]
 }

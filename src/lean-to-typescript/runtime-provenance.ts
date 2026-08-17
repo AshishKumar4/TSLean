@@ -14,6 +14,7 @@ const compilerDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = realpathSync(resolve(compilerDirectory, '..', '..'));
 const extension = extname(fileURLToPath(import.meta.url));
 const typescriptPath = realpathSync(createRequire(import.meta.url).resolve('typescript'));
+const specificationDirectory = realpathSync(join(packageRoot, 'spec', 'lean-to-typescript'));
 
 export const runtimeInputSnapshots: readonly RuntimeInputSnapshot[] = capture([
   ...readdirSync(compilerDirectory, { withFileTypes: true })
@@ -24,8 +25,14 @@ export const runtimeInputSnapshots: readonly RuntimeInputSnapshot[] = capture([
       path: realpathSync(join(compilerDirectory, entry.name)),
     })),
   { kind: 'compiler-source', identity: 'compiler:package', path: realpathSync(join(packageRoot, 'package.json')) },
-  { kind: 'compiler-source', identity: 'compiler:registry', path: registryPath('compiler-registry.json') },
-  { kind: 'compiler-source', identity: 'compiler:bounds:placement-v1', path: registryPath('placement.bounds.json') },
+  // Every registered model's specification, so adding one cannot silently escape provenance.
+  ...readdirSync(specificationDirectory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && extname(entry.name) === '.json')
+    .map((entry) => ({
+      kind: 'compiler-source' as const,
+      identity: `compiler:spec:${entry.name}`,
+      path: realpathSync(join(specificationDirectory, entry.name)),
+    })),
   { kind: 'compiler-runtime', identity: 'compiler:runtime', path: realpathSync(process.execPath) },
   { kind: 'compiler-runtime', identity: 'typescript:compiler', path: typescriptPath },
   {
@@ -50,10 +57,6 @@ export function assertRuntimeInputsUnchanged(): void {
       throw new TypeError(`compiler runtime input changed after it was loaded: ${snapshot.identity}`);
     }
   }
-}
-
-function registryPath(name: string): string {
-  return realpathSync(join(packageRoot, 'spec', 'lean-to-typescript', name));
 }
 
 function capture(

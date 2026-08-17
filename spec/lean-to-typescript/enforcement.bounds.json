@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "model": "enforcement-v1",
+  "operations": [
+    {
+      "name": "Impact.enforcementFloor",
+      "dimensions": [
+        {
+          "name": "impact",
+          "cardinality": 6
+        },
+        {
+          "name": "turnOwnedSession",
+          "cardinality": 2
+        },
+        {
+          "name": "sessionFilesystemTarget",
+          "cardinality": 2
+        }
+      ],
+      "cases": 24
+    },
+    {
+      "name": "Impact.claimHonorsEnforcementFloor",
+      "dimensions": [
+        {
+          "name": "claimed",
+          "cardinality": 6
+        },
+        {
+          "name": "derived",
+          "cardinality": 6
+        },
+        {
+          "name": "sessionFilesystemTarget",
+          "cardinality": 2
+        }
+      ],
+      "cases": 72
+    }
+  ],
+  "cases": 96,
+  "coverage": "exhaustive"
+}

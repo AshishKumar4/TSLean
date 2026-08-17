@@ -1563,7 +1563,7 @@ describe('published Lean to TypeScript API', () => {
     PACKED_COMPILER_TIMEOUT_MS,
   );
 
-  test('binds the executable model to one complete deterministic W-3 registry entry', () => {
+  test('binds every executable model to one complete deterministic W-3 registry entry', () => {
     const registryPath = join(repositoryRoot, 'spec', 'lean-to-typescript', 'compiler-registry.json');
     const source = readFileSync(registryPath, 'utf8');
     const registry: unknown = JSON.parse(source);
@@ -1572,84 +1572,93 @@ describe('published Lean to TypeScript API', () => {
     }
     expect(source.endsWith('\n')).toBe(true);
     expect(source).not.toContain('\r');
-    expect(registry['models']).toHaveLength(1);
-    const model = registry['models'][0];
-    if (!isRecord(model)) throw new TypeError('compiler registry model must be an object');
-    expect(Object.keys(model).sort()).toEqual([
-      'boundsArtifact',
-      'entrypoint',
-      'fragmentClosure',
-      'generatedTarget',
-      'id',
-      'oracleOperation',
-      'runtimeAdapter',
-    ]);
-    expect(model['id']).toBe('placement-v1');
-    expect(model['entrypoint']).toEqual({
-      projectRoot: 'lean',
-      module: 'TSLean.Examples.Placement',
-      source: 'lean/TSLean/Examples/Placement.lean',
-      declarations: ['TSLean.Examples.Placement.choosePlacement'],
-    });
-    expect(model['fragmentClosure']).toEqual(['lean/TSLean/Examples/Placement.lean']);
-    expect(model['generatedTarget']).toEqual({
-      source: 'examples/lean-to-typescript/placement.generated.ts',
-      manifest: 'examples/lean-to-typescript/placement.generated.manifest.json',
-    });
-    expect(model['runtimeAdapter']).toBe('examples/lean-to-typescript/placement.adapter.ts');
-    expect(model['boundsArtifact']).toBe('spec/lean-to-typescript/placement.bounds.json');
-    expect(model['oracleOperation']).toEqual({
-      command: 'bunx vitest run tests/lean-to-typescript.test.ts',
-      selector: 'generated decision agrees with Lean on the complete finite input domain',
-      verdict: 'exactly-equal',
-    });
-    for (const path of registryPaths(model)) expect(statSync(join(repositoryRoot, path)).isFile()).toBe(true);
+    const models = registry['models'].filter(isRecord);
+    expect(models).toHaveLength(registry['models'].length);
+    expect(models.map((model) => model['id'])).toEqual(['placement-v1', 'enforcement-v1']);
 
-    const bounds: unknown = JSON.parse(readFileSync(join(repositoryRoot, String(model['boundsArtifact'])), 'utf8'));
-    expect(bounds).toEqual({
-      schemaVersion: 1,
-      model: 'placement-v1',
-      dimensions: [
-        { name: 'manifest', cardinality: 8 },
-        { name: 'policy', cardinality: 8 },
-        { name: 'substrate', cardinality: 8 },
-        { name: 'trust', cardinality: 8 },
-      ],
-      cases: 4096,
-      coverage: 'exhaustive',
-    });
-    const dimensions = isRecord(bounds) && Array.isArray(bounds['dimensions']) ? bounds['dimensions'] : [];
-    const cases = dimensions.reduce((product, dimension) => {
-      if (!isRecord(dimension) || typeof dimension['cardinality'] !== 'number') {
-        throw new TypeError('compiler bounds dimension is invalid');
+    const oracleSuite = readFileSync(join(repositoryRoot, 'tests', 'lean-to-typescript.test.ts'), 'utf8');
+    for (const model of models) {
+      const identity = String(model['id']);
+      // A model whose generated source carries its own decode boundary needs no adapter file, so
+      // the adapter is optional; anything else about an entry is exact.
+      expect(Object.keys(model).sort()).toEqual(
+        [
+          'boundsArtifact',
+          'entrypoint',
+          'fragmentClosure',
+          'generatedTarget',
+          'id',
+          'oracleOperation',
+          ...(Object.hasOwn(model, 'runtimeAdapter') ? ['runtimeAdapter'] : []),
+        ].sort(),
+      );
+      const entrypoint = model['entrypoint'];
+      const target = model['generatedTarget'];
+      const oracle = model['oracleOperation'];
+      if (!isRecord(entrypoint) || !isRecord(target) || !isRecord(oracle)) {
+        throw new TypeError(`compiler registry model ${identity} is invalid`);
       }
-      return product * dimension['cardinality'];
-    }, 1);
-    expect(cases).toBe(isRecord(bounds) ? bounds['cases'] : undefined);
-    expect(readFileSync(join(repositoryRoot, 'tests', 'lean-to-typescript.test.ts'), 'utf8')).toContain(
-      String(isRecord(model['oracleOperation']) ? model['oracleOperation']['selector'] : ''),
-    );
-    expect(readFileSync(join(repositoryRoot, String(model['runtimeAdapter'])), 'utf8')).toContain(
-      "from './placement.generated.js'",
-    );
-    const target = model['generatedTarget'];
-    if (!isRecord(target)) throw new TypeError('compiler registry target is invalid');
-    const manifest: unknown = JSON.parse(readFileSync(join(repositoryRoot, String(target['manifest'])), 'utf8'));
-    if (!isRecord(manifest)) throw new TypeError('registered generated manifest is invalid');
-    const semantic = manifest['semantic'];
-    if (!isRecord(semantic) || !Array.isArray(semantic['inputs'])) {
-      throw new TypeError('registered generated semantic identity is invalid');
+      expect(Object.keys(entrypoint).sort()).toEqual(['declarations', 'module', 'projectRoot', 'source']);
+      expect(Object.keys(target).sort()).toEqual(['manifest', 'source']);
+      expect(oracle['command']).toBe('bunx vitest run tests/lean-to-typescript.test.ts');
+      expect(oracle['verdict']).toBe('exactly-equal');
+      expect(oracleSuite).toContain(String(oracle['selector']));
+      for (const path of registryPaths(model)) expect(statSync(join(repositoryRoot, path)).isFile()).toBe(true);
+
+      const generatedSource = readFileSync(join(repositoryRoot, String(target['source'])), 'utf8');
+      const adapter = model['runtimeAdapter'];
+      if (typeof adapter === 'string') {
+        expect(readFileSync(join(repositoryRoot, adapter), 'utf8')).toContain(
+          `from './${basename(String(target['source']), '.ts')}.js'`,
+        );
+      } else {
+        expect(generatedSource).toContain('public static fromData(value: unknown)');
+      }
+
+      const bounds: unknown = JSON.parse(readFileSync(join(repositoryRoot, String(model['boundsArtifact'])), 'utf8'));
+      if (!isRecord(bounds) || !Array.isArray(bounds['operations'])) {
+        throw new TypeError(`compiler bounds for ${identity} are invalid`);
+      }
+      expect(bounds['schemaVersion']).toBe(1);
+      expect(bounds['model']).toBe(identity);
+      expect(bounds['coverage']).toBe('exhaustive');
+      let total = 0;
+      for (const operation of bounds['operations']) {
+        if (!isRecord(operation) || !Array.isArray(operation['dimensions'])) {
+          throw new TypeError(`compiler bounds operation for ${identity} is invalid`);
+        }
+        const cases = operation['dimensions'].reduce((product, dimension) => {
+          if (!isRecord(dimension) || typeof dimension['cardinality'] !== 'number') {
+            throw new TypeError(`compiler bounds dimension for ${identity} is invalid`);
+          }
+          return product * dimension['cardinality'];
+        }, 1);
+        expect(cases).toBe(operation['cases']);
+        total += cases;
+      }
+      expect(total).toBe(bounds['cases']);
+
+      const manifest: unknown = JSON.parse(readFileSync(join(repositoryRoot, String(target['manifest'])), 'utf8'));
+      if (!isRecord(manifest)) throw new TypeError(`registered manifest for ${identity} is invalid`);
+      const semantic = manifest['semantic'];
+      if (!isRecord(semantic) || !Array.isArray(semantic['inputs'])) {
+        throw new TypeError(`registered semantic identity for ${identity} is invalid`);
+      }
+      expect(semantic['sourceModule']).toBe(entrypoint['module']);
+      expect(semantic['declarations']).toEqual([...(entrypoint['declarations'] as readonly string[])].sort());
+      expect(
+        semantic['inputs']
+          .filter(isRecord)
+          .map((input) => input['identity'])
+          .filter((value): value is string => typeof value === 'string'),
+      ).toEqual(
+        expect.arrayContaining([
+          'compiler:spec:compiler-registry.json',
+          `compiler:spec:${basename(String(model['boundsArtifact']))}`,
+          `source:${String(entrypoint['module'])}`,
+        ]),
+      );
     }
-    expect(semantic['sourceModule']).toBe('TSLean.Examples.Placement');
-    expect(semantic['declarations']).toEqual(['TSLean.Examples.Placement.choosePlacement']);
-    expect(
-      semantic['inputs']
-        .filter(isRecord)
-        .map((input) => input['identity'])
-        .filter((identity): identity is string => typeof identity === 'string'),
-    ).toEqual(
-      expect.arrayContaining(['compiler:bounds:placement-v1', 'compiler:registry', 'source:TSLean.Examples.Placement']),
-    );
   });
 
   test('keeps the registered runtime adapter explicit and fail-closed', () => {
@@ -1674,7 +1683,7 @@ function registryPaths(model: Record<string, unknown>): readonly string[] {
     ...model['fragmentClosure'].map(String),
     String(target['source']),
     String(target['manifest']),
-    String(model['runtimeAdapter']),
+    ...(typeof model['runtimeAdapter'] === 'string' ? [model['runtimeAdapter']] : []),
     String(model['boundsArtifact']),
   ];
 }
