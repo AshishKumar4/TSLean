@@ -60,12 +60,12 @@ theorem TSError.message_nonempty (e : TSError) : e.message.length > 0 := by
 theorem TSError.name_nonempty_builtin (e : TSError) (h : ∀ n m, e ≠ TSError.customError n m) :
     e.name.length > 0 := by
   cases e with
-  | typeError _ => simp only [TSError.name]; native_decide
-  | rangeError _ => simp only [TSError.name]; native_decide
-  | referenceError _ => simp only [TSError.name]; native_decide
-  | syntaxError _ => simp only [TSError.name]; native_decide
-  | networkError _ => simp only [TSError.name]; native_decide
-  | timeoutError _ => simp only [TSError.name]; native_decide
+  | typeError _ => simp only [TSError.name]; decide
+  | rangeError _ => simp only [TSError.name]; decide
+  | referenceError _ => simp only [TSError.name]; decide
+  | syntaxError _ => simp only [TSError.name]; decide
+  | networkError _ => simp only [TSError.name]; decide
+  | timeoutError _ => simp only [TSError.name]; decide
   | customError n m => exact absurd rfl (h n m)
 
 theorem TSValue.tsStr_injective : Function.Injective TSValue.tsStr :=

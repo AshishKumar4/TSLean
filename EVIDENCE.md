@@ -1692,3 +1692,50 @@ NaN in both positions, both zeros in both orders, infinities, subnormals, max fi
 half-values including `0.49999999999999994` and `±(2^52 − 0.5)`. Every vector matches Node. The
 inventory defence was demonstrated, not asserted: weakening `Math.max_nan` to `True` leaves the
 production module building and fails the inventory with a type mismatch naming the expected statement.
+
+## Clearing the trusted base of what the compiler emits
+
+The audit checks `TSLean.JS` and `TSLean.Refinement` by namespace prefix. Generated modules import
+`TSLean.Runtime.Basic`, `TSLean.Runtime.Coercions`, and `TSLean.Runtime.Monad` whenever anything is
+effectful -- none of which is audited. Measuring that closure directly, by pointing `#audit_proofs` at
+the imports the compiler actually emits, found two classes of taint in the trusted base of every
+artifact.
+
+**Thirteen asserted monad laws.** `Runtime/Monad.lean` declared `axiom pureDO_bind`, `bind_pureDO`,
+`doMonad_bind_assoc`, `throwDO_catchDO`, `pureDO_catchDO`, `getDO_setDO_id`, `setDO_getDO`,
+`setDO_setDO`, `modifyDO_eq_get_set` and three `TaskM` counterparts, with a header arguing this was
+"honest" because the runtime implements them and the type theory cannot see it. `REBUILD_PLAN.md` §6
+rule 6 requires platform behaviour to be a capability parameter rather than an axiom, and rule 7
+allows three axioms. Measured before removal: **nothing anywhere consumed any of the thirteen.** They
+were decoration sitting in the trusted base.
+
+**Nineteen `native_decide` axioms**, each injecting `Lean.ofReduceBool`. Two concrete `strStartsWith`
+facts in `Runtime/Coercions.lean`, six branches of `TSError.name_nonempty_builtin` in
+`Runtime/Basic.lean`, and eleven in `Stdlib/Numeric.lean`. The `TSError` and `Nat` cases are genuine
+facts the kernel can check, so they now use `decide`. The `String` and `Float` cases cannot be: the
+former reduces through an internal slice representation, and `Float` operations are `@[extern]`.
+Nothing consumed any of them, so they are removed rather than weakened.
+
+Two of the deleted `Float` theorems are worth recording, because they are the failure mode this
+project exists to prevent. `FloatExt.max_comm_concrete` asserted
+`max 1.0 2.0 == max 2.0 1.0` under a name claiming commutativity -- while `max` is genuinely not
+commutative for `NaN`, which is one of the four defects fixed in the previous commit.
+`FloatExt.round_half_concrete` asserted `round 2.5 == 3.0`, which passes, while `round (-0.5)` was
+wrong. A single value dressed as a theorem, with a name generalising beyond what was checked, is
+worse than no theorem: it reads as coverage.
+
+The emitted closure now depends on nothing outside `propext`, `Classical.choice` and `Quot.sound`,
+verified by auditing it directly rather than by inspecting imports. `lake build` stays at 180 jobs,
+the suite at 1682 passed with 10 todo, the gate at 7, and both trust gates pass unchanged at 603 and
+263/250.
+
+One gap found while verifying, recorded rather than fixed. `#audit_proofs` skips private declarations,
+and the JS tree contains **28 `native_decide` uses, all inside private theorems** -- mostly
+non-vacuity witnesses evaluating a Boolean check. No public proof carries `ofReduceBool`, so the
+public surface is clean and the trust gate's 603 declarations are honest. But a non-vacuity witness
+resting on an unallowed axiom is a weaker guarantee than it appears, and `checkSources` forbids
+`sorry`, `axiom`, `opaque`, `partial`, `unsafe` and `noncomputable` while permitting `native_decide`.
+Both belong in the audit-scope work: the gate should audit the emitted closure by module rather than
+by prefix, should audit all constants rather than only `Prop`-valued ones -- an
+`instance : Inhabited X := ⟨sorry⟩` is not a `Prop` and is invisible today -- and should treat
+`native_decide` as forbidden in the audited trees.
