@@ -292,7 +292,15 @@ export const DO_LEAN_IMPORTS = [
   'TSLean.Runtime.Monad',
 ] as const;
 
-/** Lean imports for Workers bindings (KV, R2, D1, Queue). */
+/**
+ * Lean imports for Workers bindings (KV, R2, D1, Queues, Scheduler).
+ *
+ * Declared, not injected, unlike `DO_LEAN_IMPORTS`: no pass reads this set. The lowerer asks for
+ * `TSLean.Workers.{KV,R2,D1}` itself when it sees a `KV.`/`R2.`/`D1.` expression (see
+ * `STATIC_LEAN_IMPORTS` in `codegen/lower.ts`), and nothing emits `Queue` or `Scheduler` yet. The
+ * trust gate audits every module named here, so all five are held to what the emitted trusted base
+ * requires — no `axiom`, no `sorry` — before anything is wired up to inject them.
+ */
 export const WORKERS_LEAN_IMPORTS = [
   'TSLean.Workers.KV',
   'TSLean.Workers.R2',

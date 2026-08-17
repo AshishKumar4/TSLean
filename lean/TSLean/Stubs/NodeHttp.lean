@@ -31,9 +31,9 @@ structure ServerResponse where
 
 -- ─── Server operations ──────────────────────────────────────────────────────
 
-/-- Opaque HTTP server handle. -/
+/-- Opaque HTTP server handle. No `Inhabited`: an opaque type may be empty, so
+    only `createServer` produces one. -/
 opaque Server : Type
-instance : Inhabited Server := ⟨sorry⟩
 
 /-- Create an HTTP server with a request handler. -/
 axiom createServer (handler : IncomingMessage → IO ServerResponse) : IO Server

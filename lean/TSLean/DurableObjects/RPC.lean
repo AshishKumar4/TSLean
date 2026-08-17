@@ -18,14 +18,13 @@ def Serializer.deserializeOrThrow {α} [Serializer α] (s ctx : String) : Except
 instance : Serializer String where
   serialize s := s; deserialize s := some s; roundtrip _ := rfl
 
--- Nat serialization roundtrip: toString n gives decimal, toNat? parses it back.
--- Lean 4.29 stdlib doesn't expose this as a theorem, so we use an axiom.
--- This is semantically sound: native_decide verifies it for all concrete values.
-private axiom nat_toNat?_toString (n : Nat) : (toString n).toNat? = some n
-
-instance : Serializer Nat where
-  serialize n := toString n; deserialize s := s.toNat?
-  roundtrip n := nat_toNat?_toString n
+-- The `Nat` serializer was removed here. Its `roundtrip` field was discharged by
+-- `private axiom nat_toNat?_toString : (toString n).toNat? = some n`, and this module is in the
+-- emitted trusted base directly -- `DO_LEAN_IMPORTS` puts it at the top of every emitted Durable
+-- Object file -- so that axiom was an unearned assumption in every artifact the compiler produced
+-- from one. The statement is true but needs decimal-parsing lemmas Lean 4.29 does not expose
+-- (`exact?` and `simp` both fail), and nothing outside this file consumes `Serializer` at all --
+-- so an unused instance is dropped rather than its law asserted.
 
 instance : Serializer Bool where
   serialize b := if b then "true" else "false"
@@ -36,24 +35,9 @@ instance : Serializer Unit where
   serialize _ := "()"; deserialize s := if s == "()" then some () else none
   roundtrip _ := by simp
 
--- Axiom for Option serializer roundtrip (semantically sound by evaluation)
-private axiom option_serializer_roundtrip {α : Type} [Serializer α] (o : Option α) :
-    let ser := fun x => match x with | none => "null" | some a => "some:" ++ Serializer.serialize a
-    let des : String → Option (Option α) := fun s =>
-      if s == "null" then some none
-      else if s.startsWith "some:" then
-        (Serializer.deserialize (s.toRawSubstring.drop 5 |>.toString)).map some
-      else none
-    des (ser o) = some o
-
-instance [Serializer α] : Serializer (Option α) where
-  serialize o := match o with | none => "null" | some a => "some:" ++ Serializer.serialize a
-  deserialize s :=
-    if s == "null" then some none
-    else if s.startsWith "some:" then
-      (Serializer.deserialize (s.toRawSubstring.drop 5 |>.toString)).map some
-    else none
-  roundtrip o := option_serializer_roundtrip o
+-- The `Option` serializer was removed here for the same reason: its `roundtrip` rested on
+-- `private axiom option_serializer_roundtrip`, nothing consumes it, and an unproven law in the
+-- emitted trusted base is worse than an absent instance.
 
 structure RPCRequest where
   method : String

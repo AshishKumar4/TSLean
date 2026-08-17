@@ -504,8 +504,9 @@ def forEach (s : AssocSet α) (f : α → Unit) : Unit :=
   List.foldl (fun _ x => f x) () s
 
 -- Theorems
-axiom contains_insert_same (s : AssocSet α) (x : α) :
-    (insert s x).contains x = true
+-- `contains_insert_same` was an `axiom` asserting `(insert s x).contains x = true`. It was consumed
+-- by nothing, and this module is in the emitted trusted base, so it was an unearned assumption in
+-- every artifact. `AssocSet` is `List`-backed and the statement is provable, but nothing needs it.
 
 theorem contains_empty (x : α) : contains (empty : AssocSet α) x = false := rfl
 

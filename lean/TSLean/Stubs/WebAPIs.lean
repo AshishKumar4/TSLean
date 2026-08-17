@@ -1,6 +1,11 @@
 -- TSLean.Stubs.WebAPIs
 -- Lean stubs for common Web/Node APIs used in production TypeScript.
 -- All types are opaque; operations are axiomatized for verification.
+--
+-- No `opaque` handle here carries `Inhabited`: an opaque type may be empty, so
+-- the instance would be a false proposition, and giving it a carrier would let
+-- `default` masquerade as a real handle. A flow needing a value it cannot obtain
+-- has to degrade visibly instead.
 
 namespace TSLean.Stubs.WebAPIs
 
@@ -12,7 +17,7 @@ structure TextEncoder where
 
 def TextEncoder.mk' : TextEncoder := default
 
-axiom TextEncoder.encode (te : TextEncoder) (s : String) : Array UInt8
+opaque TextEncoder.encode (te : TextEncoder) (s : String) : Array UInt8
 
 structure TextDecoder where
   encoding : String := "utf-8"
@@ -20,7 +25,7 @@ structure TextDecoder where
 
 def TextDecoder.mk' : TextDecoder := default
 
-axiom TextDecoder.decode (td : TextDecoder) (data : Array UInt8) : String
+opaque TextDecoder.decode (td : TextDecoder) (data : Array UInt8) : String
 
 -- ─── Headers ────────────────────────────────────────────────────────────────
 
@@ -80,10 +85,8 @@ noncomputable def AsyncLocalStorage.run {α β : Type} (als : AsyncLocalStorage 
 -- ─── ReadableStream / WritableStream ────────────────────────────────────────
 
 opaque ReadableStream : Type
-instance : Inhabited ReadableStream := ⟨sorry⟩
 
 opaque WritableStream : Type
-instance : Inhabited WritableStream := ⟨sorry⟩
 
 -- ─── WebSocket ──────────────────────────────────────────────────────────────
 
@@ -94,8 +97,8 @@ structure WebSocket where
 
 def WebSocket.mk' (url : String) : WebSocket := { url }
 
-axiom WebSocket.send (ws : WebSocket) (data : String) : IO Unit
-axiom WebSocket.close (ws : WebSocket) (code : Nat := 1000) : IO Unit
+opaque WebSocket.send (ws : WebSocket) (data : String) : IO Unit
+opaque WebSocket.close (ws : WebSocket) (code : Nat := 1000) : IO Unit
 
 -- ─── Uint8Array ─────────────────────────────────────────────────────────────
 
@@ -111,23 +114,19 @@ structure Disposable where
 
 /-- Opaque stub for DurableObjectNamespace (Cloudflare Workers API). -/
 opaque DurableObjectNamespace (T : Type) : Type
-instance {T} : Inhabited (DurableObjectNamespace T) := ⟨sorry⟩
 instance {T} : BEq (DurableObjectNamespace T) := ⟨fun _ _ => false⟩
 instance {T} : Repr (DurableObjectNamespace T) := ⟨fun _ _ => .text "DurableObjectNamespace"⟩
 
 /-- Opaque stub for DurableObjectStub (Cloudflare Workers API). -/
 opaque DurableObjectStub (T : Type) : Type
-instance {T} : Inhabited (DurableObjectStub T) := ⟨sorry⟩
 instance {T} : BEq (DurableObjectStub T) := ⟨fun _ _ => false⟩
 instance {T} : Repr (DurableObjectStub T) := ⟨fun _ _ => .text "DurableObjectStub"⟩
 
 /-- Opaque stub for DurableObjectId (Cloudflare Workers API). -/
 opaque DurableObjectId : Type
-instance : Inhabited DurableObjectId := ⟨sorry⟩
 
 /-- Opaque stub for DurableObjectStorage (Cloudflare Workers API). -/
 opaque DurableObjectStorage : Type
-instance : Inhabited DurableObjectStorage := ⟨sorry⟩
 
 /-- Opaque stub for DurableObjectState (Cloudflare Workers API). -/
 structure DurableObjectState where
@@ -154,10 +153,8 @@ structure URLSearchParams where
 -- ─── Blob / FormData ────────────────────────────────────────────────────────
 
 opaque Blob : Type
-instance : Inhabited Blob := ⟨sorry⟩
 
 opaque FormData : Type
-instance : Inhabited FormData := ⟨sorry⟩
 
 -- ─── Request / Response ─────────────────────────────────────────────────────
 
@@ -191,14 +188,11 @@ structure CloseEvent where
 -- ─── Crypto ─────────────────────────────────────────────────────────────────
 
 opaque SubtleCrypto : Type
-instance : Inhabited SubtleCrypto := ⟨sorry⟩
 
 -- ─── R2Bucket / SqlStorage (Cloudflare) ─────────────────────────────────────
 
 opaque R2Bucket : Type
-instance : Inhabited R2Bucket := ⟨sorry⟩
 
 opaque SqlStorage : Type
-instance : Inhabited SqlStorage := ⟨sorry⟩
 
 end TSLean.Stubs.WebAPIs

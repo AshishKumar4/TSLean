@@ -15,7 +15,7 @@
   "counts": {
     "tests": {
       "files": 45,
-      "passed": 1682,
+      "passed": 1690,
       "failed": 0,
       "todo": 10
     },
@@ -47,7 +47,12 @@
       "aggregateFixtureBudget": 65536
     },
     "lint": "passed",
-    "build": "passed"
+    "build": "passed",
+    "emittedTrustedBase": {
+      "imports": 22,
+      "modules": 2088,
+      "declarations": 6166
+    }
   },
   "refinementProofs": {
     "audited": 263,
@@ -167,12 +172,12 @@
     }
   ],
   "hashes": {
-    "source": "sha256:165eb474983872ff69ec2da7fe073226247f61c723a6f1c8e31a9c2b322da203",
-    "jsRuntime": "sha256:0548554dfa0803092cb6cb784558019708bc0aad6ebfa8c33d1711fa408e3d33",
+    "source": "sha256:85834ae5135d7480e5202d2eb2ed2e2c55f473c0757d288f265269853e0f76f4",
+    "jsRuntime": "sha256:a120718a9e02bcb66409e49860d5b5160cc2955d6c87faf17c82193c07b5abe7",
     "refinementRuntimeAndBarrel": "sha256:65ac151e483e7803ecea297427f47d3e282b364345c541306d26281d73a19619",
-    "refinementTestsAuditRegistry": "sha256:362ef6a302c3afde878cb632ee4b3736173a1790f7c0938f945101c546f8b47b",
+    "refinementTestsAuditRegistry": "sha256:5ee5e190daf624c79130215e52b0e14cbd74607fac1e460772c2d9603534fbf6",
     "corpus": "sha256:813ba0e3fa8d02912872c4451cf33773aa0fc627dac24f68f770e25506fa1903",
     "differentialSpecHarness": "sha256:a60e709b193d859da6521ab4179c645fd0c33cb50cfa9d1fba9f486a4feb6eb5",
-    "trustEvidenceInfrastructure": "sha256:31904d940d7b315069ad0e9a85e2a10f46b380bfc4236fbfad8e138c3be3fad4"
+    "trustEvidenceInfrastructure": "sha256:6ab7f46dc755870f97a25f0f2a55976cd346240af0212427274a6e3203bd0f70"
   }
 }

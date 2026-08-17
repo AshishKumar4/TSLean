@@ -6,7 +6,7 @@
   "counts": {
     "tests": {
       "files": 45,
-      "passed": 1682,
+      "passed": 1690,
       "failed": 0,
       "todo": 10
     },
@@ -38,7 +38,12 @@
       "aggregateFixtureBudget": 65536
     },
     "lint": "passed",
-    "build": "passed"
+    "build": "passed",
+    "emittedTrustedBase": {
+      "imports": 22,
+      "modules": 2088,
+      "declarations": 6166
+    }
   },
   "refinementProofs": {
     "audited": 263,

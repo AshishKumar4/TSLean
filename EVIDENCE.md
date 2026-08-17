@@ -1739,3 +1739,80 @@ Both belong in the audit-scope work: the gate should audit the emitted closure b
 by prefix, should audit all constants rather than only `Prop`-valued ones -- an
 `instance : Inhabited X := ⟨sorry⟩` is not a `Prop` and is invisible today -- and should treat
 `native_decide` as forbidden in the audited trees.
+
+## Auditing the trusted base the compiler actually emits
+
+The gate audited `TSLean.JS` and `TSLean.Refinement` by namespace prefix and never audited what the
+compiler emits. That is not a theoretical gap: it is how a documented, supposedly-deleted
+`sorry`-backed `LawfulBEq Float` survived in `Runtime/Basic.lean`, imported by every generated module.
+This closes it in three places.
+
+**Reach.** The audited set is now the union of what the compiler _declares_ it can emit and what the
+fixture corpus _measures_. `src/codegen/lower.ts` exports `STATIC_LEAN_IMPORTS` with a
+`StaticLeanImport` type, and the import-resolution functions are typed against it, so the lowerer
+literally cannot request a module the audited set omits -- verified by attempting one:
+`Argument of type '"TSLean.Stdlib.Undeclared"' is not assignable`. The measured half stays, because
+neither alone is sufficient: a declared list drifts, and a fixture-derived list says whatever the
+fixtures happen to cover. Reach moves from 15 imports and 5736 declarations to 22 and 6166.
+
+**Visibility.** `#audit_proofs` filtered on `Meta.isProp`, so `instance : Inhabited X := ⟨sorry⟩` was
+invisible -- it is not a `Prop`. A new `#audit_constants` selects by compiled module rather than
+namespace prefix and filters nothing, so private, non-`Prop` and compiler-internal declarations are
+all audited. `#audit_proofs` is unchanged for its existing call sites, established by replicating the
+pre-change elaborator and diffing: 603 and 263 records, byte-identical including ordering.
+
+**Depth.** The forbidden-token scan over `TSLean.JS` used a non-recursive `readdirSync` while its
+Refinement counterpart was recursive, so any module in a subdirectory received no token scrutiny at
+all. It now descends.
+
+Two attacks were demonstrated against the intermediate state and both are now rejected. A
+`sorry`-backed `Inhabited KVNamespace` in `Workers/KV.lean` -- a module reachable through the lowerer's
+own `KV.` trigger -- passed the gate with exit 0; it now fails with
+`instInhabitedKVNamespace depends on disallowed axiom sorryAx`. And a module at
+`lean/TSLean/JS/Util/Backdoor.lean` carrying `private axiom cheatWidget : Widget` behind a
+`noncomputable instance` passed; it now fails the recursive token scan. Each slipped every layer
+simultaneously: unread by the scan, skipped by `#audit_proofs` for not being a `Prop`, and outside the
+closure `#audit_constants` walked.
+
+Clearing the newly-visible taint removed 17 `sorry`-backed `Inhabited` instances across `Stubs/` and
+`Workers/`, five `axiom` groups in `Workers/` converted to `opaque`, one unused `axiom` in
+`Stdlib/HashMap.lean`, and the `Nat` and `Option` `Serializer` instances in `DurableObjects/RPC.lean`,
+whose `roundtrip` rested on two private axioms. `(toString n).toNat? = some n` is true but needs
+decimal-parsing lemmas Lean 4.29 does not expose, and nothing consumes `Serializer`, so an unused
+instance is dropped rather than its law asserted. Two `D1` signatures could **not** take `opaque` --
+a total function into a possibly-empty opaque type is exactly what `opaque` refuses -- so they return
+`IO D1PreparedStatement` instead. `axiom` to `opaque` is a real change rather than cosmetic:
+`collectAxioms` reports the former and not the latter, and `opaque` cannot assert an unproven `Prop`
+at all, since Lean demands a nonemptiness witness.
+
+Removing those instances exposed a regression the slice itself introduced, and it is the sharpest
+lesson here. The carrier check was shallow -- it inspected type constructors but never followed a
+reference into its fields -- so a carrier one struct deep still emitted `deriving Inhabited` for a type
+whose field no longer had an instance. The compiler reported success, the degradation scan produced no
+marker, so `--strict` could not reject it, and the generated Lean failed to elaborate. A hidden
+`sorryAx` had been traded for a silently broken artifact. The check now follows struct fields
+transitively with a cycle guard and is applied at all three deriving and defaulting sites, with a
+committed nested fixture the build gate elaborates every run: it degrades to a marked `sorry` that
+`--strict` rejects, and marker output across the other 43 fixtures is byte-identical, so the walk
+fires only where a carrier is genuinely reached.
+
+The three coverage numbers are now pinned in evidence as `counts.emittedTrustedBase` and compared
+exactly like `auditedTheorems`, because printed-but-unasserted numbers can silently collapse -- the
+repo's own test asserts that a single pure fixture yields only two imports, so a fixture deletion
+could have taken reach from 22 modules to 2 while staying green. `TSLean.Generated.*` is no longer
+skipped ahead of the source-existence test, and the converse orphan check now fails a Lean source with
+no compiled artifact, which is how thousands of lines of dead Lean previously sat in the tree looking
+verified.
+
+Counts: 180 Lean jobs, 45 test files, 1690 passed with 10 todo, build gate 8, 603 JS proofs, 263
+audited and 250 required refinement proofs.
+
+Three findings recorded rather than fixed. `WORKERS_LEAN_IMPORTS` has no consumer in the compiler --
+nothing reads it, and nothing emits `Queue` or `Scheduler` at all -- so it is kept in the audited union
+as the safe direction with its doc comment corrected to say declared, not injected.
+`TSLean.Runtime.Validation` is reachable only through the parser's `zod` mapping, a source import no
+fixture exercises; its `native_decide` is cleared but the audit does not cover it, and closing that
+properly first requires deciding what the `uuid` mapping should point at, since its target module has
+never existed. And `DurableObjectId` and `DurableObjectStorage` have no `Repr`/`BEq` instances, so the
+equality half of the deriving decision has the same shape of defect the carrier check just fixed --
+pre-existing, and not introduced here.

@@ -8013,6 +8013,22 @@ theorem defineOwnProperty_unblocked_array_shrink
                       slots newLength properties lengthDescriptor.writable valid found arrayKind shrink
                       swept replaced
 
+/--
+The empty collection stores nothing.
+
+`OrderedProps` is `Std.HashMap`-backed and every derived `Hashable` routes through the `opaque`
+`mixHash`, so no lookup reduces in the kernel and `decide` cannot see a fixture's property store.
+Every fixture fact below is therefore proved from the collection's own public lemmas, leaving only
+hash-free arithmetic for `decide` to finish.
+-/
+private theorem emptyProperties_lookup (key : PropertyKey) :
+    OrderedProps.empty.lookup key = none := by
+  cases found : OrderedProps.empty.lookup key with
+  | none => rfl
+  | some descriptor =>
+      exact absurd (OrderedProps.key_of_lookup_satisfies OrderedProps.empty (fun _ => false)
+        (OrderedProps.empty_keysAll _) key descriptor found) (by simp)
+
 private def shrinkFixtureDescriptor (index : Nat) (configurable : Bool) : PropertyDescriptor :=
   .data ⟨.primitive (.bigint index), true, true, configurable⟩
 
@@ -8038,10 +8054,164 @@ private def unblockedShrinkFixtureObject : ObjectRecord :=
 private def blockedShrinkFixtureHeap : Heap := .mk #[blockedShrinkFixtureObject] 0
 private def unblockedShrinkFixtureHeap : Heap := .mk #[unblockedShrinkFixtureObject] 0
 
+/-- The empty collection emits no own key, hence no stored array index. -/
+private theorem emptyProperties_ownKeys : OrderedProps.empty.ownKeys = [] := by
+  rw [List.eq_nil_iff_forall_not_mem]
+  intro key member
+  have present := (OrderedProps.mem_ownKeys_iff_lookup_isSome OrderedProps.empty key
+    OrderedProps.empty_wellFormed).mp member
+  rw [emptyProperties_lookup] at present
+  exact absurd present (by simp)
+
+private theorem emptyProperties_arrayIndices : OrderedProps.empty.arrayIndices = [] := by
+  simp [OrderedProps.arrayIndices, emptyProperties_ownKeys]
+
+/-- An array index outside the stored index order has no stored descriptor. -/
+private theorem lookup_arrayIndex_none (properties : OrderedProps) (key : JSString) (index : Nat)
+    (valid : properties.WellFormed) (parsed : PropertyKey.arrayIndex? key = some index)
+    (missing : index ∉ properties.arrayIndices) : properties.lookup (.string key) = none := by
+  cases found : properties.lookup (.string key) with
+  | none => rfl
+  | some descriptor =>
+      exact absurd (List.mem_filterMap.mpr ⟨.string key,
+        (OrderedProps.mem_ownKeys_iff_lookup_isSome properties (.string key) valid).mpr
+          (by rw [found]; rfl), parsed⟩) missing
+
+/--
+One fresh array-index insertion: validity is preserved and the stored index order extends.
+
+Carried as a pair because each step of a fixture's insertion chain needs the previous step's
+validity to know the inserted key was absent.
+-/
+private theorem insertIndex_state (properties : OrderedProps) (indices sorted : List Nat)
+    (key : JSString) (index : Nat) (descriptor : PropertyDescriptor)
+    (state : properties.WellFormed ∧ properties.arrayIndices = indices)
+    (parsed : PropertyKey.arrayIndex? key = some index) (missing : index ∉ indices)
+    (ascending : (index :: indices).mergeSort (· ≤ ·) = sorted) :
+    (properties.insert (.string key) descriptor).WellFormed ∧
+      (properties.insert (.string key) descriptor).arrayIndices = sorted :=
+  ⟨OrderedProps.insert_wellFormed _ _ _ state.1, by
+    rw [OrderedProps.arrayIndices_insert_fresh_index properties key index descriptor state.1 parsed
+      (lookup_arrayIndex_none properties key index state.1 parsed (state.2 ▸ missing)), state.2,
+      ascending]⟩
+
+private theorem blockedShrinkFixtureProperties_state :
+    blockedShrinkFixtureProperties.WellFormed ∧
+      blockedShrinkFixtureProperties.arrayIndices = [0, 1, 2, 3] := by
+  have zero := insertIndex_state OrderedProps.empty [] [0] (PropertyKey.arrayIndexString 0) 0
+    (shrinkFixtureDescriptor 0 true)
+    ⟨OrderedProps.empty_wellFormed, emptyProperties_arrayIndices⟩ (by decide) (by decide) (by simp)
+  have one := insertIndex_state _ [0] [0, 1] (PropertyKey.arrayIndexString 1) 1
+    (shrinkFixtureDescriptor 1 true) zero (by decide) (by decide) (by simp [List.mergeSort])
+  have two := insertIndex_state _ [0, 1] [0, 1, 2] (PropertyKey.arrayIndexString 2) 2
+    (shrinkFixtureDescriptor 2 false) one (by decide) (by decide) (by simp [List.mergeSort])
+  exact insertIndex_state _ [0, 1, 2] [0, 1, 2, 3] (PropertyKey.arrayIndexString 3) 3
+    (shrinkFixtureDescriptor 3 true) two (by decide) (by decide) (by simp [List.mergeSort])
+
+private theorem unblockedShrinkFixtureProperties_state :
+    unblockedShrinkFixtureProperties.WellFormed ∧
+      unblockedShrinkFixtureProperties.arrayIndices = [0, 1, 2] := by
+  have zero := insertIndex_state OrderedProps.empty [] [0] (PropertyKey.arrayIndexString 0) 0
+    (shrinkFixtureDescriptor 0 true)
+    ⟨OrderedProps.empty_wellFormed, emptyProperties_arrayIndices⟩ (by decide) (by decide) (by simp)
+  have one := insertIndex_state _ [0] [0, 1] (PropertyKey.arrayIndexString 1) 1
+    (shrinkFixtureDescriptor 1 true) zero (by decide) (by decide) (by simp [List.mergeSort])
+  exact insertIndex_state _ [0, 1] [0, 1, 2] (PropertyKey.arrayIndexString 2) 2
+    (shrinkFixtureDescriptor 2 true) one (by decide) (by decide) (by simp [List.mergeSort])
+
 private def shrinkFixtureUpdate : DescriptorUpdate := {
   value := .present (.primitive (.number (arrayLengthNumber 1)))
   writable := .present false
 }
+
+private theorem blockedShrinkFixture_blockedIndex :
+    (deleteArrayIndicesFrom blockedShrinkFixtureProperties 1).1 = some 2 := by
+  have three : blockedShrinkFixtureProperties.lookup (.string (PropertyKey.arrayIndexString 3)) =
+      some (shrinkFixtureDescriptor 3 true) := by
+    unfold blockedShrinkFixtureProperties
+    exact OrderedProps.lookup_insert_same _ _ _
+  have two : (blockedShrinkFixtureProperties.delete
+      (.string (PropertyKey.arrayIndexString 3))).lookup
+      (.string (PropertyKey.arrayIndexString 2)) = some (shrinkFixtureDescriptor 2 false) := by
+    rw [OrderedProps.lookup_delete_ne _ _ _ (by decide) blockedShrinkFixtureProperties_state.1]
+    unfold blockedShrinkFixtureProperties
+    rw [OrderedProps.lookup_insert_ne _ _ _ _ (by decide)]
+    exact OrderedProps.lookup_insert_same _ _ _
+  unfold deleteArrayIndicesFrom
+  rw [arrayIndexEntries_eq, blockedShrinkFixtureProperties_state.2]
+  simp [deleteArrayIndexStep, three, two, shrinkFixtureDescriptor]
+
+private theorem unblockedShrinkFixture_noBlockedIndex :
+    (deleteArrayIndicesFrom unblockedShrinkFixtureProperties 1).1 = none := by
+  have two : unblockedShrinkFixtureProperties.lookup (.string (PropertyKey.arrayIndexString 2)) =
+      some (shrinkFixtureDescriptor 2 true) := by
+    unfold unblockedShrinkFixtureProperties
+    exact OrderedProps.lookup_insert_same _ _ _
+  have one : (unblockedShrinkFixtureProperties.delete
+      (.string (PropertyKey.arrayIndexString 2))).lookup
+      (.string (PropertyKey.arrayIndexString 1)) = some (shrinkFixtureDescriptor 1 true) := by
+    rw [OrderedProps.lookup_delete_ne _ _ _ (by decide) unblockedShrinkFixtureProperties_state.1]
+    unfold unblockedShrinkFixtureProperties
+    rw [OrderedProps.lookup_insert_ne _ _ _ _ (by decide)]
+    exact OrderedProps.lookup_insert_same _ _ _
+  unfold deleteArrayIndicesFrom
+  rw [arrayIndexEntries_eq, unblockedShrinkFixtureProperties_state.2]
+  simp [deleteArrayIndexStep, two, one, shrinkFixtureDescriptor]
+
+private theorem blockedShrinkFixture_wellFormed : blockedShrinkFixtureHeap.WellFormed := by
+  have propsValid : blockedShrinkFixtureProperties.isWellFormed = true :=
+    blockedShrinkFixtureProperties_state.1
+  have stored : blockedShrinkFixtureProperties.descriptors.all
+      (descriptorReferencesValid blockedShrinkFixtureHeap) = true := by
+    unfold blockedShrinkFixtureProperties
+    exact OrderedProps.descriptors_all_insert _ _ _ _ (OrderedProps.descriptors_all_insert _ _ _ _
+      (OrderedProps.descriptors_all_insert _ _ _ _ (OrderedProps.descriptors_all_insert _ _ _ _
+        (by simp) (by decide)) (by decide)) (by decide)) (by decide)
+  have keys : blockedShrinkFixtureProperties.keysAll (fun key =>
+      match arrayIndexOfKey? key with
+      | some index => index < 4
+      | none => key != lengthPropertyKey) = true := by
+    unfold blockedShrinkFixtureProperties
+    exact OrderedProps.keysAll_insert _ _ _ _ (OrderedProps.keysAll_insert _ _ _ _
+      (OrderedProps.keysAll_insert _ _ _ _ (OrderedProps.keysAll_insert _ _ _ _
+        (OrderedProps.empty_keysAll _) (by decide)) (by decide)) (by decide)) (by decide)
+  have references : objectReferencesValid blockedShrinkFixtureHeap blockedShrinkFixtureObject
+      = true := by
+    unfold objectReferencesValid blockedShrinkFixtureObject
+    simp only [arraySlotsValid]
+    rw [propsValid, stored, keys]
+    decide
+  unfold WellFormed isWellFormed
+  rw [show blockedShrinkFixtureHeap.objects.toList = [blockedShrinkFixtureObject] from rfl,
+    List.all_cons, List.all_nil, references]
+  decide
+
+private theorem unblockedShrinkFixture_wellFormed : unblockedShrinkFixtureHeap.WellFormed := by
+  have propsValid : unblockedShrinkFixtureProperties.isWellFormed = true :=
+    unblockedShrinkFixtureProperties_state.1
+  have stored : unblockedShrinkFixtureProperties.descriptors.all
+      (descriptorReferencesValid unblockedShrinkFixtureHeap) = true := by
+    unfold unblockedShrinkFixtureProperties
+    exact OrderedProps.descriptors_all_insert _ _ _ _ (OrderedProps.descriptors_all_insert _ _ _ _
+      (OrderedProps.descriptors_all_insert _ _ _ _ (by simp) (by decide)) (by decide)) (by decide)
+  have keys : unblockedShrinkFixtureProperties.keysAll (fun key =>
+      match arrayIndexOfKey? key with
+      | some index => index < 3
+      | none => key != lengthPropertyKey) = true := by
+    unfold unblockedShrinkFixtureProperties
+    exact OrderedProps.keysAll_insert _ _ _ _ (OrderedProps.keysAll_insert _ _ _ _
+      (OrderedProps.keysAll_insert _ _ _ _ (OrderedProps.empty_keysAll _) (by decide))
+      (by decide)) (by decide)
+  have references : objectReferencesValid unblockedShrinkFixtureHeap unblockedShrinkFixtureObject
+      = true := by
+    unfold objectReferencesValid unblockedShrinkFixtureObject
+    simp only [arraySlotsValid]
+    rw [propsValid, stored, keys]
+    decide
+  unfold WellFormed isWellFormed
+  rw [show unblockedShrinkFixtureHeap.objects.toList = [unblockedShrinkFixtureObject] from rfl,
+    List.all_cons, List.all_nil, references]
+  decide
 
 private def blockedShrinkFixtureSucceeds : Bool :=
   match blockedShrinkFixtureHeap.defineOwnProperty ⟨0⟩ lengthPropertyKey shrinkFixtureUpdate with
@@ -8053,6 +8223,45 @@ private def unblockedShrinkFixtureSucceeds : Bool :=
   | .ok (true, _) => true
   | _ => false
 
+private theorem shrinkFixtureUpdate_value :
+    shrinkFixtureUpdate.value = .present (.primitive (.number (arrayLengthNumber 1))) := rfl
+
+private theorem shrinkFixtureUpdate_syntax : shrinkFixtureUpdate.validateSyntax = .ok .data := rfl
+
+private theorem shrinkFixtureUpdate_references (heap : Heap) :
+    validateDescriptorReferences heap shrinkFixtureUpdate = .ok () := rfl
+
+private theorem shrinkFixtureUpdate_length : validArrayLength? (arrayLengthNumber 1) = some 1 := by
+  decide
+
+/-- The length normalization `defineArrayLength` performs is the identity on this update. -/
+private theorem shrinkFixtureUpdate_normalized :
+    ({ value := .present (.primitive (.number (arrayLengthNumber 1))),
+        writable := shrinkFixtureUpdate.writable, get := shrinkFixtureUpdate.get,
+        set := shrinkFixtureUpdate.set, enumerable := shrinkFixtureUpdate.enumerable,
+        configurable := shrinkFixtureUpdate.configurable } : DescriptorUpdate)
+      = shrinkFixtureUpdate := rfl
+
+private theorem shrinkFixtureUpdate_applied (length : Nat) :
+    DescriptorUpdate.applyValidatedDescriptor (some (syntheticLengthDescriptor ⟨length, true⟩)) true
+        shrinkFixtureUpdate .data =
+      .ok (.data ⟨.primitive (.number (arrayLengthNumber 1)), false, false, false⟩) := rfl
+
+private theorem blockedShrinkFixture_succeeds : blockedShrinkFixtureSucceeds = true := by
+  unfold blockedShrinkFixtureSucceeds
+  simp [defineOwnProperty, defineArrayLength, blockedShrinkFixtureHeap, blockedShrinkFixtureObject,
+    get?, replace, shrinkFixtureUpdate_value, shrinkFixtureUpdate_syntax,
+    shrinkFixtureUpdate_references, shrinkFixtureUpdate_length, shrinkFixtureUpdate_normalized,
+    shrinkFixtureUpdate_applied, blockedShrinkFixture_blockedIndex, Except.map, Except.mapError]
+
+private theorem unblockedShrinkFixture_succeeds : unblockedShrinkFixtureSucceeds = true := by
+  unfold unblockedShrinkFixtureSucceeds
+  simp [defineOwnProperty, defineArrayLength, unblockedShrinkFixtureHeap,
+    unblockedShrinkFixtureObject, get?, replace, shrinkFixtureUpdate_value,
+    shrinkFixtureUpdate_syntax, shrinkFixtureUpdate_references, shrinkFixtureUpdate_length,
+    shrinkFixtureUpdate_normalized, shrinkFixtureUpdate_applied,
+    unblockedShrinkFixture_noBlockedIndex, Except.map, Except.mapError]
+
 /-- The public blocked-shrink theorem has a concrete writable-to-nonwritable witness. -/
 private theorem defineOwnProperty_blocked_array_shrink_nonvacuous :
     ∃ next blocked,
@@ -8063,7 +8272,7 @@ private theorem defineOwnProperty_blocked_array_shrink_nonvacuous :
         ⟨.primitive (.number (arrayLengthNumber (blocked + 1))), false, false, false⟩)) ∧
       next.WellFormed := by
   set_option maxRecDepth 100000 in
-    have succeeds : blockedShrinkFixtureSucceeds = true := by native_decide
+    have succeeds := blockedShrinkFixture_succeeds
     cases run : blockedShrinkFixtureHeap.defineOwnProperty ⟨0⟩ lengthPropertyKey
         shrinkFixtureUpdate with
     | error fault => simp [blockedShrinkFixtureSucceeds, run] at succeeds
@@ -8076,7 +8285,7 @@ private theorem defineOwnProperty_blocked_array_shrink_nonvacuous :
               blockedShrinkFixtureHeap next ⟨0⟩ blockedShrinkFixtureObject ⟨4, true⟩
               shrinkFixtureUpdate shrinkFixtureUpdate .data (arrayLengthNumber 1) 1
               ⟨.primitive (.number (arrayLengthNumber 1)), false, false, false⟩
-              (by unfold WellFormed; native_decide) (by rfl) (by rfl) (by rfl) (by rfl)
+              blockedShrinkFixture_wellFormed (by rfl) (by rfl) (by rfl) (by rfl)
               (by rfl) (by rfl) (by rfl) (by decide) (by rfl) run
             rcases lifted with
               ⟨blocked, properties, finalObject, bound, blocker, higher, lower, strings, symbols,
@@ -8099,7 +8308,7 @@ private theorem defineOwnProperty_unblocked_array_shrink_nonvacuous :
         ⟨.primitive (.number (arrayLengthNumber 1)), false, false, false⟩)) ∧
       next.WellFormed := by
   set_option maxRecDepth 100000 in
-    have succeeds : unblockedShrinkFixtureSucceeds = true := by native_decide
+    have succeeds := unblockedShrinkFixture_succeeds
     cases run : unblockedShrinkFixtureHeap.defineOwnProperty ⟨0⟩ lengthPropertyKey
         shrinkFixtureUpdate with
     | error fault => simp [unblockedShrinkFixtureSucceeds, run] at succeeds
@@ -8112,7 +8321,7 @@ private theorem defineOwnProperty_unblocked_array_shrink_nonvacuous :
               unblockedShrinkFixtureHeap next ⟨0⟩ unblockedShrinkFixtureObject ⟨3, true⟩
               shrinkFixtureUpdate shrinkFixtureUpdate .data (arrayLengthNumber 1) 1
               ⟨.primitive (.number (arrayLengthNumber 1)), false, false, false⟩
-              (by unfold WellFormed; native_decide) (by rfl) (by rfl) (by rfl) (by rfl)
+              unblockedShrinkFixture_wellFormed (by rfl) (by rfl) (by rfl) (by rfl)
               (by rfl) (by rfl) (by rfl) (by decide) (by rfl) run
             rcases lifted with
               ⟨properties, finalObject, deleted, lower, strings, symbols, stringOrder, symbolOrder,
@@ -8146,6 +8355,24 @@ private def objectValueFixtureHeap : Heap :=
   .mk #[.mk OrderedProps.empty none true .ordinary,
     .mk OrderedProps.empty none true .ordinary] 0
 
+private theorem ordinaryMutationFixture_wellFormed : ordinaryMutationFixtureHeap.WellFormed := by
+  unfold WellFormed isWellFormed objectReferencesValid ordinaryMutationFixtureHeap
+  simp [functionSlotList, functionIdsSequential, functionCount, size] <;> decide
+
+private theorem arrayExtensionFixture_wellFormed : arrayExtensionFixtureHeap.WellFormed := by
+  unfold WellFormed isWellFormed objectReferencesValid arrayExtensionFixtureHeap
+  simp [functionSlotList, functionIdsSequential, functionCount, size, arraySlotsValid,
+    maxArrayLength] <;> decide
+
+private theorem wrapperMutationFixture_wellFormed : wrapperMutationFixtureHeap.WellFormed := by
+  unfold WellFormed isWellFormed objectReferencesValid wrapperMutationFixtureHeap
+  simp [functionSlotList, functionIdsSequential, functionCount, size,
+    primitiveWrapperSlotsValid, primitiveBoxable] <;> decide
+
+private theorem objectValueFixture_wellFormed : objectValueFixtureHeap.WellFormed := by
+  unfold WellFormed isWellFormed objectReferencesValid objectValueFixtureHeap
+  simp [functionSlotList, functionIdsSequential, functionCount, size] <;> decide
+
 private def operationReturns (expected : Bool)
     (operation : Except DefinePropertyFault (Bool × Heap)) : Bool :=
   match operation with
@@ -8158,7 +8385,10 @@ private theorem defineOwnProperty_ordinary_nonvacuous :
       (.string (JSString.ofLeanString "x")) publicMutationFixtureUpdate = .ok (true, next) ∧
       next.WellFormed := by
   have succeeds : operationReturns true (ordinaryMutationFixtureHeap.defineOwnProperty ⟨0⟩
-      (.string (JSString.ofLeanString "x")) publicMutationFixtureUpdate) = true := by native_decide
+      (.string (JSString.ofLeanString "x")) publicMutationFixtureUpdate) = true := by
+    simp [operationReturns, defineOwnProperty, ordinaryDefineValidated,
+      ordinaryMutationFixtureHeap, emptyProperties_lookup, get?, replace,
+      publicMutationFixtureUpdate] <;> decide
   cases run : ordinaryMutationFixtureHeap.defineOwnProperty ⟨0⟩
       (.string (JSString.ofLeanString "x")) publicMutationFixtureUpdate with
   | error fault => simp [operationReturns, run] at succeeds
@@ -8168,7 +8398,7 @@ private theorem defineOwnProperty_ordinary_nonvacuous :
       | false => simp [operationReturns, run] at succeeds
       | true =>
           exact ⟨next, rfl, defineOwnProperty_preserves_wellFormed _ _ _ _ _ _
-            (by unfold WellFormed; native_decide) run⟩
+            ordinaryMutationFixture_wellFormed run⟩
 
 /-- Public array-index extension has a witness covered by the general theorem. -/
 private theorem defineOwnProperty_array_extension_nonvacuous :
@@ -8176,7 +8406,10 @@ private theorem defineOwnProperty_array_extension_nonvacuous :
       (.string (PropertyKey.arrayIndexString 0)) publicMutationFixtureUpdate = .ok (true, next) ∧
       next.WellFormed := by
   have succeeds : operationReturns true (arrayExtensionFixtureHeap.defineOwnProperty ⟨0⟩
-      (.string (PropertyKey.arrayIndexString 0)) publicMutationFixtureUpdate) = true := by native_decide
+      (.string (PropertyKey.arrayIndexString 0)) publicMutationFixtureUpdate) = true := by
+    simp [operationReturns, defineOwnProperty, defineArrayIndex, ordinaryDefineValidated,
+      arrayExtensionFixtureHeap, emptyProperties_lookup, get?, replace,
+      publicMutationFixtureUpdate] <;> decide
   cases run : arrayExtensionFixtureHeap.defineOwnProperty ⟨0⟩
       (.string (PropertyKey.arrayIndexString 0)) publicMutationFixtureUpdate with
   | error fault => simp [operationReturns, run] at succeeds
@@ -8186,7 +8419,7 @@ private theorem defineOwnProperty_array_extension_nonvacuous :
       | false => simp [operationReturns, run] at succeeds
       | true =>
           exact ⟨next, rfl, defineOwnProperty_preserves_wellFormed _ _ _ _ _ _
-            (by unfold WellFormed; native_decide) run⟩
+            arrayExtensionFixture_wellFormed run⟩
 
 /-- Primitive-wrapper synthetic rejection and ordinary storage both instantiate the public theorem. -/
 private theorem defineOwnProperty_wrapper_nonvacuous :
@@ -8199,7 +8432,8 @@ private theorem defineOwnProperty_wrapper_nonvacuous :
   constructor
   · have succeeds : operationReturns false (wrapperMutationFixtureHeap.defineOwnProperty ⟨0⟩
         (.string (PropertyKey.arrayIndexString 0)) publicMutationFixtureUpdate) = true := by
-      native_decide
+      simp [operationReturns, defineOwnProperty, defineWrapperProperty,
+        wrapperMutationFixtureHeap, get?, publicMutationFixtureUpdate] <;> decide
     cases run : wrapperMutationFixtureHeap.defineOwnProperty ⟨0⟩
         (.string (PropertyKey.arrayIndexString 0)) publicMutationFixtureUpdate with
     | error fault => simp [operationReturns, run] at succeeds
@@ -8209,9 +8443,12 @@ private theorem defineOwnProperty_wrapper_nonvacuous :
         | true => simp [operationReturns, run] at succeeds
         | false =>
             exact ⟨next, rfl, defineOwnProperty_preserves_wellFormed _ _ _ _ _ _
-              (by unfold WellFormed; native_decide) run⟩
+              wrapperMutationFixture_wellFormed run⟩
   · have succeeds : operationReturns true (wrapperMutationFixtureHeap.defineOwnProperty ⟨0⟩
-        (.string (JSString.ofLeanString "x")) publicMutationFixtureUpdate) = true := by native_decide
+        (.string (JSString.ofLeanString "x")) publicMutationFixtureUpdate) = true := by
+      simp [operationReturns, defineOwnProperty, defineWrapperProperty, ordinaryDefineValidated,
+        wrapperMutationFixtureHeap, emptyProperties_lookup, get?, replace,
+        publicMutationFixtureUpdate] <;> decide
     cases run : wrapperMutationFixtureHeap.defineOwnProperty ⟨0⟩
         (.string (JSString.ofLeanString "x")) publicMutationFixtureUpdate with
     | error fault => simp [operationReturns, run] at succeeds
@@ -8221,7 +8458,7 @@ private theorem defineOwnProperty_wrapper_nonvacuous :
         | false => simp [operationReturns, run] at succeeds
         | true =>
             exact ⟨next, rfl, defineOwnProperty_preserves_wellFormed _ _ _ _ _ _
-              (by unfold WellFormed; native_decide) run⟩
+              wrapperMutationFixture_wellFormed run⟩
 
 /-- Object-valued public data-property creation has a reference-valid witness. -/
 private theorem createDataProperty_object_reference_nonvacuous :
@@ -8229,7 +8466,9 @@ private theorem createDataProperty_object_reference_nonvacuous :
       (.string (JSString.ofLeanString "peer")) (.object ⟨1⟩) = .ok (true, next) ∧
       next.WellFormed := by
   have succeeds : operationReturns true (objectValueFixtureHeap.createDataProperty ⟨0⟩
-      (.string (JSString.ofLeanString "peer")) (.object ⟨1⟩)) = true := by native_decide
+      (.string (JSString.ofLeanString "peer")) (.object ⟨1⟩)) = true := by
+    simp [operationReturns, createDataProperty, defineOwnProperty, ordinaryDefineValidated,
+      objectValueFixtureHeap, emptyProperties_lookup, get?, replace] <;> decide
   cases run : objectValueFixtureHeap.createDataProperty ⟨0⟩
       (.string (JSString.ofLeanString "peer")) (.object ⟨1⟩) with
   | error fault => simp [operationReturns, run] at succeeds
@@ -8239,13 +8478,13 @@ private theorem createDataProperty_object_reference_nonvacuous :
       | false => simp [operationReturns, run] at succeeds
       | true =>
           exact ⟨next, rfl, createDataProperty_preserves_wellFormed _ _ _ _ _ _
-            (by unfold WellFormed; native_decide) run⟩
+            objectValueFixture_wellFormed run⟩
 
 /-- A blocked false commit is covered directly by the result-oriented public theorem. -/
 private theorem defineOwnProperty_blocked_false_preservation_nonvacuous :
     ∃ next, blockedShrinkFixtureHeap.defineOwnProperty ⟨0⟩ lengthPropertyKey shrinkFixtureUpdate =
       .ok (false, next) ∧ next.WellFormed := by
-  have succeeds : blockedShrinkFixtureSucceeds = true := by native_decide
+  have succeeds := blockedShrinkFixture_succeeds
   cases run : blockedShrinkFixtureHeap.defineOwnProperty ⟨0⟩ lengthPropertyKey
       shrinkFixtureUpdate with
   | error fault => simp [blockedShrinkFixtureSucceeds, run] at succeeds
@@ -8255,7 +8494,7 @@ private theorem defineOwnProperty_blocked_false_preservation_nonvacuous :
       | true => simp [blockedShrinkFixtureSucceeds, run] at succeeds
       | false =>
            exact ⟨next, rfl, defineOwnProperty_preserves_wellFormed _ _ _ _ _ _
-             (by unfold WellFormed; native_decide) run⟩
+             blockedShrinkFixture_wellFormed run⟩
 
 private def prototypeFixtureObject (prototype : Option RefId) (extensible : Bool := true) :
     ObjectRecord := .mk OrderedProps.empty prototype extensible .ordinary
@@ -8272,13 +8511,22 @@ private def prototypeSetFixtureHeap : Heap :=
 private def prototypeFixedFixtureHeap : Heap :=
   .mk #[prototypeFixtureObject none false, prototypeFixtureObject none] 0
 
+private theorem prototypeFixture_wellFormed : prototypeFixtureHeap.WellFormed := by
+  unfold WellFormed isWellFormed objectReferencesValid prototypeFixtureHeap prototypeFixtureObject
+  simp [functionSlotList, functionIdsSequential, functionCount, size] <;> decide
+
+private theorem prototypeSetFixture_wellFormed : prototypeSetFixtureHeap.WellFormed := by
+  unfold WellFormed isWellFormed objectReferencesValid prototypeSetFixtureHeap
+    prototypeFixtureObject
+  simp [functionSlotList, functionIdsSequential, functionCount, size] <;> decide
+
 /-- Concrete witnesses cover successful parent and null assignment. -/
 private theorem setPrototypeOf_success_nonvacuous :
     prototypeFixtureHeap.setPrototypeOf ⟨0⟩ (some ⟨1⟩) =
         .ok (true, prototypeSetFixtureHeap) ∧ prototypeSetFixtureHeap.WellFormed ∧
       prototypeLinkedFixtureHeap.setPrototypeOf ⟨1⟩ none =
         .ok (true, prototypeFixtureHeap) ∧ prototypeFixtureHeap.WellFormed := by
-  refine ⟨rfl, by unfold WellFormed; native_decide, rfl, by unfold WellFormed; native_decide⟩
+  exact ⟨rfl, prototypeSetFixture_wellFormed, rfl, prototypeFixture_wellFormed⟩
 
 /-- Concrete witnesses cover unchanged success, nonextensible rejection, and cycle rejection. -/
 private theorem setPrototypeOf_branch_nonvacuous :
