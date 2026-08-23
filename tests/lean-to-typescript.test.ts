@@ -710,6 +710,25 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     }
   });
 
+  test('refuses a target that is pinned to a different exact Lean toolchain', () => {
+    const fixture = createLeanProjectFixture(
+      ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
+    );
+    try {
+      writeFileSync(join(fixture.projectRoot, 'lean-toolchain'), 'leanprover/lean4:v4.29.0\n');
+      expect(() =>
+        compileLeanToTypeScript({
+          projectRoot: fixture.projectRoot,
+          moduleName: 'Fixture',
+          sourcePath: fixture.sourcePath,
+          declarations: ['Fixture.decide'],
+        }),
+      ).toThrow('target and compiler Lean toolchains do not match exactly');
+    } finally {
+      fixture.dispose();
+    }
+  });
+
   test('generates byte-identical artifacts in independent locale-varied processes', () => {
     expect(compileInChild('C')).toBe(compileInChild('tr_TR.UTF-8'));
   });
