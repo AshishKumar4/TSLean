@@ -7,16 +7,20 @@
         "projectRoot": "lean",
         "module": "TSLean.Examples.Placement",
         "source": "lean/TSLean/Examples/Placement.lean",
-        "declarations": ["TSLean.Examples.Placement.choosePlacement"]
+        "declarations": [
+          "TSLean.Examples.Placement.choosePlacement"
+        ]
       },
-      "fragmentClosure": ["lean/TSLean/Examples/Placement.lean"],
+      "fragmentClosure": [
+        "lean/TSLean/Examples/Placement.lean"
+      ],
       "oracleOperation": {
         "command": "bunx vitest run tests/lean-to-typescript.test.ts",
         "selector": "generated decision agrees with Lean on the complete finite input domain",
         "verdict": "exactly-equal"
       },
       "generatedTarget": {
-        "source": "examples/lean-to-typescript/placement.generated.ts",
+        "source": "examples/lean-to-typescript/generated/TSLean/Examples/Placement.ts",
         "manifest": "examples/lean-to-typescript/placement.generated.manifest.json"
       },
       "runtimeAdapter": "examples/lean-to-typescript/placement.adapter.ts",
@@ -33,14 +37,16 @@
           "AgentCore.Facets.enforcementFloor"
         ]
       },
-      "fragmentClosure": ["lean/AgentCore/Facets/Enforcement.lean"],
+      "fragmentClosure": [
+        "lean/AgentCore/Facets/Enforcement.lean"
+      ],
       "oracleOperation": {
         "command": "bunx vitest run tests/lean-to-typescript.test.ts",
         "selector": "generated enforcement floor agrees with Lean on the complete finite input domain",
         "verdict": "exactly-equal"
       },
       "generatedTarget": {
-        "source": "examples/agent-core/facets/enforcement.generated.ts",
+        "source": "examples/agent-core/facets/generated/AgentCore/Facets/Enforcement.ts",
         "manifest": "examples/agent-core/facets/enforcement.generated.manifest.json"
       },
       "boundsArtifact": "spec/lean-to-typescript/enforcement.bounds.json"

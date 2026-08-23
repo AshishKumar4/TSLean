@@ -2,10 +2,11 @@
   "schemaVersion": 3,
   "semantic": {
     "fragmentVersion": "tslean-structural-first-order-v4",
-    "entryModule": "AgentCore.Facets.Enforcement",
+    "entryModule": "TSLean.Examples.Package.Decision",
     "declarations": [
-      "AgentCore.Facets.claimHonorsEnforcementFloor",
-      "AgentCore.Facets.enforcementFloor"
+      "TSLean.Examples.Package.Policy.effective",
+      "TSLean.Examples.Package.decideAccess",
+      "TSLean.Examples.Package.grantedCapability"
     ],
     "leanToolchain": {
       "identity": "leanprover/lean4:v4.29.0",
@@ -14,190 +15,158 @@
     },
     "modules": [
       {
-        "path": "AgentCore/Facets/Enforcement.ts",
-        "leanModule": "AgentCore.Facets.Enforcement",
-        "imports": [],
+        "path": "TSLean/Examples/Package/Capability.ts",
+        "leanModule": "TSLean.Examples.Package.Capability",
+        "imports": [
+          "tslean-runtime.ts"
+        ],
         "declarations": [
           {
-            "declaration": "AgentCore.Facets.EnforcementTier",
-            "emitted": "EnforcementTier",
-            "line": 18,
+            "declaration": "TSLean.Examples.Package.Capability",
+            "emitted": "Capability",
+            "line": 20,
             "span": {
-              "source": "AgentCore/Facets/Enforcement.lean",
-              "startLine": 21,
+              "source": "TSLean/Examples/Package/Capability.lean",
+              "startLine": 3,
               "startColumn": 0,
-              "endLine": 29,
+              "endLine": 8,
               "endColumn": 28
             }
           },
           {
-            "declaration": "AgentCore.Facets.Impact",
-            "emitted": "Impact",
+            "declaration": "TSLean.Examples.Package.Grant",
+            "emitted": "Grant",
             "line": 25,
             "span": {
-              "source": "AgentCore/Facets/Enforcement.lean",
-              "startLine": 31,
+              "source": "TSLean/Examples/Package/Capability.lean",
+              "startLine": 10,
               "startColumn": 0,
-              "endLine": 42,
+              "endLine": 15,
               "endColumn": 28
             }
           },
           {
-            "declaration": "AgentCore.Facets.admitsDirect",
-            "emitted": "admitsDirect",
-            "line": 31,
+            "declaration": "TSLean.Examples.Package.Grant.allows",
+            "emitted": "allows",
+            "line": 25,
             "span": {
-              "source": "AgentCore/Facets/Enforcement.lean",
-              "startLine": 44,
+              "source": "TSLean/Examples/Package/Capability.lean",
+              "startLine": 17,
               "startColumn": 0,
-              "endLine": 56,
-              "endColumn": 24
-            }
-          },
-          {
-            "declaration": "AgentCore.Facets.claimHonorsEnforcementFloor",
-            "emitted": "claimHonorsEnforcementFloor",
-            "line": 49,
-            "span": {
-              "source": "AgentCore/Facets/Enforcement.lean",
-              "startLine": 76,
-              "startColumn": 0,
-              "endLine": 87,
-              "endColumn": 69
-            }
-          },
-          {
-            "declaration": "AgentCore.Facets.enforcementFloor",
-            "emitted": "enforcementFloor",
-            "line": 61,
-            "span": {
-              "source": "AgentCore/Facets/Enforcement.lean",
-              "startLine": 58,
-              "startColumn": 0,
-              "endLine": 64,
-              "endColumn": 93
-            }
-          },
-          {
-            "declaration": "AgentCore.Facets.honorsFloorUnder",
-            "emitted": "honorsFloorUnder",
-            "line": 40,
-            "span": {
-              "source": "AgentCore/Facets/Enforcement.lean",
-              "startLine": 66,
-              "startColumn": 0,
-              "endLine": 74,
-              "endColumn": 68
+              "endLine": 22,
+              "endColumn": 35
             }
           }
         ],
-        "bodySha256": "sha256:b3221ed478a774ea669388799a9b2e03566d3734b232befcdc258b7925d3d309",
-        "sourceMapSha256": "sha256:f9f65ebe6693025837b1b6b05d2d21938de262b2a10bd8b01fa95b20e70ee441"
+        "bodySha256": "sha256:e6d5a2c625b5907ff47a9ba962abe0f385f6983916634b8ca8e24817472cb0eb",
+        "sourceMapSha256": "sha256:879d83810335376ab84f6b8afbeabc9f015983b17a62dbe4e7833d1822d7c24d"
+      },
+      {
+        "path": "TSLean/Examples/Package/Decision.ts",
+        "leanModule": "TSLean.Examples.Package.Decision",
+        "imports": [
+          "TSLean/Examples/Package/Capability.ts",
+          "TSLean/Examples/Package/Policy.ts"
+        ],
+        "declarations": [
+          {
+            "declaration": "TSLean.Examples.Package.Decision",
+            "emitted": "Decision",
+            "line": 21,
+            "span": {
+              "source": "TSLean/Examples/Package/Decision.lean",
+              "startLine": 5,
+              "startColumn": 0,
+              "endLine": 9,
+              "endColumn": 28
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Package.decideAccess",
+            "emitted": "decideAccess",
+            "line": 26,
+            "span": {
+              "source": "TSLean/Examples/Package/Decision.lean",
+              "startLine": 11,
+              "startColumn": 0,
+              "endLine": 13,
+              "endColumn": 83
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Package.grantedCapability",
+            "emitted": "grantedCapability",
+            "line": 33,
+            "span": {
+              "source": "TSLean/Examples/Package/Decision.lean",
+              "startLine": 15,
+              "startColumn": 0,
+              "endLine": 17,
+              "endColumn": 70
+            }
+          }
+        ],
+        "bodySha256": "sha256:892c1eb3c52d5a13fc427e3c616ad7ffca1fa0a2bc69f6c8640699da5bbaa982",
+        "sourceMapSha256": "sha256:2cfcf0b81de41315b8d8f2940b2eaf02c0e8f3e8e7cc0ae7e16d95eb6429ac71"
+      },
+      {
+        "path": "TSLean/Examples/Package/Policy.ts",
+        "leanModule": "TSLean.Examples.Package.Policy",
+        "imports": [
+          "TSLean/Examples/Package/Capability.ts",
+          "tslean-runtime.ts"
+        ],
+        "declarations": [
+          {
+            "declaration": "TSLean.Examples.Package.Policy",
+            "emitted": "Policy",
+            "line": 21,
+            "span": {
+              "source": "TSLean/Examples/Package/Policy.lean",
+              "startLine": 5,
+              "startColumn": 0,
+              "endLine": 10,
+              "endColumn": 28
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Package.Policy.consistent",
+            "emitted": "consistent",
+            "line": 21,
+            "span": {
+              "source": "TSLean/Examples/Package/Policy.lean",
+              "startLine": 17,
+              "startColumn": 0,
+              "endLine": 19,
+              "endColumn": 38
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Package.Policy.effective",
+            "emitted": "effective",
+            "line": 21,
+            "span": {
+              "source": "TSLean/Examples/Package/Policy.lean",
+              "startLine": 12,
+              "startColumn": 0,
+              "endLine": 15,
+              "endColumn": 21
+            }
+          }
+        ],
+        "bodySha256": "sha256:3347ef4ce7605c44f14727df96f60733648c75e2cdcbdef8bf127e210b72f93c",
+        "sourceMapSha256": "sha256:a45bbd4f7b031cb254ea2f7e2a181f97b2ac88e3c79b3e3b246da3389412d3dc"
+      },
+      {
+        "path": "tslean-runtime.ts",
+        "leanModule": "",
+        "imports": [],
+        "declarations": [],
+        "bodySha256": "sha256:2c85d01f5dff8e897739629008278283b66717688250613c04a663980704293a",
+        "sourceMapSha256": ""
       }
     ],
     "closure": [
-      {
-        "declaration": "AgentCore.Facets.EnforcementTier",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "emitted",
-        "reason": ""
-      },
-      {
-        "declaration": "AgentCore.Facets.EnforcementTier.direct",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "erased",
-        "reason": "constructor lowered with its inductive type"
-      },
-      {
-        "declaration": "AgentCore.Facets.EnforcementTier.mediated",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "erased",
-        "reason": "constructor lowered with its inductive type"
-      },
-      {
-        "declaration": "AgentCore.Facets.Impact",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "emitted",
-        "reason": ""
-      },
-      {
-        "declaration": "AgentCore.Facets.Impact.administer",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "erased",
-        "reason": "constructor lowered with its inductive type"
-      },
-      {
-        "declaration": "AgentCore.Facets.Impact.casesOn",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "erased",
-        "reason": "generated helper reached only through erased scaffolding"
-      },
-      {
-        "declaration": "AgentCore.Facets.Impact.delegate",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "erased",
-        "reason": "constructor lowered with its inductive type"
-      },
-      {
-        "declaration": "AgentCore.Facets.Impact.execute",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "erased",
-        "reason": "constructor lowered with its inductive type"
-      },
-      {
-        "declaration": "AgentCore.Facets.Impact.externalSend",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "erased",
-        "reason": "constructor lowered with its inductive type"
-      },
-      {
-        "declaration": "AgentCore.Facets.Impact.mutate",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "erased",
-        "reason": "constructor lowered with its inductive type"
-      },
-      {
-        "declaration": "AgentCore.Facets.Impact.observe",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "erased",
-        "reason": "constructor lowered with its inductive type"
-      },
-      {
-        "declaration": "AgentCore.Facets.Impact.rec",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "erased",
-        "reason": "recursor"
-      },
-      {
-        "declaration": "AgentCore.Facets.admitsDirect",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "emitted",
-        "reason": ""
-      },
-      {
-        "declaration": "AgentCore.Facets.claimHonorsEnforcementFloor",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "emitted",
-        "reason": ""
-      },
-      {
-        "declaration": "AgentCore.Facets.enforcementFloor",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "emitted",
-        "reason": ""
-      },
-      {
-        "declaration": "AgentCore.Facets.honorsFloorUnder",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "emitted",
-        "reason": ""
-      },
-      {
-        "declaration": "AgentCore.Facets.instReprImpact.repr.match_1",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "erased",
-        "reason": "match auxiliary inlined at its application sites"
-      },
       {
         "declaration": "Bool",
         "module": "Init.Prelude",
@@ -248,18 +217,6 @@
       },
       {
         "declaration": "Bool.noConfusionType",
-        "module": "Init.Prelude",
-        "role": "runtime-boundary",
-        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
-      },
-      {
-        "declaration": "Bool.not",
-        "module": "Init.Prelude",
-        "role": "runtime-boundary",
-        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
-      },
-      {
-        "declaration": "Bool.or",
         "module": "Init.Prelude",
         "role": "runtime-boundary",
         "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
@@ -349,6 +306,24 @@
         "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
       },
       {
+        "declaration": "Option",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Option.none",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Option.some",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
         "declaration": "PUnit",
         "module": "Init.Prelude",
         "role": "runtime-boundary",
@@ -361,6 +336,156 @@
         "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
       },
       {
+        "declaration": "TSLean.Examples.Package.Capability",
+        "module": "TSLean.Examples.Package.Capability",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Capability.administer",
+        "module": "TSLean.Examples.Package.Capability",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Capability.casesOn",
+        "module": "TSLean.Examples.Package.Capability",
+        "role": "erased",
+        "reason": "generated helper reached only through erased scaffolding"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Capability.read",
+        "module": "TSLean.Examples.Package.Capability",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Capability.rec",
+        "module": "TSLean.Examples.Package.Capability",
+        "role": "erased",
+        "reason": "recursor"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Capability.write",
+        "module": "TSLean.Examples.Package.Capability",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Decision",
+        "module": "TSLean.Examples.Package.Decision",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Decision.allow",
+        "module": "TSLean.Examples.Package.Decision",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Decision.deny",
+        "module": "TSLean.Examples.Package.Decision",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Grant",
+        "module": "TSLean.Examples.Package.Capability",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Grant.administer",
+        "module": "TSLean.Examples.Package.Capability",
+        "role": "erased",
+        "reason": "structure projection lowered as field access"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Grant.allows",
+        "module": "TSLean.Examples.Package.Capability",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Grant.mk",
+        "module": "TSLean.Examples.Package.Capability",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Grant.read",
+        "module": "TSLean.Examples.Package.Capability",
+        "role": "erased",
+        "reason": "structure projection lowered as field access"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Grant.write",
+        "module": "TSLean.Examples.Package.Capability",
+        "role": "erased",
+        "reason": "structure projection lowered as field access"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Policy",
+        "module": "TSLean.Examples.Package.Policy",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Policy.ceiling",
+        "module": "TSLean.Examples.Package.Policy",
+        "role": "erased",
+        "reason": "structure projection lowered as field access"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Policy.consistent",
+        "module": "TSLean.Examples.Package.Policy",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Policy.effective",
+        "module": "TSLean.Examples.Package.Policy",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Policy.frozen",
+        "module": "TSLean.Examples.Package.Policy",
+        "role": "erased",
+        "reason": "structure projection lowered as field access"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Policy.granted",
+        "module": "TSLean.Examples.Package.Policy",
+        "role": "erased",
+        "reason": "structure projection lowered as field access"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.Policy.mk",
+        "module": "TSLean.Examples.Package.Policy",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Package.decideAccess",
+        "module": "TSLean.Examples.Package.Decision",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Package.grantedCapability",
+        "module": "TSLean.Examples.Package.Decision",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Package.instReprCapability.repr.match_1",
+        "module": "TSLean.Examples.Package.Capability",
+        "role": "erased",
+        "reason": "match auxiliary inlined at its application sites"
+      },
+      {
         "declaration": "Unit",
         "module": "Init.Prelude",
         "role": "runtime-boundary",
@@ -368,12 +493,6 @@
       },
       {
         "declaration": "Unit.unit",
-        "module": "Init.Prelude",
-        "role": "runtime-boundary",
-        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
-      },
-      {
-        "declaration": "cond.match_1",
         "module": "Init.Prelude",
         "role": "runtime-boundary",
         "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
@@ -505,8 +624,18 @@
       },
       {
         "kind": "lean-source",
-        "identity": "source:AgentCore.Facets.Enforcement",
-        "sha256": "sha256:0cd11685988721d43ef4181e09ee42c92ca94be80868b0a8dd9724f1da5663a5"
+        "identity": "source:TSLean.Examples.Package.Capability",
+        "sha256": "sha256:7faa46c5acf6e5fc0ef9e72565d2dbbf700e9e9547ab62aa49a791c90e55f55e"
+      },
+      {
+        "kind": "lean-source",
+        "identity": "source:TSLean.Examples.Package.Decision",
+        "sha256": "sha256:5546959aae9b5458266d2912d8783dc52dcf96f12a83b7958507261bf260c7e6"
+      },
+      {
+        "kind": "lean-source",
+        "identity": "source:TSLean.Examples.Package.Policy",
+        "sha256": "sha256:bc5b522774323c41b8b948abfdbdc6afe326fc59cb884be33884a72e137f4127"
       },
       {
         "kind": "lean-source",
@@ -529,9 +658,9 @@
         "sha256": "sha256:651c8accb402b0c071cd336e9d3dc0a55516b1bfb434ddc4801f14936785b1d2"
       }
     ],
-    "inputClosureSha256": "sha256:09dfc485d900b9bac1cfda472950779a490de2c7ceb6edab4bb56e5648396a18",
-    "semanticIrSha256": "sha256:4f2bf513f7e5dbbaf2454df7dff787650b6d2bd56d3df85b03b0461798d5978a",
-    "generatedBodySha256": "sha256:f332a39a82fbe097075c94b2e9b0d36b0b5abd37cca11aef16a803531a6821fc"
+    "inputClosureSha256": "sha256:bbe0c3ac17940de67e35099511cabdc4f18b07ee3a7e0b679264081097f22ea6",
+    "semanticIrSha256": "sha256:506ca7bc62f2597f467a5f15150a77335e1af01c6eb9c2f6a3ef88c46198db7d",
+    "generatedBodySha256": "sha256:0c65bce36253e04e6ae09e2338a917657a1c3711a8f9efc700d0e4e5aa90b5b9"
   },
   "environment": {
     "runtime": "node:v22.22.3",
@@ -555,11 +684,6 @@
       },
       {
         "kind": "lean-module",
-        "identity": "module:AgentCore.Facets.Enforcement",
-        "sha256": "sha256:c0d0907ee949bdf810d9d8f0f7dea55643e07369b38ef4d4766fad0b20e9b318"
-      },
-      {
-        "kind": "lean-module",
         "identity": "module:Init",
         "sha256": "sha256:7ccac48ef26289852ecb686826d9e0ce42f3ceb33ba7bdff960c38fb3d9a00c5"
       },
@@ -567,6 +691,21 @@
         "kind": "lean-module",
         "identity": "module:Lean",
         "sha256": "sha256:d6e35ad9eb0cf5a1b88fb9e26e131ddd84069baf67dc2f6f0d0ba7045e287e93"
+      },
+      {
+        "kind": "lean-module",
+        "identity": "module:TSLean.Examples.Package.Capability",
+        "sha256": "sha256:de4697a674bb414591f83eb6ce84551e8f7863c7d7038222a1a369c4efa1e9d4"
+      },
+      {
+        "kind": "lean-module",
+        "identity": "module:TSLean.Examples.Package.Decision",
+        "sha256": "sha256:a72e1707cf292b5567cc857498de3062126b1ee159106f2e704c1b52c9fc44b4"
+      },
+      {
+        "kind": "lean-module",
+        "identity": "module:TSLean.Examples.Package.Policy",
+        "sha256": "sha256:93fdc1ee5c72eed4eaf07f92e357649424aebac686955b477dcefabb4625bc67"
       },
       {
         "kind": "lean-module",
@@ -1194,6 +1333,6 @@
         "sha256": "sha256:bb6ee7e709ae60426e30b8d393df4d939ee61407794b4f053ce6338d6eaa8c63"
       }
     ],
-    "inputClosureSha256": "sha256:2e5bece74294a3ec098721056aeaf616d5afc47d0e3d6cbc35451b33e6b08121"
+    "inputClosureSha256": "sha256:10bdb137ccb0b6ee7596fecda608e2c9c838200b14fed3f66245bd1117703a3a"
   }
 }

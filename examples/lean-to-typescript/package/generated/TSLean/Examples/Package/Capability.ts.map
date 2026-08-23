@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "file": "Capability.ts",
+  "sourceRoot": "",
+  "sources": [
+    "TSLean/Examples/Package/Capability.lean"
+  ],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;;AAEA;;;;;AAOA"
+}

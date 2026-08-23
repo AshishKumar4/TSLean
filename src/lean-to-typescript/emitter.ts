@@ -1,8 +1,11 @@
 import ts from 'typescript';
 import { createHash } from 'node:crypto';
 import type {
-  LeanToTypeScriptArtifact,
   LeanToTypeScriptEnvironmentAttestation,
+  LeanToTypeScriptGeneratedDeclaration,
+  LeanToTypeScriptModuleArtifact,
+  LeanToTypeScriptModuleIdentity,
+  LeanToTypeScriptPackage,
   LeanToTypeScriptSemanticIdentity,
 } from './artifact.js';
 import type {
@@ -15,48 +18,383 @@ import type {
 } from './ir.js';
 import {
   canonicalManifest,
+  generatedPackageDigest,
   LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION,
+  PROVENANCE_HEADER_LINES,
   provenanceHeader,
-  verifyLeanToTypeScriptArtifact,
+  verifyLeanToTypeScriptPackage,
 } from './manifest.js';
-import { attributeUnsupportedFragment } from './fragment.js';
+import { attributeUnsupportedFragment, UnsupportedLeanFragmentError } from './fragment.js';
 import { compareCodePoints } from './ordering.js';
+import {
+  declaredNames,
+  exportedFunction,
+  generatedModulePath,
+  groupByLeanModule,
+  importStatement,
+  isExportedStatement,
+  LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH,
+  moduleImports,
+} from './package-layout.js';
 
 export interface LeanToTypeScriptProvenance {
-  readonly semantic: Omit<LeanToTypeScriptSemanticIdentity, 'generatedBodySha256'>;
+  readonly semantic: Omit<LeanToTypeScriptSemanticIdentity, 'generatedBodySha256' | 'modules' | 'closure'>;
   readonly environment: LeanToTypeScriptEnvironmentAttestation;
+  /** Each Lean module's source path, relative to the target project root. */
+  readonly sources: ReadonlyMap<string, string>;
 }
 
-export function emitTypeScript(
+/** One generated module while it is being assembled. */
+interface ModuleDraft {
+  readonly leanModule: string;
+  readonly path: string;
+  readonly statements: ts.Statement[];
+  /** Lean declaration name to the index of the statement that carries it. */
+  readonly carriers: Map<string, number>;
+  /**
+   * Statement index to the one declaration that produced it. A dot-notation method is carried by
+   * its receiver's statement, so several names share an index and only one of them starts a line.
+   */
+  readonly primary: Map<number, string>;
+}
+
+/**
+ * One Lean package becomes one TypeScript source tree: a file per Lean module at the path its
+ * module name spells, cross-module references resolved as relative ESM imports, and the shared
+ * boundary validators lifted into one runtime module as soon as a second module exists.
+ */
+export function emitTypeScriptPackage(
   program: LeanSemanticProgram,
   provenance: LeanToTypeScriptProvenance,
-): LeanToTypeScriptArtifact {
+): LeanToTypeScriptPackage {
   const context = planProgram(program);
-  const statements = orderedDeclarations(program).flatMap((declaration) => {
-    try {
-      return emitDeclaration(declaration, context);
-    } catch (error: unknown) {
-      throw attributeUnsupportedFragment(error, declaration.name);
-    }
-  });
-  const file = ts.factory.updateSourceFile(
-    ts.createSourceFile('generated.ts', '', ts.ScriptTarget.Latest, false, ts.ScriptKind.TS),
-    [...statements, ...emitPrelude(context)],
-  );
-  // One blank line between top-level declarations: the printer emits none, and a formatter
-  // preserves blank lines but never introduces them.
-  const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
-  const body = `${file.statements
-    .map((statement) => printer.printNode(ts.EmitHint.Unspecified, statement, file))
-    .join('\n\n')}\n`;
+  const drafts = emitModuleDeclarations(program, context);
+  appendGeneratedDecoders(drafts, context);
+  const runtime = placeBoundaryPrimitives(drafts, context);
+  const printed = printPackage([...drafts, ...(runtime === undefined ? [] : [runtime])], program, provenance);
   const manifest = canonicalManifest({
     schemaVersion: LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION,
-    semantic: { ...provenance.semantic, generatedBodySha256: sha256(body) },
+    semantic: {
+      ...provenance.semantic,
+      modules: printed.map((module) => module.identity),
+      closure: program.closure,
+      generatedBodySha256: generatedPackageDigest(printed.map((module) => module.identity)),
+    },
     environment: provenance.environment,
   });
-  const artifact = { code: `${provenanceHeader(manifest)}${body}`, manifest };
-  verifyLeanToTypeScriptArtifact(artifact);
-  return artifact;
+  const emitted: LeanToTypeScriptPackage = {
+    modules: printed.map((module): LeanToTypeScriptModuleArtifact => {
+      const header = provenanceHeader(manifest, module.identity.path);
+      return { path: module.identity.path, code: `${header}${module.body}`, sourceMap: module.sourceMap };
+    }),
+    manifest,
+  };
+  verifyLeanToTypeScriptPackage(emitted);
+  return emitted;
+}
+
+function emitModuleDeclarations(program: LeanSemanticProgram, context: EmitContext): readonly ModuleDraft[] {
+  const drafts: ModuleDraft[] = [];
+  for (const [leanModule, declarations] of groupByLeanModule(orderedDeclarations(program))) {
+    const draft: ModuleDraft = {
+      leanModule,
+      path: generatedModulePath(leanModule),
+      statements: [],
+      carriers: new Map(),
+      primary: new Map(),
+    };
+    for (const declaration of declarations) {
+      let produced: readonly ts.Statement[];
+      try {
+        produced = emitDeclaration(declaration, context);
+      } catch (error: unknown) {
+        throw attributeUnsupportedFragment(error, declaration.name);
+      }
+      // A dot-notation method is emitted inside its receiver's class, so it has no statement of
+      // its own; `planProgram` already refused one whose receiver lives in another module.
+      if (produced.length === 0) continue;
+      draft.primary.set(draft.statements.length, declaration.name);
+      draft.carriers.set(declaration.name, draft.statements.length);
+      for (const method of context.types.get(declaration.name)?.methods ?? []) {
+        draft.carriers.set(method.declaration.name, draft.statements.length);
+      }
+      draft.statements.push(...produced);
+    }
+    drafts.push(draft);
+  }
+  return drafts;
+}
+
+/**
+ * The generated decoders, each in the module that declares the type it reads. A decoder reached
+ * only through another decoder is discovered when that one is built, so the set is closed by
+ * repeating until no new decoder appears.
+ */
+function appendGeneratedDecoders(drafts: readonly ModuleDraft[], context: EmitContext): void {
+  const owners = new Map(drafts.map((draft) => [draft.leanModule, draft]));
+  const built = new Map<string, { readonly leanName: string; readonly statement: ts.Statement }[]>();
+  const emitted = new Set<string>();
+  const decoders = [...context.prelude.decoders].sort(([left], [right]) => compareCodePoints(left, right));
+  for (let progressed = true; progressed;) {
+    progressed = false;
+    for (const [leanName, name] of decoders) {
+      if (!context.used.has(name) || emitted.has(name)) continue;
+      emitted.add(name);
+      const declaration = context.types.get(leanName)?.declaration;
+      if (declaration === undefined) throw new TypeError(`missing generated decoder owner for ${leanName}`);
+      const owner = owners.get(declaration.module);
+      if (owner === undefined) throw new TypeError(`generated decoder for ${leanName} has no module`);
+      const existing = built.get(declaration.module);
+      const entry = { leanName, statement: emitStructuralDecoder(leanName, name, context) };
+      if (existing === undefined) built.set(declaration.module, [entry]);
+      else existing.push(entry);
+      progressed = true;
+    }
+  }
+  for (const [leanModule, entries] of built) {
+    const owner = owners.get(leanModule);
+    if (owner === undefined) throw new TypeError(`generated decoders have no module: ${leanModule}`);
+    for (const entry of [...entries].sort((left, right) => compareCodePoints(left.leanName, right.leanName))) {
+      owner.statements.push(entry.statement);
+    }
+  }
+}
+
+/**
+ * The boundary type and its primitive validators. A package with one module keeps them in that
+ * module; a package with more shares one runtime module, because duplicating them per file would
+ * give the same boundary two implementations.
+ */
+function placeBoundaryPrimitives(drafts: readonly ModuleDraft[], context: EmitContext): ModuleDraft | undefined {
+  const primitives = emitBoundaryPrimitives(context);
+  if (primitives.length === 0) return undefined;
+  const [only] = drafts;
+  if (drafts.length === 1 && only !== undefined) {
+    only.statements.push(...primitives);
+    return undefined;
+  }
+  // Export promotion is left to the package pass, so the runtime module exports exactly the
+  // helpers another module actually imports and keeps the rest private.
+  return {
+    leanModule: '',
+    path: LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH,
+    statements: [...primitives],
+    carriers: new Map(),
+    primary: new Map(),
+  };
+}
+
+interface PrintedModule {
+  readonly identity: LeanToTypeScriptModuleIdentity;
+  readonly body: string;
+  readonly sourceMap: { readonly path: string; readonly contents: string } | undefined;
+}
+
+function printPackage(
+  drafts: readonly ModuleDraft[],
+  program: LeanSemanticProgram,
+  provenance: LeanToTypeScriptProvenance,
+): readonly PrintedModule[] {
+  const owners = new Map<string, string>();
+  const typeOnly = new Set<string>();
+  for (const draft of drafts) {
+    for (const name of declaredNames(draft.statements)) owners.set(name, draft.path);
+    for (const statement of draft.statements) {
+      if (!ts.isInterfaceDeclaration(statement) && !ts.isTypeAliasDeclaration(statement)) continue;
+      typeOnly.add(statement.name.text);
+    }
+  }
+  const imports = new Map(drafts.map((draft) => [draft.path, moduleImports(draft.path, draft.statements, owners)]));
+  const required = new Set([...imports.values()].flatMap((entries) => entries.flatMap((entry) => entry.names)));
+  const declarations = new Map(program.declarations.map((declaration) => [declaration.name, declaration]));
+  return drafts.map((draft) => {
+    const entries = imports.get(draft.path) ?? [];
+    const statements = draft.statements.map((statement) =>
+      ts.isFunctionDeclaration(statement) && statement.name !== undefined && required.has(statement.name.text)
+        ? exportedFunction(statement)
+        : statement,
+    );
+    assertImportsAreExported(draft, entries, drafts, owners);
+    const body = printModuleBody(
+      entries.map((entry) => importStatement(entry, typeOnly)),
+      statements,
+    );
+    const generated = moduleDeclarations(draft, declarations, body.lines, provenance);
+    const sourceMap = buildSourceMap(draft, generated, provenance);
+    return {
+      identity: {
+        path: draft.path,
+        leanModule: draft.leanModule,
+        imports: entries.map((entry) => resolvedImportPath(draft.path, entry.specifier)).sort(compareCodePoints),
+        declarations: generated,
+        bodySha256: sha256(body.text),
+        sourceMapSha256: sourceMap === undefined ? '' : sha256(sourceMap.contents),
+      },
+      body: body.text,
+      sourceMap,
+    };
+  });
+}
+
+/**
+ * Every imported name is exported by the module that owns it. A generated helper is promoted to
+ * an export exactly where another module names it, so a reference that cannot be exported is a
+ * compiler defect and is refused rather than emitted as a broken import.
+ */
+function assertImportsAreExported(
+  draft: ModuleDraft,
+  entries: readonly { readonly specifier: string; readonly names: readonly string[] }[],
+  drafts: readonly ModuleDraft[],
+  owners: ReadonlyMap<string, string>,
+): void {
+  for (const entry of entries) {
+    for (const name of entry.names) {
+      const path = owners.get(name);
+      const owner = drafts.find((candidate) => candidate.path === path);
+      if (owner === undefined) throw new TypeError(`imported name ${name} has no owning generated module`);
+      const exported = owner.statements.some(
+        (statement) =>
+          declaredNames([statement]).includes(name) &&
+          (isExportedStatement(statement) || (ts.isFunctionDeclaration(statement) && statement.name?.text === name)),
+      );
+      if (!exported) {
+        throw new UnsupportedLeanFragmentError(
+          draft.leanModule,
+          `generated module ${draft.path} refers to ${name}, which ${owner.path} cannot export`,
+        );
+      }
+    }
+  }
+}
+
+function resolvedImportPath(fromPath: string, specifier: string): string {
+  const segments = fromPath.split('/').slice(0, -1);
+  for (const segment of specifier.split('/')) {
+    if (segment === '.') continue;
+    if (segment === '..') segments.pop();
+    else segments.push(segment);
+  }
+  const last = segments.pop();
+  if (last === undefined) throw new TypeError(`import specifier resolves to nothing: ${specifier}`);
+  return [...segments, last.replace(/\.js$/u, '.ts')].join('/');
+}
+
+/**
+ * The printed module body and the 1-based line each declaration statement starts on. Imports are
+ * printed as one adjacent block; declarations are separated by a blank line, which the printer
+ * never emits on its own and a formatter never removes.
+ */
+function printModuleBody(
+  imports: readonly ts.Statement[],
+  statements: readonly ts.Statement[],
+): { readonly text: string; readonly lines: readonly number[] } {
+  const file = ts.createSourceFile('generated.ts', '', ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
+  const render = (statement: ts.Statement): string => printer.printNode(ts.EmitHint.Unspecified, statement, file);
+  const importText = imports.map(render).join('\n');
+  const rendered = statements.map(render);
+  const lines: number[] = [];
+  let line = importText === '' ? 1 : importText.split('\n').length + 2;
+  for (const text of rendered) {
+    lines.push(line);
+    line += text.split('\n').length + 1;
+  }
+  const declarationText = `${rendered.join('\n\n')}\n`;
+  return { text: importText === '' ? declarationText : `${importText}\n\n${declarationText}`, lines };
+}
+
+function moduleDeclarations(
+  draft: ModuleDraft,
+  declarations: ReadonlyMap<string, LeanDeclaration>,
+  lines: readonly number[],
+  provenance: LeanToTypeScriptProvenance,
+): readonly LeanToTypeScriptGeneratedDeclaration[] {
+  const source = provenance.sources.get(draft.leanModule);
+  if (draft.leanModule !== '' && source === undefined) {
+    throw new TypeError(`no Lean source is recorded for module ${draft.leanModule}`);
+  }
+  return [...draft.carriers]
+    .sort(([left], [right]) => compareCodePoints(left, right))
+    .map(([name, index]): LeanToTypeScriptGeneratedDeclaration => {
+      const declaration = declarations.get(name);
+      const line = lines[index];
+      if (declaration === undefined || line === undefined) {
+        throw new TypeError(`generated declaration ${name} has no recorded position`);
+      }
+      return {
+        declaration: name,
+        emitted: requiredDeclarationName(new Map([[name, localName(name)]]), name),
+        line: PROVENANCE_HEADER_LINES + line,
+        span: { source: source ?? '', ...declaration.span },
+      };
+    });
+}
+
+/**
+ * A declaration-level source map. The emitter builds a fresh TypeScript AST from a semantic IR
+ * with no token positions, so a finer correspondence than "this generated declaration came from
+ * that Lean declaration" would be invented rather than measured. One segment per generated line,
+ * from the declaration that starts it: a dot-notation method shares its receiver's line and is
+ * recorded in the manifest instead, where it does not have to compete for a position.
+ */
+function buildSourceMap(
+  draft: ModuleDraft,
+  declarations: readonly LeanToTypeScriptGeneratedDeclaration[],
+  provenance: LeanToTypeScriptProvenance,
+): { readonly path: string; readonly contents: string } | undefined {
+  const source = provenance.sources.get(draft.leanModule);
+  if (source === undefined) return undefined;
+  const primary = new Set(draft.primary.values());
+  const ordered = declarations
+    .filter((declaration) => primary.has(declaration.declaration))
+    .sort((left, right) => left.line - right.line);
+  if (ordered.length === 0) return undefined;
+  const groups: string[] = [];
+  let previousLine = 0;
+  let sourceLine = 0;
+  let sourceColumn = 0;
+  for (const declaration of ordered) {
+    while (previousLine < declaration.line - 1) {
+      groups.push('');
+      previousLine += 1;
+    }
+    groups.push(
+      [
+        variableLengthQuantity(0),
+        variableLengthQuantity(0),
+        variableLengthQuantity(declaration.span.startLine - 1 - sourceLine),
+        variableLengthQuantity(declaration.span.startColumn - sourceColumn),
+      ].join(''),
+    );
+    sourceLine = declaration.span.startLine - 1;
+    sourceColumn = declaration.span.startColumn;
+    previousLine += 1;
+  }
+  const map = {
+    version: 3,
+    file: draft.path.split('/').slice(-1)[0],
+    sourceRoot: '',
+    sources: [source],
+    names: [],
+    mappings: groups.join(';'),
+  };
+  return { path: `${draft.path}.map`, contents: `${JSON.stringify(map, undefined, 2)}\n` };
+}
+
+const BASE64_DIGITS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function variableLengthQuantity(value: number): string {
+  let remaining = value < 0 ? (-value << 1) | 1 : value << 1;
+  let encoded = '';
+  do {
+    let digit = remaining & 0b11111;
+    remaining >>>= 5;
+    if (remaining > 0) digit |= 0b100000;
+    const character = BASE64_DIGITS[digit];
+    if (character === undefined) throw new TypeError('source map digit is out of range');
+    encoded += character;
+  } while (remaining > 0);
+  return encoded;
 }
 
 function sha256(value: string): string {
@@ -207,12 +545,23 @@ function planProgram(program: LeanSemanticProgram): EmitContext {
   };
 }
 
-/** Lean dot notation names the receiver, so `T.f (t : T) …` is a method on `T`. */
+/**
+ * Lean dot notation names the receiver, so `T.f (t : T) …` is a method on `T`. The method is
+ * emitted inside `T`'s class, so it has to be declared by the same Lean module: a receiver in
+ * another module would move code across the module boundary the generated tree preserves.
+ */
 function isDotNotationMethod(declaration: LeanFunction, data: LeanData): boolean {
   if (!declaration.name.startsWith(`${data.name}.`)) return false;
   if (declaration.name.slice(data.name.length + 1).includes('.')) return false;
   const receiver = declaration.parameters[0];
-  return receiver !== undefined && receiver.type.kind === 'named' && receiver.type.name === data.name;
+  if (receiver === undefined || receiver.type.kind !== 'named' || receiver.type.name !== data.name) return false;
+  if (declaration.module !== data.module) {
+    throw new UnsupportedLeanFragmentError(
+      declaration.name,
+      `dot-notation method is declared by ${declaration.module} but its receiver ${data.name} is declared by ${data.module}; declare it beside its type`,
+    );
+  }
+  return true;
 }
 
 function dispatchesOnReceiver(declaration: LeanFunction, enumName: string): boolean {
@@ -1055,20 +1404,17 @@ function assertStructuralDataImage(plan: TypePlan, context: EmitContext, name: s
 }
 
 /**
- * The generated validators, built in reverse dependency order so a helper reached only through
- * another helper is still emitted, and printed in a fixed order so the bytes are stable.
+ * The boundary type and the primitive validators every generated codec shares. They are built in
+ * reverse dependency order, so a validator reached only through another one is still emitted, and
+ * returned in a fixed order so the bytes are stable. The per-type decoders are emitted separately,
+ * each in the module that declares its type.
  */
-function emitPrelude(context: EmitContext): readonly ts.Statement[] {
+function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
   const { prelude, locals } = context;
   const value = ts.factory.createIdentifier(locals.value);
   const name = ts.factory.createIdentifier(locals.name);
   const fields = ts.factory.createIdentifier(locals.fields);
   const dataRecord = dataRecordType(prelude.dataBoundary);
-  const decoders: ts.Statement[] = [];
-  for (const [leanName, emitted] of [...prelude.decoders].sort(([left], [right]) => compareCodePoints(left, right))) {
-    if (!context.used.has(emitted)) continue;
-    decoders.push(emitStructuralDecoder(leanName, emitted, context));
-  }
   const requireBooleanDeclaration: ts.Statement[] = [];
   if (context.used.has(prelude.requireBoolean)) {
     requireBooleanDeclaration.push(
@@ -1214,13 +1560,7 @@ function emitPrelude(context: EmitContext): readonly ts.Statement[] {
   const boundaryDeclaration: ts.Statement[] = context.used.has(prelude.dataBoundary)
     ? [emitDataBoundaryAlias(prelude.dataBoundary)]
     : [];
-  return [
-    ...boundaryDeclaration,
-    ...isDataObjectDeclaration,
-    ...dataFieldsDeclaration,
-    ...requireBooleanDeclaration,
-    ...decoders,
-  ];
+  return [...boundaryDeclaration, ...isDataObjectDeclaration, ...dataFieldsDeclaration, ...requireBooleanDeclaration];
 }
 
 function emitStructuralDecoder(leanName: string, emitted: string, context: EmitContext): ts.Statement {

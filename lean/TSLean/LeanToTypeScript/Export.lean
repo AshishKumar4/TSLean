@@ -63,20 +63,36 @@ private def ensureDeclarationName (name : Name) : Except String Unit := do
   ensureAsciiDeclarationName name
   ensureBindingIdentifier name.getString! "declaration name"
 
-private def ensureDistinctDeclarationNames (names : List Name) : Except String Unit := do
-  let mut seen : Std.HashSet String := {}
-  for name in names do
-    let localName := name.getString!
-    if seen.contains localName then
-      throw s!"{name}: emitted declaration name {localName} collides with another declaration"
-    seen := seen.insert localName
-
 private def declarationModule? (environment : Environment) (name : Name) : Option Name := do
   let index ← environment.getModuleIdxFor? name
   environment.header.moduleNames[index]?
 
 private def declaredInModules (environment : Environment) (modules : NameSet) (name : Name) : Bool :=
   (declarationModule? environment name).any modules.contains
+
+/-- The module that declares a constant. A declaration decides which generated file carries it, so
+a constant whose defining module the environment cannot name is refused rather than placed. -/
+private def declarationModule (environment : Environment) (name : Name) : Except String Name :=
+  match declarationModule? environment name with
+  | some moduleName => pure moduleName
+  | none => throw s!"declaration {name} has no defining Lean module"
+
+private def declarationModuleField (environment : Environment) (name : Name) :
+    Except String (String × Json) := do
+  pure ("module", .str (← declarationModule environment name).toString)
+
+/-- Emitted names have to be distinct inside one generated module, not across the package: two
+Lean modules may each declare `Config`, and each keeps its own file. -/
+private def ensureDistinctDeclarationNames (environment : Environment) (names : List Name) :
+    Except String Unit := do
+  let mut seen : Std.HashSet String := {}
+  for name in names do
+    let moduleName ← declarationModule environment name
+    let localName := name.getString!
+    let key := s!"{moduleName}|{localName}"
+    if seen.contains key then
+      throw s!"{name}: emitted declaration name {localName} collides with another declaration in module {moduleName}"
+    seen := seen.insert key
 
 private def appView : Expr → Expr × List Expr
   | .app function argument =>
@@ -472,6 +488,7 @@ private def dataDeclaration (environment : Environment) (targetModules : NameSet
     let fields := getStructureFields environment name
     pure (node "record" ([
       ("name", .str name.toString),
+      ← declarationModuleField environment name,
       ("fields", array (← fields.toList.mapM (fieldDeclaration environment targetModules name)))
     ] ++ documentationFields environment name))
   else
@@ -489,6 +506,7 @@ private def dataDeclaration (environment : Environment) (targetModules : NameSet
       ] ++ documentationFields environment constructorName) :: constructors
     pure (node "enum" ([
       ("name", .str name.toString),
+      ← declarationModuleField environment name,
       ("constructors", array constructors.reverse)
     ] ++ documentationFields environment name))
 
@@ -575,6 +593,7 @@ private def functionDeclaration (environment : Environment) (targetModules : Nam
     object [("name", .str lambdaName), ("type", parameter.type)]) parameters lambdaNames
   pure (node "function" ([
     ("name", .str name.toString),
+    ← declarationModuleField environment name,
     ("parameters", array parameters),
     ("result", result)
   ] ++ recursionFields ++ [
@@ -620,23 +639,86 @@ private def executableMetadataDiagnostic? (environment : Environment) (name : Na
   else
     none
 
+private structure ClosureEntry where
+  name : Name
+  module : String
+  role : String
+  reason : String
+
+private def closureEntryJson (entry : ClosureEntry) : Json :=
+  object [
+    ("declaration", .str entry.name.toString),
+    ("module", .str entry.module),
+    ("role", .str entry.role),
+    ("reason", .str entry.reason)
+  ]
+
+private def moduleText (environment : Environment) (name : Name) : String :=
+  match declarationModule? environment name with
+  | some moduleName => moduleName.toString
+  | none => ""
+
+/--
+What the compiler did with one reachable constant. A constant outside the frozen target closure is
+a runtime boundary: its TypeScript image is fixed by the type mapping rather than lowered from its
+Lean definition. Inside the closure, a constant is either emitted or erased scaffolding.
+
+`viaScaffolding` records that the walk only reached this constant through something already erased,
+which is how Lean's generated eliminators and their helpers are reached: nothing an emitted
+declaration names directly can arrive that way. A constant the compiler can neither emit nor
+account for is refused by name rather than dropped silently.
+-/
+private def classifyConstant (environment : Environment) (targetModules : NameSet) (emitted : NameSet)
+    (name : Name) (info : ConstantInfo) (viaScaffolding : Bool) : Except String ClosureEntry := do
+  let module := moduleText environment name
+  unless declaredInModules environment targetModules name do
+    return { name, module, role := "runtime-boundary",
+             reason := "constant outside the target module closure; its TypeScript image is fixed by the type mapping" }
+  if emitted.contains name then
+    return { name, module, role := "emitted", reason := "" }
+  let reason ← match info with
+    | .ctorInfo _ => pure "constructor lowered with its inductive type"
+    | .recInfo _ => pure "recursor"
+    | .thmInfo _ => pure "proof"
+    | .axiomInfo _ => throw s!"{name}: axioms are outside the checked fragment"
+    | .opaqueInfo _ => throw s!"{name}: opaque or partial definitions are outside the checked fragment"
+    | .quotInfo _ => throw s!"{name}: quotient primitives are outside the checked fragment"
+    | .defnInfo _ =>
+        if (Meta.getMatcherInfoCore? environment name).isSome then
+          pure "match auxiliary inlined at its application sites"
+        else if (environment.getProjectionStructureName? name).isSome then
+          pure "structure projection lowered as field access"
+        else if viaScaffolding then
+          pure "generated helper reached only through erased scaffolding"
+        else
+          throw s!"{name}: reachable definition was neither emitted nor erased"
+    | .inductInfo _ =>
+        if viaScaffolding then
+          pure "generated type reached only through erased scaffolding"
+        else
+          throw s!"{name}: reachable inductive type was neither emitted nor erased"
+  pure { name, module, role := "erased", reason }
+
 /--
 Every constant the emitted program depends on, transitively and across the boundary of the target
 module: a compiler-level replacement anywhere in that closure means the executable Lean differs
 from the definitions this compiler read, so the whole closure is audited rather than the local
-part of it plus one hop.
+part of it plus one hop. The same walk records what happened to each constant, so the closure is
+accounted for completely instead of only where it reached a generated file.
 -/
-private partial def auditExecutableMetadataAux (environment : Environment) (targetModules : NameSet)
-    (pending : List Name) (seen : NameSet) : Except String Unit := do
+private partial def classifyClosureAux (environment : Environment) (targetModules : NameSet)
+    (emitted : NameSet) (pending : List (Name × Bool)) (seen : NameSet) (entries : List ClosureEntry) :
+    Except String (List ClosureEntry) := do
   match pending with
-  | [] => pure ()
-  | name :: rest =>
-      if seen.contains name then auditExecutableMetadataAux environment targetModules rest seen
+  | [] => pure entries
+  | (name, viaScaffolding) :: rest =>
+      if seen.contains name then classifyClosureAux environment targetModules emitted rest seen entries
       else
         let some info := environment.find? name
           | throw s!"{name}: declaration is absent from the elaborated environment"
         if let some diagnostic := executableMetadataDiagnostic? environment name then
           throw s!"{name}: {diagnostic}"
+        let entry ← classifyConstant environment targetModules emitted name info viaScaffolding
         let dependencies := match info with
           | .ctorInfo constructor => constructor.induct :: declarationDependencies environment name
           | .inductInfo declaration => declaration.ctors ++ declarationDependencies environment name
@@ -645,11 +727,15 @@ private partial def auditExecutableMetadataAux (environment : Environment) (targ
               | some structureName => structureName :: declarationDependencies environment name
               | none => declarationDependencies environment name
           | _ => declarationDependencies environment name
-        auditExecutableMetadataAux environment targetModules (dependencies ++ rest) (seen.insert name)
+        let erased := entry.role != "emitted"
+        classifyClosureAux environment targetModules emitted
+          (dependencies.map (fun dependency => (dependency, erased)) ++ rest) (seen.insert name)
+          (entry :: entries)
 
-private def auditExecutableMetadata (environment : Environment) (targetModules : NameSet)
-    (roots : List Name) : Except String Unit :=
-  auditExecutableMetadataAux environment targetModules roots {}
+private def classifyClosure (environment : Environment) (targetModules : NameSet) (emitted : NameSet)
+    (roots : List Name) : Except String (List ClosureEntry) := do
+  let entries ← classifyClosureAux environment targetModules emitted (roots.map (·, false)) {} []
+  pure (entries.toArray.qsort (fun left right => nameTextLt left.name right.name) |>.toList)
 
 private partial def collectDeclarationsAux (environment : Environment) (targetModules : NameSet)
     (pending : List Name) (seen : NameSet) (ordered : List Name) :
@@ -687,19 +773,33 @@ private def collectDeclarations (environment : Environment) (targetModules : Nam
     (roots : List Name) : Except String (List Name) :=
   collectDeclarationsAux environment targetModules roots {} []
 
-private def exportPackage (sourceModule : Name) (targetModules : NameSet) (roots : List Name) : CoreM Json := do
+/--
+`entryModule` is the module Lake builds and the driver imports; `targetModules` is that module's
+frozen transitive import closure. A root may be declared by any module in the closure, so one
+compilation exports a whole Lean package rather than one file's worth of it.
+-/
+private def exportPackage (entryModule : Name) (targetModules : NameSet) (roots : List Name) : CoreM Json := do
   let environment ← getEnv
+  unless targetModules.contains entryModule do
+    throwError "entry module {entryModule} is outside the frozen target module closure"
   for root in roots do
-    unless declarationModule? environment root == some sourceModule do
-      throwError "exported declaration {root} is not defined by source module {sourceModule}"
-  match auditExecutableMetadata environment targetModules roots with
-  | .ok () => pure ()
-  | .error message => throwError message
+    unless declaredInModules environment targetModules root do
+      throwError "exported declaration {root} is outside the frozen target module closure"
   let names ← match collectDeclarations environment targetModules roots with
     | .ok value => pure value
     | .error message => throwError message
   let names := names.toArray.qsort nameTextLt |>.toList
-  match ensureDistinctDeclarationNames names with
+  let emitted := names.foldl (fun set name => set.insert name) ({} : NameSet)
+  let closure ← match classifyClosure environment targetModules emitted roots with
+    | .ok value => pure value
+    | .error message => throwError message
+  for entry in closure do
+    unless entry.role == "emitted" || !emitted.contains entry.name do
+      throwError "{entry.name}: emitted declaration was classified as {entry.role}"
+  for name in names do
+    unless closure.any (fun entry => entry.name == name) do
+      throwError "{name}: emitted declaration is absent from the classified closure"
+  match ensureDistinctDeclarationNames environment names with
   | .ok () => pure ()
   | .error message => throwError message
   for name in names do
@@ -729,11 +829,31 @@ private def exportPackage (sourceModule : Name) (targetModules : NameSet) (roots
     match encoded with
     | .ok value => declarations := value :: declarations
     | .error message => throwError "{name}: {message}"
+  -- Every emitted declaration carries the range Lean recorded for it, so a generated file maps
+  -- back to the exact source text the kernel accepted.
+  let mut spans : Std.HashMap Name Json := {}
+  for name in names do
+    let some ranges ← Lean.findDeclarationRanges? name
+      | throwError "{name}: no source range is recorded for its declaration"
+    spans := spans.insert name (object [
+      ("startLine", .num ranges.range.pos.line),
+      ("startColumn", .num ranges.range.pos.column),
+      ("endLine", .num ranges.range.endPos.line),
+      ("endColumn", .num ranges.range.endPos.column)
+    ])
+  let mut spanned := []
+  for (name, declaration) in List.zip names declarations.reverse do
+    let some span := spans[name]?
+      | throwError "{name}: source range disappeared before encoding"
+    spanned := (match declaration with
+      | .obj fields => Json.obj (fields.insert "span" span)
+      | other => other) :: spanned
   pure (object [
     ("schemaVersion", .num 1),
     ("fragmentVersion", .str fragmentVersion),
     ("roots", array (roots.map (fun name => .str name.toString))),
-    ("declarations", array declarations.reverse)
+    ("closure", array (closure.map closureEntryJson)),
+    ("declarations", array spanned.reverse)
   ])
 
 open Lean Elab Command in
@@ -741,16 +861,16 @@ syntax (name := tsleanExport) "#tslean_export " str str str+ : command
 
 open Lean Elab Command in
 elab_rules : command
-  | `(#tslean_export $moduleName:str $targetModuleNames:str $roots:str*) => do
-      let moduleName := moduleName.raw.isStrLit?.getD ""
+  | `(#tslean_export $entryModule:str $targetModuleNames:str $roots:str*) => do
+      let entryModule := entryModule.raw.isStrLit?.getD ""
       let targetModuleNames := targetModuleNames.raw.isStrLit?.getD ""
       let roots := roots.toList.map (fun root => root.raw.isStrLit?.getD "")
       let targetModules := targetModuleNames.splitOn "\n" |>.filter (!·.isEmpty) |>.map String.toName
         |>.foldl (fun modules name => modules.insert name) {}
-      if moduleName.isEmpty || targetModules.isEmpty || roots.isEmpty || roots.any String.isEmpty then
-        throwError "#tslean_export requires a source module, target module closure, and at least one declaration"
+      if entryModule.isEmpty || targetModules.isEmpty || roots.isEmpty || roots.any String.isEmpty then
+        throwError "#tslean_export requires an entry module, target module closure, and at least one declaration"
       let result ← try
-        let package ← liftCoreM (exportPackage moduleName.toName targetModules (roots.map String.toName))
+        let package ← liftCoreM (exportPackage entryModule.toName targetModules (roots.map String.toName))
         pure (object [("ok", .bool true), ("package", package)])
       catch error =>
         let message ← error.toMessageData.toString

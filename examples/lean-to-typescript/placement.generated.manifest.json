@@ -1,8 +1,8 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "semantic": {
     "fragmentVersion": "tslean-structural-first-order-v4",
-    "sourceModule": "TSLean.Examples.Placement",
+    "entryModule": "TSLean.Examples.Placement",
     "declarations": [
       "TSLean.Examples.Placement.choosePlacement"
     ],
@@ -11,6 +11,331 @@
       "leanVersion": "Lean (version 4.29.0, x86_64-unknown-linux-gnu, commit 98dc76e3c0a9b856c9b98726b713fb04fab16740, Release)",
       "lakeVersion": "Lake version 5.0.0-src+98dc76e (Lean version 4.29.0)"
     },
+    "modules": [
+      {
+        "path": "TSLean/Examples/Placement.ts",
+        "leanModule": "TSLean.Examples.Placement",
+        "imports": [],
+        "declarations": [
+          {
+            "declaration": "TSLean.Examples.Placement.Placement",
+            "emitted": "Placement",
+            "line": 18,
+            "span": {
+              "source": "TSLean/Examples/Placement.lean",
+              "startLine": 3,
+              "startColumn": 0,
+              "endLine": 7,
+              "endColumn": 28
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Placement.PlacementSet",
+            "emitted": "PlacementSet",
+            "line": 20,
+            "span": {
+              "source": "TSLean/Examples/Placement.lean",
+              "startLine": 9,
+              "startColumn": 0,
+              "endLine": 13,
+              "endColumn": 28
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Placement.PlacementSet.intersect",
+            "emitted": "intersect",
+            "line": 20,
+            "span": {
+              "source": "TSLean/Examples/Placement.lean",
+              "startLine": 15,
+              "startColumn": 0,
+              "endLine": 20,
+              "endColumn": 3
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Placement.choosePlacement",
+            "emitted": "choosePlacement",
+            "line": 69,
+            "span": {
+              "source": "TSLean/Examples/Placement.lean",
+              "startLine": 22,
+              "startColumn": 0,
+              "endLine": 27,
+              "endColumn": 11
+            }
+          }
+        ],
+        "bodySha256": "sha256:cae734266b3c3d3ddbd10e528bc6f85ef290baca088cc1907064d0073314618f",
+        "sourceMapSha256": "sha256:b8463b7534a30fa6fd601375e55e1173888f3a9e949334211e336ed553cd0c5d"
+      }
+    ],
+    "closure": [
+      {
+        "declaration": "Bool",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.and",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.and.match_1",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.casesOn",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.decEq",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.decEq.match_1",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.false",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.noConfusion",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.noConfusionType",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.rec",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.true",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Decidable",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Decidable.casesOn",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Decidable.isFalse",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Decidable.isTrue",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Decidable.rec",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "DecidableEq",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Eq",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Eq.ndrec",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Eq.rec",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Eq.refl",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "False",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Not",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Option",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Option.none",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Option.some",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "PUnit",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "PUnit.unit",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "TSLean.Examples.Placement.Placement",
+        "module": "TSLean.Examples.Placement",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Placement.Placement.bundled",
+        "module": "TSLean.Examples.Placement",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Placement.Placement.dynamic",
+        "module": "TSLean.Examples.Placement",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Placement.Placement.provider",
+        "module": "TSLean.Examples.Placement",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Placement.PlacementSet",
+        "module": "TSLean.Examples.Placement",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Placement.PlacementSet.bundled",
+        "module": "TSLean.Examples.Placement",
+        "role": "erased",
+        "reason": "structure projection lowered as field access"
+      },
+      {
+        "declaration": "TSLean.Examples.Placement.PlacementSet.dynamic",
+        "module": "TSLean.Examples.Placement",
+        "role": "erased",
+        "reason": "structure projection lowered as field access"
+      },
+      {
+        "declaration": "TSLean.Examples.Placement.PlacementSet.intersect",
+        "module": "TSLean.Examples.Placement",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Placement.PlacementSet.mk",
+        "module": "TSLean.Examples.Placement",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Placement.PlacementSet.provider",
+        "module": "TSLean.Examples.Placement",
+        "role": "erased",
+        "reason": "structure projection lowered as field access"
+      },
+      {
+        "declaration": "TSLean.Examples.Placement.choosePlacement",
+        "module": "TSLean.Examples.Placement",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "Unit",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Unit.unit",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "instDecidableEqBool",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "ite",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "rfl",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      }
+    ],
     "inputs": [
       {
         "kind": "lean-project",
@@ -35,22 +360,22 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:artifact-transaction",
-        "sha256": "sha256:b041d85ba6c49d0266c035e928c0d810c570067e236878dc078ce6fb4f1e3b8b"
+        "sha256": "sha256:520ca67f489cbcfc7da7efd470375ea7aec58b880c8d2c7d1a4275adce02b07a"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:cli",
-        "sha256": "sha256:94e02c4286fc66384c89b1c136f060dbff7746442420429dea89a71eb866e7a4"
+        "sha256": "sha256:38ad9be9055a8f9a8b2b170af19564f6863d7494958cc9425793e8c8dc71d940"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:compiler",
-        "sha256": "sha256:9b7b04adf3da338acada92754ad967fc3a3f43e6bdca2d49c51864bbc6f57cb2"
+        "sha256": "sha256:d2ae9fce7e5ff5cdee452d17c4ee07985c0921a0f93006aba206bd13217d5c32"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:emitter",
-        "sha256": "sha256:e7c65077bfac5c33f23ce6da48f35290020a4e855ed3127137e57beefa8efa72"
+        "sha256": "sha256:ee84a3c1594506edf95e85c9fa77d6157751f2ee188f20f7ac6847ca8affe28b"
       },
       {
         "kind": "compiler-source",
@@ -60,22 +385,22 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:index",
-        "sha256": "sha256:4572ff25e67296079c8856df59b2fcb5110803bf62b5b15f3bf66cc3ddbaf64f"
+        "sha256": "sha256:42df4f6e15e97e6504bcf11aef172c2c52ec6acf4a5c2a51a53e3c4f0736fb4a"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:ir",
-        "sha256": "sha256:d562e221054db357db54506ce37a690ffbf0e5ccc718d7de6e10649062db2ee0"
+        "sha256": "sha256:21030736f9e42504d2cb0274e239969397aa82136f8ce9469aea4bc15f47d265"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-exporter",
-        "sha256": "sha256:65ec4e7e296a68f97c0a17eb3720d3b2a51b567259915b5b4daf715ade08b55c"
+        "sha256": "sha256:f6ac1a115cdc16e0aa8835891d3f2e254c3f43add87fd6816858f030473c455f"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:manifest",
-        "sha256": "sha256:13ecbd700ad94d5edd8c15c17172ca30d0d7cce56740a22acee7da1018b92e31"
+        "sha256": "sha256:0595876e8d3f513d8413a0904dfa906e0afc989f3f3c4dd748844cc0e8e623fe"
       },
       {
         "kind": "compiler-source",
@@ -85,7 +410,12 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:package",
-        "sha256": "sha256:aee2d1fa339aa6bcf4a4866893ccfb7c1dcb0a812fd74a63835648214e00a0b6"
+        "sha256": "sha256:79035f40ba92e0be7da5fc7a7171433f88cfeeeac8a59172e87d1fb258b42baf"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:package-layout",
+        "sha256": "sha256:4d17534f8ccfdcb7d18b3380c4f9383948fea6692561901f4ce95e3cc5d7f33a"
       },
       {
         "kind": "compiler-source",
@@ -100,7 +430,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:spec:compiler-registry.json",
-        "sha256": "sha256:f9f3149145a901491341ca7f568a0f23ae7fbb52102e4dd0228fa9bc63c0a605"
+        "sha256": "sha256:93a77d09448ad06c10ca35eff770fda22f554107c2acdd99495096a22dc2f108"
       },
       {
         "kind": "compiler-source",
@@ -120,7 +450,7 @@
       {
         "kind": "lean-source",
         "identity": "source:TSLean.LeanToTypeScript.Export",
-        "sha256": "sha256:65ec4e7e296a68f97c0a17eb3720d3b2a51b567259915b5b4daf715ade08b55c"
+        "sha256": "sha256:f6ac1a115cdc16e0aa8835891d3f2e254c3f43add87fd6816858f030473c455f"
       },
       {
         "kind": "lean-project",
@@ -138,9 +468,9 @@
         "sha256": "sha256:651c8accb402b0c071cd336e9d3dc0a55516b1bfb434ddc4801f14936785b1d2"
       }
     ],
-    "inputClosureSha256": "sha256:d7b5753111ed8ed473b0ac071bb62a0363d85ee19e8fce4fd87c5af34ede621b",
-    "semanticIrSha256": "sha256:5c98e7bcf10723c0e56b3871319af7cb8af77f8899aa9f95ff904d7fe8a34c33",
-    "generatedBodySha256": "sha256:cae734266b3c3d3ddbd10e528bc6f85ef290baca088cc1907064d0073314618f"
+    "inputClosureSha256": "sha256:0ce774e8c6f7a521e26d5a2064806a2d3ae2f984bed7f936b42df43fd856e779",
+    "semanticIrSha256": "sha256:196adc6b4440a5ce67221c5a98c217dafb7a1bc6e565b90120e838233954667b",
+    "generatedBodySha256": "sha256:63e29b246e204156ea0e15f5b07f3cc7522d7730f435bba47f66f490842988e4"
   },
   "environment": {
     "runtime": "node:v22.22.3",
@@ -180,7 +510,7 @@
       {
         "kind": "lean-module",
         "identity": "module:TSLean.LeanToTypeScript.Export",
-        "sha256": "sha256:4a2bdb3b592ad2bba42b258d9bab61fb7aa038e6fa4d58624801e1d2106709e7"
+        "sha256": "sha256:7b0412e6c74e0378a9597a901d89c7b6eb74a18ce683a557ea61d218e1745e62"
       },
       {
         "kind": "lean-toolchain",
@@ -803,6 +1133,6 @@
         "sha256": "sha256:bb6ee7e709ae60426e30b8d393df4d939ee61407794b4f053ce6338d6eaa8c63"
       }
     ],
-    "inputClosureSha256": "sha256:8202cb54ecccb5d70b59235f89f8eddd077d88ee68dd05e6074c5a0bf447df29"
+    "inputClosureSha256": "sha256:d34b6135fdc9f97bf0016a2592f7671235b941e8602c2123f9ac4cbda1ea3c3f"
   }
 }

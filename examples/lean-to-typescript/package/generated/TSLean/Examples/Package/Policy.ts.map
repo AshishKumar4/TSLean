@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "file": "Policy.ts",
+  "sourceRoot": "",
+  "sources": [
+    "TSLean/Examples/Package/Policy.lean"
+  ],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;;;AAIA"
+}

@@ -22,13 +22,13 @@ import { assertRuntimeInputsUnchanged, runtimeInputSnapshots } from './runtime-p
 import ts from 'typescript';
 import {
   LEAN_TO_TYPESCRIPT_INPUT_PLANES,
-  type LeanToTypeScriptArtifact,
   type LeanToTypeScriptEnvironmentAttestation,
   type LeanToTypeScriptInput,
+  type LeanToTypeScriptPackage,
 } from './artifact.js';
-import { emitTypeScript } from './emitter.js';
+import { emitTypeScriptPackage } from './emitter.js';
 import { UnsupportedLeanFragmentError } from './fragment.js';
-import { decodeLeanSemanticProgram } from './ir.js';
+import { decodeLeanSemanticProgram, isLeanModuleName } from './ir.js';
 import { compareCodePoints } from './ordering.js';
 import {
   assertLeanToTypeScriptPlatform,
@@ -49,7 +49,7 @@ export interface LeanToTypeScriptCompilerInput {
 }
 
 export interface LeanToTypeScriptCompilation {
-  readonly artifact: LeanToTypeScriptArtifact;
+  readonly package: LeanToTypeScriptPackage;
   readonly inputs: readonly LeanToTypeScriptCompilerInput[];
 }
 
@@ -97,8 +97,8 @@ interface CachedToolchainInput {
 
 const toolchainInputCache = new Map<string, CachedToolchainInput>();
 
-export function compileLeanToTypeScript(request: LeanToTypeScriptRequest): LeanToTypeScriptArtifact {
-  return compileLeanToTypeScriptWithInputs(request).artifact;
+export function compileLeanToTypeScript(request: LeanToTypeScriptRequest): LeanToTypeScriptPackage {
+  return compileLeanToTypeScriptWithInputs(request).package;
 }
 
 export function compileLeanToTypeScriptWithInputs(
@@ -209,10 +209,10 @@ function compileNormalized(
   const inputs = snapshots.map(({ kind, identity, sha256: digest }) => ({ kind, identity, sha256: digest }));
   const semanticInputs = inputs.filter((input) => LEAN_TO_TYPESCRIPT_INPUT_PLANES[input.kind] === 'semantic');
   const environmentInputs = inputs.filter((input) => LEAN_TO_TYPESCRIPT_INPUT_PLANES[input.kind] === 'environment');
-  const artifact = emitTypeScript(program, {
+  const emitted = emitTypeScriptPackage(program, {
     semantic: {
       fragmentVersion: program.fragmentVersion,
-      sourceModule: normalized.moduleName,
+      entryModule: normalized.moduleName,
       declarations: normalized.declarations,
       leanToolchain: {
         identity: targetToolchain.identity,
@@ -224,8 +224,9 @@ function compileNormalized(
       semanticIrSha256: sha256(JSON.stringify(program)),
     },
     environment: hostEnvironmentAttestation(environmentInputs),
+    sources: leanSourcePaths(normalized, moduleFiles, layout),
   });
-  assertTypeChecks(artifact.code, directory);
+  assertPackageTypeChecks(emitted, directory);
   assertSameModuleClosure(moduleFiles, collectModuleFiles(targetRequest, layout, compilerToolchain, targetToolchain));
   assertSameStrings(
     targetModules,
@@ -235,14 +236,13 @@ function compileNormalized(
   assertStagedProjectsUnchanged(layout);
   assertUnchanged(snapshots);
   return {
-    artifact,
+    package: emitted,
     inputs: snapshots.map(({ identity, path }) => ({ identity, path })),
   };
 }
 
 function normalizeRequest(request: LeanToTypeScriptRequest): LeanToTypeScriptRequest {
-  const modulePattern = /^[A-Za-z_][A-Za-z0-9_'!?]*(?:\.[A-Za-z_][A-Za-z0-9_'!?]*)*$/u;
-  if (!modulePattern.test(request.moduleName)) {
+  if (!isLeanModuleName(request.moduleName)) {
     throw new TypeError(`invalid Lean module name: ${request.moduleName}`);
   }
   if (request.declarations.length === 0) throw new TypeError('at least one declaration is required');
@@ -323,10 +323,13 @@ function collectModuleFiles(
   targetToolchain: LeanToolchain,
 ): readonly InputFile[] {
   const artifacts = [
-    moduleArtifact(compilerToolchain, layout.compilerLeanRoot, 'TSLean.LeanToTypeScript.Export'),
-    ...moduleDependencies(compilerToolchain, layout.compilerLeanRoot, layout.exporterBuildSourcePath),
-    moduleArtifact(targetToolchain, request.projectRoot, request.moduleName),
-    ...moduleDependencies(targetToolchain, request.projectRoot, request.sourcePath),
+    ...transitiveModuleArtifacts(
+      compilerToolchain,
+      layout.compilerLeanRoot,
+      'TSLean.LeanToTypeScript.Export',
+      layout.exporterBuildSourcePath,
+    ),
+    ...transitiveModuleArtifacts(targetToolchain, request.projectRoot, request.moduleName, request.sourcePath),
   ];
   const modules = new Map<string, string>();
   for (const artifact of artifacts.map((path) => realpathSync(path))) {
@@ -354,17 +357,42 @@ function collectModuleFiles(
 
 function collectTargetModuleNames(request: LeanToTypeScriptRequest, toolchain: LeanToolchain): readonly string[] {
   const targetBuildRoot = realpathSync(join(request.projectRoot, '.lake', 'build', 'lib', 'lean'));
-  const names = [
-    moduleArtifact(toolchain, request.projectRoot, request.moduleName),
-    ...moduleDependencies(toolchain, request.projectRoot, request.sourcePath),
-  ]
-    .map((path) => realpathSync(path))
+  const names = transitiveModuleArtifacts(toolchain, request.projectRoot, request.moduleName, request.sourcePath)
     .filter((path) => isWithin(targetBuildRoot, path))
     .map(moduleNameFromArtifact)
     .filter((name, index, names) => names.indexOf(name) === index)
     .sort(compareCodePoints);
   if (!names.includes(request.moduleName)) throw new TypeError('target module is outside its project build tree');
   return names;
+}
+
+/**
+ * Every compiled Lean module the entry module reaches, transitively. `lean --deps` names one hop,
+ * so the walk follows each project-built dependency through its own source. A module Lake did not
+ * build has no trace, which is exactly the toolchain boundary: it is recorded and not expanded.
+ */
+function transitiveModuleArtifacts(
+  toolchain: LeanToolchain,
+  projectRoot: string,
+  moduleName: string,
+  sourcePath: string,
+): readonly string[] {
+  const artifacts = new Set<string>([realpathSync(moduleArtifact(toolchain, projectRoot, moduleName))]);
+  const pending = [realpathSync(sourcePath)];
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const source = pending.pop();
+    if (source === undefined || visited.has(source)) continue;
+    visited.add(source);
+    for (const dependency of moduleDependencies(toolchain, projectRoot, source)) {
+      const artifact = realpathSync(dependency);
+      if (artifacts.has(artifact)) continue;
+      artifacts.add(artifact);
+      const dependencySource = sourceFromTrace(artifact);
+      if (dependencySource !== undefined) pending.push(dependencySource);
+    }
+  }
+  return [...artifacts].sort(compareCodePoints);
 }
 
 function inputFiles(request: LeanToTypeScriptRequest, moduleFiles: readonly InputFile[]): readonly InputFile[] {
@@ -788,13 +816,25 @@ function isQualifiedLeanName(value: string): boolean {
   return components.length >= 2 && components.every((component) => component.length > 0);
 }
 
-function assertTypeChecks(code: string, directory: string): void {
-  const path = join(directory, 'generated.ts');
-  writeFileSync(path, code, 'utf8');
-  const program = ts.createProgram([path], {
+/**
+ * The whole emitted tree is type-checked as one program, in the layout a consumer receives, so a
+ * cross-module import that does not resolve is a compilation failure rather than a later surprise.
+ * `noUnusedLocals` is on: an import the module does not need would mean the reference analysis
+ * over-approximated, and that is a compiler defect, not a style question.
+ */
+function assertPackageTypeChecks(emitted: LeanToTypeScriptPackage, directory: string): void {
+  const root = join(directory, 'package');
+  const paths = emitted.modules.map((module) => {
+    const path = join(root, module.path);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, module.code, 'utf8');
+    return path;
+  });
+  const program = ts.createProgram(paths, {
     module: ts.ModuleKind.NodeNext,
     moduleResolution: ts.ModuleResolutionKind.NodeNext,
     noEmit: true,
+    noUnusedLocals: true,
     lib: ['lib.es2022.d.ts'],
     strict: true,
     target: ts.ScriptTarget.ES2022,
@@ -804,6 +844,27 @@ function assertTypeChecks(code: string, directory: string): void {
     const rendered = diagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
     throw new TypeError(`generated TypeScript failed type checking:\n${rendered.join('\n')}`);
   }
+}
+
+/**
+ * Each target Lean module's source path, relative to the target project root. The compiler
+ * already resolved every module's source through Lake's build traces, so provenance reuses that
+ * resolution instead of guessing a source layout from the module name.
+ */
+function leanSourcePaths(
+  request: LeanToTypeScriptRequest,
+  moduleFiles: readonly InputFile[],
+  layout: CompilationLayout,
+): ReadonlyMap<string, string> {
+  const sources = new Map<string, string>();
+  for (const file of moduleFiles) {
+    if (file.kind !== 'lean-source') continue;
+    const moduleName = file.identity.slice('source:'.length);
+    if (!isWithin(request.projectRoot, file.path) && !isWithin(layout.targetProjectRoot, file.path)) continue;
+    const root = isWithin(request.projectRoot, file.path) ? request.projectRoot : layout.targetProjectRoot;
+    sources.set(moduleName, relative(root, file.path).split(sep).join('/'));
+  }
+  return sources;
 }
 
 function hostEnvironmentAttestation(inputs: readonly LeanToTypeScriptInput[]): LeanToTypeScriptEnvironmentAttestation {

@@ -1,8 +1,18 @@
 import ts from 'typescript';
+import type { LeanToTypeScriptClosureEntry, LeanToTypeScriptDeclarationRole } from './artifact.js';
 import { compareCodePoints } from './ordering.js';
 
 export const LEAN_TO_TYPESCRIPT_SCHEMA_VERSION = 1;
 export const LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION = 'tslean-structural-first-order-v4';
+
+/**
+ * The Lean module grammar the compiler admits: dot-separated segments beginning with `[A-Za-z_]`.
+ * A module name selects the Lake module, the Lean import, the generated file path, and the
+ * provenance identity, so it is validated once here and reused wherever a module name arrives.
+ */
+export function isLeanModuleName(value: string): boolean {
+  return /^[A-Za-z_][\w'!?]*(?:\.[A-Za-z_][\w'!?]*)*$/u.test(value);
+}
 
 export type LeanType =
   | { readonly kind: 'boolean' }
@@ -58,37 +68,55 @@ export interface LeanEnumConstructor extends LeanDocumented {
   readonly fields: readonly LeanField[];
 }
 
+/** Where a declaration is written, in its own Lean source. Lines are 1-based, columns 0-based. */
+export interface LeanSpan {
+  readonly startLine: number;
+  readonly startColumn: number;
+  readonly endLine: number;
+  readonly endColumn: number;
+}
+
+interface LeanDeclared extends LeanDocumented {
+  readonly name: string;
+  /** The Lean module that declares it, which decides the generated file that carries it. */
+  readonly module: string;
+  readonly span: LeanSpan;
+}
+
 export type LeanDeclaration =
   | ({
       readonly kind: 'enum';
-      readonly name: string;
       readonly constructors: readonly LeanEnumConstructor[];
-    } & LeanDocumented)
+    } & LeanDeclared)
   | ({
       readonly kind: 'record';
-      readonly name: string;
       readonly fields: readonly LeanField[];
-    } & LeanDocumented)
+    } & LeanDeclared)
   | ({
       readonly kind: 'function';
-      readonly name: string;
       readonly parameters: readonly { readonly name: string; readonly type: LeanType }[];
       readonly result: LeanType;
       /** Present exactly when Lean proved the definition recurses structurally on that parameter. */
       readonly recursion?: { readonly argument: number };
       readonly body: LeanExpression;
-    } & LeanDocumented);
+    } & LeanDeclared);
 
 export interface LeanSemanticProgram {
   readonly schemaVersion: 1;
   readonly fragmentVersion: typeof LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION;
   readonly roots: readonly string[];
+  /**
+   * Every constant reachable from the roots and what the compiler did with it. The exporter
+   * refuses anything it can neither emit, erase, nor admit at the runtime boundary, so this
+   * accounts for the whole closure rather than the part that reached a generated file.
+   */
+  readonly closure: readonly LeanToTypeScriptClosureEntry[];
   readonly declarations: readonly LeanDeclaration[];
 }
 
 export function decodeLeanSemanticProgram(value: unknown): LeanSemanticProgram {
   const program = object(value, 'semantic program');
-  exactKeys(program, ['schemaVersion', 'fragmentVersion', 'roots', 'declarations'], 'semantic program');
+  exactKeys(program, ['schemaVersion', 'fragmentVersion', 'roots', 'closure', 'declarations'], 'semantic program');
   if (program['schemaVersion'] !== LEAN_TO_TYPESCRIPT_SCHEMA_VERSION) {
     throw new TypeError(`unsupported Lean semantic IR schema ${String(program['schemaVersion'])}`);
   }
@@ -104,14 +132,75 @@ export function decodeLeanSemanticProgram(value: unknown): LeanSemanticProgram {
     declarations.map((declaration) => declaration.name),
     'semantic program declarations',
   );
+  const closure = array(program['closure'], 'semantic program closure').map((entry, index) =>
+    decodeClosureEntry(entry, `closure[${index}]`),
+  );
+  assertClosureAccountsFor(closure, declarations);
   const decoded: LeanSemanticProgram = {
     schemaVersion: LEAN_TO_TYPESCRIPT_SCHEMA_VERSION,
     fragmentVersion: LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION,
     roots,
+    closure,
     declarations,
   };
   validateProgramReferences(decoded);
   return decoded;
+}
+
+function decodeClosureEntry(value: unknown, location: string): LeanToTypeScriptClosureEntry {
+  const entry = object(value, location);
+  exactKeys(entry, ['declaration', 'module', 'role', 'reason'], location);
+  const role = entry['role'];
+  if (role !== 'emitted' && role !== 'erased' && role !== 'runtime-boundary') {
+    throw new TypeError(`${location}.role is unsupported: ${String(role)}`);
+  }
+  const reason = entry['reason'];
+  if (typeof reason !== 'string') throw new TypeError(`${location}.reason must be a string`);
+  if ((role === 'emitted') !== (reason === '')) {
+    throw new TypeError(`${location}.reason must be empty exactly for an emitted declaration`);
+  }
+  const module = entry['module'];
+  if (module !== '' && !isLeanModuleName(string(module, `${location}.module`))) {
+    throw new TypeError(`${location}.module is not a Lean module name: ${String(module)}`);
+  }
+  return {
+    declaration: qualifiedName(entry['declaration'], `${location}.declaration`),
+    module: module === '' ? '' : string(module, `${location}.module`),
+    role: role satisfies LeanToTypeScriptDeclarationRole,
+    reason,
+  };
+}
+
+/**
+ * The closure is the compiler's own account of what it reached. It has to be ordered, unique, and
+ * cover every emitted declaration exactly once under the `emitted` role, so a generated tree can
+ * never carry a declaration the audit record does not mention.
+ */
+function assertClosureAccountsFor(
+  closure: readonly LeanToTypeScriptClosureEntry[],
+  declarations: readonly LeanDeclaration[],
+): void {
+  for (let index = 1; index < closure.length; index += 1) {
+    const previous = closure[index - 1];
+    const current = closure[index];
+    if (previous === undefined || current === undefined) throw new TypeError('semantic program closure is sparse');
+    if (compareCodePoints(previous.declaration, current.declaration) >= 0) {
+      throw new TypeError('semantic program closure must be strictly ordered and unique');
+    }
+  }
+  const emitted = new Set(closure.filter((entry) => entry.role === 'emitted').map((entry) => entry.declaration));
+  for (const declaration of declarations) {
+    if (!emitted.has(declaration.name)) {
+      throw new TypeError(`semantic program closure does not record ${declaration.name} as emitted`);
+    }
+    const entry = closure.find((candidate) => candidate.declaration === declaration.name);
+    if (entry !== undefined && entry.module !== declaration.module) {
+      throw new TypeError(`semantic program closure disagrees on the module of ${declaration.name}`);
+    }
+  }
+  if (emitted.size !== declarations.length) {
+    throw new TypeError('semantic program closure records an emitted declaration that was not exported');
+  }
 }
 
 function validateProgramReferences(program: LeanSemanticProgram): void {
@@ -536,9 +625,11 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
   const declaration = object(value, location);
   const kind = string(declaration['kind'], `${location}.kind`);
   const name = qualifiedName(declaration['name'], `${location}.name`);
+  const module = moduleName(declaration['module'], `${location}.module`);
+  const span = decodeSpan(declaration['span'], `${location}.span`);
   switch (kind) {
     case 'enum': {
-      exactKeys(declaration, ['kind', 'name', 'constructors'], location, ['doc']);
+      exactKeys(declaration, ['kind', 'name', 'module', 'span', 'constructors'], location, ['doc']);
       const constructors = array(declaration['constructors'], `${location}.constructors`).map(
         (constructor, index): LeanEnumConstructor => {
           const constructorLocation = `${location}.constructors[${index}]`;
@@ -556,19 +647,24 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
         constructors.map((constructor) => constructor.name),
         `${location}.constructors`,
       );
-      return { kind, name, constructors, ...documentation(declaration, location) };
+      return { kind, name, module, span, constructors, ...documentation(declaration, location) };
     }
     case 'record': {
-      exactKeys(declaration, ['kind', 'name', 'fields'], location, ['doc']);
+      exactKeys(declaration, ['kind', 'name', 'module', 'span', 'fields'], location, ['doc']);
       return {
         kind,
         name,
+        module,
+        span,
         fields: decodeFields(declaration['fields'], location),
         ...documentation(declaration, location),
       };
     }
     case 'function': {
-      exactKeys(declaration, ['kind', 'name', 'parameters', 'result', 'body'], location, ['doc', 'recursion']);
+      exactKeys(declaration, ['kind', 'name', 'module', 'span', 'parameters', 'result', 'body'], location, [
+        'doc',
+        'recursion',
+      ]);
       const parameters = array(declaration['parameters'], `${location}.parameters`).map((parameter, index) => {
         const decoded = object(parameter, `${location}.parameters[${index}]`);
         exactKeys(decoded, ['name', 'type'], `${location}.parameters[${index}]`);
@@ -580,6 +676,8 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
       return {
         kind,
         name,
+        module,
+        span,
         parameters,
         result: decodeType(declaration['result'], `${location}.result`),
         ...decodeRecursion(declaration, parameters.length, location),
@@ -590,6 +688,34 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
     default:
       throw new TypeError(`${location}.kind is unsupported: ${kind}`);
   }
+}
+
+function decodeSpan(value: unknown, location: string): LeanSpan {
+  const span = object(value, location);
+  exactKeys(span, ['startLine', 'startColumn', 'endLine', 'endColumn'], location);
+  const decoded = {
+    startLine: line(span['startLine'], `${location}.startLine`),
+    startColumn: column(span['startColumn'], `${location}.startColumn`),
+    endLine: line(span['endLine'], `${location}.endLine`),
+    endColumn: column(span['endColumn'], `${location}.endColumn`),
+  };
+  if (
+    decoded.endLine < decoded.startLine ||
+    (decoded.endLine === decoded.startLine && decoded.endColumn < decoded.startColumn)
+  ) {
+    throw new TypeError(`${location} ends before it starts`);
+  }
+  return decoded;
+}
+
+function line(value: unknown, location: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1) throw new TypeError(`${location} must be a 1-based line`);
+  return Number(value);
+}
+
+function column(value: unknown, location: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) throw new TypeError(`${location} must be a column offset`);
+  return Number(value);
 }
 
 function decodeRecursion(
@@ -822,6 +948,12 @@ function qualifiedName(value: unknown, location: string): string {
   for (const [index, part] of decoded.split('.').entries()) {
     identifier(part, `${location} part ${index}`);
   }
+  return decoded;
+}
+
+function moduleName(value: unknown, location: string): string {
+  const decoded = string(value, location);
+  if (!isLeanModuleName(decoded)) throw new TypeError(`${location} is not a Lean module name: ${decoded}`);
   return decoded;
 }
 

@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 
-import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { LeanToTypeScriptManifest } from './artifact.js';
+import type { LeanToTypeScriptManifest, LeanToTypeScriptPackage } from './artifact.js';
 import {
   decodeManifest,
   environmentAttestationDigest,
   environmentAttestationDrift,
   semanticIdentityDigest,
 } from './manifest.js';
-import { publishArtifactPair } from './artifact-transaction.js';
+import { publishArtifacts } from './artifact-transaction.js';
 import { compileLeanToTypeScriptWithInputs } from './compiler.js';
 import {
   assertLeanToTypeScriptPlatform,
@@ -23,7 +23,7 @@ interface CompilerArguments {
   readonly moduleName: string;
   readonly sourcePath: string;
   readonly declarations: readonly string[];
-  readonly outputPath: string;
+  readonly outputDirectory: string;
   readonly manifestPath: string;
   readonly check: boolean;
   readonly requireAttestation: boolean;
@@ -58,13 +58,14 @@ export function runLeanToTypeScriptCli(
   const options = parseArguments(arguments_);
   const projectRoot = resolve(options.projectRoot);
   const sourcePath = resolve(options.sourcePath);
-  const outputPath = resolve(options.outputPath);
+  const outputDirectory = resolve(options.outputDirectory);
   const manifestPath = resolve(options.manifestPath);
-  const destinations = [
-    { name: '--output', path: outputPath },
-    { name: '--manifest', path: manifestPath },
-  ] as const;
-  const initialDestinations = assertArtifactPathsAreIsolated(destinations, [{ name: '--source', path: sourcePath }]);
+  // The tree's shape is only known after compilation, so isolation is checked twice: once for the
+  // destinations the caller named, and again for every file the emitted package turns out to need.
+  const initialDestinations = assertArtifactPathsAreIsolated(
+    [{ name: '--manifest', path: manifestPath }],
+    [{ name: '--source', path: sourcePath }],
+  );
   const compilation = compileLeanToTypeScriptWithInputs(
     {
       projectRoot,
@@ -74,28 +75,52 @@ export function runLeanToTypeScriptCli(
     },
     platform,
   );
+  const emitted = compilation.package;
+  const files = [
+    ...emitted.modules.flatMap((module) => [
+      { name: module.path, path: join(outputDirectory, module.path), contents: module.code },
+      ...(module.sourceMap === undefined
+        ? []
+        : [
+            {
+              name: module.sourceMap.path,
+              path: join(outputDirectory, module.sourceMap.path),
+              contents: module.sourceMap.contents,
+            },
+          ]),
+    ]),
+    { name: '--manifest', path: manifestPath, contents: `${JSON.stringify(emitted.manifest, null, 2)}\n` },
+  ];
+  const destinations = files.map(({ name, path }) => ({ name, path }));
   const currentDestinations = assertArtifactPathsAreIsolated(
     destinations,
     compilation.inputs.map(({ identity, path }) => ({ name: identity, path })),
   );
-  assertSameDestinationIdentities(initialDestinations, currentDestinations);
-  const { artifact } = compilation;
-  const manifest = `${JSON.stringify(artifact.manifest, null, 2)}\n`;
+  assertSameDestinationIdentities(
+    initialDestinations,
+    currentDestinations.filter((destination) => destination.name === '--manifest'),
+  );
   if (!options.check) {
-    publishArtifactPair(currentDestinations, [artifact.code, manifest], platform);
+    publishArtifacts(
+      currentDestinations,
+      files.map((file) => file.contents),
+      platform,
+    );
     return;
   }
-  assertCurrent(currentDestinations[0].canonicalPath, artifact.code);
-  const recorded = readManifest(currentDestinations[1].canonicalPath);
-  if (semanticIdentityDigest(recorded.semantic) !== semanticIdentityDigest(artifact.manifest.semantic)) {
-    throw new TypeError(`generated artifact is stale: ${currentDestinations[1].canonicalPath}`);
+  for (const [index, file] of files.entries()) {
+    const destination = currentDestinations[index];
+    if (destination === undefined) throw new TypeError('generated destination set changed during compilation');
+    if (file.name === '--manifest') continue;
+    assertCurrent(destination.canonicalPath, file.contents);
   }
-  reportEnvironmentAttestation(
-    currentDestinations[1].canonicalPath,
-    recorded,
-    artifact.manifest,
-    options.requireAttestation,
-  );
+  const recordedPath = requiredDestination(currentDestinations, '--manifest').canonicalPath;
+  const recorded = readManifest(recordedPath);
+  if (semanticIdentityDigest(recorded.semantic) !== semanticIdentityDigest(emitted.manifest.semantic)) {
+    throw new TypeError(`generated artifact is stale: ${recordedPath}`);
+  }
+  assertNoUnexpectedGeneratedFiles(outputDirectory, emitted);
+  reportEnvironmentAttestation(recordedPath, recorded, emitted.manifest, options.requireAttestation);
 }
 
 /**
@@ -125,29 +150,36 @@ function readManifest(manifestPath: string): LeanToTypeScriptManifest {
   return decodeManifest(parsed);
 }
 
+/**
+ * No destination may be an existing directory, alias another destination, or overlap a compiler
+ * input. The generated tree is many files, so every pair is checked rather than one fixed pair.
+ */
 function assertArtifactPathsAreIsolated(
-  destinations: readonly [NamedPath, NamedPath],
+  destinations: readonly NamedPath[],
   compilerInputs: readonly NamedPath[],
-): readonly [FilesystemIdentity, FilesystemIdentity] {
-  const output = filesystemIdentity(destinations[0]);
-  const manifest = filesystemIdentity(destinations[1]);
-  for (const destination of [output, manifest]) {
+): readonly FilesystemIdentity[] {
+  const identities = destinations.map(filesystemIdentity);
+  for (const destination of identities) {
     if (destination.existingDirectory) {
       throw new TypeError(`${destination.name} must not identify an existing directory`);
     }
   }
-  const destinationRelationship = filesystemRelationship(output, manifest);
-  if (destinationRelationship === 'same') {
-    throw new TypeError('--output and --manifest must identify distinct filesystem paths');
-  }
-  if (destinationRelationship === 'ancestor') {
-    throw new TypeError('--output must not contain the other artifact destination');
-  }
-  if (destinationRelationship === 'descendant') {
-    throw new TypeError('--manifest must not contain the other artifact destination');
+  for (const [index, destination] of identities.entries()) {
+    for (const other of identities.slice(index + 1)) {
+      const relationship = filesystemRelationship(destination, other);
+      if (relationship === 'same') {
+        throw new TypeError(`${destination.name} and ${other.name} must identify distinct filesystem paths`);
+      }
+      if (relationship === 'ancestor') {
+        throw new TypeError(`${destination.name} must not contain the other artifact destination ${other.name}`);
+      }
+      if (relationship === 'descendant') {
+        throw new TypeError(`${other.name} must not contain the other artifact destination ${destination.name}`);
+      }
+    }
   }
   const inputs = compilerInputs.map(filesystemIdentity);
-  for (const destination of [output, manifest]) {
+  for (const destination of identities) {
     const aliasedInput = inputs.find((input) => filesystemRelationship(destination, input) !== 'disjoint');
     if (aliasedInput !== undefined) {
       throw new TypeError(
@@ -158,13 +190,49 @@ function assertArtifactPathsAreIsolated(
       throw new TypeError(`${destination.name} has an existing non-directory ancestor`);
     }
   }
-  return [output, manifest];
+  return identities;
+}
+
+function requiredDestination(destinations: readonly FilesystemIdentity[], name: string): FilesystemIdentity {
+  const destination = destinations.find((candidate) => candidate.name === name);
+  if (destination === undefined) throw new TypeError(`artifact destination ${name} is missing`);
+  return destination;
+}
+
+/**
+ * A stale generated file left behind by an earlier layout would still type-check and still be
+ * imported, so `--check` fails when the output directory holds a `.ts` or `.ts.map` file the
+ * emitted package does not name.
+ */
+function assertNoUnexpectedGeneratedFiles(outputDirectory: string, emitted: LeanToTypeScriptPackage): void {
+  if (!existsSync(outputDirectory)) return;
+  const expected = new Set(
+    emitted.modules.flatMap((module) => [
+      resolve(outputDirectory, module.path),
+      ...(module.sourceMap === undefined ? [] : [resolve(outputDirectory, module.sourceMap.path)]),
+    ]),
+  );
+  const pending = [outputDirectory];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    if (directory === undefined) break;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = resolve(directory, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(path);
+        continue;
+      }
+      if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.ts.map')) continue;
+      if (!expected.has(path)) throw new TypeError(`generated tree holds an unexpected file: ${path}`);
+    }
+  }
 }
 
 function assertSameDestinationIdentities(
-  expected: readonly [FilesystemIdentity, FilesystemIdentity],
-  actual: readonly [FilesystemIdentity, FilesystemIdentity],
+  expected: readonly FilesystemIdentity[],
+  actual: readonly FilesystemIdentity[],
 ): void {
+  if (expected.length !== actual.length) throw new TypeError('artifact destination set changed during compilation');
   for (let index = 0; index < expected.length; index += 1) {
     const before = expected[index];
     const after = actual[index];
@@ -270,7 +338,7 @@ function parseArguments(arguments_: readonly string[]): CompilerArguments {
   let projectRoot: string | undefined;
   let moduleName: string | undefined;
   let sourcePath: string | undefined;
-  let outputPath: string | undefined;
+  let outputDirectory: string | undefined;
   let manifestPath: string | undefined;
   let check = false;
   let requireAttestation = false;
@@ -301,8 +369,8 @@ function parseArguments(arguments_: readonly string[]): CompilerArguments {
       case '--declaration':
         declarations.push(value);
         break;
-      case '--output':
-        outputPath = uniqueValue(outputPath, value, option);
+      case '--out-dir':
+        outputDirectory = uniqueValue(outputDirectory, value, option);
         break;
       case '--manifest':
         manifestPath = uniqueValue(manifestPath, value, option);
@@ -320,7 +388,7 @@ function parseArguments(arguments_: readonly string[]): CompilerArguments {
     moduleName: requiredValue(moduleName, '--module'),
     sourcePath: requiredValue(sourcePath, '--source'),
     declarations,
-    outputPath: requiredValue(outputPath, '--output'),
+    outputDirectory: requiredValue(outputDirectory, '--out-dir'),
     manifestPath: requiredValue(manifestPath, '--manifest'),
     check,
     requireAttestation,
@@ -346,8 +414,12 @@ function assertCurrent(absolutePath: string, expected: string): void {
 function usage(): string {
   return [
     'Usage: lean-to-typescript --project-root <path> --module <name> --source <path>',
-    '  --declaration <name> [--declaration <name> ...] --output <path> --manifest <path>',
+    '  --declaration <name> [--declaration <name> ...] --out-dir <path> --manifest <path>',
     '  [--check [--require-attestation]]',
+    '',
+    '--module names the Lean module Lake builds and the exporter imports. A declaration may be',
+    "defined by any module in that module's import closure; each one is emitted into the file its",
+    'own Lean module names, beneath --out-dir.',
   ].join('\n');
 }
 

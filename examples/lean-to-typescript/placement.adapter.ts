@@ -1,4 +1,4 @@
-import { choosePlacement, PlacementSet, type GeneratedData, type Placement } from './placement.generated.js';
+import { choosePlacement, PlacementSet, type GeneratedData, type Placement } from './generated/TSLean/Examples/Placement.js';
 
 /**
  * The boundary between untrusted input and the generated decision. `PlacementSet` carries

@@ -152,7 +152,7 @@ interface TransactionJournal {
   readonly schemaVersion: 1;
   readonly owner: TransactionOwner;
   readonly state: JournalState;
-  readonly artifacts: readonly [JournalArtifact, JournalArtifact];
+  readonly artifacts: readonly JournalArtifact[];
 }
 
 interface RecoveryArtifact {
@@ -165,21 +165,29 @@ interface RecoveryArtifact {
   readonly backupIdentity: FileIdentity | undefined;
 }
 
-export function publishArtifactPair(
-  destinations: readonly [ArtifactDestination, ArtifactDestination],
-  contents: readonly [string, string],
+/**
+ * Publishes a whole generated package atomically: every destination is staged and journalled
+ * before any of them replaces its target, so a crash leaves either the complete previous tree or
+ * the complete new one.
+ */
+export function publishArtifacts(
+  destinations: readonly ArtifactDestination[],
+  contents: readonly string[],
   platform: LeanToTypeScriptPlatform = hostLeanToTypeScriptPlatform,
 ): void {
-  publishArtifactPairWithFileSystem(destinations, contents, nodeArtifactFileSystem, platform);
+  publishArtifactsWithFileSystem(destinations, contents, nodeArtifactFileSystem, platform);
 }
 
-export function publishArtifactPairWithFileSystem(
-  destinations: readonly [ArtifactDestination, ArtifactDestination],
-  contents: readonly [string, string],
+export function publishArtifactsWithFileSystem(
+  destinations: readonly ArtifactDestination[],
+  contents: readonly string[],
   filesystem: ArtifactFileSystem,
   platform: LeanToTypeScriptPlatform = hostLeanToTypeScriptPlatform,
 ): void {
   assertLeanToTypeScriptPlatform(platform);
+  if (destinations.length !== contents.length) {
+    throw new TypeError('artifact transaction requires one content for each destination');
+  }
   const bound = bindDestinations(destinations, filesystem);
   let publicationLock: PublicationLock | undefined;
   let transactionOwner: TransactionOwner | undefined;
@@ -191,17 +199,19 @@ export function publishArtifactPairWithFileSystem(
   try {
     publicationLock = acquirePublicationLock(bound, journalName, filesystem);
     for (const destination of bound) assertBoundRoute(destination, filesystem);
-    recoverBoundArtifactPair(bound, journalName, publicationLock, filesystem);
+    recoverBoundArtifacts(bound, journalName, publicationLock, filesystem);
     transactionOwner = currentTransactionOwner();
     writePublicationLockOwner(publicationLock, transactionOwner, filesystem);
     for (let index = 0; index < bound.length; index += 1) {
       const destination = bound[index];
       const artifactContents = contents[index];
       if (destination === undefined || artifactContents === undefined) {
-        throw new TypeError('artifact transaction requires exactly two destinations and contents');
+        throw new TypeError('artifact transaction destinations and contents are misaligned');
       }
       assertPublicationLockOwned(publicationLock, filesystem);
-      staged.push(stageArtifact(destination, artifactContents, transactionOwner, publicationLock, filesystem));
+      staged.push(
+        stageArtifact(destination, artifactContents, transactionOwner, publicationLock, bound.length, filesystem),
+      );
     }
     const prepared = transactionJournal(staged, 'prepared', transactionOwner);
     writeJournalCopies(bound, journalName, prepared, publicationLock, filesystem);
@@ -297,8 +307,8 @@ export function publishArtifactPairWithFileSystem(
   }
 }
 
-export function recoverArtifactPairWithFileSystem(
-  destinations: readonly [ArtifactDestination, ArtifactDestination],
+export function recoverArtifactsWithFileSystem(
+  destinations: readonly ArtifactDestination[],
   filesystem: ArtifactFileSystem,
 ): void {
   const bound = bindDestinations(destinations, filesystem);
@@ -307,7 +317,7 @@ export function recoverArtifactPairWithFileSystem(
   try {
     publicationLock = acquirePublicationLock(bound, transactionJournalName(bound), filesystem);
     for (const destination of bound) assertBoundRoute(destination, filesystem);
-    recoverBoundArtifactPair(bound, transactionJournalName(bound), publicationLock, filesystem);
+    recoverBoundArtifacts(bound, transactionJournalName(bound), publicationLock, filesystem);
     recoveryFinished = true;
   } finally {
     try {
@@ -322,14 +332,16 @@ export function recoverArtifactPairWithFileSystem(
 }
 
 function acquirePublicationLock(
-  destinations: readonly [BoundDestination, BoundDestination],
+  destinations: readonly BoundDestination[],
   journalName: string,
   filesystem: ArtifactFileSystem,
 ): PublicationLock {
+  // The lock lives beside the lexicographically first destination, so every publisher of the same
+  // destination set contends for the same file regardless of the order it was handed them.
   const destination = [...destinations].sort((left, right) =>
     compareCodePoints(left.canonicalPath, right.canonicalPath),
   )[0];
-  if (destination === undefined) throw new TypeError('artifact publication requires exactly two destinations');
+  if (destination === undefined) throw new TypeError('artifact publication requires at least one destination');
   const name = `${journalName}.lock`;
   const path = childPath(destination, name);
   while (true) {
@@ -357,8 +369,14 @@ function acquirePublicationLock(
   }
 }
 
+/**
+ * The lock's own record of the transaction: its owner, and one entry per file staged before the
+ * journal exists. `stageLimit` is the transaction's destination count, so a lock that has grown
+ * past the set it belongs to is corrupt rather than merely unexpected.
+ */
 function readPublicationLockState(
   publicationLock: PublicationLock,
+  stageLimit: number,
   filesystem: ArtifactFileSystem,
 ): PublicationLockState | undefined {
   assertPublicationLockOwned(publicationLock, filesystem);
@@ -395,7 +413,7 @@ function readPublicationLockState(
     }
     stages.push(stage);
   }
-  if (stages.length > 2) throw new TypeError('artifact publication lock has too many stage records');
+  if (stages.length > stageLimit) throw new TypeError('artifact publication lock has too many stage records');
   return { owner, stages };
 }
 
@@ -413,17 +431,26 @@ function writePublicationLockOwner(
   assertPublicationLockOwned(publicationLock, filesystem);
 }
 
+/**
+ * Records one staged file in the lock before it is journalled, so a crash between staging and the
+ * journal still leaves a durable pointer to the orphan. The transaction's own destination count
+ * bounds the record: one entry per destination, and never the same destination twice.
+ */
 function recordUnjournaledStage(
   publicationLock: PublicationLock,
   owner: TransactionOwner,
   stage: UnjournaledStage,
+  destinationCount: number,
   filesystem: ArtifactFileSystem,
 ): void {
-  const state = readPublicationLockState(publicationLock, filesystem);
+  const state = readPublicationLockState(publicationLock, destinationCount, filesystem);
   if (state === undefined || !sameTransactionOwner(state.owner, owner)) {
     throw new TypeError('artifact publication lock owner changed');
   }
-  if (state.stages.length >= 2 || state.stages.some((entry) => entry.canonicalPath === stage.canonicalPath)) {
+  if (
+    state.stages.length >= destinationCount ||
+    state.stages.some((entry) => entry.canonicalPath === stage.canonicalPath)
+  ) {
     throw new TypeError('artifact publication lock cannot record another stage');
   }
   const record: PublicationLockStageRecord = { schemaVersion: 1, owner, stage };
@@ -459,28 +486,39 @@ function removePublicationLock(publicationLock: PublicationLock, filesystem: Art
   removeKnownFile(publicationLock.destination, publicationLock.name, publicationLock.identity, filesystem);
 }
 
+/**
+ * Binds every destination's parent directory before any of them is written. Two destinations that
+ * turn out to name the same file would make the transaction unable to roll either back, so the
+ * whole set is checked pairwise and a failure closes every descriptor already opened.
+ */
 function bindDestinations(
-  destinations: readonly [ArtifactDestination, ArtifactDestination],
+  destinations: readonly ArtifactDestination[],
   filesystem: ArtifactFileSystem,
-): readonly [BoundDestination, BoundDestination] {
-  const first = bindDestination(destinations[0], filesystem);
+): readonly BoundDestination[] {
+  if (destinations.length === 0) throw new TypeError('artifact publication requires at least one destination');
+  const bound: BoundDestination[] = [];
   try {
-    const second = bindDestination(destinations[1], filesystem);
-    const firstFile = fileIdentity(childPath(first, first.filename), filesystem);
-    const secondFile = fileIdentity(childPath(second, second.filename), filesystem);
-    if (
-      sameIdentity(first.directoryIdentity, second.directoryIdentity) &&
-      (first.filename === second.filename ||
-        (firstFile !== undefined && secondFile !== undefined && sameIdentity(firstFile, secondFile)))
-    ) {
-      filesystem.close(second.directoryDescriptor);
-      throw new TypeError('artifact destinations must identify distinct regular files');
+    for (const destination of destinations) {
+      const next = bindDestination(destination, filesystem);
+      const nextFile = fileIdentity(childPath(next, next.filename), filesystem);
+      for (const previous of bound) {
+        if (!sameIdentity(previous.directoryIdentity, next.directoryIdentity)) continue;
+        const previousFile = fileIdentity(childPath(previous, previous.filename), filesystem);
+        if (
+          previous.filename === next.filename ||
+          (previousFile !== undefined && nextFile !== undefined && sameIdentity(previousFile, nextFile))
+        ) {
+          filesystem.close(next.directoryDescriptor);
+          throw new TypeError('artifact destinations must identify distinct regular files');
+        }
+      }
+      bound.push(next);
     }
-    return [first, second];
   } catch (error: unknown) {
-    filesystem.close(first.directoryDescriptor);
+    for (const opened of bound) filesystem.close(opened.directoryDescriptor);
     throw error;
   }
+  return bound;
 }
 
 function bindDestination(destination: ArtifactDestination, filesystem: ArtifactFileSystem): BoundDestination {
@@ -524,6 +562,7 @@ function stageArtifact(
   contents: string,
   owner: TransactionOwner,
   publicationLock: PublicationLock,
+  destinationCount: number,
   filesystem: ArtifactFileSystem,
 ): StagedArtifact {
   assertBoundRoute(destination, filesystem);
@@ -538,6 +577,7 @@ function stageArtifact(
         stageName,
         stagedIdentity: serializeIdentity(createdIdentity),
       },
+      destinationCount,
       filesystem,
     );
   });
@@ -742,13 +782,11 @@ function transactionJournal(
       originalIdentity: artifact.originalIdentity === undefined ? null : serializeIdentity(artifact.originalIdentity),
     }))
     .sort((left, right) => compareCodePoints(left.canonicalPath, right.canonicalPath));
-  if (entries.length !== 2 || entries[0] === undefined || entries[1] === undefined) {
-    throw new TypeError('artifact transaction journal requires exactly two artifacts');
-  }
-  return { schemaVersion: 1, owner, state, artifacts: [entries[0], entries[1]] };
+  if (entries.length === 0) throw new TypeError('artifact transaction journal requires at least one artifact');
+  return { schemaVersion: 1, owner, state, artifacts: entries };
 }
 
-function recoverBoundArtifactPair(
+function recoverBoundArtifacts(
   destinations: readonly BoundDestination[],
   journalName: string,
   publicationLock: PublicationLock,
@@ -787,7 +825,7 @@ function recoverBoundArtifactPair(
       throw new TypeError('artifact transaction journal identity changed');
     }
   }
-  const lockOwner = readPublicationLockState(publicationLock, filesystem)?.owner;
+  const lockOwner = readPublicationLockState(publicationLock, destinations.length, filesystem)?.owner;
   if (lockOwner === undefined) {
     if (transactionOwnerIsLive(first.owner)) {
       throw new TypeError('artifact transaction journal belongs to a live foreign publisher');
@@ -813,7 +851,7 @@ function recoverUnjournaledStages(
   publicationLock: PublicationLock,
   filesystem: ArtifactFileSystem,
 ): void {
-  const state = readPublicationLockState(publicationLock, filesystem);
+  const state = readPublicationLockState(publicationLock, destinations.length, filesystem);
   if (state === undefined || state.stages.length === 0) return;
   const recoverable: {
     readonly destination: BoundDestination;
@@ -1012,14 +1050,14 @@ function decodeJournal(source: string): TransactionJournal {
     throw new TypeError('artifact transaction journal has an invalid root');
   }
   const artifacts = parsed['artifacts'].map(decodeJournalArtifact);
-  if (artifacts.length !== 2 || artifacts[0] === undefined || artifacts[1] === undefined) {
-    throw new TypeError('artifact transaction journal must contain exactly two artifacts');
+  if (artifacts.length === 0) {
+    throw new TypeError('artifact transaction journal must contain at least one artifact');
   }
   return {
     schemaVersion: 1,
     owner: parsed['owner'],
     state: parsed['state'],
-    artifacts: [artifacts[0], artifacts[1]],
+    artifacts,
   };
 }
 

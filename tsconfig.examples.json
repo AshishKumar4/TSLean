@@ -6,5 +6,10 @@
     "rootDir": ".",
     "sourceMap": false
   },
-  "include": ["examples/lean-to-typescript/placement.adapter.ts", "examples/lean-to-typescript/placement.generated.ts"]
+  "include": [
+    "examples/lean-to-typescript/placement.adapter.ts",
+    "examples/lean-to-typescript/generated/**/*.ts",
+    "examples/lean-to-typescript/package/generated/**/*.ts",
+    "examples/agent-core/facets/generated/**/*.ts"
+  ]
 }
