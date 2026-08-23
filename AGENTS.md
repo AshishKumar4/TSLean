@@ -46,15 +46,15 @@ lean/
 
 ## Lean 4 Setup
 
-Lean 4.16.0 via elan: `export PATH="$HOME/.elan/bin:$PATH"`
+Lean 4.33.1 via elan: `export PATH="$HOME/.elan/bin:$PATH"`
 
 The pin is exact, and it is not free to move: the Lean-to-TypeScript compiler
 refuses a target project whose toolchain is not byte-identical to its own, and
-Agent Core's formal library is `leanprover/lean4:v4.16.0`.
+Agent Core's formal library is `leanprover/lean4:v4.33.1`.
 
 If elan does not already have the toolchain:
 ```bash
-elan toolchain install leanprover/lean4:v4.16.0
+elan toolchain install leanprover/lean4:v4.33.1
 ```
 
 ## Lean Runtime Architecture

@@ -26,7 +26,7 @@ const LEAN = join(REPOSITORY, 'lean');
  */
 const UNBUILT_SOURCE = 'lean/TSLean/Refinement/JsTrustUnbuiltFixture.lean';
 const TOKEN_SOURCE = 'lean/TSLean/Refinement/JsTrustTokenFixture.lean';
-const ORPHAN_ARTIFACT = 'lean/.lake/build/lib/TSLean/Refinement/JsTrustOrphanFixture.olean';
+const ORPHAN_ARTIFACT = 'lean/.lake/build/lib/lean/TSLean/Refinement/JsTrustOrphanFixture.olean';
 /** Named so the sweep can delete the whole directory without ever meeting a real source module. */
 const NESTED_DIRECTORY_NAME = 'JsTrustNested';
 const NESTED_SOURCE = `lean/TSLean/JS/${NESTED_DIRECTORY_NAME}/Fixture.lean`;

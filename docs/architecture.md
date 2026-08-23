@@ -238,7 +238,7 @@ The CLI entry point. Parses arguments and dispatches to commands:
 
 ## Lean Runtime Library Organization
 
-The Lean library at `lean/TSLean/` is pure Lean 4.16.0 with no external dependencies (no Mathlib). It provides the runtime support that transpiled code imports.
+The Lean library at `lean/TSLean/` is pure Lean 4.33.1 with no external dependencies (no Mathlib). It provides the runtime support that transpiled code imports.
 
 ```
 lean/TSLean/
@@ -318,7 +318,7 @@ For project mode (`--project`):
 2. **Shared compiler** (`createSharedCompiler`) — Creates a single `ts.Program` for all files, enabling cross-file type checking.
 3. **Dependency graph** (`buildDependencyGraph`) — Builds a DAG of module dependencies. Runs Tarjan's SCC to detect cycles and Kahn's algorithm for topological sort.
 4. **Transpile in order** — Each file is parsed, rewritten, and lowered in topological order. Imports resolve to Lean module paths via `fileToLeanModule()`.
-5. **Generate lakefile** (`writeLakefiles`) — Emits `lakefile.toml`, `lean-toolchain` (pinned to v4.16.0), and a root barrel module that imports all sub-modules.
+5. **Generate lakefile** (`writeLakefiles`) — Emits `lakefile.toml`, `lean-toolchain` (pinned to v4.33.1), and a root barrel module that imports all sub-modules.
 6. **Write outputs** (`writeProjectOutputs`) — Writes all `.lean` files to the output directory.
 
 ## Type Checker Integration

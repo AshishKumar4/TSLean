@@ -869,7 +869,7 @@ function createLeanPackageFixture(
   const projectRoot = mkdtempSync(join(tmpdir(), 'tslean-lean-package-'));
   const sourceRoot = join(projectRoot, 'sources');
   mkdirSync(sourceRoot);
-  writeFileSync(join(projectRoot, 'lean-toolchain'), 'leanprover/lean4:v4.16.0\n');
+  writeFileSync(join(projectRoot, 'lean-toolchain'), 'leanprover/lean4:v4.33.1\n');
   writeFileSync(join(projectRoot, 'lake-manifest.json'), '{"version":"1.1.0","name":"fixture","packages":[]}\n');
   const library = modules[0]?.name.split('.')[0];
   if (library === undefined) throw new TypeError('a Lean package fixture needs at least one module');

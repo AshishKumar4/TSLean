@@ -851,7 +851,7 @@ private def exportPackage (entryModule : Name) (targetModules : NameSet) (roots 
     let some span := spans[name]?
       | throwError "{name}: source range disappeared before encoding"
     spanned := (match declaration with
-      | .obj fields => Json.obj (fields.insert compare "span" span)
+      | .obj fields => Json.obj (fields.insert "span" span)
       | other => other) :: spanned
   pure (object [
     ("schemaVersion", .num 1),

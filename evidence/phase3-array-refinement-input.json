@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase3-array-refinement-manifest.json",
   "baseRevision": "aab470f31b4f04bd8f19f1367e71fda1fe65d655",
-  "branch": "trust-integration-416",
+  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,

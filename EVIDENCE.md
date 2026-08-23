@@ -1246,14 +1246,14 @@ audit does not enforce it on its own.
 
 The trust gate audited an environment whose currency it never checked. `runLeanAudit` invokes
 `lake env lean`, which loads whatever `.olean` files already exist rather than rebuilding. That is
-not theoretical: an orphaned `lean/.lake/build/lib/TSLean/Refinement/Array.olean`, left behind
+not theoretical: an orphaned `lean/.lake/build/lib/lean/TSLean/Refinement/Array.olean`, left behind
 by a module whose source had been removed, stayed reachable through a stale barrel artifact and the
 gate reported 167 refinement proof declarations where source contained 155. `lake build` reconciled
 them. `bun run verify` masked the hazard by rebuilding first, so `bun run js:trust` alone was the
 more useful check.
 
 The gate discovers every compiled Lean module through Lake's 4.16 build directory
-`lean/.lake/build/lib/TSLean/**` and rejects artifacts with no corresponding source. This check is
+`lean/.lake/build/lib/lean/TSLean/**` and rejects artifacts with no corresponding source. This check is
 load-bearing because `lake build` does not remove modules whose sources disappeared. It found three
 orphans from modules deleted in `4e0953f`:
 `JS/AbstractOperationsOracleTests`, `JS/CoercionEffectsRefinement`, and
@@ -1820,7 +1820,7 @@ pre-existing, and not introduced here.
 
 The two remote trust commits — clearing the emitted trusted base of unallowed axioms, then auditing
 what the compiler emits — landed on `rebuild/semantic-core`, which still targets Lean 4.29. This
-repository's integrated line now targets Lean 4.16.0, pinned because Agent Core's formal library is.
+repository's integrated line now targets Lean 4.33.1, pinned because Agent Core's formal library is.
 The merge (`27a91ab` on `trust-integration-416`) resolved four conflicts semantically: `RPC.lean`
 kept the axiom removal and mooted the 4.16-only `toSubstring` fix it had carried for the deleted
 instance; `package.json` kept both the emitted-TCB evidence wiring and the lean-to-typescript

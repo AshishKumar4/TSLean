@@ -1894,7 +1894,7 @@ describe('published Lean to TypeScript API', () => {
         expect(help).toContain('Usage: lean-to-typescript');
         expect(help).toContain('--out-dir <path>');
         expect(help).not.toContain('--output');
-        writeFileSync(join(leanRoot, 'lean-toolchain'), 'leanprover/lean4:v4.16.0\n');
+        writeFileSync(join(leanRoot, 'lean-toolchain'), 'leanprover/lean4:v4.33.1\n');
         writeFileSync(join(leanRoot, 'lake-manifest.json'), '{"version":"1.1.0","name":"consumer","packages":[]}\n');
         writeFileSync(
           join(leanRoot, 'lakefile.toml'),

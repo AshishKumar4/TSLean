@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase2-array-shrink-manifest.json",
   "baseRevision": "ac8ad990e39863a9eedb3ffdcd61b8b2c663aade",
-  "branch": "trust-integration-416",
+  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,

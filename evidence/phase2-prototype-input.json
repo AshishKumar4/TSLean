@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase2-prototype-manifest.json",
   "baseRevision": "926e4924a367d40e72f0f4d403efd6e0030d18f6",
-  "branch": "trust-integration-416",
+  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,

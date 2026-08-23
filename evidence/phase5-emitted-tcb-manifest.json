@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
   "baseRevision": "110c1296e1dce0f67601c13e5863e13ee9252eac",
-  "branch": "trust-integration-416",
+  "branch": "lean-to-typescript/toolchain-433",
   "toolchain": {
     "bun": "1.4.0",
     "node": "v22.22.3",
     "typescript": "6.0.2",
-    "vitest": "vitest/4.1.11 linux-x64 node-v22.22.3",
+    "vitest": "vitest/4.1.2 linux-x64 node-v22.22.3",
     "prettier": "3.9.6",
-    "eslint": "v10.9.0",
-    "lean": "Lean (version 4.16.0, x86_64-unknown-linux-gnu, commit 128a1e6b0a82, Release)",
-    "lake": "Lake version 5.0.0-128a1e6 (Lean version 4.16.0)"
+    "eslint": "v10.8.1",
+    "lean": "Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)",
+    "lake": "Lake version 5.0.0-src+819816b (Lean version 4.33.1)"
   },
   "counts": {
     "tests": {
@@ -27,7 +27,7 @@
       "entries": 104,
       "red": 104
     },
-    "auditedTheorems": 603,
+    "auditedTheorems": 604,
     "differential": {
       "scenarioGroups": 17,
       "fixed": 734,
@@ -50,8 +50,8 @@
     "build": "passed",
     "emittedTrustedBase": {
       "imports": 22,
-      "modules": 1171,
-      "declarations": 5354
+      "modules": 2362,
+      "declarations": 6168
     }
   },
   "refinementProofs": {
@@ -172,12 +172,12 @@
     }
   ],
   "hashes": {
-    "source": "sha256:be0e41f247252e24a2fcc7723eec47f483b1c51721032a66fa14efd2f349878f",
-    "jsRuntime": "sha256:a4798946aff1565740f0311b34b2d429aaa8bfb08f24555e682b2e102f7c5a3f",
-    "refinementRuntimeAndBarrel": "sha256:5476eec5dd294827a3734a022c9a6bb4de100a9ff997e4271bdcf4a1344b9984",
-    "refinementTestsAuditRegistry": "sha256:a1f9c796a0051e3fa86f247c58a7d9bae964262a8996189e0d8cfbb9857b2425",
+    "source": "sha256:4ed551c016ea1d25c2f78851d0459a8ba3ea9b034c83c750b9ed69caa3008453",
+    "jsRuntime": "sha256:03f43c01641fd7379f87e7e2a56ad4fc92528c129efa2c736e289e70a3283deb",
+    "refinementRuntimeAndBarrel": "sha256:3c4badb33a92287e32a4156353ca3ac594fa575336a633ce98cdcd21e82e1ae2",
+    "refinementTestsAuditRegistry": "sha256:f751cdf08c7fcfafe94dacf515a5ec687a789668a6865b2cc98cd0b3b92e5acc",
     "corpus": "sha256:813ba0e3fa8d02912872c4451cf33773aa0fc627dac24f68f770e25506fa1903",
     "differentialSpecHarness": "sha256:a60e709b193d859da6521ab4179c645fd0c33cb50cfa9d1fba9f486a4feb6eb5",
-    "trustEvidenceInfrastructure": "sha256:28c97fbd377a9343b414fa839cfe37079a1f892be2b0590f8bb16118d0d06488"
+    "trustEvidenceInfrastructure": "sha256:872e9b35d822464b65a7da39b5a22f72cf8900844ced434399f72ea70dfa4714"
   }
 }

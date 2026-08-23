@@ -23,7 +23,7 @@ import { refinementProofRegistry } from './refinement-proof-registry.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const leanDirectory = join(root, 'lean');
-const compiledLibraryDirectory = join(leanDirectory, '.lake/build/lib');
+const compiledLibraryDirectory = join(leanDirectory, '.lake/build/lib/lean');
 const fixtureDirectory = join(root, 'tests/fixtures');
 const allowedAxioms = new Set(['propext', 'Classical.choice', 'Quot.sound']);
 const usage = 'Usage: check-js-axioms.mjs --evidence <input.json> | --self-test';

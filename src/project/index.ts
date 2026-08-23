@@ -44,7 +44,7 @@ export interface ProjectResult {
 }
 
 export function transpileProject(opts: ProjectOpts): ProjectResult {
-  const { projectDir, verify = false, generateLakefile: genLake = true, leanVersion = 'v4.16.0' } = opts;
+  const { projectDir, verify = false, generateLakefile: genLake = true, leanVersion = 'v4.33.1' } = opts;
   const progress = opts.onProgress ?? (() => {});
 
   // Phase 1: Read configuration

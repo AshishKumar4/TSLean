@@ -10,9 +10,9 @@
       "TSLean.Examples.Package.grantedCapability"
     ],
     "leanToolchain": {
-      "identity": "leanprover/lean4:v4.16.0",
-      "leanVersion": "Lean (version 4.16.0, x86_64-unknown-linux-gnu, commit 128a1e6b0a82, Release)",
-      "lakeVersion": "Lake version 5.0.0-128a1e6 (Lean version 4.16.0)"
+      "identity": "leanprover/lean4:v4.33.1",
+      "leanVersion": "Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)",
+      "lakeVersion": "Lake version 5.0.0-src+819816b (Lean version 4.33.1)"
     },
     "modules": [
       {
@@ -481,6 +481,12 @@
         "reason": ""
       },
       {
+        "declaration": "TSLean.Examples.Package.instReprCapability.repr.match_1",
+        "module": "TSLean.Examples.Package.Capability",
+        "role": "erased",
+        "reason": "match auxiliary inlined at its application sites"
+      },
+      {
         "declaration": "Unit",
         "module": "Init.Prelude",
         "role": "runtime-boundary",
@@ -491,12 +497,6 @@
         "module": "Init.Prelude",
         "role": "runtime-boundary",
         "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
-      },
-      {
-        "declaration": "_private.TSLean.Examples.Package.Capability.0.TSLean.Examples.Package.reprCapability.match_1._@.TSLean.Examples.Package.Capability._hyg.108",
-        "module": "TSLean.Examples.Package.Capability",
-        "role": "erased",
-        "reason": "match auxiliary inlined at its application sites"
       },
       {
         "declaration": "instDecidableEqBool",
@@ -531,7 +531,7 @@
       {
         "kind": "lean-project",
         "identity": "compiler-project:lean-toolchain",
-        "sha256": "sha256:b3f7d43e005c36e7980721171c8809899ec3c0bc338f35568f54606beb7149a8"
+        "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       },
       {
         "kind": "compiler-source",
@@ -576,7 +576,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-exporter",
-        "sha256": "sha256:d8db90dad92e7209d0ce9d1c570225c9de70faa76411388cabb0a7348f8cdd0a"
+        "sha256": "sha256:3e6ab6321d8643fca2ee6db0504c5d16cd806afbce4d8e55c13dced987b0989e"
       },
       {
         "kind": "compiler-source",
@@ -641,7 +641,7 @@
       {
         "kind": "lean-source",
         "identity": "source:TSLean.LeanToTypeScript.Export",
-        "sha256": "sha256:d8db90dad92e7209d0ce9d1c570225c9de70faa76411388cabb0a7348f8cdd0a"
+        "sha256": "sha256:3e6ab6321d8643fca2ee6db0504c5d16cd806afbce4d8e55c13dced987b0989e"
       },
       {
         "kind": "lean-project",
@@ -656,11 +656,11 @@
       {
         "kind": "lean-project",
         "identity": "target-project:lean-toolchain",
-        "sha256": "sha256:b3f7d43e005c36e7980721171c8809899ec3c0bc338f35568f54606beb7149a8"
+        "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       }
     ],
-    "inputClosureSha256": "sha256:bfa5065b3ce6da832d3df5c498e5db65667a11da944003282f7e4fb9e06e7f14",
-    "semanticIrSha256": "sha256:3ba4598b25b41720cde1cd01b13dd08a31b3e7cc41e2571b575b89cc0cd25cf9",
+    "inputClosureSha256": "sha256:bc6212a4e6b3eac834b90901ad3c905173c6a83d0d99ecad1ec9834f928816ab",
+    "semanticIrSha256": "sha256:506ca7bc62f2597f467a5f15150a77335e1af01c6eb9c2f6a3ef88c46198db7d",
     "generatedBodySha256": "sha256:19fb59c451dec3b307a009e0586002398ad8f7eed67d90ba982e62e02fbcbe11"
   },
   "environment": {
@@ -671,12 +671,12 @@
       {
         "kind": "lean-toolchain",
         "identity": "compiler-toolchain:lake-executable",
-        "sha256": "sha256:4ef16213215e1308861eb54e36b5c5cc76273c0c725f9cad21dab04ebab73062"
+        "sha256": "sha256:60330ab6f07dce20f3fa9ebb08e8b984ea9549eac172afeb15d9d2227060e2b3"
       },
       {
         "kind": "lean-toolchain",
         "identity": "compiler-toolchain:lean-executable",
-        "sha256": "sha256:c1156e9f4acc159b36e18edf02b9dd8b1b6babdef6461c9c81851378ac854929"
+        "sha256": "sha256:e8baaa71855a616dc351028f3ad2200051b0671f423a1696a100e809302d5550"
       },
       {
         "kind": "compiler-runtime",
@@ -686,42 +686,42 @@
       {
         "kind": "lean-module",
         "identity": "module:Init",
-        "sha256": "sha256:eac45f28af238625661e277b9e5dfb42094626837abe837645238335d852a000"
+        "sha256": "sha256:9ed3667be31b6ce04b831418a8bc9e99c44804b8ddaf52f6ebbdebfd26d8409e"
       },
       {
         "kind": "lean-module",
         "identity": "module:Lean",
-        "sha256": "sha256:24627fb6fdd7baa02c2518cbea800e6645aa67069fddb2071b6ea9ebc0303837"
+        "sha256": "sha256:b6d86d9546713512afdbbaecee5fbc5355e06a30cd70a405f4fa061dce3d56a7"
       },
       {
         "kind": "lean-module",
         "identity": "module:TSLean.Examples.Package.Capability",
-        "sha256": "sha256:65fb92dbd39d0a774efe79cccade40146a08db2c86ae1d892696927002eeab7c"
+        "sha256": "sha256:41795339bf1bebd566b6dc0d3277ae61d13cbd40576df4cb14b6de8eb5cde5e7"
       },
       {
         "kind": "lean-module",
         "identity": "module:TSLean.Examples.Package.Decision",
-        "sha256": "sha256:2d3e3ff6b81260e12f0d0648d4a30d8bdd2c16e2692c765683ae4850cf508269"
+        "sha256": "sha256:758418c5c2a906df63b3a05d6a2578965c10390455346daf45e685337d455e19"
       },
       {
         "kind": "lean-module",
         "identity": "module:TSLean.Examples.Package.Policy",
-        "sha256": "sha256:06b87d0491ebb0f357e7bef53d47adfe36bced2abc79028b6c99fe8860199c2d"
+        "sha256": "sha256:33dcb07a8f020e95bd658ba67020c642c843f016065f811c28ecbc6920ea48aa"
       },
       {
         "kind": "lean-module",
         "identity": "module:TSLean.LeanToTypeScript.Export",
-        "sha256": "sha256:539db02e1a6247285a4bce601dd124cad09a0a957f29235736641d344878f80d"
+        "sha256": "sha256:17be7d0af9ebdaf12e09ec28fc40ea5da7ef4be048ac2df39452946b71ec013b"
       },
       {
         "kind": "lean-toolchain",
         "identity": "target-toolchain:lake-executable",
-        "sha256": "sha256:4ef16213215e1308861eb54e36b5c5cc76273c0c725f9cad21dab04ebab73062"
+        "sha256": "sha256:60330ab6f07dce20f3fa9ebb08e8b984ea9549eac172afeb15d9d2227060e2b3"
       },
       {
         "kind": "lean-toolchain",
         "identity": "target-toolchain:lean-executable",
-        "sha256": "sha256:c1156e9f4acc159b36e18edf02b9dd8b1b6babdef6461c9c81851378ac854929"
+        "sha256": "sha256:e8baaa71855a616dc351028f3ad2200051b0671f423a1696a100e809302d5550"
       },
       {
         "kind": "lean-toolchain",
@@ -731,51 +731,56 @@
       {
         "kind": "lean-toolchain",
         "identity": "toolchain-runtime:00:libInit_shared.so",
-        "sha256": "sha256:d99647d27cc5f73e579af37e9e0c750ea07a1a27dafd1cc12c35042aecd6dcbf"
+        "sha256": "sha256:2f96493ac9046f64ec7bcb78102a4c1e7cd9a7042487f246af45eda8a96667f5"
       },
       {
         "kind": "lean-toolchain",
         "identity": "toolchain-runtime:01:libLake_shared.so",
-        "sha256": "sha256:93d7543625b772fb9d1f0bda7da6020c90fccb2014f252f3caac651a939dd963"
+        "sha256": "sha256:b1d164bf248f35b9e9664e696f4cd05a79a7066065510fb9b459139c78beb354"
       },
       {
         "kind": "lean-toolchain",
         "identity": "toolchain-runtime:02:libleanshared.so",
-        "sha256": "sha256:fad7352c9b83bfee67423e3fecf1dfba039ecb3984cf1aa202ef1e659aca9a40"
+        "sha256": "sha256:23d636cac1cadcba37beac30eff9b9b20d66cee726cf5defb4ae39f1284a3e5a"
       },
       {
         "kind": "lean-toolchain",
         "identity": "toolchain-runtime:03:libleanshared_1.so",
-        "sha256": "sha256:d99647d27cc5f73e579af37e9e0c750ea07a1a27dafd1cc12c35042aecd6dcbf"
+        "sha256": "sha256:2f96493ac9046f64ec7bcb78102a4c1e7cd9a7042487f246af45eda8a96667f5"
       },
       {
         "kind": "lean-toolchain",
-        "identity": "toolchain-runtime:04:ld-linux-x86-64.so.2",
+        "identity": "toolchain-runtime:04:libleanshared_2.so",
+        "sha256": "sha256:2f96493ac9046f64ec7bcb78102a4c1e7cd9a7042487f246af45eda8a96667f5"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "toolchain-runtime:05:ld-linux-x86-64.so.2",
         "sha256": "sha256:c5e80a563850d6ab5c2f2482e4202d9c1b71fbf44854b8c399e63527202c64e1"
       },
       {
         "kind": "lean-toolchain",
-        "identity": "toolchain-runtime:05:libc.so.6",
+        "identity": "toolchain-runtime:06:libc.so.6",
         "sha256": "sha256:a3947513a02831ec692ebf13053c07614882ab54a2101fb91a1b15724062ed0c"
       },
       {
         "kind": "lean-toolchain",
-        "identity": "toolchain-runtime:06:libdl.so.2",
+        "identity": "toolchain-runtime:07:libdl.so.2",
         "sha256": "sha256:7d293f8361fcead4f9691561adc0413f724f3607b959abe0d4fb243072956079"
       },
       {
         "kind": "lean-toolchain",
-        "identity": "toolchain-runtime:07:libm.so.6",
+        "identity": "toolchain-runtime:08:libm.so.6",
         "sha256": "sha256:beea4eeacfcfa2cd96011b959a826c97cf4a774017e214f6a34d7eea3d49cd88"
       },
       {
         "kind": "lean-toolchain",
-        "identity": "toolchain-runtime:08:libpthread.so.0",
+        "identity": "toolchain-runtime:09:libpthread.so.0",
         "sha256": "sha256:f93acb6e78dcf0213c8a85f922d21916249148e24de426079c40b6304c42085d"
       },
       {
         "kind": "lean-toolchain",
-        "identity": "toolchain-runtime:09:librt.so.1",
+        "identity": "toolchain-runtime:10:librt.so.1",
         "sha256": "sha256:5df2508a1ef33bd8024d77271e2a4a2607cb63e59dd753dd46f8e7a2ed44962d"
       },
       {
@@ -1329,6 +1334,6 @@
         "sha256": "sha256:bb6ee7e709ae60426e30b8d393df4d939ee61407794b4f053ce6338d6eaa8c63"
       }
     ],
-    "inputClosureSha256": "sha256:b88c6461a9dc4804303981c83dc00405b94f3b0138d1d5bc2454fafa070e2245"
+    "inputClosureSha256": "sha256:88b0e58074df3cb4aa2fc8ffc1a42c407775f8a94bc69568141a5cc3650b4c0a"
   }
 }

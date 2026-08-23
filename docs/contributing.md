@@ -6,7 +6,7 @@
 
 - **Node.js** >= 18
 - **Bun** (package manager) — install from [bun.sh](https://bun.sh)
-- **Lean 4.16.0** — the exact version the project is pinned to
+- **Lean 4.33.1** — the exact version the project is pinned to
 
 ### Clone and Install
 
@@ -16,23 +16,23 @@ cd TSLean
 bun install
 ```
 
-### Install Lean 4.16.0
+### Install Lean 4.33.1
 
 The pin is exact. The Lean-to-TypeScript compiler refuses a target project
 whose toolchain does not match its own, and Agent Core's formal library is
-`leanprover/lean4:v4.16.0`.
+`leanprover/lean4:v4.33.1`.
 
 Install through elan, which reads `lean/lean-toolchain` and selects the right
 version for you:
 
 ```bash
 curl -sSf https://elan.lean-lang.org | sh
-elan toolchain install leanprover/lean4:v4.16.0
+elan toolchain install leanprover/lean4:v4.33.1
 
 # Verify
 cd lean
-lean --version  # Should print: Lean (version 4.16.0, ...)
-lake --version  # Should print: Lake version 5.0.0-128a1e6 (Lean version 4.16.0)
+lean --version  # Should print: Lean (version 4.33.1, ...)
+lake --version  # Should print: Lake version 5.0.0-src+819816b (Lean version 4.33.1)
 ```
 
 ### Verify Setup
@@ -79,8 +79,8 @@ TSLean/
 │   ├── timing.ts             Pipeline timing (59 lines)
 │   └── utils.ts              Shared utilities (12 lines)
 ├── lean/                   Lean 4 runtime library
-│   ├── lakefile.toml         Lake build config (pure Lean 4.16.0, no deps)
-│   ├── lean-toolchain        leanprover/lean4:v4.16.0
+│   ├── lakefile.toml         Lake build config (pure Lean 4.33.1, no deps)
+│   ├── lean-toolchain        leanprover/lean4:v4.33.1
 │   └── TSLean/               Library root
 │       ├── Runtime/            Core types, DOMonad, BrandedTypes, Coercions
 │       ├── Stdlib/             String, Array, HashMap, HashSet, Numeric, Async, JSON
@@ -409,4 +409,4 @@ When filing a bug report, include:
 2. **Expected Lean output** — what you expected TSLean to produce
 3. **Actual Lean output** — what TSLean actually produced (or the error message)
 4. **TSLean version** — `bun run tslean --version`
-5. **Lean version** — `lean --version` (should be 4.16.0)
+5. **Lean version** — `lean --version` (should be 4.33.1)

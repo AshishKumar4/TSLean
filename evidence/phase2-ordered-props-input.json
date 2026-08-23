@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase2-ordered-props-manifest.json",
   "baseRevision": "04d31a1dc46450ba532c5553b9ebadf3784f5bba",
-  "branch": "trust-integration-416",
+  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,

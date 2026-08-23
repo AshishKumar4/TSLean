@@ -4,14 +4,14 @@
  * Lean module: AgentCore.Facets.Enforcement
  * Generated module: AgentCore/Facets/Enforcement.ts
  * Package entry module: AgentCore.Facets.Enforcement
- * Semantic identity: sha256:24896727c145c1b45ccfc883b7447ffdf9587d243b26ffcd3e77504325501000
- * Input closure: sha256:1209a72b3197ebd0694f0764b0feec79027ee4e4663c7cf92bf750124d7d539a
- * Semantic IR: sha256:bd274094fa65ac881715b6b618d63a0e9cffc987f958490bec2790390f19b788
+ * Semantic identity: sha256:fbf5e2df543f4724930b5c8aba9779a8b88410e24a40c76768481f18c498c17c
+ * Input closure: sha256:9d813228bed0fe97c883313600eb09dff313a7466a1af07da25dedecbffd1fe0
+ * Semantic IR: sha256:4f2bf513f7e5dbbaf2454df7dff787650b6d2bd56d3df85b03b0461798d5978a
  * Generated module body: sha256:a99bf7c2cb6d81d90f45eadb273ffc0b5bd01f680641d47310181fce1c4bd0f3
  * Generated package body: sha256:d34f6d0a21e454c5ceae3d2b7ddf917f1debc81f71d0b6db6d4eaee2d6f7134f
- * Lean toolchain: leanprover/lean4:v4.16.0
- * Lean: Lean (version 4.16.0, x86_64-unknown-linux-gnu, commit 128a1e6b0a82, Release)
- * Lake: Lake version 5.0.0-128a1e6 (Lean version 4.16.0)
+ * Lean toolchain: leanprover/lean4:v4.33.1
+ * Lean: Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)
+ * Lake: Lake version 5.0.0-src+819816b (Lean version 4.33.1)
  * Environment attestation: recorded in the manifest sidecar; it does not affect these bytes.
  * Evidence boundary: generation is checked and differential tests are empirical; no refinement theorem is claimed.
  */

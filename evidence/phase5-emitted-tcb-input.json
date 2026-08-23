@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase5-emitted-tcb-manifest.json",
   "baseRevision": "110c1296e1dce0f67601c13e5863e13ee9252eac",
-  "branch": "trust-integration-416",
+  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 50,
@@ -18,7 +18,7 @@
       "entries": 104,
       "red": 104
     },
-    "auditedTheorems": 603,
+    "auditedTheorems": 604,
     "differential": {
       "scenarioGroups": 17,
       "fixed": 734,
@@ -41,8 +41,8 @@
     "build": "passed",
     "emittedTrustedBase": {
       "imports": 22,
-      "modules": 1171,
-      "declarations": 5354
+      "modules": 2362,
+      "declarations": 6168
     }
   },
   "refinementProofs": {

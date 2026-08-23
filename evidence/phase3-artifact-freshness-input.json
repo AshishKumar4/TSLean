@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase3-artifact-freshness-manifest.json",
   "baseRevision": "701612a9bb53fd66cbf42e6913e9cff0e52642ec",
-  "branch": "trust-integration-416",
+  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,

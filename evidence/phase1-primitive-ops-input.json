@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase1-primitive-ops-manifest.json",
   "baseRevision": "3450468e82ccf70895ba892c636c707d851b4162",
-  "branch": "trust-integration-416",
+  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,

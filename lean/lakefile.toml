@@ -27,7 +27,7 @@ name = "js-coercion-effects-benchmark"
 root = "TSLean.JS.CoercionEffectsBenchmark"
 
 # Note: Veil (verse-lab/veil) requires Lean v4.24.0 + Mathlib + lean-smt.
-# Our runtime targets Lean v4.16.0 (no external deps), matching Agent Core's
+# Our runtime targets Lean v4.33.1 (no external deps), matching Agent Core's
 # formal library so the same toolchain compiles both sides of the bridge.
 # We implement the Veil transition-system core natively in TSLean/Veil/
 # so that structural type-checking works without SMT solvers or Mathlib.

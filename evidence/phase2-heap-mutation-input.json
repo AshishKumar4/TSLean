@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase2-heap-mutation-manifest.json",
   "baseRevision": "ec7b896f0fbdb639e22d1ae69a6a89e878f51c9c",
-  "branch": "trust-integration-416",
+  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,

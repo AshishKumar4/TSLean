@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase2-heap-allocation-manifest.json",
   "baseRevision": "54ca2aac56c74745a496f23f34176fe521c1c5e3",
-  "branch": "trust-integration-416",
+  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,

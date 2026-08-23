@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase2-zero-debt-manifest.json",
   "baseRevision": "d68dab44af677733dd23b15c0ca16937ebc3d2ae",
-  "branch": "trust-integration-416",
+  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,
