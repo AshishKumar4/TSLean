@@ -316,39 +316,55 @@ function prepareLeanModules(
   runLake(targetToolchain, request.projectRoot, ['-H', 'build', request.moduleName], 'target build');
 }
 
+interface LeanProject {
+  readonly toolchain: LeanToolchain;
+  readonly projectRoot: string;
+  readonly moduleName: string;
+  readonly sourcePath: string;
+}
+
 function collectModuleFiles(
   request: LeanToTypeScriptRequest,
   layout: CompilationLayout,
   compilerToolchain: LeanToolchain,
   targetToolchain: LeanToolchain,
 ): readonly InputFile[] {
-  const artifacts = [
-    ...transitiveModuleArtifacts(
-      compilerToolchain,
-      layout.compilerLeanRoot,
-      'TSLean.LeanToTypeScript.Export',
-      layout.exporterBuildSourcePath,
-    ),
-    ...transitiveModuleArtifacts(targetToolchain, request.projectRoot, request.moduleName, request.sourcePath),
+  const projects: readonly LeanProject[] = [
+    {
+      toolchain: compilerToolchain,
+      projectRoot: layout.compilerLeanRoot,
+      moduleName: 'TSLean.LeanToTypeScript.Export',
+      sourcePath: layout.exporterBuildSourcePath,
+    },
+    {
+      toolchain: targetToolchain,
+      projectRoot: request.projectRoot,
+      moduleName: request.moduleName,
+      sourcePath: request.sourcePath,
+    },
   ];
-  const modules = new Map<string, string>();
-  for (const artifact of artifacts.map((path) => realpathSync(path))) {
-    const moduleName = moduleNameFromArtifact(artifact);
-    const existing = modules.get(moduleName);
-    if (existing !== undefined && existing !== artifact) {
-      throw new TypeError(`Lean module ${moduleName} resolves to multiple artifacts`);
+  const modules = new Map<string, { readonly artifact: string; readonly source: string | undefined }>();
+  for (const project of projects) {
+    const searchRoots = leanSearchRoots(project.toolchain, project.projectRoot);
+    const sourceRoots = projectSourceRoots(project.toolchain, project.projectRoot);
+    for (const path of transitiveModuleArtifacts(project)) {
+      const artifact = realpathSync(path);
+      const moduleName = moduleNameFromArtifact(searchRoots, artifact);
+      const existing = modules.get(moduleName);
+      if (existing !== undefined && existing.artifact !== artifact) {
+        throw new TypeError(`Lean module ${moduleName} resolves to multiple artifacts`);
+      }
+      modules.set(moduleName, { artifact, source: moduleSource(sourceRoots, moduleName) });
     }
-    modules.set(moduleName, artifact);
   }
   const files: InputFile[] = [];
-  for (const [moduleName, artifact] of [...modules].sort(([left], [right]) => compareCodePoints(left, right))) {
-    files.push({ kind: 'lean-module', identity: `module:${moduleName}`, path: artifact });
-    const source = sourceFromTrace(artifact);
-    if (source !== undefined) {
+  for (const [moduleName, module] of [...modules].sort(([left], [right]) => compareCodePoints(left, right))) {
+    files.push({ kind: 'lean-module', identity: `module:${moduleName}`, path: module.artifact });
+    if (module.source !== undefined) {
       files.push({
         kind: 'lean-source',
         identity: `source:${moduleName}`,
-        path: originalTargetSourcePath(source, layout),
+        path: originalTargetSourcePath(module.source, layout),
       });
     }
   }
@@ -356,10 +372,17 @@ function collectModuleFiles(
 }
 
 function collectTargetModuleNames(request: LeanToTypeScriptRequest, toolchain: LeanToolchain): readonly string[] {
-  const targetBuildRoot = realpathSync(join(request.projectRoot, '.lake', 'build', 'lib', 'lean'));
-  const names = transitiveModuleArtifacts(toolchain, request.projectRoot, request.moduleName, request.sourcePath)
-    .filter((path) => isWithin(targetBuildRoot, path))
-    .map(moduleNameFromArtifact)
+  const project: LeanProject = {
+    toolchain,
+    projectRoot: request.projectRoot,
+    moduleName: request.moduleName,
+    sourcePath: request.sourcePath,
+  };
+  const searchRoots = leanSearchRoots(toolchain, request.projectRoot);
+  const buildRoots = withinProject(request.projectRoot, searchRoots);
+  const names = transitiveModuleArtifacts(project)
+    .filter((path) => buildRoots.some((root) => isWithin(root, path)))
+    .map((path) => moduleNameFromArtifact(searchRoots, path))
     .filter((name, index, names) => names.indexOf(name) === index)
     .sort(compareCodePoints);
   if (!names.includes(request.moduleName)) throw new TypeError('target module is outside its project build tree');
@@ -368,17 +391,16 @@ function collectTargetModuleNames(request: LeanToTypeScriptRequest, toolchain: L
 
 /**
  * Every compiled Lean module the entry module reaches, transitively. `lean --deps` names one hop,
- * so the walk follows each project-built dependency through its own source. A module Lake did not
- * build has no trace, which is exactly the toolchain boundary: it is recorded and not expanded.
+ * so the walk follows each project-built dependency through its own source. A dependency Lake
+ * resolved outside the project's own build directories is the toolchain boundary: it is recorded
+ * and not expanded, because Lake's source path for the project cannot name its source.
  */
-function transitiveModuleArtifacts(
-  toolchain: LeanToolchain,
-  projectRoot: string,
-  moduleName: string,
-  sourcePath: string,
-): readonly string[] {
-  const artifacts = new Set<string>([realpathSync(moduleArtifact(toolchain, projectRoot, moduleName))]);
-  const pending = [realpathSync(sourcePath)];
+function transitiveModuleArtifacts(project: LeanProject): readonly string[] {
+  const { toolchain, projectRoot } = project;
+  const searchRoots = leanSearchRoots(toolchain, projectRoot);
+  const sourceRoots = projectSourceRoots(toolchain, projectRoot);
+  const artifacts = new Set<string>([realpathSync(moduleArtifact(toolchain, projectRoot, project.moduleName))]);
+  const pending = [realpathSync(project.sourcePath)];
   const visited = new Set<string>();
   while (pending.length > 0) {
     const source = pending.pop();
@@ -388,7 +410,7 @@ function transitiveModuleArtifacts(
       const artifact = realpathSync(dependency);
       if (artifacts.has(artifact)) continue;
       artifacts.add(artifact);
-      const dependencySource = sourceFromTrace(artifact);
+      const dependencySource = moduleSource(sourceRoots, moduleNameFromArtifact(searchRoots, artifact));
       if (dependencySource !== undefined) pending.push(dependencySource);
     }
   }
@@ -412,6 +434,13 @@ function compilerLeanSources(projectRoot: string): readonly InputFile[] {
   }));
 }
 
+/**
+ * Every Lean source in the target project, staged so Lake can rebuild it in isolation.
+ * `lakefile.lean` is deliberately excluded: it is Lake configuration rather than a module of the
+ * project, `projectInputs` already captures it, and staging the same path under two identities
+ * would both double-count it in the recorded input closure and write it twice into a tree whose
+ * files are made read-only as they land.
+ */
 function targetLeanSources(projectRoot: string): readonly InputFile[] {
   const files: InputFile[] = [];
   const visit = (directory: string): void => {
@@ -419,6 +448,7 @@ function targetLeanSources(projectRoot: string): readonly InputFile[] {
       compareCodePoints(left.name, right.name),
     )) {
       if (entry.name === '.git' || entry.name === '.lake') continue;
+      if (directory === projectRoot && entry.name === 'lakefile.lean') continue;
       const path = join(directory, entry.name);
       if (entry.isSymbolicLink()) throw new TypeError(`target project source tree contains symlink: ${path}`);
       if (entry.isDirectory()) {
@@ -716,58 +746,81 @@ function assertTargetSource(moduleFiles: readonly InputFile[], moduleName: strin
   }
 }
 
-function moduleArtifact(toolchain: LeanToolchain, projectRoot: string, moduleName: string): string {
-  const relativePath = `${moduleName.split('.').join(sep)}.olean`;
-  const candidates = runLake(toolchain, projectRoot, ['env', 'printenv', 'LEAN_PATH'], `${moduleName} search path`)
+/**
+ * A path list Lake reports for a project, as absolute directories. Lake 5.0.0-128a1e6 (Lean 4.16)
+ * reports the project's own directories relative to the package — `././.lake/build/lib`,
+ * `./././.` — while later Lake versions report them absolutely, and the compiled-module directory
+ * moved one level deeper into `lib/lean`. Resolving against the project root normalises both, so
+ * nothing downstream has to know which layout produced a path.
+ */
+function leanPathRoots(
+  toolchain: LeanToolchain,
+  projectRoot: string,
+  variable: string,
+  label: string,
+): readonly string[] {
+  return runLake(toolchain, projectRoot, ['env', 'printenv', variable], label)
     .trim()
     .split(delimiter)
+    .filter((entry) => entry.length > 0)
+    .map((entry) => resolve(projectRoot, entry))
+    .map((directory) => (existsSync(directory) ? realpathSync(directory) : directory));
+}
+
+/** Where Lake looks for compiled modules. */
+function leanSearchRoots(toolchain: LeanToolchain, projectRoot: string): readonly string[] {
+  return leanPathRoots(toolchain, projectRoot, 'LEAN_PATH', 'Lean search path');
+}
+
+/**
+ * Where Lake looks for the project's own module sources, honouring each library's `srcDir`. The
+ * toolchain's own source directories are excluded, so a module the project did not build has no
+ * source and terminates the walk instead of dragging core Lean sources into the input closure.
+ */
+function projectSourceRoots(toolchain: LeanToolchain, projectRoot: string): readonly string[] {
+  return withinProject(projectRoot, leanPathRoots(toolchain, projectRoot, 'LEAN_SRC_PATH', 'Lean source path'));
+}
+
+function withinProject(projectRoot: string, directories: readonly string[]): readonly string[] {
+  const root = realpathSync(projectRoot);
+  return directories.filter((directory) => directory === root || isWithin(root, directory));
+}
+
+function moduleArtifact(toolchain: LeanToolchain, projectRoot: string, moduleName: string): string {
+  const relativePath = `${moduleName.split('.').join(sep)}.olean`;
+  const artifact = leanSearchRoots(toolchain, projectRoot)
     .map((directory) => join(directory, relativePath))
-    .filter(existsSync);
-  const artifact = candidates[0];
+    .find(existsSync);
   if (artifact === undefined) {
     throw new TypeError(`Lake returned no module artifact for ${moduleName}`);
   }
   return artifact;
 }
 
+/** The source Lake would compile for a module, or `undefined` when the project does not own it. */
+function moduleSource(sourceRoots: readonly string[], moduleName: string): string | undefined {
+  const relativePath = `${moduleName.split('.').join(sep)}.lean`;
+  const source = sourceRoots.map((directory) => join(directory, relativePath)).find(existsSync);
+  return source === undefined ? undefined : realpathSync(source);
+}
+
 function moduleDependencies(toolchain: LeanToolchain, projectRoot: string, sourcePath: string): readonly string[] {
   return runLake(toolchain, projectRoot, ['env', 'lean', '--deps', sourcePath], 'module dependencies')
     .split(/\r?\n/u)
-    .filter((path) => path.endsWith('.olean'));
+    .filter((path) => path.endsWith('.olean'))
+    .map((path) => resolve(projectRoot, path));
 }
 
-function moduleNameFromArtifact(path: string): string {
-  const marker = `${sep}lib${sep}lean${sep}`;
-  const markerIndex = path.lastIndexOf(marker);
-  if (markerIndex < 0 || !path.endsWith('.olean')) {
-    throw new TypeError(`cannot derive Lean module name from ${path}`);
+function moduleNameFromArtifact(searchRoots: readonly string[], path: string): string {
+  if (!path.endsWith('.olean')) throw new TypeError(`cannot derive Lean module name from ${path}`);
+  const root = searchRoots.find((candidate) => isWithin(candidate, path));
+  if (root === undefined) {
+    throw new TypeError(`Lean module artifact is outside every Lake search root: ${path}`);
   }
-  return path
-    .slice(markerIndex + marker.length, -'.olean'.length)
+  return relative(root, path)
+    .slice(0, -'.olean'.length)
     .split(sep)
     .join('.');
-}
-
-function sourceFromTrace(artifact: string): string | undefined {
-  const tracePath = artifact.replace(/\.olean$/u, '.trace');
-  if (!existsSync(tracePath)) return undefined;
-  const trace: unknown = JSON.parse(readFileSync(tracePath, 'utf8'));
-  const sources = [
-    ...new Set(
-      allStrings(trace)
-        .filter((value) => value.endsWith('.lean') && existsSync(value))
-        .map((path) => realpathSync(path)),
-    ),
-  ];
-  if (sources.length > 1) throw new TypeError(`Lean module trace names multiple source files: ${tracePath}`);
-  return sources[0];
-}
-
-function allStrings(value: unknown): readonly string[] {
-  if (typeof value === 'string') return [value];
-  if (Array.isArray(value)) return value.flatMap(allStrings);
-  if (isRecord(value)) return Object.values(value).flatMap(allStrings);
-  return [];
 }
 
 function exportDriver(request: LeanToTypeScriptRequest, targetModules: readonly string[]): string {
@@ -785,15 +838,21 @@ function exportDriver(request: LeanToTypeScriptRequest, targetModules: readonly 
 type ExporterResponse =
   { readonly ok: true; readonly package: unknown } | { readonly ok: false; readonly error: string };
 
+/**
+ * The exporter's one response line, selected by shape rather than by leading text. Lean's `Json`
+ * renderer walks an object's keys in ascending order at 4.29 and descending order at 4.16, so
+ * `{"ok":true,"package":…}` and `{"package":…,"ok":true}` are the same response and neither
+ * spelling may be privileged. The recorded semantic IR digest is unaffected: it is taken over the
+ * decoded program this compiler rebuilds, not over the bytes Lean printed.
+ */
 function decodeExporterResponse(output: string): ExporterResponse {
-  const lines = output
+  const candidates = output
     .split(/\r?\n/u)
-    .filter((candidate) => candidate.startsWith('{"error"') || candidate.startsWith('{"ok"'));
-  if (lines.length !== 1) throw new TypeError('Lean semantic exporter must emit exactly one response');
-  const line = lines[0];
-  if (line === undefined) throw new TypeError('Lean semantic exporter emitted no response');
-  const parsed: unknown = JSON.parse(line);
-  if (!isRecord(parsed)) throw new TypeError('Lean semantic exporter response must be an object');
+    .map((line) => parsedJsonObject(line))
+    .filter((value): value is Record<string, unknown> => value !== undefined && 'ok' in value);
+  if (candidates.length !== 1) throw new TypeError('Lean semantic exporter must emit exactly one response');
+  const parsed = candidates[0];
+  if (parsed === undefined) throw new TypeError('Lean semantic exporter emitted no response');
   const fields = Object.keys(parsed).sort(compareCodePoints);
   if (parsed['ok'] === true && sameStrings(fields, ['ok', 'package'])) {
     return { ok: true, package: parsed['package'] };
@@ -802,6 +861,17 @@ function decodeExporterResponse(output: string): ExporterResponse {
     return { ok: false, error: parsed['error'] };
   }
   throw new TypeError('Lean semantic exporter response has an invalid shape');
+}
+
+function parsedJsonObject(line: string): Record<string, unknown> | undefined {
+  if (!line.startsWith('{')) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  return isRecord(parsed) ? parsed : undefined;
 }
 
 function unsupportedError(message: string, fallbackDeclaration: string): UnsupportedLeanFragmentError {
