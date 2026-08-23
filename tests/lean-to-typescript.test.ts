@@ -112,8 +112,8 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     expect(first.manifest.schemaVersion).toBe(3);
     expect(first.manifest.semantic.entryModule).toBe('TSLean.Examples.Placement');
     expect(first.manifest.semantic.modules.map((module) => module.path)).toEqual(['TSLean/Examples/Placement.ts']);
-    expect(first.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.29.0');
-    expect(first.manifest.semantic.leanToolchain.leanVersion).toContain('Lean (version 4.29.0');
+    expect(first.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.16.0');
+    expect(first.manifest.semantic.leanToolchain.leanVersion).toContain('Lean (version 4.16.0');
     expect(first.manifest.semantic.leanToolchain.lakeVersion).toContain('Lake version 5.0.0');
     expect(first.manifest.semantic.semanticIrSha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
     expect(first.manifest.semantic.inputClosureSha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
@@ -639,8 +639,8 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.decide'],
       });
-      expect(emitted.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.29.0');
-      expect(emitted.manifest.semantic.leanToolchain.leanVersion).toContain('Lean (version 4.29.0');
+      expect(emitted.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.16.0');
+      expect(emitted.manifest.semantic.leanToolchain.leanVersion).toContain('Lean (version 4.16.0');
     } finally {
       if (originalToolchain === undefined) {
         delete process.env['ELAN_TOOLCHAIN'];
