@@ -651,6 +651,65 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     }
   });
 
+  test('compiles a Lean 4.16 Lake DSL project with a transitive source closure', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'tslean-lake-dsl-project-'));
+    const dependencyDirectory = join(projectRoot, 'Fixture');
+    const fixtureSourcePath = join(projectRoot, 'Fixture.lean');
+    try {
+      mkdirSync(dependencyDirectory);
+      writeFileSync(join(projectRoot, 'lean-toolchain'), 'leanprover/lean4:v4.16.0\n');
+      writeFileSync(join(projectRoot, 'lake-manifest.json'), '{"version":"1.1.0","name":"fixture","packages":[]}\n');
+      writeFileSync(
+        join(projectRoot, 'lakefile.lean'),
+        [
+          'import Lake',
+          'open Lake DSL',
+          '',
+          'package fixture where',
+          '',
+          'lean_lib Fixture where',
+          '  roots := #[`Fixture]',
+          '',
+        ].join('\n'),
+      );
+      writeFileSync(
+        join(dependencyDirectory, 'Dependency.lean'),
+        [
+          'namespace Fixture.Dependency',
+          'def invert (value : Bool) : Bool := !value',
+          'end Fixture.Dependency',
+          '',
+        ].join('\n'),
+      );
+      writeFileSync(
+        fixtureSourcePath,
+        [
+          'import Fixture.Dependency',
+          'namespace Fixture',
+          'def decide (value : Bool) : Bool := Fixture.Dependency.invert value',
+          'end Fixture',
+          '',
+        ].join('\n'),
+      );
+
+      const emitted = compileLeanToTypeScript({
+        projectRoot,
+        moduleName: 'Fixture',
+        sourcePath: fixtureSourcePath,
+        declarations: ['Fixture.decide'],
+      });
+
+      expect(emitted.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.16.0');
+      expect(emitted.manifest.semantic.modules.map((module) => module.path)).toEqual([
+        'Fixture.ts',
+        'Fixture/Dependency.ts',
+      ]);
+      expect(entryCode(emitted)).toContain('export function decide(');
+    } finally {
+      rmSync(projectRoot, { force: true, recursive: true });
+    }
+  });
+
   test('generates byte-identical artifacts in independent locale-varied processes', () => {
     expect(compileInChild('C')).toBe(compileInChild('tr_TR.UTF-8'));
   });
