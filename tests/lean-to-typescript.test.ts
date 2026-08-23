@@ -771,6 +771,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     const emitted = compileLeanToTypeScript(request);
     const committed = committedPackage(generatedRoot, manifestPath, emitted);
     expect(() => verifyLeanToTypeScriptPackage(committed)).not.toThrow();
+    expect(committed.manifest.semantic.semanticIrSha256).toBe(emitted.manifest.semantic.semanticIrSha256);
     expect(committed.modules.map((module) => generatedBody(module.code))).toEqual(
       emitted.modules.map((module) => generatedBody(module.code)),
     );
