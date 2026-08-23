@@ -2697,7 +2697,7 @@ private theorem prototypeTermination_length_le_size
     obtain ⟨ref, refMember, rfl⟩ := member
     simp only [List.mem_cons] at refMember
     cases refMember with
-    | inl same => simpa [same] using prototypePath_start_valid path
+    | inl same => simpa [same, ValidRef] using prototypePath_start_valid path
     | inr member =>
         have reachable := prototypePath_reaches_member path member
         obtain ⟨_, _, firstEdge, remaining⟩ := reachable
@@ -3523,6 +3523,9 @@ private theorem objectReferencesValid_push (heap : Heap) (newObject object : Obj
     | some prototype =>
         simp only [prototypeEq] at valid ⊢
         simp only [size, Array.size_push, Option.all_some, Bool.and_eq_true, id_eq] at valid ⊢
+        have oldPrototypeBound : prototype.value < heap.objects.size :=
+          of_decide_eq_true valid.1.2
+        apply decide_eq_true
         omega
   · cases kindEq : object.kind with
     | ordinary => simpa [kindEq] using valid.2
@@ -3534,13 +3537,20 @@ private theorem objectReferencesValid_push (heap : Heap) (newObject object : Obj
         simp only [Bool.and_eq_true] at valid ⊢
         refine ⟨⟨⟨⟨⟨⟨?_, ?_⟩, ?_⟩, valid.2.1.1.1.2⟩,
           valid.2.1.1.2⟩, valid.2.1.2⟩, valid.2.2⟩
-        · simp [functionCount] at valid ⊢
+        · have oldFunctionBound : slots.functionId.value < heap.functionCount :=
+            of_decide_eq_true valid.2.1.1.1.1.1.1
+          change slots.functionId.value < heap.nextFunctionId at oldFunctionBound
+          apply decide_eq_true
+          change slots.functionId.value < nextFunctionId
           omega
         · cases homeEq : slots.homeObject with
           | none => rfl
           | some home =>
               simp only [homeEq] at valid ⊢
               simp only [size, Array.size_push, Option.all_some, Bool.and_eq_true, id_eq] at valid ⊢
+              have oldHomeBound : home.value < heap.objects.size :=
+                of_decide_eq_true valid.2.1.1.1.1.1.2
+              apply decide_eq_true
               omega
         · cases lexicalEq : slots.lexicalThis with
           | none => rfl
@@ -3593,6 +3603,9 @@ private theorem prototypeGraphAcyclic_push_two (heap : Heap) (first second : Obj
       | some prototype =>
           simp only [prototypeEq] at firstPrototypeValid ⊢
           simp only [size, Array.size_push, Option.all_some, Bool.and_eq_true, id_eq] at firstPrototypeValid ⊢
+          have oldBound : prototype.value < heap.objects.size :=
+            of_decide_eq_true firstPrototypeValid
+          apply decide_eq_true
           omega
     · rename_i notLast
       have oldValid := referencesValid index object found
@@ -3601,12 +3614,19 @@ private theorem prototypeGraphAcyclic_push_two (heap : Heap) (first second : Obj
       | some prototype =>
           simp only [prototypeEq] at oldValid ⊢
           simp only [size, Array.size_push, Option.all_some, Bool.and_eq_true, id_eq] at oldValid ⊢
+          have oldBound : prototype.value < heap.objects.size :=
+            of_decide_eq_true oldValid
+          apply decide_eq_true
           omega
   · cases prototypeEq : second.prototype with
     | none => rfl
     | some prototype =>
         simp only [prototypeEq] at secondPrototypeValid ⊢
         simp only [afterFirst, size] at secondPrototypeValid ⊢
+        simp only [Array.size_push, Option.all_some] at secondPrototypeValid ⊢
+        have oldBound : prototype.value < heap.objects.size :=
+          of_decide_eq_true secondPrototypeValid
+        apply decide_eq_true
         omega
   · exact prototypeGraphAcyclic_push heap first nextFunctionId referencesValid
       firstPrototypeValid valid
@@ -4010,29 +4030,47 @@ private theorem descriptorUpdateReferencesValid_iff_policy (heap : Heap)
   unfold DescriptorUpdateReferencesValid DescriptorUpdate.ReferencesValid
   constructor
   · rintro ⟨valueValid, getValid, setValid⟩
-    refine ⟨by simpa using valueValid, ?_, ?_⟩
+    refine ⟨?_, ?_, ?_⟩
+    · cases valueEq : update.value with
+      | absent => trivial
+      | present value =>
+          simp only [valueEq] at valueValid ⊢
+          exact valueValid
     · cases getEq : update.get with
       | absent => trivial
       | present getter =>
           simp only [getEq] at getValid ⊢
-          cases getter <;> simp_all
+          cases getter with
+          | none => trivial
+          | some getter => exact getValid
     · cases setEq : update.set with
       | absent => trivial
       | present setter =>
           simp only [setEq] at setValid ⊢
-          cases setter <;> simp_all
+          cases setter with
+          | none => trivial
+          | some setter => exact setValid
   · rintro ⟨valueValid, getValid, setValid⟩
-    refine ⟨by simpa using valueValid, ?_, ?_⟩
+    refine ⟨?_, ?_, ?_⟩
+    · cases valueEq : update.value with
+      | absent => trivial
+      | present value =>
+          simp only [valueEq] at valueValid ⊢
+          exact valueValid
     · cases getEq : update.get with
       | absent => trivial
       | present getter =>
           simp only [getEq] at getValid ⊢
-          cases getter <;> simp_all
+          cases getter with
+          | none => trivial
+          | some getter => exact getValid
     · cases setEq : update.set with
       | absent => trivial
       | present setter =>
           simp only [setEq] at setValid ⊢
-          cases setter <;> simp_all
+          cases setter with
+          | none => trivial
+          | some setter => exact setValid
 
 /-- A validated descriptor update preserves value-reference and accessor-callability validity. -/
 theorem applyValidatedDescriptor_referencesValid (heap : Heap) (update : DescriptorUpdate)
@@ -5365,9 +5403,20 @@ private theorem validArrayLength?_bound (number : JSNumber) (length : Nat)
   unfold validArrayLength? at decoded
   dsimp only at decoded
   split at decoded
-  all_goals repeat first | split at decoded
-  all_goals simp_all [maxArrayLength]
-  all_goals omega
+  · have same := Option.some.inj decoded
+    omega
+  · split at decoded
+    · cases decoded
+    · split at decoded
+      · cases decoded
+      · split at decoded
+        · cases decoded
+        · split at decoded
+          · cases decoded
+          · split at decoded
+            · have same := Option.some.inj decoded
+              omega
+            · cases decoded
 
 private theorem requestedArrayLength_bound (slots : ArraySlots) (update normalized : DescriptorUpdate)
     (newLength : Nat) (oldBound : slots.length ≤ maxArrayLength)
@@ -5922,7 +5971,9 @@ theorem preventExtensions_preserves_wellFormed (heap next : Heap) (ref : RefId)
               have oldValid := wellFormed_object heap ref object valid found
               have preserved := objectReferencesValid_replace_heap heap next ref object
                 { object with extensible := false } object found rfl replaced oldValid
-              simpa [objectReferencesValid] using preserved
+              cases kindEq : object.kind <;>
+                simpa [objectReferencesValid, kindEq, arraySlotsValid,
+                  primitiveWrapperSlotsValid] using preserved
 
 private theorem deleteReplacement_referencesValid (heap next : Heap) (ref : RefId)
     (object : ObjectRecord) (key : PropertyKey) (valid : heap.WellFormed)
@@ -6058,7 +6109,13 @@ theorem allocate_preserves_wellFormed (heap next : Heap) (prototype : Option Ref
     · cases prototype <;> simp_all [validPrototype, size]
     · unfold objectReferencesValid
       simp [OrderedProps.empty_wellFormed, size]
-      cases prototype <;> simp_all [validPrototype, size] <;> omega
+      cases prototype with
+      | none => simp_all [validPrototype, size]
+      | some prototype =>
+          simp_all [validPrototype, size]
+          have oldBound : prototype.value < heap.objects.size :=
+            of_decide_eq_true ‹decide (prototype.value < heap.objects.size) = true›
+          omega
     · unfold functionSlotList
       simp
       unfold WellFormed isWellFormed at valid
@@ -6068,7 +6125,7 @@ theorem allocate_preserves_wellFormed (heap next : Heap) (prototype : Option Ref
       simp
       unfold WellFormed isWellFormed at valid
       simp only [Bool.and_eq_true] at valid
-      simpa [functionCount] using valid.1.2
+      simpa [functionSlotList, functionCount] using valid.1.2
   · cases prototype <;> simp_all
 
 /-- Ordinary allocation retains every previously allocated identity and function slot. -/
@@ -6121,8 +6178,13 @@ theorem allocatePrimitiveWrapper_preserves_wellFormed (heap next : Heap) (value 
       heap.nextFunctionId valid (by omega)
     · cases prototype <;> simp_all [validPrototype, size]
     · unfold objectReferencesValid primitiveWrapperSlotsValid
-      cases prototype <;> simp_all [validPrototype, primitiveBoxable, size]
-      all_goals omega
+      cases prototype with
+      | none => simp_all [validPrototype, primitiveBoxable, size]
+      | some prototype =>
+          simp_all [validPrototype, primitiveBoxable, size]
+          have oldBound : prototype.value < heap.objects.size :=
+            of_decide_eq_true ‹decide (prototype.value < heap.objects.size) = true›
+          omega
     · unfold functionSlotList
       simp
       unfold WellFormed isWellFormed at valid
@@ -6132,7 +6194,7 @@ theorem allocatePrimitiveWrapper_preserves_wellFormed (heap next : Heap) (value 
       simp
       unfold WellFormed isWellFormed at valid
       simp only [Bool.and_eq_true] at valid
-      simpa [functionCount] using valid.1.2
+      simpa [functionSlotList, functionCount] using valid.1.2
   · cases prototype <;> simp_all
 
 /-- Primitive-wrapper allocation retains every previously allocated identity and function slot. -/
@@ -6227,11 +6289,11 @@ private theorem arrayElementFold_preserves_validity (heap : Heap)
 private theorem mergeSort_cons_range (index : Nat) :
     (index :: List.range index).mergeSort (fun left right => decide (left ≤ right)) =
       List.range (index + 1) := by
-  refine List.Perm.eq_of_sorted
+  refine List.Perm.eq_of_pairwise
     (le := fun left right => decide (left ≤ right) = true)
     (fun left right _ _ leftLe rightLe =>
       Nat.le_antisymm (of_decide_eq_true leftLe) (of_decide_eq_true rightLe))
-    (List.sorted_mergeSort (fun left middle right leftLe middleLe => by
+    (List.pairwise_mergeSort (fun left middle right leftLe middleLe => by
         simp only [decide_eq_true_eq] at leftLe middleLe ⊢
         omega)
       (fun left right => by simp only [Bool.or_eq_true, decide_eq_true_eq]; omega) _)
@@ -6438,6 +6500,9 @@ private theorem appendArray_preserves_wellFormed (heap : Heap)
       | none => rfl
       | some ref =>
           simp only [size, Array.size_push, Option.all_some, Bool.and_eq_true, id_eq] at prototypeValid ⊢
+          have oldBound : ref.value < heap.objects.size :=
+            of_decide_eq_true prototypeValid
+          apply decide_eq_true
           omega
   · unfold functionSlotList
     simp
@@ -6448,7 +6513,7 @@ private theorem appendArray_preserves_wellFormed (heap : Heap)
     simp
     unfold WellFormed isWellFormed at valid
     simp only [Bool.and_eq_true] at valid
-    simpa [functionCount] using valid.1.2
+    simpa [functionSlotList, functionCount] using valid.1.2
 
 /-- Every successful list-input array allocation preserves the complete heap invariant. -/
 theorem allocateArray_preserves_wellFormed (heap next : Heap)
@@ -6693,7 +6758,8 @@ private theorem appendArray_dense (heap : Heap) (values : Array Value) (prototyp
       propertiesStrings, propertiesSymbols]
     simp
   · intro index inBounds
-    simpa using propertiesLookup index (by simpa using inBounds)
+    rw [← Array.getElem_toList (h := by simpa using inBounds)]
+    exact propertiesLookup index (by simpa using inBounds)
 
 /-- Allocating an array with no holes yields exactly the ECMAScript dense observation: an extensible
 array object carrying the requested prototype, own keys that are the ascending index keys followed by
@@ -6941,7 +7007,8 @@ private theorem validateOptionalRef_valid (heap : Heap) (ref : Option RefId) (un
           | none => simp [lookup] at found
           | some current =>
               have inBounds := (Array.getElem?_eq_some_iff.mp lookup).choose
-              simpa [size] using inBounds
+              change decide (ref.value < heap.objects.size) = true
+              exact decide_eq_true inBounds
 
 /-- Every successful function allocation, for every supported metadata mode, preserves the complete
 heap invariant. Captured-environment validity remains a machine-layer obligation. -/
@@ -6977,10 +7044,20 @@ theorem allocateFunction_preserves_wellFormed (heap next : Heap) (environment : 
         have homeValid := validateOptionalRef_valid heap homeObject _ (by assumption)
         have prototypeNext : prototype.all
             (fun ref => ref.value < heap.objects.size + 1) = true := by
-          cases prototype <;> simp_all [size] <;> omega
+          cases prototype with
+          | none => rfl
+          | some prototype =>
+              change decide (prototype.value < heap.objects.size + 1) = true
+              change decide (prototype.value < heap.objects.size) = true at prototypeValid
+              exact decide_eq_true (Nat.lt_succ_of_lt (of_decide_eq_true prototypeValid))
         have homeNext : homeObject.all
             (fun ref => ref.value < heap.objects.size + 1) = true := by
-          cases homeObject <;> simp_all [size] <;> omega
+          cases homeObject with
+          | none => rfl
+          | some homeObject =>
+              change decide (homeObject.value < heap.objects.size + 1) = true
+              change decide (homeObject.value < heap.objects.size) = true at homeValid
+              exact decide_eq_true (Nat.lt_succ_of_lt (of_decide_eq_true homeValid))
         have lexicalOld : heap.valueValid lexicalValue = true := by assumption
         have lexicalNext := valueValid_push heap
           (ObjectRecord.fromFields OrderedProps.empty prototype true
@@ -7001,7 +7078,7 @@ theorem allocateFunction_preserves_wellFormed (heap next : Heap) (environment : 
         simp
         unfold WellFormed isWellFormed at valid
         simp only [Bool.and_eq_true] at valid
-        simpa [functionCount] using valid.1.2
+        simpa [functionSlotList, functionCount] using valid.1.2
 
   | none =>
       all_goals (split at allocated <;> try simp_all)
@@ -7020,10 +7097,20 @@ theorem allocateFunction_preserves_wellFormed (heap next : Heap) (environment : 
         have homeValid := validateOptionalRef_valid heap homeObject _ (by assumption)
         have prototypeNext : prototype.all
             (fun ref => ref.value < heap.objects.size + 1) = true := by
-          cases prototype <;> simp_all [size] <;> omega
+          cases prototype with
+          | none => rfl
+          | some prototype =>
+              change decide (prototype.value < heap.objects.size + 1) = true
+              change decide (prototype.value < heap.objects.size) = true at prototypeValid
+              exact decide_eq_true (Nat.lt_succ_of_lt (of_decide_eq_true prototypeValid))
         have homeNext : homeObject.all
             (fun ref => ref.value < heap.objects.size + 1) = true := by
-          cases homeObject <;> simp_all [size] <;> omega
+          cases homeObject with
+          | none => rfl
+          | some homeObject =>
+              change decide (homeObject.value < heap.objects.size + 1) = true
+              change decide (homeObject.value < heap.objects.size) = true at homeValid
+              exact decide_eq_true (Nat.lt_succ_of_lt (of_decide_eq_true homeValid))
         simp_all [functionCount, size, valueValid]
         constructor
         · by_cases classKind : kind = .classConstructor <;> simp_all
@@ -7041,7 +7128,7 @@ theorem allocateFunction_preserves_wellFormed (heap next : Heap) (environment : 
         simp
         unfold WellFormed isWellFormed at valid
         simp only [Bool.and_eq_true] at valid
-        simpa [functionCount] using valid.1.2
+        simpa [functionSlotList, functionCount] using valid.1.2
 
 /-- Function allocation retains every previously allocated identity and complete function slot. -/
 theorem allocateFunction_continuesFrom (heap next : Heap) (environment : EnvId)
@@ -7136,8 +7223,14 @@ theorem allocateConstructorPair_preserves_wellFormed (heap next : Heap) (environ
       · simp [constructorDescriptor, dataProperty, descriptorReferencesValid, valueValid,
           prototypeRef, size]
     · have prototypeValid := validateOptionalRef_valid heap functionPrototype _ (by assumption)
-      cases functionPrototype <;> simp_all [size]
-      omega
+      cases functionPrototype with
+      | none => rfl
+      | some prototype =>
+          simp only [Option.all_some, size, Array.size_push]
+          change decide (prototype.value < heap.objects.size + 1 + 1) = true
+          change decide (prototype.value < heap.objects.size) = true at prototypeValid
+          exact decide_eq_true
+            (Nat.lt_succ_of_lt (Nat.lt_succ_of_lt (of_decide_eq_true prototypeValid)))
     · unfold functionSlotsValid
       have modeValid : constructorMode = .derived → classConstructor = true := by
         intro derived
@@ -7154,8 +7247,14 @@ theorem allocateConstructorPair_preserves_wellFormed (heap next : Heap) (environ
           constructorRef, size]
         omega
     · have prototypeValid := validateOptionalRef_valid heap objectPrototype _ (by assumption)
-      cases objectPrototype <;> simp_all [size]
-      omega
+      cases objectPrototype with
+      | none => rfl
+      | some prototype =>
+          simp only [Option.all_some, size, Array.size_push]
+          change decide (prototype.value < heap.objects.size + 1 + 1) = true
+          change decide (prototype.value < heap.objects.size) = true at prototypeValid
+          exact decide_eq_true
+            (Nat.lt_succ_of_lt (Nat.lt_succ_of_lt (of_decide_eq_true prototypeValid)))
   · unfold functionSlotList constructorObject prototypeObject
     simp
     apply functionIdsSequential_append 0 heap.functionSlotList
@@ -7170,7 +7269,7 @@ theorem allocateConstructorPair_preserves_wellFormed (heap next : Heap) (environ
     simp
     unfold WellFormed isWellFormed at valid
     simp only [Bool.and_eq_true] at valid
-    simpa [functionCount] using valid.1.2
+    simpa [functionSlotList, functionCount] using valid.1.2
 
 /-- Constructor-pair allocation retains every previously allocated identity and function slot. -/
 theorem allocateConstructorPair_continuesFrom (heap next : Heap) (environment : EnvId)
@@ -7242,7 +7341,7 @@ theorem allocateArrayIterator_preserves_wellFormed (heap next : Heap) (target : 
                 simp
                 unfold WellFormed isWellFormed at valid
                 simp only [Bool.and_eq_true] at valid
-                simpa [functionCount] using valid.1.2
+                simpa [functionSlotList, functionCount] using valid.1.2
           | some prototype =>
               cases prototypeFound : heap.get? prototype with
               | error fault =>
@@ -7268,7 +7367,8 @@ theorem allocateArrayIterator_preserves_wellFormed (heap next : Heap) (target : 
                           Nat.ne_of_lt (Array.getElem?_eq_some_iff.mp lookup).choose
                         have prototypeNext : prototype.value < heap.objects.size + 1 := by
                           have prototypeOld : prototype.value < heap.objects.size := by
-                            simpa [size] using prototypeValid
+                            change decide (prototype.value < heap.objects.size) = true at prototypeValid
+                            exact of_decide_eq_true prototypeValid
                           omega
                         simp [size, Array.getElem?_push, targetNe, lookup, targetKind,
                           prototypeNext]
@@ -7281,7 +7381,7 @@ theorem allocateArrayIterator_preserves_wellFormed (heap next : Heap) (target : 
                     simp
                     unfold WellFormed isWellFormed at valid
                     simp only [Bool.and_eq_true] at valid
-                    simpa [functionCount] using valid.1.2
+                    simpa [functionSlotList, functionCount] using valid.1.2
 
 /-- Successful array-iterator allocation preserves every heap fact referenced by machine state. -/
 theorem allocateArrayIterator_preserves_machineReferences (heap next : Heap) (target : RefId)
