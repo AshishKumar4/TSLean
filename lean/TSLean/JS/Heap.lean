@@ -2286,7 +2286,7 @@ private theorem setIfInBounds_push (colors : Array PrototypeColor) (index : Nat)
     (colors.push appended).setIfInBounds index value =
       (colors.setIfInBounds index value).push appended := by
   apply Array.toList_inj.mp
-  rw [Array.toList_setIfInBounds, Array.push_toList, Array.push_toList,
+  rw [Array.toList_setIfInBounds, Array.toList_push, Array.toList_push,
     Array.toList_setIfInBounds]
   exact List.set_append_left _ _ (by simpa using inBounds)
 
@@ -2318,7 +2318,7 @@ private def validatePrototypeGraphAux (heap : Heap) : Nat → Nat → Array Prot
 
 /-- Stack-safe linear prototype graph validation. Each object changes color at most twice. -/
 def prototypeGraphAcyclic (heap : Heap) : Bool :=
-  validatePrototypeGraphAux heap heap.size 0 (Array.mkArray heap.size .unseen)
+  validatePrototypeGraphAux heap heap.size 0 (Array.replicate heap.size .unseen)
 
 private def prototypeAt (heap : Heap) (index : Nat) : Option (Option RefId) :=
   (heap.objects[index]?).map (·.prototype)
@@ -3267,9 +3267,9 @@ private theorem prototypeGraphAcyclic_of_terminates (heap : Heap)
     heap.prototypeGraphAcyclic = true := by
   unfold prototypeGraphAcyclic
   apply validatePrototypeGraphAux_of_terminates heap heap.size 0
-    (Array.mkArray heap.size .unseen) (by simp)
+    (Array.replicate heap.size .unseen) (by simp)
   · intro ref found
-    rw [Array.getElem?_mkArray] at found
+    rw [Array.getElem?_replicate] at found
     split at found <;> simp_all
   · exact terminates
   · omega
@@ -3459,8 +3459,8 @@ private theorem prototypeGraphAcyclic_push (heap : Heap) (newObject : ObjectReco
     prototypeGraphAcyclic (Heap.fromObjects (heap.objects.push newObject) nextFunctionId) = true := by
   unfold prototypeGraphAcyclic at valid ⊢
   have pushed := validatePrototypeGraphAux_push heap newObject nextFunctionId heap.size 0
-    (Array.mkArray heap.size .unseen) referencesValid newPrototypeValid (by simp) (by simp) valid
-  simpa [size, Array.mkArray_succ] using pushed
+    (Array.replicate heap.size .unseen) referencesValid newPrototypeValid (by simp) (by simp) valid
+  simpa [size, Array.replicate_succ] using pushed
 
 private theorem valueValid_push (heap : Heap) (newObject : ObjectRecord)
     (nextFunctionId : Nat) (value : Value) (valid : heap.valueValid value = true) :
@@ -3522,7 +3522,7 @@ private theorem objectReferencesValid_push (heap : Heap) (newObject object : Obj
     | none => rfl
     | some prototype =>
         simp only [prototypeEq] at valid ⊢
-        simp [size] at valid ⊢
+        simp only [size] at valid ⊢
         omega
   · cases kindEq : object.kind with
     | ordinary => simpa [kindEq] using valid.2
@@ -3540,7 +3540,7 @@ private theorem objectReferencesValid_push (heap : Heap) (newObject object : Obj
           | none => rfl
           | some home =>
               simp only [homeEq] at valid ⊢
-              simp [size] at valid ⊢
+              simp only [size] at valid ⊢
               omega
         · cases lexicalEq : slots.lexicalThis with
           | none => rfl
@@ -3592,7 +3592,7 @@ private theorem prototypeGraphAcyclic_push_two (heap : Heap) (first second : Obj
       | none => rfl
       | some prototype =>
           simp only [prototypeEq] at firstPrototypeValid ⊢
-          simp [size] at firstPrototypeValid ⊢
+          simp only [size] at firstPrototypeValid ⊢
           omega
     · rename_i notLast
       have oldValid := referencesValid index object found
@@ -3600,13 +3600,13 @@ private theorem prototypeGraphAcyclic_push_two (heap : Heap) (first second : Obj
       | none => rfl
       | some prototype =>
           simp only [prototypeEq] at oldValid ⊢
-          simp [size] at oldValid ⊢
+          simp only [size] at oldValid ⊢
           omega
   · cases prototypeEq : second.prototype with
     | none => rfl
     | some prototype =>
         simp only [prototypeEq] at secondPrototypeValid ⊢
-        simp [afterFirst, size] at secondPrototypeValid ⊢
+        simp only [afterFirst, size] at secondPrototypeValid ⊢
         omega
   · exact prototypeGraphAcyclic_push heap first nextFunctionId referencesValid
       firstPrototypeValid valid
@@ -3687,12 +3687,12 @@ theorem prototypeGraphAcyclic_iff (heap : Heap) (referencesValid : heap.Prototyp
   constructor
   · intro graphValid
     have doneTerminates : DoneReferencesTerminate heap
-        (Array.mkArray heap.size PrototypeColor.unseen) := by
+        (Array.replicate heap.size PrototypeColor.unseen) := by
       intro ref done
-      rw [Array.getElem?_mkArray] at done
+      rw [Array.getElem?_replicate] at done
       split at done <;> simp_all
     have terminates := validatePrototypeGraphAux_terminates heap heap.size 0
-      (Array.mkArray heap.size PrototypeColor.unseen) referencesValid (by simp) (by simp)
+      (Array.replicate heap.size PrototypeColor.unseen) referencesValid (by simp) (by simp)
       doneTerminates graphValid
     intro ref refValid cyclic
     exact prototypeTerminates_not_cyclic (terminates ref refValid) cyclic
@@ -3706,7 +3706,7 @@ private theorem wellFormed_prototype_terminates (heap : Heap) (valid : heap.Well
     fun child object parent found prototypeEq =>
       wellFormed_prototype_valid heap valid child object parent found prototypeEq
   have graphValid : validatePrototypeGraphAux heap heap.size 0
-      (Array.mkArray heap.size .unseen) = true := by
+      (Array.replicate heap.size .unseen) = true := by
     unfold WellFormed isWellFormed at valid
     simp only [Bool.and_eq_true] at valid
     exact valid.2
@@ -3816,7 +3816,7 @@ private theorem appendObject_preserves_wellFormed (heap : Heap) (newObject : Obj
   unfold WellFormed isWellFormed at valid ⊢
   simp only [Bool.and_eq_true] at valid ⊢
   refine ⟨⟨⟨?_, idsValid⟩, by simpa [functionCount] using countValid⟩, ?_⟩
-  · rw [Array.push_toList, List.all_append, List.all_cons, List.all_nil]
+  · rw [Array.toList_push, List.all_append, List.all_cons, List.all_nil]
     simp only [Bool.and_true, Bool.and_eq_true]
     refine ⟨?_, newValid⟩
     rw [List.all_eq_true] at valid ⊢
@@ -3857,7 +3857,7 @@ private theorem appendTwoObjects_preserves_wellFormed (heap : Heap)
   unfold WellFormed isWellFormed at valid ⊢
   simp only [Bool.and_eq_true] at valid ⊢
   refine ⟨⟨⟨?_, idsValid⟩, by simpa [functionCount] using countValid⟩, ?_⟩
-  · simp only [Array.push_toList, List.all_append, List.all_cons, List.all_nil,
+  · simp only [Array.toList_push, List.all_append, List.all_cons, List.all_nil,
       Bool.and_true, Bool.and_eq_true]
     refine ⟨⟨?_, firstValid⟩, secondValid⟩
     rw [List.all_eq_true] at valid ⊢
@@ -6432,7 +6432,7 @@ private theorem appendArray_preserves_wellFormed (heap : Heap)
     · cases prototype with
       | none => rfl
       | some ref =>
-          simp [size] at prototypeValid ⊢
+          simp only [size] at prototypeValid ⊢
           omega
   · unfold functionSlotList
     simp

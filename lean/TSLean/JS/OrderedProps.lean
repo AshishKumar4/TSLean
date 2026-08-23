@@ -26,12 +26,12 @@ namespace OrderedProps
 def compactionThreshold : Nat := 64
 
 private def emptyRep : OrderedPropsRep :=
-  ⟨Std.HashMap.empty, #[], #[], 0, 0⟩
+  ⟨(∅ : Std.HashMap PropertyKey StoredProperty), #[], #[], 0, 0⟩
 
 private abbrev fromRep (rep : OrderedPropsRep) : OrderedProps := ⟨rep⟩
 
 private def listZipIdx (xs : List α) (start : Nat := 0) : List (α × Nat) :=
-  (xs.enumFrom start).map fun pair => (pair.2, pair.1)
+  xs.zipIdx start
 
 private theorem listZipIdx_cons (a : α) (xs : List α) (start : Nat) :
     listZipIdx (a :: xs) start = (a, start) :: listZipIdx xs (start + 1) :=
@@ -50,28 +50,59 @@ private abbrev arrayZipIdx (xs : Array α) (start : Nat := 0) : Array (α × Nat
       (xs[index]'(by simpa [arrayZipIdx] using inBounds), start + index) := by
   simp [arrayZipIdx]
 
+private theorem arrayZipIdx_push_fst_lt {xs : Array α} {x : α} {index : Nat}
+    (h : index < xs.size) :
+    ((arrayZipIdx (xs.push x))[index]'(by rw [arrayZipIdx_size, Array.size_push]; omega)).1 =
+      xs[index] := by
+  rw [arrayGetElem_zipIdx (start := 0)
+    (by rw [arrayZipIdx_size, Array.size_push]; omega)]
+  exact Array.getElem_push_lt h
+
+private theorem arrayZipIdx_push_snd_lt {xs : Array α} {x : α} {index : Nat}
+    (h : index < xs.size) :
+    ((arrayZipIdx (xs.push x))[index]'(by rw [arrayZipIdx_size, Array.size_push]; omega)).2 =
+      index := by
+  rw [arrayGetElem_zipIdx (start := 0)
+    (by rw [arrayZipIdx_size, Array.size_push]; omega)]
+  exact Nat.zero_add index
+
+private theorem arrayZipIdx_push_fst_top {xs : Array α} {x : α} :
+    ((arrayZipIdx (xs.push x))[xs.size]'(by rw [arrayZipIdx_size]; simp)).1 = x := by
+  rw [arrayGetElem_zipIdx (start := 0) (index := xs.size)
+    (by rw [arrayZipIdx_size]; simp)]
+  exact Array.getElem_push_eq
+
+private theorem arrayZipIdx_push_snd_top {xs : Array α} {x : α} :
+    ((arrayZipIdx (xs.push x))[xs.size]'(by rw [arrayZipIdx_size]; simp)).2 = xs.size := by
+  rw [arrayGetElem_zipIdx (start := 0) (index := xs.size)
+    (by rw [arrayZipIdx_size]; simp)]
+  exact Nat.zero_add xs.size
+
 private theorem modelMem_iff_getValue?_eq_some
     (items : List ((_: PropertyKey) × StoredProperty))
-    (distinct : Std.DHashMap.Internal.List.DistinctKeys items)
+    (distinct : Std.Internal.List.DistinctKeys items)
     {key : PropertyKey} {stored : StoredProperty} :
     ⟨key, stored⟩ ∈ items ↔
-      Std.DHashMap.Internal.List.getValue? key items = some stored := by
-  simp only [Std.DHashMap.Internal.List.mem_iff_getEntry?_eq_some distinct,
-    Std.DHashMap.Internal.List.getValue?_eq_getEntry?, Option.map_eq_some']
+      Std.Internal.List.getValue? key items = some stored := by
+  rw [Std.Internal.List.getValue?_eq_getEntry?]
   constructor
   · intro found
-    exact ⟨⟨key, stored⟩, found, rfl⟩
-  · rintro ⟨entry, found, descriptorEqual⟩
-    simp [found, ← descriptorEqual, Sigma.ext_iff]
-    exact LawfulBEq.eq_of_beq
-      (Std.DHashMap.Internal.List.getEntry?_eq_some found)
+    rw [(Std.Internal.List.mem_iff_getEntry?_eq_some distinct).mp found]
+    rfl
+  · intro valueEq
+    obtain ⟨entry, found, descriptorEqual⟩ := Option.map_eq_some_iff.mp valueEq
+    obtain ⟨keyEqual, entryMember⟩ :=
+      (Std.Internal.List.getEntry?_eq_some_iff distinct).mp found
+    have keyEq : key = entry.1 := LawfulBEq.eq_of_beq keyEqual
+    rw [← descriptorEqual, keyEq]
+    exact entryMember
 
 private theorem modelMemToProd_iff_getValue?_eq_some
     (items : List ((_: PropertyKey) × StoredProperty))
-    (distinct : Std.DHashMap.Internal.List.DistinctKeys items)
+    (distinct : Std.Internal.List.DistinctKeys items)
     {key : PropertyKey} {stored : StoredProperty} :
     (key, stored) ∈ items.map (fun entry => (entry.1, entry.2)) ↔
-      Std.DHashMap.Internal.List.getValue? key items = some stored := by
+      Std.Internal.List.getValue? key items = some stored := by
   constructor
   · intro member
     rcases List.mem_map.mp member with ⟨⟨entryKey, entryStored⟩, entryMember, entryEqual⟩
@@ -118,7 +149,7 @@ private theorem hashMap_distinct_keys_toList
       (l := raw) (acc := []) (fun key stored => (key, stored)))
   rw [rawToList, List.pairwise_map]
   have keyPairwise := (Std.DHashMap.Internal.Raw.WF.out entries.inner.2).distinct.distinct
-  rw [Std.DHashMap.Internal.List.keys_eq_map, List.pairwise_map] at keyPairwise
+  rw [Std.Internal.List.keys_eq_map, List.pairwise_map] at keyPairwise
   exact keyPairwise.imp fun different equal => by
     simp only [Prod.fst] at equal
     rw [equal] at different
@@ -163,12 +194,12 @@ private theorem hashMap_keys_nodup [BEq α] [Hashable α] [LawfulBEq α] [Lawful
 
 
 private theorem hashMap_empty_toList :
-    (Std.HashMap.empty : Std.HashMap PropertyKey StoredProperty).toList = [] := by
+    ((∅ : Std.HashMap PropertyKey StoredProperty)).toList = [] := by
   rw [List.eq_nil_iff_forall_not_mem]
   intro entry member
   have found :=
     (hashMap_mem_toList_iff_getElem?_eq_some
-      (Std.HashMap.empty : Std.HashMap PropertyKey StoredProperty)).mp member
+      ((∅ : Std.HashMap PropertyKey StoredProperty))).mp member
   simp at found
 /-- An empty property collection. -/
 def empty : OrderedProps := fromRep emptyRep
@@ -246,14 +277,14 @@ private theorem liveOrder_eq_filterMap (wrap : α → PropertyKey)
             simpa [List.filterMap_cons] using tail
         | some key =>
             obtain ⟨stored, found⟩ := coverage key (by simp)
-            have contains : entries.contains (wrap key) = true := by
-              rw [Std.HashMap.contains_eq_isSome_getElem?]
+            have contains : wrap key ∈ entries := by
+              rw [Std.HashMap.mem_iff_contains, Std.HashMap.contains_eq_isSome_getElem?]
               simpa using congrArg Option.isSome found
             have tail := ih fun tailKey member => coverage tailKey (by simp [member])
-            simpa [List.filterMap_cons, contains] using congrArg (key :: ·) tail
+            simpa [Option.bind_some, contains] using congrArg (key :: ·) tail
   apply go
   intro key member
-  exact covered key ((Array.mem_toList_iff (some key) order).mp member)
+  exact covered key (Array.mem_toList_iff.mp member)
 
 private theorem liveOrder_insert_existing (wrap : α → PropertyKey)
     (entries : Std.HashMap PropertyKey StoredProperty) (order : Array (Option α))
@@ -288,11 +319,11 @@ private theorem liveOrder_push_fresh (wrap : α → PropertyKey)
   have nextCovered : ∀ orderKey, some orderKey ∈ order.push (some key) →
       ∃ stored, (entries.insert (wrap key) replacement).get? (wrap orderKey) = some stored := by
     intro orderKey member
-    rw [← Array.mem_toList_iff (some orderKey) (order.push (some key)), Array.push_toList,
+    rw [← Array.mem_toList_iff, Array.toList_push,
       List.mem_append, List.mem_singleton] at member
     rcases member with oldMember | equal
     · obtain ⟨stored, found⟩ :=
-        covered orderKey ((Array.mem_toList_iff (some orderKey) order).mp oldMember)
+        covered orderKey ((Array.mem_toList_iff).mp oldMember)
       refine ⟨stored, ?_⟩
       change (entries.insert (wrap key) replacement)[wrap orderKey]? = some stored
       rw [Std.HashMap.getElem?_insert]
@@ -310,7 +341,7 @@ private theorem liveOrder_push_fresh (wrap : α → PropertyKey)
       exact ⟨replacement, by simp⟩
   rw [liveOrder_eq_filterMap wrap _ _ nextCovered,
     liveOrder_eq_filterMap wrap entries order covered]
-  simp [Array.push_toList, List.filterMap_append]
+  simp [Array.toList_push, List.filterMap_append]
 
 private theorem liveOrder_entries_ext (wrap : α → PropertyKey)
     (left right : Std.HashMap PropertyKey StoredProperty) (order : Array (Option α))
@@ -394,8 +425,10 @@ private theorem compactOrder_contains (wrap : α → PropertyKey)
     (entries : Std.HashMap PropertyKey StoredProperty) (order : Array (Option α)) (key) :
     (compactOrder wrap entries order).1.contains key = entries.contains key := by
   rw [Std.HashMap.contains_eq_isSome_getElem?, Std.HashMap.contains_eq_isSome_getElem?]
-  have descriptors := congrArg Option.isSome (compactOrder_descriptor wrap entries order key)
-  simpa only [Option.isSome_map'] using descriptors
+  have descriptors : ((compactOrder wrap entries order).1[key]?.map (·.descriptor)).isSome =
+      (entries[key]?.map (·.descriptor)).isSome :=
+    congrArg Option.isSome (compactOrder_descriptor wrap entries order key)
+  simpa only [Option.isSome_map] using descriptors
 
 private theorem compactOrder_output (wrap : α → PropertyKey)
     (entries : Std.HashMap PropertyKey StoredProperty) (order : Array (Option α))
@@ -964,7 +997,7 @@ private theorem compactStrings_metadata (properties : OrderedPropsRep)
                   simp only [id_eq] at slotValue
                   subst slot
                   have nonIndex := stringSlot_nonIndex valid
-                    ((Array.mem_toList_iff (some key) properties.stringOrder).mp slotMember)
+                    ((Array.mem_toList_iff).mp slotMember)
                   rw [parsed] at nonIndex
                   contradiction
                 have unchanged := compactOrder_get?_outside PropertyKey.string properties.entries
@@ -982,7 +1015,7 @@ private theorem compactStrings_metadata (properties : OrderedPropsRep)
                     properties.stringOrder := by
                   rw [liveEq]
                   exact List.mem_filterMap.mpr ⟨some key,
-                    (Array.mem_toList_iff (some key) properties.stringOrder).mpr slotMember, rfl⟩
+                    (Array.mem_toList_iff).mpr slotMember, rfl⟩
                 obtain ⟨position, positionBound, atPosition⟩ := List.getElem_of_mem liveMember
                 have atPosition? : (liveOrder PropertyKey.string properties.entries
                     properties.stringOrder)[position]? = some key := by
@@ -1031,14 +1064,14 @@ private theorem compactStrings_metadata (properties : OrderedPropsRep)
     simp only [id_eq] at slotValue
     subst slot
     obtain ⟨stored, found⟩ := stringSlot_covered valid
-      ((Array.mem_toList_iff (some key) properties.stringOrder).mp slotMember)
+      ((Array.mem_toList_iff).mp slotMember)
     have rebuilt := compactOrder_get?_at PropertyKey.string (by
         intro left right equal
         exact PropertyKey.string.inj equal)
       properties.entries properties.stringOrder position key stored liveNodup
       liveAtPosition found
     have nonIndex := stringSlot_nonIndex valid
-      ((Array.mem_toList_iff (some key) properties.stringOrder).mp slotMember)
+      ((Array.mem_toList_iff).mp slotMember)
     have outputBound : position < (compactStrings properties.entries
         properties.stringOrder).2.size := by simpa [outputEq] using positionBound
     have outputAt : (compactStrings properties.entries properties.stringOrder).2[position] =
@@ -1116,7 +1149,7 @@ private theorem compactSymbols_metadata (properties : OrderedPropsRep)
                 properties.symbolOrder := by
               rw [liveEq]
               exact List.mem_filterMap.mpr ⟨some key,
-                (Array.mem_toList_iff (some key) properties.symbolOrder).mpr slotMember, rfl⟩
+                (Array.mem_toList_iff).mpr slotMember, rfl⟩
             obtain ⟨position, positionBound, atPosition⟩ := List.getElem_of_mem liveMember
             have atPosition? : (liveOrder PropertyKey.symbol properties.entries
                 properties.symbolOrder)[position]? = some key := by
@@ -1162,7 +1195,7 @@ private theorem compactSymbols_metadata (properties : OrderedPropsRep)
     simp only [id_eq] at slotValue
     subst slot
     obtain ⟨stored, found⟩ := symbolSlot_covered valid
-      ((Array.mem_toList_iff (some key) properties.symbolOrder).mp slotMember)
+      ((Array.mem_toList_iff).mp slotMember)
     have rebuilt := compactOrder_get?_at PropertyKey.symbol (by
         intro left right equal
         exact PropertyKey.symbol.inj equal)
@@ -1439,23 +1472,21 @@ private theorem appendStringMetadata_valid (properties : OrderedPropsRep)
               have before : position < properties.stringOrder.size :=
                 (Array.getElem?_eq_some_iff.mp slot).choose
               exact ⟨position, storedPosition, by
-                rw [Array.getElem?_push]
-                simp [Nat.ne_of_lt before, slot]⟩
+                rw [Array.getElem?_push, if_neg (Nat.ne_of_lt before), slot]⟩
       | symbol oldKey => simpa [EntryValid] using oldValid
   · intro position inBounds
     have pushedBound : position < properties.stringOrder.size + 1 := by simpa using inBounds
     have positionLe : position ≤ properties.stringOrder.size := by omega
     rcases Nat.eq_or_lt_of_le positionLe with equal | before
     · subst position
-      simp [arrayGetElem_zipIdx, StringSlotValid, nonIndex]
+      simp only [StringSlotValid, arrayZipIdx_push_fst_top,
+        arrayZipIdx_push_snd_top, nonIndex]
+      refine ⟨⟨descriptor, some properties.stringOrder.size⟩, ?_, trivial, rfl⟩
+      exact Std.HashMap.getElem?_insert_self
     · have oldValid := valid.2.1 position (by simpa using before)
       cases slot : properties.stringOrder[position] with
       | none =>
-          have pushedArrayBound : position < (properties.stringOrder.push (some key)).size := by
-            simp; omega
-          have pushedSlot : (properties.stringOrder.push (some key))[position]'pushedArrayBound = none := by
-            simp [Array.getElem_push_lt properties.stringOrder (some key) position before, slot]
-          simp [arrayGetElem_zipIdx, pushedSlot, StringSlotValid]
+          simp only [StringSlotValid, arrayZipIdx_push_fst_lt before, slot]
       | some oldKey =>
           simp [arrayGetElem_zipIdx, slot, StringSlotValid] at oldValid
           rcases oldValid with ⟨oldStored, oldFound, oldNonIndex, oldPosition⟩
@@ -1466,15 +1497,15 @@ private theorem appendStringMetadata_valid (properties : OrderedPropsRep)
             change properties.entries[PropertyKey.string key]? = none at absent
             rw [absent] at oldFound
             contradiction
-          have pushedArrayBound : position < (properties.stringOrder.push (some key)).size := by
-            simp; omega
-          have pushedSlot : (properties.stringOrder.push (some key))[position]'pushedArrayBound =
-              some oldKey := by
-            simp [Array.getElem_push_lt properties.stringOrder (some key) position before, slot]
-          simp [arrayGetElem_zipIdx, pushedSlot, StringSlotValid]
+          simp only [StringSlotValid, arrayZipIdx_push_fst_lt before,
+            arrayZipIdx_push_snd_lt before, slot]
           refine ⟨oldStored, ?_, oldNonIndex, oldPosition⟩
-          rw [Std.HashMap.getElem?_insert]
-          simp [keyNe, oldFound]
+          have step : (properties.entries.insert (PropertyKey.string key)
+              { descriptor := descriptor, orderPosition := some properties.stringOrder.size })[PropertyKey.string oldKey]? =
+              some oldStored := by
+            rw [Std.HashMap.getElem?_insert]
+            simp [keyNe, oldFound]
+          exact step
   · intro position inBounds
     have oldBound : position < properties.symbolOrder.size := by simpa using inBounds
     have oldValid := valid.2.2 position (by simpa using oldBound)
@@ -1507,8 +1538,10 @@ private theorem appendSymbolMetadata_valid (properties : OrderedPropsRep)
       subst query
       have resultEqual := Option.some.inj queryFound
       subst result
-      simp [EntryValid, Array.getElem?_push]
-    · have oldValid := valid.1 query result queryFound
+      simp [EntryValid, Array.getElem?_push, arrayZipIdx_push_fst_top,
+        arrayZipIdx_push_snd_top]
+    · rename_i different
+      have oldValid := valid.1 query result queryFound
       cases query with
       | string oldKey => simpa [EntryValid] using oldValid
       | symbol oldKey =>
@@ -1517,8 +1550,7 @@ private theorem appendSymbolMetadata_valid (properties : OrderedPropsRep)
           have before : position < properties.symbolOrder.size :=
             (Array.getElem?_eq_some_iff.mp slot).choose
           exact ⟨position, storedPosition, by
-            rw [Array.getElem?_push]
-            simp [Nat.ne_of_lt before, slot]⟩
+            rw [Array.getElem?_push, if_neg (Nat.ne_of_lt before), slot]⟩
   · intro position inBounds
     have oldBound : position < properties.stringOrder.size := by simpa using inBounds
     have oldValid := valid.2.1 position (by simpa using oldBound)
@@ -1537,15 +1569,14 @@ private theorem appendSymbolMetadata_valid (properties : OrderedPropsRep)
     have positionLe : position ≤ properties.symbolOrder.size := by omega
     rcases Nat.eq_or_lt_of_le positionLe with equal | before
     · subst position
-      simp [arrayGetElem_zipIdx, SymbolSlotValid]
+      simp only [SymbolSlotValid, arrayZipIdx_push_fst_top, arrayZipIdx_push_snd_top]
+      refine ⟨⟨descriptor, some properties.symbolOrder.size⟩, ?_, rfl⟩
+      exact Std.HashMap.getElem?_insert_self
     · have oldValid := valid.2.2 position (by simpa using before)
       cases slot : properties.symbolOrder[position] with
       | none =>
-          have pushedArrayBound : position < (properties.symbolOrder.push (some key)).size := by
-            simp; omega
-          have pushedSlot : (properties.symbolOrder.push (some key))[position]'pushedArrayBound = none := by
-            simp [Array.getElem_push_lt properties.symbolOrder (some key) position before, slot]
-          simp [arrayGetElem_zipIdx, pushedSlot, SymbolSlotValid]
+          simp only [SymbolSlotValid, arrayZipIdx_push_fst_lt before,
+            arrayZipIdx_push_snd_lt before, slot]
       | some oldKey =>
           simp [arrayGetElem_zipIdx, slot, SymbolSlotValid] at oldValid
           rcases oldValid with ⟨oldStored, oldFound, oldPosition⟩
@@ -1556,20 +1587,19 @@ private theorem appendSymbolMetadata_valid (properties : OrderedPropsRep)
             change properties.entries[PropertyKey.symbol key]? = none at absent
             rw [absent] at oldFound
             contradiction
-          have pushedArrayBound : position < (properties.symbolOrder.push (some key)).size := by
-            simp; omega
-          have pushedSlot : (properties.symbolOrder.push (some key))[position]'pushedArrayBound =
-              some oldKey := by
-            simp [Array.getElem_push_lt properties.symbolOrder (some key) position before, slot]
-          simp [arrayGetElem_zipIdx, pushedSlot, SymbolSlotValid]
+          simp only [SymbolSlotValid, arrayZipIdx_push_fst_lt before,
+            arrayZipIdx_push_snd_lt before, slot]
           refine ⟨oldStored, ?_, oldPosition⟩
-          rw [Std.HashMap.getElem?_insert]
-          simp [keyNe, oldFound]
-
+          have step : (properties.entries.insert (PropertyKey.symbol key)
+              { descriptor := descriptor, orderPosition := some properties.symbolOrder.size })[PropertyKey.symbol oldKey]? =
+              some oldStored := by
+            rw [Std.HashMap.getElem?_insert]
+            simp [keyNe, oldFound]
+          exact step
 private theorem tombstoneCount_push_some (order : Array (Option α)) (key : α) :
     tombstoneCount (order.push (some key)) = tombstoneCount order := by
   unfold tombstoneCount
-  rw [← Array.foldl_toList, Array.push_toList, List.foldl_append]
+  rw [← Array.foldl_toList, Array.toList_push, List.foldl_append]
   simp
 
 private theorem tombstoneCount_eq_listCountP (order : Array (Option α)) :
@@ -2128,12 +2158,13 @@ private theorem deleteRep_lookup (properties : OrderedPropsRep) (key query : Pro
       · subst query
         have absent : ¬key ∈ properties.entries := by
           intro member
-          have present : properties.entries.get? key =
-              some (properties.entries.get key member) :=
-            Std.HashMap.getElem?_eq_some_getElem
-          change properties.entries.get? key = some _ at present
-          rw [found] at present
-          contradiction
+          have hc : properties.entries.contains key = true :=
+            Std.HashMap.mem_iff_contains.mp member
+          have isSomeEq : (properties.entries[key]? ).isSome = true := by
+            rw [← Std.HashMap.contains_eq_isSome_getElem?]; exact hc
+          have noneEq : properties.entries[key]? = none := found
+          rw [noneEq] at isSomeEq
+          simp at isSomeEq
         simp [absent]
       · simp [equal]
   | some stored =>
@@ -2262,9 +2293,9 @@ private theorem mem_orderedStrings_iff (properties : OrderedPropsRep)
     simp only [id_eq] at slotValue
     subst slot
     obtain ⟨stored, found⟩ := stringSlot_covered valid
-      ((Array.mem_toList_iff (some key) properties.stringOrder).mp slotMember)
+      ((Array.mem_toList_iff).mp slotMember)
     refine ⟨?_, stringSlot_nonIndex valid
-      ((Array.mem_toList_iff (some key) properties.stringOrder).mp slotMember)⟩
+      ((Array.mem_toList_iff).mp slotMember)⟩
     rw [found]
     rfl
   · rintro ⟨present, nonIndex⟩
@@ -2279,7 +2310,7 @@ private theorem mem_orderedStrings_iff (properties : OrderedPropsRep)
         refine ⟨key, ?_, rfl⟩
         rw [liveEq]
         exact List.mem_filterMap.mpr ⟨some key,
-          (Array.mem_toList_iff (some key) properties.stringOrder).mpr
+          (Array.mem_toList_iff).mpr
             (Array.mem_of_getElem? slot), rfl⟩
 
 private theorem mem_orderedSymbols_iff (properties : OrderedPropsRep)
@@ -2301,7 +2332,7 @@ private theorem mem_orderedSymbols_iff (properties : OrderedPropsRep)
     simp only [id_eq] at slotValue
     subst slot
     obtain ⟨stored, found⟩ := symbolSlot_covered valid
-      ((Array.mem_toList_iff (some key) properties.symbolOrder).mp slotMember)
+      ((Array.mem_toList_iff).mp slotMember)
     rw [found]
     rfl
   · intro present
@@ -2316,7 +2347,7 @@ private theorem mem_orderedSymbols_iff (properties : OrderedPropsRep)
         refine ⟨key, ?_, rfl⟩
         rw [liveEq]
         exact List.mem_filterMap.mpr ⟨some key,
-          (Array.mem_toList_iff (some key) properties.symbolOrder).mpr
+          (Array.mem_toList_iff).mpr
             (Array.mem_of_getElem? slot), rfl⟩
 
 private theorem sortedIndices_nodup (properties : OrderedPropsRep) :
@@ -2565,7 +2596,7 @@ private theorem ownKeyIndices_pairwise (properties : OrderedPropsRep)
   let source := properties.entries.toList.filterMap indexEntry?
   let sorted := source.mergeSort indexEntryLE
   have sortedPairs : sorted.Pairwise (fun left right => indexEntryLE left right = true) := by
-    apply List.sorted_mergeSort
+    apply List.pairwise_mergeSort
     · intro left middle right leftLe rightLe
       simp [indexEntryLE] at leftLe rightLe ⊢
       omega
@@ -2595,7 +2626,7 @@ private theorem ownKeyIndices_pairwise (properties : OrderedPropsRep)
       induction pairs with
       | nil => rfl
       | cons pair pairs ih =>
-          have head := parsed pair (List.mem_cons_self pair pairs)
+          have head := parsed pair List.mem_cons_self
           have tail : ∀ entry ∈ pairs, keyIndex? entry.2 = some entry.1 := fun entry member =>
             parsed entry (List.mem_cons_of_mem pair member)
           simp only [List.map_cons, List.filterMap_cons]
@@ -2670,7 +2701,7 @@ private theorem sortedIndices_eq_arrayIndices (properties : OrderedPropsRep) :
     induction keys with
     | nil => rfl
     | cons key keys ih =>
-        rcases valid key (List.mem_cons_self key keys) with ⟨index, parsed, canonicalKey⟩
+        rcases valid key List.mem_cons_self with ⟨index, parsed, canonicalKey⟩
         have tail : ∀ tailKey ∈ keys, ∃ index, keyIndex? tailKey = some index ∧
             tailKey = .string (PropertyKey.arrayIndexString index) := fun tailKey member =>
           valid tailKey (List.mem_cons_of_mem key member)
@@ -2792,8 +2823,17 @@ theorem metadataConsistent_iff_valid (properties : OrderedProps) :
 /-- The executable complete invariant check is sound and complete. -/
 theorem isWellFormed_iff_valid (properties : OrderedProps) :
     properties.isWellFormed = true ↔ properties.Valid := by
-  simp [isWellFormed, invariantChecks, Valid, ValidRep, metadataConsistentRep_iff,
-    compactionThreshold]
+  simp only [isWellFormed, invariantChecks, Valid, ValidRep, compactionThreshold,
+    List.all_cons, List.all_nil, Bool.and_eq_true, id_eq]
+  constructor
+  · rintro ⟨h1, h2, h3, h4, h5, trivial⟩
+    exact ⟨(metadataConsistentRep_iff properties.rep).mp h1,
+      beq_iff_eq.mp h2, beq_iff_eq.mp h3,
+      decide_eq_true_iff.mp h4, decide_eq_true_iff.mp h5⟩
+  · rintro ⟨h1, h2, h3, h4, h5⟩
+    exact ⟨(metadataConsistentRep_iff properties.rep).mpr h1,
+      beq_iff_eq.mpr h2, beq_iff_eq.mpr h3,
+      decide_eq_true_iff.mpr h4, decide_eq_true_iff.mpr h5, trivial⟩
 
 /-- The public well-formedness proposition is the proof-oriented representation invariant. -/
 theorem wellFormed_iff_valid (properties : OrderedProps) :
@@ -3063,14 +3103,6 @@ private theorem ownKeys_perm_keys (properties : OrderedProps) (valid : WellForme
     properties.ownKeys.Perm properties.rep.entries.keys := by
   rw [List.perm_iff_count]
   intro key
-  have ownCount : @List.count PropertyKey instBEqOfDecidableEq key properties.ownKeys =
-      if key ∈ properties.ownKeys then 1 else 0 :=
-    nodup_count_perm (a := key) (l := properties.ownKeys)
-      (ownKeys_nodup properties valid)
-  have mapCount : @List.count PropertyKey instBEqOfDecidableEq key properties.rep.entries.keys =
-      if key ∈ properties.rep.entries.keys then 1 else 0 :=
-    nodup_count_perm (a := key) (l := properties.rep.entries.keys)
-      (hashMap_keys_nodup properties.rep.entries)
   have membership := mem_ownKeys_iff_lookup_isSome properties key valid
   have mapMembership : key ∈ properties.rep.entries.keys ↔ (properties.lookup key).isSome := by
     calc
@@ -3081,12 +3113,11 @@ private theorem ownKeys_perm_keys (properties : OrderedProps) (valid : WellForme
         change (properties.rep.entries.get? key).isSome ↔
           ((properties.rep.entries.get? key).map (·.descriptor)).isSome
         cases properties.rep.entries.get? key <;> rfl
-  calc
-    @List.count PropertyKey instBEqOfDecidableEq key properties.ownKeys =
-        if key ∈ properties.ownKeys then 1 else 0 := ownCount
-    _ = if key ∈ properties.rep.entries.keys then 1 else 0 := by
-      simp [membership, mapMembership]
-    _ = @List.count PropertyKey instBEqOfDecidableEq key properties.rep.entries.keys := mapCount.symm
+  rw [List.Nodup.count (ownKeys_nodup properties valid),
+    List.Nodup.count (hashMap_keys_nodup properties.rep.entries)]
+  by_cases hkey : key ∈ properties.ownKeys
+  · rw [if_pos hkey, if_pos (mapMembership.mpr (membership.mp hkey))]
+  · rw [if_neg hkey, if_neg fun hm => absurd (membership.mpr (mapMembership.mp hm)) hkey]
 
 /-- The number of emitted own keys is exactly the live HashMap size. -/
 theorem ownKeys_length (properties : OrderedProps) (valid : WellFormed properties) :
@@ -3457,7 +3488,7 @@ theorem arrayIndices_insert_fresh_index (properties : OrderedProps) (key : JSStr
         · rw [lookup_insert_ne properties (.string key) observedKey descriptor equal]
           exact (mem_ownKeys_iff_lookup_isSome properties observedKey valid).mp keyMember
   have expectedSorted : ((index :: properties.arrayIndices).mergeSort (· ≤ ·)).Pairwise (· ≤ ·) := by
-    have sorted := List.sorted_mergeSort (l := index :: properties.arrayIndices)
+    have sorted := List.pairwise_mergeSort (l := index :: properties.arrayIndices)
       (le := fun left right : Nat => decide (left ≤ right)) (by
         intro left middle right leftLe rightLe
         simp at leftLe rightLe ⊢
@@ -3517,12 +3548,12 @@ theorem orderedKeys_delete (properties : OrderedProps) (key : PropertyKey)
 private theorem stringKeys_nodup (properties : OrderedProps) (valid : WellFormed properties) :
     properties.stringKeys.Nodup := by
   unfold stringKeys
-  exact (ownKeys_nodup properties valid).sublist (List.filter_sublist properties.ownKeys)
+  exact (ownKeys_nodup properties valid).sublist List.filter_sublist
 
 private theorem symbolKeys_nodup (properties : OrderedProps) (valid : WellFormed properties) :
     properties.symbolKeys.Nodup := by
   unfold symbolKeys
-  exact (ownKeys_nodup properties valid).sublist (List.filter_sublist properties.ownKeys)
+  exact (ownKeys_nodup properties valid).sublist List.filter_sublist
 
 /-- Deleting an ordinary string leaves the numeric index projection unchanged. -/
 theorem arrayIndices_delete_nonIndex_string (properties : OrderedProps) (key : JSString)
@@ -3911,7 +3942,7 @@ private def adversarialDescriptor : PropertyDescriptor :=
 private def swappedMetadataRep : OrderedPropsRep :=
   let first := JSString.ofLeanString "first"
   let second := JSString.ofLeanString "second"
-  ⟨Std.HashMap.empty
+  ⟨(∅ : Std.HashMap PropertyKey StoredProperty)
       |>.insert (.string first) ⟨adversarialDescriptor, some 0⟩
       |>.insert (.string second) ⟨adversarialDescriptor, some 1⟩,
     #[some second, some first], #[], 0, 0⟩
@@ -3919,7 +3950,7 @@ private def swappedMetadataRep : OrderedPropsRep :=
 private def staleMetadataRep : OrderedPropsRep :=
   let live := JSString.ofLeanString "live"
   let stale := JSString.ofLeanString "stale"
-  ⟨Std.HashMap.empty |>.insert (.string live) ⟨adversarialDescriptor, some 0⟩,
+  ⟨(∅ : Std.HashMap PropertyKey StoredProperty) |>.insert (.string live) ⟨adversarialDescriptor, some 0⟩,
     #[some live, some stale], #[], 0, 0⟩
 
 /-- Internal adversarial check for swapped positions and stale occupied slots. -/
