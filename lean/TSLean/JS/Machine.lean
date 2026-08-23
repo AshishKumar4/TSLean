@@ -174,6 +174,14 @@ structure Machine (P : Platform) where
   reverseTrace : List TraceEvent
   fuel : Nat
 
+/-- Constructs a machine without exposing its private representation. -/
+private abbrev Machine.fromFields (P : Platform) (heap : Heap) (cells : Array Cell)
+    (environments : Array EnvironmentRecord) (currentEnv : EnvId)
+    (intrinsics : Option RealmIntrinsics) (platform : P.State)
+    (reverseTrace : List TraceEvent) (fuel : Nat) : Machine P :=
+  ⟨heap, cells, environments, currentEnv, intrinsics, platform, reverseTrace, fuel⟩
+
+
 namespace Machine
 private def zipIdxFrom (xs : List α) (start : Nat) : List (α × Nat) :=
   (xs.enumFrom start).map fun p => (p.2, p.1)
@@ -248,7 +256,7 @@ private theorem hashMap_mem_toList_iff_getElem?_eq_some
 
 /-- Creates a machine containing one valid global lexical environment at identity zero. -/
 def initial (P : Platform) (fuel : Nat) : Machine P :=
-  .mk Heap.empty #[] #[⟨none, Std.HashMap.empty⟩] ⟨0⟩ none P.initialState [] fuel
+  Machine.fromFields P Heap.empty #[] #[⟨none, Std.HashMap.empty⟩] ⟨0⟩ none P.initialState [] fuel
 
 /-- Returns the root global environment identity. -/
 def globalEnv (_machine : Machine P) : EnvId := ⟨0⟩
@@ -421,7 +429,8 @@ theorem wellFormed_getCell_valueValid (machine : Machine P) (id : CellId) (value
       simp [lookup] at found
       subst cell
       have member : Cell.mk (.initialized value) mutable ∈ machine.cells.toList :=
-        Array.mem_toList_iff.mpr (Array.mem_of_getElem? lookup)
+        (Array.mem_toList_iff (Cell.mk (.initialized value) mutable) machine.cells).mpr
+          (Array.mem_of_getElem? lookup)
       simpa [cellValid] using valid.1.1.1.2 _ member
 
 /-- A successfully read environment identity is allocated. -/
@@ -484,7 +493,7 @@ theorem wellFormed_binding_valid (machine : Machine P) (environment : EnvId)
   unfold environmentValidAt at invariant
   simp only [Bool.and_eq_true] at invariant
   rw [List.all_eq_true] at invariant
-  have member := hashMap_mem_toList_iff_getElem?_eq_some.mpr foundBinding
+  have member := (hashMap_mem_toList_iff_getElem?_eq_some record.bindings name cell).mpr foundBinding
   simpa [ValidCellId] using invariant.1.2 (name, cell) member
 
 private theorem environmentTerminates_succ_of_true (machine : Machine P) (fuel : Nat)
@@ -574,8 +583,10 @@ private theorem pushEnvironment_preserves_wellFormed (machine : Machine P)
       · simpa using parentValid
       · rw [List.all_eq_true]
         intro binding bindingMember
-        exact decide_eq_true (bindingsValid binding.1 binding.2
-          (hashMap_mem_toList_iff_getElem?_eq_some.mp bindingMember))
+        have bindingFound :=
+          (hashMap_mem_toList_iff_getElem?_eq_some record.bindings binding.1 binding.2).mp
+            bindingMember
+        exact decide_eq_true (bindingsValid binding.1 binding.2 bindingFound)
       · simpa using newTerminates
   · rw [List.all_eq_true]
     have functionsValid := List.all_eq_true.mp valid.2
@@ -721,17 +732,19 @@ theorem setCell_preserves_wellFormed (machine next : Machine P) (id : CellId) (c
         subst candidate
         simpa [cellValid] using cellIsValid
       · have oldIndexValid : index < machine.cells.size := by simpa using indexValid
-        rw [Array.getElem_set_ne inBounds oldIndexValid (Ne.symm same)] at candidateEq
+        rw [Array.getElem_set_ne machine.cells id.value inBounds cell indexValid (Ne.symm same)]
+          at candidateEq
         have oldLookup : machine.cells[index]? = some candidate := by
           rw [Array.getElem?_eq_getElem oldIndexValid]
           exact congrArg some candidateEq
         have oldMember : candidate ∈ machine.cells.toList := by
-          exact Array.mem_toList_iff.mpr (Array.mem_of_getElem? oldLookup)
+          exact (Array.mem_toList_iff candidate machine.cells).mpr (Array.mem_of_getElem? oldLookup)
         exact valid.1.1.1.2 candidate oldMember
     · rw [List.all_eq_true]
       have environmentsValid := List.all_eq_true.mp valid.1.1.2
       intro entry member
-      rw [environmentValidAt_setCell machine _ (Array.size_set inBounds)]
+      rw [environmentValidAt_setCell machine (machine.cells.set id.value cell inBounds)
+        (Array.size_set machine.cells id.value cell inBounds)]
       exact environmentsValid entry (by simpa using member)
   next outOfBounds => contradiction
 
@@ -912,7 +925,8 @@ theorem setEnvironment_bindings_preserves_wellFormed (machine next : Machine P)
       refine ⟨⟨oldInvariant.1.1, ?_⟩, ?_⟩
       · rw [List.all_eq_true]
         intro binding bindingMember
-        have bindingFound := hashMap_mem_toList_iff_getElem?_eq_some.mp bindingMember
+        have bindingFound :=
+          (hashMap_mem_toList_iff_getElem?_eq_some bindings binding.1 binding.2).mp bindingMember
         exact decide_eq_true (bindingsValid binding.1 binding.2 bindingFound)
       · rw [environmentTerminates_setParent machine environment record
           { record with bindings } inBounds arrayFound rfl]
@@ -920,7 +934,8 @@ theorem setEnvironment_bindings_preserves_wellFormed (machine next : Machine P)
     · rw [getElem_zipIdxFrom] at entryAt
       have arrayIndexBound : index < machine.environments.size := by simpa using indexBound
       rw [Array.getElem_toList] at entryAt
-      rw [Array.getElem_set_ne inBounds arrayIndexBound (Ne.symm same)] at entryAt
+      rw [Array.getElem_set_ne machine.environments environment.value inBounds
+        { record with bindings } (by simpa using arrayIndexBound) (Ne.symm same)] at entryAt
       have oldEntryAt : (zipIdxFrom machine.environments.toList 0)[index] = entry := by
         rw [getElem_zipIdxFrom, Array.getElem_toList]
         simpa using entryAt
@@ -1399,6 +1414,11 @@ theorem initial_wellFormed (P : Platform) (fuel : Nat) :
   rw [heapValid]
   simp [environmentValidAt, environmentTerminates, Heap.functionEnvironments,
     Heap.functionSlotList, Heap.empty, realmValid]
+  intro name cell member
+  have found :=
+    (hashMap_mem_toList_iff_getElem?_eq_some (Std.HashMap.empty : Std.HashMap JSString CellId)
+      name cell).mp member
+  simp at found
 
 end Machine
 end TSLean.JS
