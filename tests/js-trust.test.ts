@@ -228,6 +228,30 @@ describe('JS elaborated-environment trust audit', () => {
     }
   }, 180_000);
 
+  it('audits authored declarations wearing compiler-auxiliary names', () => {
+    // Exemption from the constant audit needs structural provenance: an exact generated suffix
+    // AND no source declaration range. Authored declarations always carry a range, so every
+    // planted spoof below stays audited and is refused by its own axiom dependency.
+    const directory = mkdtempSync(join(tmpdir(), 'tslean-aux-spoof-'));
+    try {
+      compileModule(directory, 'JsTrustSpoofCstageFixture', 'axiom _cstage1 : False\n');
+      expect(() => checkModuleConstants(['JsTrustSpoofCstageFixture'], 'JsTrustSpoofCstageFixture', directory))
+        .toThrow('_cstage1 depends on disallowed axiom _cstage1');
+      compileModule(directory, 'JsTrustSpoofSpecFixture', 'axiom _spec_2 : False\n');
+      expect(() => checkModuleConstants(['JsTrustSpoofSpecFixture'], 'JsTrustSpoofSpecFixture', directory))
+        .toThrow('_spec_2 depends on disallowed axiom _spec_2');
+      compileModule(directory, 'JsTrustSpoofUnsafeRecFixture', 'axiom _unsafe_rec : False\n');
+      expect(() => checkModuleConstants(['JsTrustSpoofUnsafeRecFixture'], 'JsTrustSpoofUnsafeRecFixture', directory))
+        .toThrow('_unsafe_rec depends on disallowed axiom _unsafe_rec');
+      // A definition, not just an axiom: same provenance rule, so it stays selected.
+      compileModule(directory, 'JsTrustSpoofDefFixture', 'def _cstage7 : Nat := 7\n');
+      expect([...checkModuleConstants(['JsTrustSpoofDefFixture'], 'JsTrustSpoofDefFixture', directory).keys()])
+        .toContain('_cstage7');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 180_000);
+
   it('rejects native_decide in the audited Lean trees', () => {
     // `native_decide` was absent from the forbidden-token scan, and `#audit_proofs` filters private
     // names, so a `private theorem ... := by native_decide` was invisible to both.

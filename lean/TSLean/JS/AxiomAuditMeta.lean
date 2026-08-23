@@ -32,19 +32,28 @@ private def declaringModule (environment : Environment) (name : Name) : Option N
   environment.header.moduleNames[index.toNat]?
 
 /--
-Names of declarations the compiler derives from already-elaborated source: compiled-code stages
-(`._cstageN`), recursion-specialization placeholders (`._specN`), and `partial def` machinery
-(`._unsafe_rec`).
+Exact final-component shapes the compiler generates for machinery derived from already-elaborated
+source: compiled-code stages (`._cstage12`), recursion-specialization placeholders (`._spec_3`), and
+`partial def` machinery (`._unsafe_rec`). Digits are matched exactly, so an authored name that merely
+begins like one of these does not qualify.
 
-They are never authored, and on this toolchain they carry codegen artifacts — `lcProof` standing in
-for erased proofs, specialized-recursion lemmas declared as axioms — that say nothing about the
-source the gate judges. Source-level taint stays visible: it sits on the authored declaration the
-auxiliary was derived from, which the audit still selects.
+Shape alone would let an authored declaration spoof its way out of the audit, so exclusion requires
+structural provenance as well: a source declaration range. Everything written in a module carries
+one — private declarations included — while compiler-synthesized constants never do. An authored
+`axiom _cstage1` therefore keeps its source range and stays audited; only true machinery, name and
+rangelessness agreeing, is exempted.
 -/
-private def compilerDerivedName (name : Name) : Bool :=
+private def compilerDerivedName (name : Name) : CommandElabM Bool := do
   match name with
-  | .str _ suffix => suffix.startsWith "_cstage" || suffix.startsWith "_spec_" || suffix == "_unsafe_rec"
-  | _ => false
+  | .str _ suffix =>
+    let shaped :=
+      suffix == "_unsafe_rec"
+      || (suffix.startsWith "_cstage" && (suffix.drop "_cstage".length).all Char.isDigit
+          && (suffix.drop "_cstage".length).length > 0)
+      || (suffix.startsWith "_spec_" && (suffix.drop "_spec_".length).all Char.isDigit
+          && (suffix.drop "_spec_".length).length > 0)
+    pure (shaped && (← findDeclarationRangesCore? name).isNone)
+  | _ => pure false
 
 /--
 Audit the public, proposition-valued declarations of a namespace.
@@ -58,8 +67,9 @@ syntax "#audit_proofs " ident : command
 
 /--
 Audit every *authored* declaration of every imported module whose name starts with the given
-module prefix — private and non-`Prop` declarations included; compiler-derived auxiliaries
-(`compilerDerivedName`) are excluded.
+module prefix — private and non-`Prop` declarations included. Compiler-synthesized machinery is
+excluded by structural provenance (`compilerDerivedName`): exact generated name shape and no source
+declaration range, so an authored declaration cannot hide behind a reserved-looking name.
 
 The prefix selects modules, not namespaces, so a declaration cannot escape the audit by living
 in a namespace that does not match the module it was compiled into.
@@ -76,7 +86,8 @@ elab_rules : command
         liftTermElabM do Meta.isProp info.type
   | `(#audit_constants $moduleId:ident) =>
       auditSelected fun environment name _ => do
-        if compilerDerivedName name then return false
+        let derived ← compilerDerivedName name
+        if derived then return false
         match declaringModule environment name with
         | none => return false
         | some module => return moduleId.getId.isPrefixOf module

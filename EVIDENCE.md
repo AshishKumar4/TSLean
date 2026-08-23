@@ -1881,3 +1881,13 @@ which no revision could reproduce. The repo keeps one live snapshot (`phase5-emi
 `source` group already covers the compiler sources) and freezes history, so the file went back to
 the frozen shape and its manifest was regenerated. All 29 historical inputs record the branch they
 are checked on; each now records this one, and all 31 evidence checks pass on this branch.
+
+The exact-sha re-review of `2356a63` rejected one hole in that exemption: it matched any authored
+final component beginning `_cstage`, `_spec_`, or `_unsafe_rec`, so an authored
+`axiom _cstageBackdoor : False` in a module no token scan reads could have evaded the constant audit.
+The exemption is structural provenance now: an exact generated shape — digits matched exactly — and
+no source declaration range, which compiler-synthesized constants never have and everything written
+in a module always has, private included. Planted fixtures prove each reserved suffix red when
+authored (`_cstage1`, `_spec_2`, `_unsafe_rec` axioms refused by their own dependency; a shaped
+`def` still selected), and measured scope is unchanged at 22 imports, 1,171 modules and 5,354
+declarations.
