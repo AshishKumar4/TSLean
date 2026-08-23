@@ -764,15 +764,21 @@ theorem encode_total {elementCodec : Codec α ElementEncodeFault ElementDecodeFa
         obtain ⟨encodedValue, valueMember, entryEq⟩ : ∃ value, value ∈ values ∧ some value = entry := by
           simpa using member
         obtain ⟨index, inBounds, indexEq⟩ :=
-          List.getElem_of_mem (Array.mem_toList_iff.mpr valueMember)
+          List.getElem_of_mem ((Array.mem_toList_iff encodedValue values).mpr valueMember)
         have indexBound : index < values.size := by simpa using inBounds
         obtain ⟨related, valueAt, relation⟩ := elements index (by simpa [valuesSize] using indexBound)
         have valueAtIndex : values[index] = related := by
           rw [show (#[] : _root_.Array Value).size = 0 from rfl, Nat.zero_add,
             Array.getElem?_eq_getElem indexBound] at valueAt
           exact Option.some.inj valueAt
+        have encodedValueEqRelated : encodedValue = related := by
+          calc
+            encodedValue = values.toList[index] := indexEq.symm
+            _ = values[index] := Array.getElem_toList indexBound
+            _ = related := valueAtIndex
         subst entryEq
-        simpa [← indexEq, valueAtIndex] using element.valueValid relation)
+        rw [encodedValueEqRelated]
+        exact element.valueValid relation)
   refine ⟨.object root, next, ?_⟩
   change encode elementCodec heap native = _
   unfold encode
