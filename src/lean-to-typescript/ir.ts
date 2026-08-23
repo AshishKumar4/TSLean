@@ -14,6 +14,18 @@ export function isLeanModuleName(value: string): boolean {
   return /^[A-Za-z_][\w'!?]*(?:\.[A-Za-z_][\w'!?]*)*$/u.test(value);
 }
 
+/**
+ * Any name Lean can render for a declaration, which is a strictly larger language than the
+ * TypeScript-safe subset the compiler is willing to emit. Lean's own generated auxiliaries use
+ * numeric components and hygiene marks — `_private.M.0.f.match_1._@.M._hyg.297` at 4.16,
+ * `M.instReprT.repr.match_1` at 4.29 — and a closure entry records such a name as provenance
+ * without ever emitting it as an identifier. So this checks integrity, not emittability: no empty
+ * component, no whitespace, no control character.
+ */
+export function isLeanDeclarationName(value: string): boolean {
+  return /^[^\s.\u0000-\u001f]+(?:\.[^\s.\u0000-\u001f]+)*$/u.test(value);
+}
+
 export type LeanType =
   | { readonly kind: 'boolean' }
   | { readonly kind: 'named'; readonly name: string }
@@ -163,8 +175,12 @@ function decodeClosureEntry(value: unknown, location: string): LeanToTypeScriptC
   if (module !== '' && !isLeanModuleName(string(module, `${location}.module`))) {
     throw new TypeError(`${location}.module is not a Lean module name: ${String(module)}`);
   }
+  const declaration = string(entry['declaration'], `${location}.declaration`);
+  if (!isLeanDeclarationName(declaration)) {
+    throw new TypeError(`${location}.declaration is not a Lean declaration name: ${declaration}`);
+  }
   return {
-    declaration: qualifiedName(entry['declaration'], `${location}.declaration`),
+    declaration,
     module: module === '' ? '' : string(module, `${location}.module`),
     role: role satisfies LeanToTypeScriptDeclarationRole,
     reason,
