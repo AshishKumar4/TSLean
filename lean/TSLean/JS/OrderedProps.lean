@@ -50,9 +50,6 @@ private abbrev arrayZipIdx (xs : Array α) (start : Nat := 0) : Array (α × Nat
       (xs[index]'(by simpa [arrayZipIdx] using inBounds), start + index) := by
   simp [arrayZipIdx]
 
-local macro "List.zipIdx_cons" : term => `(listZipIdx_cons)
-local macro "Array.getElem_zipIdx" : term => `(arrayGetElem_zipIdx)
-
 private theorem modelMem_iff_getValue?_eq_some
     (items : List ((_: PropertyKey) × StoredProperty))
     (distinct : Std.DHashMap.Internal.List.DistinctKeys items)
@@ -423,7 +420,7 @@ private theorem rebuildZip_get?_not_mem (wrap : α → PropertyKey)
       have tailAbsent : target ∉ keys := by
         intro member
         exact absent (by simp [member])
-      simp only [List.zipIdx_cons, List.foldl_cons, rebuildEntry]
+      simp only [listZipIdx_cons, List.foldl_cons, rebuildEntry]
       cases found : source.get? (wrap key) with
       | none =>
           rw [ih _ _ tailAbsent]
@@ -444,7 +441,7 @@ private theorem rebuildZip_get?_outside (wrap : α → PropertyKey)
       have keyOutside := outside key (by simp)
       have tailOutside : ∀ key ∈ keys, wrap key ≠ target := fun key member =>
         outside key (by simp [member])
-      simp only [List.zipIdx_cons, List.foldl_cons, rebuildEntry]
+      simp only [listZipIdx_cons, List.foldl_cons, rebuildEntry]
       cases found : source.get? (wrap key) with
       | none => rw [ih _ _ tailOutside]
       | some stored =>
@@ -471,14 +468,14 @@ private theorem rebuildZip_get?_at (wrap : α → PropertyKey)
       | zero =>
           simp at atPosition
           subst first
-          simp only [List.zipIdx_cons, List.foldl_cons, rebuildEntry]
+          simp only [listZipIdx_cons, List.foldl_cons, rebuildEntry]
           rw [found, rebuildZip_get?_not_mem wrap injective source _ keys (start + 1) key firstAbsent]
           change (current.insert (wrap key)
             { stored with orderPosition := some start })[wrap key]? = _
           simp
       | succ position =>
           simp only [List.getElem?_cons_succ] at atPosition
-          simp only [List.zipIdx_cons, List.foldl_cons]
+          simp only [listZipIdx_cons, List.foldl_cons]
           rw [ih (start := start + 1) (position := position)
             (current := rebuildEntry wrap source current (first, start)) tailNodup atPosition]
           congr 3
@@ -829,7 +826,7 @@ private theorem stringSlot_covered {properties : OrderedPropsRep}
     ∃ stored, properties.entries.get? (.string key) = some stored := by
   obtain ⟨position, inBounds, atPosition⟩ := Array.getElem_of_mem member
   have slotValid := valid.2.1 position (by simpa using inBounds)
-  simp [Array.getElem_zipIdx, atPosition, StringSlotValid] at slotValid
+  simp [arrayGetElem_zipIdx, atPosition, StringSlotValid] at slotValid
   exact ⟨slotValid.choose, slotValid.choose_spec.1⟩
 
 private theorem symbolSlot_covered {properties : OrderedPropsRep}
@@ -838,7 +835,7 @@ private theorem symbolSlot_covered {properties : OrderedPropsRep}
     ∃ stored, properties.entries.get? (.symbol key) = some stored := by
   obtain ⟨position, inBounds, atPosition⟩ := Array.getElem_of_mem member
   have slotValid := valid.2.2 position (by simpa using inBounds)
-  simp [Array.getElem_zipIdx, atPosition, SymbolSlotValid] at slotValid
+  simp [arrayGetElem_zipIdx, atPosition, SymbolSlotValid] at slotValid
   exact ⟨slotValid.choose, slotValid.choose_spec.1⟩
 
 private theorem entryValid_of_get? {properties : OrderedPropsRep}
@@ -851,7 +848,7 @@ private theorem stringSlot_nonIndex {properties : OrderedPropsRep}
     (member : some key ∈ properties.stringOrder) : PropertyKey.arrayIndex? key = none := by
   obtain ⟨position, inBounds, atPosition⟩ := Array.getElem_of_mem member
   have slotValid := valid.2.1 position (by simpa using inBounds)
-  simp [Array.getElem_zipIdx, atPosition, StringSlotValid] at slotValid
+  simp [arrayGetElem_zipIdx, atPosition, StringSlotValid] at slotValid
   exact slotValid.choose_spec.2.1
 
 private theorem stringSlot_unique {properties : OrderedPropsRep}
@@ -862,8 +859,8 @@ private theorem stringSlot_unique {properties : OrderedPropsRep}
     (rightKey : properties.stringOrder[right] = some key) : left = right := by
   have leftValid := valid.2.1 left (by simpa using leftBound)
   have rightValid := valid.2.1 right (by simpa using rightBound)
-  simp [Array.getElem_zipIdx, leftKey, StringSlotValid] at leftValid
-  simp [Array.getElem_zipIdx, rightKey, StringSlotValid] at rightValid
+  simp [arrayGetElem_zipIdx, leftKey, StringSlotValid] at leftValid
+  simp [arrayGetElem_zipIdx, rightKey, StringSlotValid] at rightValid
   rcases leftValid with ⟨leftStored, leftFound, _, leftPosition⟩
   rcases rightValid with ⟨rightStored, rightFound, _, rightPosition⟩
   have storedEqual : leftStored = rightStored := by
@@ -881,8 +878,8 @@ private theorem symbolSlot_unique {properties : OrderedPropsRep}
     (rightKey : properties.symbolOrder[right] = some key) : left = right := by
   have leftValid := valid.2.2 left (by simpa using leftBound)
   have rightValid := valid.2.2 right (by simpa using rightBound)
-  simp [Array.getElem_zipIdx, leftKey, SymbolSlotValid] at leftValid
-  simp [Array.getElem_zipIdx, rightKey, SymbolSlotValid] at rightValid
+  simp [arrayGetElem_zipIdx, leftKey, SymbolSlotValid] at leftValid
+  simp [arrayGetElem_zipIdx, rightKey, SymbolSlotValid] at rightValid
   rcases leftValid with ⟨leftStored, leftFound, leftPosition⟩
   rcases rightValid with ⟨rightStored, rightFound, rightPosition⟩
   have storedEqual : leftStored = rightStored := by
@@ -1046,20 +1043,20 @@ private theorem compactStrings_metadata (properties : OrderedPropsRep)
         properties.stringOrder).2.size := by simpa [outputEq] using positionBound
     have outputAt : (compactStrings properties.entries properties.stringOrder).2[position] =
         some key := by simp [outputEq, key]
-    simp [Array.getElem_zipIdx, outputAt, StringSlotValid]
+    simp [arrayGetElem_zipIdx, outputAt, StringSlotValid]
     exact ⟨{ stored with orderPosition := some position }, rebuilt, nonIndex, rfl⟩
   · intro position inBounds
     have oldBound : position < properties.symbolOrder.size := by simpa using inBounds
     have oldValid := valid.2.2 position (by simpa using oldBound)
     cases slot : properties.symbolOrder[position] with
     | none =>
-        simp [Array.getElem_zipIdx, slot, SymbolSlotValid] at oldValid ⊢
+        simp [arrayGetElem_zipIdx, slot, SymbolSlotValid] at oldValid ⊢
     | some key =>
-        simp [Array.getElem_zipIdx, slot, SymbolSlotValid] at oldValid
+        simp [arrayGetElem_zipIdx, slot, SymbolSlotValid] at oldValid
         rcases oldValid with ⟨stored, found, storedPosition⟩
         have unchanged := compactOrder_get?_outside PropertyKey.string properties.entries
           properties.stringOrder (.symbol key) (by simp)
-        simp [Array.getElem_zipIdx, slot, SymbolSlotValid]
+        simp [arrayGetElem_zipIdx, slot, SymbolSlotValid]
         exact ⟨stored, unchanged.trans found, storedPosition⟩
 
 private theorem compactSymbols_metadata (properties : OrderedPropsRep)
@@ -1142,13 +1139,13 @@ private theorem compactSymbols_metadata (properties : OrderedPropsRep)
     have oldValid := valid.2.1 position (by simpa using oldBound)
     cases slot : properties.stringOrder[position] with
     | none =>
-        simp [Array.getElem_zipIdx, slot, StringSlotValid] at oldValid ⊢
+        simp [arrayGetElem_zipIdx, slot, StringSlotValid] at oldValid ⊢
     | some key =>
-        simp [Array.getElem_zipIdx, slot, StringSlotValid] at oldValid
+        simp [arrayGetElem_zipIdx, slot, StringSlotValid] at oldValid
         rcases oldValid with ⟨stored, found, nonIndex, storedPosition⟩
         have unchanged := compactOrder_get?_outside PropertyKey.symbol properties.entries
           properties.symbolOrder (.string key) (by simp)
-        simp [Array.getElem_zipIdx, slot, StringSlotValid]
+        simp [arrayGetElem_zipIdx, slot, StringSlotValid]
         exact ⟨stored, unchanged.trans found, nonIndex, storedPosition⟩
   · intro position inBounds
     have positionBound : position < (properties.symbolOrder.toList.filterMap id).length := by
@@ -1175,7 +1172,7 @@ private theorem compactSymbols_metadata (properties : OrderedPropsRep)
         properties.symbolOrder).2.size := by simpa [outputEq] using positionBound
     have outputAt : (compactSymbols properties.entries properties.symbolOrder).2[position] =
         some key := by simp [outputEq, key]
-    simp [Array.getElem_zipIdx, outputAt, SymbolSlotValid]
+    simp [arrayGetElem_zipIdx, outputAt, SymbolSlotValid]
     exact ⟨{ stored with orderPosition := some position }, rebuilt, rfl⟩
 
 private theorem tombstoneCount_map_some (keys : List α) :
@@ -1304,9 +1301,9 @@ private theorem updateMetadata_valid (properties : OrderedPropsRep)
     have oldValid := valid.2.1 position (by simpa using oldBound)
     cases slot : properties.stringOrder[position] with
     | none =>
-        simp [Array.getElem_zipIdx, slot, StringSlotValid] at oldValid ⊢
+        simp [arrayGetElem_zipIdx, slot, StringSlotValid] at oldValid ⊢
     | some stringKey =>
-        simp [Array.getElem_zipIdx, slot, StringSlotValid] at oldValid
+        simp [arrayGetElem_zipIdx, slot, StringSlotValid] at oldValid
         rcases oldValid with ⟨oldStored, oldFound, nonIndex, oldPosition⟩
         by_cases equal : key = .string stringKey
         · subst key
@@ -1314,8 +1311,8 @@ private theorem updateMetadata_valid (properties : OrderedPropsRep)
           rw [found] at oldFound
           have storedEqual := Option.some.inj oldFound
           subst oldStored
-          simp [Array.getElem_zipIdx, slot, StringSlotValid, nonIndex, oldPosition]
-        · simp [Array.getElem_zipIdx, slot, StringSlotValid]
+          simp [arrayGetElem_zipIdx, slot, StringSlotValid, nonIndex, oldPosition]
+        · simp [arrayGetElem_zipIdx, slot, StringSlotValid]
           have newFound : (properties.entries.insert key
               { stored with descriptor })[PropertyKey.string stringKey]? = some oldStored := by
             rw [Std.HashMap.getElem?_insert]
@@ -1326,9 +1323,9 @@ private theorem updateMetadata_valid (properties : OrderedPropsRep)
     have oldValid := valid.2.2 position (by simpa using oldBound)
     cases slot : properties.symbolOrder[position] with
     | none =>
-        simp [Array.getElem_zipIdx, slot, SymbolSlotValid] at oldValid ⊢
+        simp [arrayGetElem_zipIdx, slot, SymbolSlotValid] at oldValid ⊢
     | some symbolKey =>
-        simp [Array.getElem_zipIdx, slot, SymbolSlotValid] at oldValid
+        simp [arrayGetElem_zipIdx, slot, SymbolSlotValid] at oldValid
         rcases oldValid with ⟨oldStored, oldFound, oldPosition⟩
         by_cases equal : key = .symbol symbolKey
         · subst key
@@ -1336,8 +1333,8 @@ private theorem updateMetadata_valid (properties : OrderedPropsRep)
           rw [found] at oldFound
           have storedEqual := Option.some.inj oldFound
           subst oldStored
-          simp [Array.getElem_zipIdx, slot, SymbolSlotValid, oldPosition]
-        · simp [Array.getElem_zipIdx, slot, SymbolSlotValid]
+          simp [arrayGetElem_zipIdx, slot, SymbolSlotValid, oldPosition]
+        · simp [arrayGetElem_zipIdx, slot, SymbolSlotValid]
           have newFound : (properties.entries.insert key
               { stored with descriptor })[PropertyKey.symbol symbolKey]? = some oldStored := by
             rw [Std.HashMap.getElem?_insert]
@@ -1374,9 +1371,9 @@ private theorem insertIndexMetadata_valid (properties : OrderedPropsRep)
     have oldValid := valid.2.1 position (by simpa using oldBound)
     cases slot : properties.stringOrder[position] with
     | none =>
-        simp [Array.getElem_zipIdx, slot, StringSlotValid] at oldValid ⊢
+        simp [arrayGetElem_zipIdx, slot, StringSlotValid] at oldValid ⊢
     | some oldKey =>
-        simp [Array.getElem_zipIdx, slot, StringSlotValid] at oldValid
+        simp [arrayGetElem_zipIdx, slot, StringSlotValid] at oldValid
         rcases oldValid with ⟨oldStored, oldFound, nonIndex, oldPosition⟩
         have keyNe : PropertyKey.string key ≠ .string oldKey := by
           intro equal
@@ -1385,7 +1382,7 @@ private theorem insertIndexMetadata_valid (properties : OrderedPropsRep)
           change properties.entries[PropertyKey.string key]? = none at absent
           rw [absent] at oldFound
           contradiction
-        simp [Array.getElem_zipIdx, slot, StringSlotValid]
+        simp [arrayGetElem_zipIdx, slot, StringSlotValid]
         refine ⟨oldStored, ?_, nonIndex, oldPosition⟩
         rw [Std.HashMap.getElem?_insert]
         simp [keyNe, oldFound]
@@ -1394,11 +1391,11 @@ private theorem insertIndexMetadata_valid (properties : OrderedPropsRep)
     have oldValid := valid.2.2 position (by simpa using oldBound)
     cases slot : properties.symbolOrder[position] with
     | none =>
-        simp [Array.getElem_zipIdx, slot, SymbolSlotValid] at oldValid ⊢
+        simp [arrayGetElem_zipIdx, slot, SymbolSlotValid] at oldValid ⊢
     | some oldKey =>
-        simp [Array.getElem_zipIdx, slot, SymbolSlotValid] at oldValid
+        simp [arrayGetElem_zipIdx, slot, SymbolSlotValid] at oldValid
         rcases oldValid with ⟨oldStored, oldFound, oldPosition⟩
-        simp [Array.getElem_zipIdx, slot, SymbolSlotValid]
+        simp [arrayGetElem_zipIdx, slot, SymbolSlotValid]
         refine ⟨oldStored, ?_, oldPosition⟩
         rw [Std.HashMap.getElem?_insert]
         simpa using oldFound
@@ -1450,7 +1447,7 @@ private theorem appendStringMetadata_valid (properties : OrderedPropsRep)
     have positionLe : position ≤ properties.stringOrder.size := by omega
     rcases Nat.eq_or_lt_of_le positionLe with equal | before
     · subst position
-      simp [Array.getElem_zipIdx, StringSlotValid, nonIndex]
+      simp [arrayGetElem_zipIdx, StringSlotValid, nonIndex]
     · have oldValid := valid.2.1 position (by simpa using before)
       cases slot : properties.stringOrder[position] with
       | none =>
@@ -1458,9 +1455,9 @@ private theorem appendStringMetadata_valid (properties : OrderedPropsRep)
             simp; omega
           have pushedSlot : (properties.stringOrder.push (some key))[position]'pushedArrayBound = none := by
             simp [Array.getElem_push_lt properties.stringOrder (some key) position before, slot]
-          simp [Array.getElem_zipIdx, pushedSlot, StringSlotValid]
+          simp [arrayGetElem_zipIdx, pushedSlot, StringSlotValid]
       | some oldKey =>
-          simp [Array.getElem_zipIdx, slot, StringSlotValid] at oldValid
+          simp [arrayGetElem_zipIdx, slot, StringSlotValid] at oldValid
           rcases oldValid with ⟨oldStored, oldFound, oldNonIndex, oldPosition⟩
           have keyNe : PropertyKey.string key ≠ .string oldKey := by
             intro equal
@@ -1474,7 +1471,7 @@ private theorem appendStringMetadata_valid (properties : OrderedPropsRep)
           have pushedSlot : (properties.stringOrder.push (some key))[position]'pushedArrayBound =
               some oldKey := by
             simp [Array.getElem_push_lt properties.stringOrder (some key) position before, slot]
-          simp [Array.getElem_zipIdx, pushedSlot, StringSlotValid]
+          simp [arrayGetElem_zipIdx, pushedSlot, StringSlotValid]
           refine ⟨oldStored, ?_, oldNonIndex, oldPosition⟩
           rw [Std.HashMap.getElem?_insert]
           simp [keyNe, oldFound]
@@ -1483,11 +1480,11 @@ private theorem appendStringMetadata_valid (properties : OrderedPropsRep)
     have oldValid := valid.2.2 position (by simpa using oldBound)
     cases slot : properties.symbolOrder[position] with
     | none =>
-        simp [Array.getElem_zipIdx, slot, SymbolSlotValid] at oldValid ⊢
+        simp [arrayGetElem_zipIdx, slot, SymbolSlotValid] at oldValid ⊢
     | some oldKey =>
-        simp [Array.getElem_zipIdx, slot, SymbolSlotValid] at oldValid
+        simp [arrayGetElem_zipIdx, slot, SymbolSlotValid] at oldValid
         rcases oldValid with ⟨oldStored, oldFound, oldPosition⟩
-        simp [Array.getElem_zipIdx, slot, SymbolSlotValid]
+        simp [arrayGetElem_zipIdx, slot, SymbolSlotValid]
         refine ⟨oldStored, ?_, oldPosition⟩
         rw [Std.HashMap.getElem?_insert]
         simpa using oldFound
@@ -1527,11 +1524,11 @@ private theorem appendSymbolMetadata_valid (properties : OrderedPropsRep)
     have oldValid := valid.2.1 position (by simpa using oldBound)
     cases slot : properties.stringOrder[position] with
     | none =>
-        simp [Array.getElem_zipIdx, slot, StringSlotValid] at oldValid ⊢
+        simp [arrayGetElem_zipIdx, slot, StringSlotValid] at oldValid ⊢
     | some oldKey =>
-        simp [Array.getElem_zipIdx, slot, StringSlotValid] at oldValid
+        simp [arrayGetElem_zipIdx, slot, StringSlotValid] at oldValid
         rcases oldValid with ⟨oldStored, oldFound, oldNonIndex, oldPosition⟩
-        simp [Array.getElem_zipIdx, slot, StringSlotValid]
+        simp [arrayGetElem_zipIdx, slot, StringSlotValid]
         refine ⟨oldStored, ?_, oldNonIndex, oldPosition⟩
         rw [Std.HashMap.getElem?_insert]
         simpa using oldFound
@@ -1540,7 +1537,7 @@ private theorem appendSymbolMetadata_valid (properties : OrderedPropsRep)
     have positionLe : position ≤ properties.symbolOrder.size := by omega
     rcases Nat.eq_or_lt_of_le positionLe with equal | before
     · subst position
-      simp [Array.getElem_zipIdx, SymbolSlotValid]
+      simp [arrayGetElem_zipIdx, SymbolSlotValid]
     · have oldValid := valid.2.2 position (by simpa using before)
       cases slot : properties.symbolOrder[position] with
       | none =>
@@ -1548,9 +1545,9 @@ private theorem appendSymbolMetadata_valid (properties : OrderedPropsRep)
             simp; omega
           have pushedSlot : (properties.symbolOrder.push (some key))[position]'pushedArrayBound = none := by
             simp [Array.getElem_push_lt properties.symbolOrder (some key) position before, slot]
-          simp [Array.getElem_zipIdx, pushedSlot, SymbolSlotValid]
+          simp [arrayGetElem_zipIdx, pushedSlot, SymbolSlotValid]
       | some oldKey =>
-          simp [Array.getElem_zipIdx, slot, SymbolSlotValid] at oldValid
+          simp [arrayGetElem_zipIdx, slot, SymbolSlotValid] at oldValid
           rcases oldValid with ⟨oldStored, oldFound, oldPosition⟩
           have keyNe : PropertyKey.symbol key ≠ .symbol oldKey := by
             intro equal
@@ -1564,7 +1561,7 @@ private theorem appendSymbolMetadata_valid (properties : OrderedPropsRep)
           have pushedSlot : (properties.symbolOrder.push (some key))[position]'pushedArrayBound =
               some oldKey := by
             simp [Array.getElem_push_lt properties.symbolOrder (some key) position before, slot]
-          simp [Array.getElem_zipIdx, pushedSlot, SymbolSlotValid]
+          simp [arrayGetElem_zipIdx, pushedSlot, SymbolSlotValid]
           refine ⟨oldStored, ?_, oldPosition⟩
           rw [Std.HashMap.getElem?_insert]
           simp [keyNe, oldFound]
@@ -1865,7 +1862,7 @@ private theorem deleteStringMetadata_valid (properties : OrderedPropsRep)
       simpa [tombstone_size] using inBounds
     by_cases samePosition : oldPosition = position
     · subst oldPosition
-      simp [tombstone, positionBound, Array.getElem_zipIdx, StringSlotValid]
+      simp [tombstone, positionBound, arrayGetElem_zipIdx, StringSlotValid]
     · have oldValid := valid.2.1 oldPosition (by simpa using orderBound)
       cases oldSlot : properties.stringOrder[oldPosition] with
       | none =>
@@ -1873,9 +1870,9 @@ private theorem deleteStringMetadata_valid (properties : OrderedPropsRep)
             simpa [tombstone_size] using orderBound
           have tombstonedSlot : (tombstone properties.stringOrder position)[oldPosition] = none := by
             simp [tombstone, positionBound, Array.getElem_set, Ne.symm samePosition, oldSlot]
-          simp [Array.getElem_zipIdx, tombstonedSlot, StringSlotValid]
+          simp [arrayGetElem_zipIdx, tombstonedSlot, StringSlotValid]
       | some oldKey =>
-          simp [Array.getElem_zipIdx, oldSlot, StringSlotValid] at oldValid
+          simp [arrayGetElem_zipIdx, oldSlot, StringSlotValid] at oldValid
           rcases oldValid with ⟨oldStored, oldFound, oldNonIndex, oldStoredPosition⟩
           have keyNe : PropertyKey.string key ≠ .string oldKey := by
             intro equal
@@ -1890,7 +1887,7 @@ private theorem deleteStringMetadata_valid (properties : OrderedPropsRep)
           have tombstonedSlot : (tombstone properties.stringOrder position)[oldPosition] =
               some oldKey := by
             simp [tombstone, positionBound, Array.getElem_set, Ne.symm samePosition, oldSlot]
-          simp [Array.getElem_zipIdx, tombstonedSlot, StringSlotValid]
+          simp [arrayGetElem_zipIdx, tombstonedSlot, StringSlotValid]
           refine ⟨oldStored, ?_, oldNonIndex, oldStoredPosition⟩
           rw [Std.HashMap.getElem?_erase]
           simp [keyNe, oldFound]
@@ -1899,11 +1896,11 @@ private theorem deleteStringMetadata_valid (properties : OrderedPropsRep)
     have oldValid := valid.2.2 oldPosition (by simpa using oldBound)
     cases oldSlot : properties.symbolOrder[oldPosition] with
     | none =>
-        simp [Array.getElem_zipIdx, oldSlot, SymbolSlotValid] at oldValid ⊢
+        simp [arrayGetElem_zipIdx, oldSlot, SymbolSlotValid] at oldValid ⊢
     | some oldKey =>
-        simp [Array.getElem_zipIdx, oldSlot, SymbolSlotValid] at oldValid
+        simp [arrayGetElem_zipIdx, oldSlot, SymbolSlotValid] at oldValid
         rcases oldValid with ⟨oldStored, oldFound, oldStoredPosition⟩
-        simp [Array.getElem_zipIdx, oldSlot, SymbolSlotValid]
+        simp [arrayGetElem_zipIdx, oldSlot, SymbolSlotValid]
         refine ⟨oldStored, ?_, oldStoredPosition⟩
         rw [Std.HashMap.getElem?_erase]
         simpa using oldFound
@@ -1945,11 +1942,11 @@ private theorem deleteSymbolMetadata_valid (properties : OrderedPropsRep)
     have oldValid := valid.2.1 oldPosition (by simpa using oldBound)
     cases oldSlot : properties.stringOrder[oldPosition] with
     | none =>
-        simp [Array.getElem_zipIdx, oldSlot, StringSlotValid] at oldValid ⊢
+        simp [arrayGetElem_zipIdx, oldSlot, StringSlotValid] at oldValid ⊢
     | some oldKey =>
-        simp [Array.getElem_zipIdx, oldSlot, StringSlotValid] at oldValid
+        simp [arrayGetElem_zipIdx, oldSlot, StringSlotValid] at oldValid
         rcases oldValid with ⟨oldStored, oldFound, oldNonIndex, oldStoredPosition⟩
-        simp [Array.getElem_zipIdx, oldSlot, StringSlotValid]
+        simp [arrayGetElem_zipIdx, oldSlot, StringSlotValid]
         refine ⟨oldStored, ?_, oldNonIndex, oldStoredPosition⟩
         rw [Std.HashMap.getElem?_erase]
         simpa using oldFound
@@ -1958,7 +1955,7 @@ private theorem deleteSymbolMetadata_valid (properties : OrderedPropsRep)
       simpa [tombstone_size] using inBounds
     by_cases samePosition : oldPosition = position
     · subst oldPosition
-      simp [tombstone, positionBound, Array.getElem_zipIdx, SymbolSlotValid]
+      simp [tombstone, positionBound, arrayGetElem_zipIdx, SymbolSlotValid]
     · have oldValid := valid.2.2 oldPosition (by simpa using orderBound)
       cases oldSlot : properties.symbolOrder[oldPosition] with
       | none =>
@@ -1966,9 +1963,9 @@ private theorem deleteSymbolMetadata_valid (properties : OrderedPropsRep)
             simpa [tombstone_size] using orderBound
           have tombstonedSlot : (tombstone properties.symbolOrder position)[oldPosition] = none := by
             simp [tombstone, positionBound, Array.getElem_set, Ne.symm samePosition, oldSlot]
-          simp [Array.getElem_zipIdx, tombstonedSlot, SymbolSlotValid]
+          simp [arrayGetElem_zipIdx, tombstonedSlot, SymbolSlotValid]
       | some oldKey =>
-          simp [Array.getElem_zipIdx, oldSlot, SymbolSlotValid] at oldValid
+          simp [arrayGetElem_zipIdx, oldSlot, SymbolSlotValid] at oldValid
           rcases oldValid with ⟨oldStored, oldFound, oldStoredPosition⟩
           have keyNe : PropertyKey.symbol key ≠ .symbol oldKey := by
             intro equal
@@ -1983,7 +1980,7 @@ private theorem deleteSymbolMetadata_valid (properties : OrderedPropsRep)
           have tombstonedSlot : (tombstone properties.symbolOrder position)[oldPosition] =
               some oldKey := by
             simp [tombstone, positionBound, Array.getElem_set, Ne.symm samePosition, oldSlot]
-          simp [Array.getElem_zipIdx, tombstonedSlot, SymbolSlotValid]
+          simp [arrayGetElem_zipIdx, tombstonedSlot, SymbolSlotValid]
           refine ⟨oldStored, ?_, oldStoredPosition⟩
           rw [Std.HashMap.getElem?_erase]
           simp [keyNe, oldFound]
@@ -2004,16 +2001,16 @@ private theorem eraseIndexMetadata_valid (properties : OrderedPropsRep)
     have oldValid := valid.2.1 position (by simpa using oldBound)
     cases oldSlot : properties.stringOrder[position] with
     | none =>
-        simp [Array.getElem_zipIdx, oldSlot, StringSlotValid] at oldValid ⊢
+        simp [arrayGetElem_zipIdx, oldSlot, StringSlotValid] at oldValid ⊢
     | some oldKey =>
-        simp [Array.getElem_zipIdx, oldSlot, StringSlotValid] at oldValid
+        simp [arrayGetElem_zipIdx, oldSlot, StringSlotValid] at oldValid
         rcases oldValid with ⟨oldStored, oldFound, oldNonIndex, oldPosition⟩
         have keyNe : PropertyKey.string key ≠ .string oldKey := by
           intro equal
           cases equal
           rw [parsed] at oldNonIndex
           contradiction
-        simp [Array.getElem_zipIdx, oldSlot, StringSlotValid]
+        simp [arrayGetElem_zipIdx, oldSlot, StringSlotValid]
         refine ⟨oldStored, ?_, oldNonIndex, oldPosition⟩
         rw [Std.HashMap.getElem?_erase]
         simp [keyNe, oldFound]
@@ -2022,11 +2019,11 @@ private theorem eraseIndexMetadata_valid (properties : OrderedPropsRep)
     have oldValid := valid.2.2 position (by simpa using oldBound)
     cases oldSlot : properties.symbolOrder[position] with
     | none =>
-        simp [Array.getElem_zipIdx, oldSlot, SymbolSlotValid] at oldValid ⊢
+        simp [arrayGetElem_zipIdx, oldSlot, SymbolSlotValid] at oldValid ⊢
     | some oldKey =>
-        simp [Array.getElem_zipIdx, oldSlot, SymbolSlotValid] at oldValid
+        simp [arrayGetElem_zipIdx, oldSlot, SymbolSlotValid] at oldValid
         rcases oldValid with ⟨oldStored, oldFound, oldPosition⟩
-        simp [Array.getElem_zipIdx, oldSlot, SymbolSlotValid]
+        simp [arrayGetElem_zipIdx, oldSlot, SymbolSlotValid]
         refine ⟨oldStored, ?_, oldPosition⟩
         rw [Std.HashMap.getElem?_erase]
         simpa using oldFound
