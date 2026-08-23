@@ -3,7 +3,7 @@
   "file": "Decision.ts",
   "sourceRoot": "",
   "sources": [
-    "TSLean/Examples/Package/Decision.lean"
+    "../../../../../../../lean/TSLean/Examples/Package/Decision.lean"
   ],
   "names": [],
   "mappings": ";;;;;;;;;;;;;;;;;;;;AAIA;;;;;AAMA;;;;;;;AAIA"

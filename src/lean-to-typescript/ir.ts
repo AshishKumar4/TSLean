@@ -203,6 +203,25 @@ function assertClosureAccountsFor(
   }
 }
 
+/**
+ * A qualified Lean name becomes its final component in TypeScript. Two different Lean modules can
+ * legally declare `Config`; one generated module that imports both could not name them without an
+ * aliasing policy the checked fragment has not specified. Refuse the collision before emission,
+ * naming both sources instead of collapsing one into an arbitrary Map entry.
+ */
+function assertDistinctEmittedDeclarationNames(declarations: readonly LeanDeclaration[]): void {
+  const owners = new Map<string, LeanDeclaration>();
+  for (const declaration of [...declarations].sort((left, right) => compareCodePoints(left.name, right.name))) {
+    const emitted = localName(declaration.name);
+    const existing = owners.get(emitted);
+    if (existing !== undefined && existing.module !== declaration.module) {
+      throw new TypeError(
+        `${existing.name} (${existing.module}) and ${declaration.name} (${declaration.module}) both emit ${emitted}; rename one before compiling this module tree`,
+      );
+    }
+    owners.set(emitted, declaration);
+  }
+}
 function validateProgramReferences(program: LeanSemanticProgram): void {
   const declarations = new Map(program.declarations.map((declaration) => [declaration.name, declaration]));
   const functions = new Map(
@@ -212,13 +231,11 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
       )
       .map((declaration) => [declaration.name, declaration]),
   );
-  requireUnique(
-    program.declarations.map((declaration) => localName(declaration.name)),
-    'TypeScript declaration names',
-  );
+  assertDistinctEmittedDeclarationNames(program.declarations);
   for (const declaration of program.declarations) {
     bindingIdentifier(localName(declaration.name), `declaration ${declaration.name}`);
   }
+
   for (const root of program.roots) {
     if (!functions.has(root)) throw new TypeError(`semantic program root is not a function: ${root}`);
   }

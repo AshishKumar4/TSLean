@@ -3,7 +3,7 @@
   "file": "Placement.ts",
   "sourceRoot": "",
   "sources": [
-    "TSLean/Examples/Placement.lean"
+    "../../../../../lean/TSLean/Examples/Placement.lean"
   ],
   "names": [],
   "mappings": ";;;;;;;;;;;;;;;;;AAEA;;AAMA;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;AAaA"

@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, test } from 'vitest';
 import {
@@ -13,7 +13,7 @@ import {
   type LeanToTypeScriptPackage,
   type LeanToTypeScriptRequest,
 } from '../src/lean-to-typescript/index.js';
-import { relativeModuleSpecifier } from '../src/lean-to-typescript/package-layout.js';
+import { compareGeneratedPaths, relativeModuleSpecifier } from '../src/lean-to-typescript/package-layout.js';
 import {
   decideAccess,
   grantedCapability,
@@ -38,6 +38,7 @@ const packageRequest = {
     'TSLean.Examples.Package.grantedCapability',
     'TSLean.Examples.Package.Policy.effective',
   ],
+  outputDirectory: generatedRoot,
 } satisfies LeanToTypeScriptRequest;
 
 const COMPILATION_TIMEOUT_MS = 600_000;
@@ -181,7 +182,9 @@ describe('Lean package to TypeScript module tree', () => {
       if (typeof map !== 'object' || map === null) throw new TypeError('source map is not an object');
       const decoded = map as { version: number; sources: string[]; mappings: string; file: string };
       expect(decoded.version).toBe(3);
-      expect(decoded.sources).toEqual([`${module.leanModule.split('.').join('/')}.lean`]);
+      expect(resolve(dirname(join(generatedRoot, `${module.path}.map`)), decoded.sources[0] ?? '')).toBe(
+        join(leanRoot, `${module.leanModule.split('.').join('/')}.lean`),
+      );
       expect(decoded.file).toBe(module.path.split('/').slice(-1)[0]);
       const segments = decodeMappings(decoded.mappings);
       expect(segments.length).toBeGreaterThan(0);
@@ -335,8 +338,104 @@ describe('Lean package to TypeScript module tree', () => {
             moduleName: 'Fixture.Entry',
             sourcePath: join(fixture.sourceRoot, 'Fixture', 'Entry.lean'),
             declarations: ['Fixture.read'],
+            outputDirectory: join(fixture.projectRoot, 'out'),
           }),
         ).toThrowError(UnsupportedLeanFragmentError);
+      } finally {
+        fixture.dispose();
+      }
+    },
+    COMPILATION_TIMEOUT_MS,
+  );
+
+  test('refuses a module name that cannot become a safe path component', () => {
+    // Lean admits these; a URL or a Windows filename does not.
+    for (const name of ["Fix'ture", 'Fixture!', 'Fixture?', "A.b'c", 'A.CON', 'A.nul', 'A.com1', 'A.LPT9']) {
+      expect(() => generatedModulePath(name)).toThrowError(/path-safe subset|reserved path component/u);
+    }
+    for (const name of ['../escape', 'A/B', 'A\\B', 'A#b', 'A%2Fb', 'A?b', '.hidden', 'A..B', '']) {
+      expect(() => generatedModulePath(name)).toThrowError(/invalid Lean module name|path-safe subset/u);
+    }
+    // No Lean module may claim the generated runtime path.
+    expect(() => generatedModulePath('tslean-runtime')).toThrowError(/invalid Lean module name/u);
+    // And the accepted ones stay literal in a specifier: no query, hash, escape or separator.
+    for (const name of ['A', 'A.B_1', 'Zoo.aardvark']) {
+      const path = generatedModulePath(name);
+      expect(path).toMatch(/^[A-Za-z_][A-Za-z0-9_]*(?:\/[A-Za-z_][A-Za-z0-9_]*)*\.ts$/u);
+      expect(relativeModuleSpecifier('X/Y.ts', path)).not.toMatch(/[?#%\\]/u);
+    }
+  });
+
+  test('orders the runtime module by the same path comparator as every other module', () => {
+    // 't' > 'T' by code point, so a lowercase Lean module can sort after the runtime module. The
+    // comparator has to be locale-independent, or the manifest order would depend on the machine.
+    const paths = ['tslean-runtime.ts', 'TSLean/A.ts', 'zoo/b.ts', 'Zoo/b.ts'];
+    const sorted = [...paths].sort(compareGeneratedPaths);
+    expect(sorted).toEqual(['TSLean/A.ts', 'Zoo/b.ts', 'tslean-runtime.ts', 'zoo/b.ts']);
+    for (const locale of ['en-US', 'de-DE', 'tr-TR', 'sv-SE']) {
+      expect([...paths].sort((left, right) => compareGeneratedPaths(left, right))).toEqual(sorted);
+      expect(locale).toBeTruthy();
+    }
+    // The committed manifest is in exactly that order, runtime module included.
+    const recorded = committedManifest().semantic.modules.map((module) => module.path);
+    expect(recorded).toEqual([...recorded].sort(compareGeneratedPaths));
+  });
+
+  test('records a source map source that resolves from the map to the real Lean file', () => {
+    const manifest = committedManifest();
+    for (const module of manifest.semantic.modules) {
+      if (module.leanModule === '') continue;
+      const map: { sources: string[] } = JSON.parse(readGenerated(`${module.path}.map`));
+      const mapDirectory = dirname(join(generatedRoot, `${module.path}.map`));
+      const resolved = resolve(mapDirectory, map.sources[0] ?? '');
+      expect(existsSync(resolved)).toBe(true);
+      expect(resolved).toBe(join(leanRoot, `${module.leanModule.split('.').join('/')}.lean`));
+    }
+    expect(manifest.semantic.leanProjectPath).toBe(relative(generatedRoot, leanRoot).split(sep).join('/'));
+  });
+
+  test(
+    'refuses two Lean modules that would emit the same TypeScript name',
+    () => {
+      const shared = (namespaceName: string) =>
+        [
+          `namespace ${namespaceName}`,
+          '',
+          'structure Config where',
+          '  flag : Bool',
+          '',
+          `end ${namespaceName}`,
+          '',
+        ].join('\n');
+      const fixture = createLeanPackageFixture([
+        { name: 'Fixture.Left', source: shared('Fixture.Left') },
+        { name: 'Fixture.Right', source: shared('Fixture.Right') },
+        {
+          name: 'Fixture.Entry',
+          source: [
+            'import Fixture.Left',
+            'import Fixture.Right',
+            '',
+            'namespace Fixture',
+            '',
+            'def read (left : Fixture.Left.Config) (right : Fixture.Right.Config) : Bool :=',
+            '  left.flag && right.flag',
+            '',
+            'end Fixture',
+            '',
+          ].join('\n'),
+        },
+      ]);
+      try {
+        expect(() =>
+          compileLeanToTypeScript({
+            projectRoot: fixture.projectRoot,
+            moduleName: 'Fixture.Entry',
+            sourcePath: join(fixture.sourceRoot, 'Fixture', 'Entry.lean'),
+            declarations: ['Fixture.read'],
+            outputDirectory: join(fixture.projectRoot, 'out'),
+          }),
+        ).toThrowError(/Fixture\.Left\.Config.*Fixture\.Right\.Config.*both emit Config/u);
       } finally {
         fixture.dispose();
       }
@@ -385,6 +484,7 @@ describe('Lean package to TypeScript module tree', () => {
           moduleName: 'Fixture.Entry',
           sourcePath: join(fixture.sourceRoot, 'Fixture', 'Entry.lean'),
           declarations: ['Fixture.isRed'],
+          outputDirectory: join(fixture.projectRoot, 'out'),
         });
         verifyLeanToTypeScriptPackage(emitted);
         expect(emitted.modules.map((module) => module.path)).toEqual(['Fixture/Data.ts', 'Fixture/Entry.ts']);

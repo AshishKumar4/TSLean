@@ -41,6 +41,12 @@ export interface LeanToTypeScriptRequest {
   readonly moduleName: string;
   readonly sourcePath: string;
   readonly declarations: readonly string[];
+  /**
+   * Where the generated package root will be written. Source maps resolve from their own location
+   * back to the Lean sources, so callers that write elsewhere supply this directory. Library
+   * callers that only inspect the package use the deterministic project-local default.
+   */
+  readonly outputDirectory?: string;
 }
 
 export interface LeanToTypeScriptCompilerInput {
@@ -209,6 +215,8 @@ function compileNormalized(
   const inputs = snapshots.map(({ kind, identity, sha256: digest }) => ({ kind, identity, sha256: digest }));
   const semanticInputs = inputs.filter((input) => LEAN_TO_TYPESCRIPT_INPUT_PLANES[input.kind] === 'semantic');
   const environmentInputs = inputs.filter((input) => LEAN_TO_TYPESCRIPT_INPUT_PLANES[input.kind] === 'environment');
+  const outputDirectory = normalized.outputDirectory;
+  if (outputDirectory === undefined) throw new TypeError('normalized generated output directory is missing');
   const emitted = emitTypeScriptPackage(program, {
     semantic: {
       fragmentVersion: program.fragmentVersion,
@@ -225,6 +233,7 @@ function compileNormalized(
     },
     environment: hostEnvironmentAttestation(environmentInputs),
     sources: leanSourcePaths(normalized, moduleFiles, layout),
+    leanProjectPath: relativeForwardSlashed(outputDirectory, normalized.projectRoot),
   });
   assertPackageTypeChecks(emitted, directory);
   assertSameModuleClosure(moduleFiles, collectModuleFiles(targetRequest, layout, compilerToolchain, targetToolchain));
@@ -263,7 +272,18 @@ function normalizeRequest(request: LeanToTypeScriptRequest): LeanToTypeScriptReq
     sourcePath,
     moduleName: request.moduleName,
     declarations: [...request.declarations].sort(compareCodePoints),
+    outputDirectory: resolve(request.outputDirectory ?? join(projectRoot, '.tslean-generated')),
   };
+}
+
+/**
+ * One directory relative to another, forward-slashed. The generated package records where its Lean
+ * project sits, so a source map written anywhere still names a source a consumer can open.
+ */
+function relativeForwardSlashed(from: string, to: string): string {
+  const path = relative(from, to).split(sep).join('/');
+  if (path === '') throw new TypeError('generated package root and Lean project root are the same directory');
+  return path;
 }
 
 function compilationLayout(

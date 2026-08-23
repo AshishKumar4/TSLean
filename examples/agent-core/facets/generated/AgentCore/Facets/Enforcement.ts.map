@@ -3,7 +3,7 @@
   "file": "Enforcement.ts",
   "sourceRoot": "",
   "sources": [
-    "AgentCore/Facets/Enforcement.lean"
+    "../../../../../../lean/AgentCore/Facets/Enforcement.lean"
   ],
   "names": [],
   "mappings": ";;;;;;;;;;;;;;;;;AAoBA;;;;;;;AAUA;;;;;;AAaA;;;;;;;;;AAsBA;;;;;;;;;AAUA;;;;;;;;;;;;AAlBA"

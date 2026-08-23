@@ -93,6 +93,8 @@ export interface LeanToTypeScriptSemanticIdentity {
   readonly entryModule: string;
   readonly declarations: readonly string[];
   readonly leanToolchain: LeanToTypeScriptLeanToolchain;
+  /** Where the Lean project root sits relative to the generated package root. */
+  readonly leanProjectPath: string;
   readonly modules: readonly LeanToTypeScriptModuleIdentity[];
   readonly closure: readonly LeanToTypeScriptClosureEntry[];
   readonly inputs: readonly LeanToTypeScriptInput[];

@@ -3,7 +3,7 @@
   "file": "Policy.ts",
   "sourceRoot": "",
   "sources": [
-    "TSLean/Examples/Package/Policy.lean"
+    "../../../../../../../lean/TSLean/Examples/Package/Policy.lean"
   ],
   "names": [],
   "mappings": ";;;;;;;;;;;;;;;;;;;;AAIA"

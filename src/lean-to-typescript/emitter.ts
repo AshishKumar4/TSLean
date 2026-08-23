@@ -27,6 +27,7 @@ import {
 import { attributeUnsupportedFragment, UnsupportedLeanFragmentError } from './fragment.js';
 import { compareCodePoints } from './ordering.js';
 import {
+  compareGeneratedPaths,
   declaredNames,
   exportedFunction,
   generatedModulePath,
@@ -38,10 +39,19 @@ import {
 } from './package-layout.js';
 
 export interface LeanToTypeScriptProvenance {
-  readonly semantic: Omit<LeanToTypeScriptSemanticIdentity, 'generatedBodySha256' | 'modules' | 'closure'>;
+  readonly semantic: Omit<
+    LeanToTypeScriptSemanticIdentity,
+    'generatedBodySha256' | 'modules' | 'closure' | 'leanProjectPath'
+  >;
   readonly environment: LeanToTypeScriptEnvironmentAttestation;
   /** Each Lean module's source path, relative to the target project root. */
   readonly sources: ReadonlyMap<string, string>;
+  /**
+   * Where the Lean project root sits relative to the generated package root, so a source map
+   * resolves from its own location to the Lean source a consumer can actually open. It decides
+   * emitted bytes, so it is part of the semantic identity.
+   */
+  readonly leanProjectPath: string;
 }
 
 /** One generated module while it is being assembled. */
@@ -71,11 +81,17 @@ export function emitTypeScriptPackage(
   const drafts = emitModuleDeclarations(program, context);
   appendGeneratedDecoders(drafts, context);
   const runtime = placeBoundaryPrimitives(drafts, context);
-  const printed = printPackage([...drafts, ...(runtime === undefined ? [] : [runtime])], program, provenance);
+  // One canonical order for every emitted module, the shared runtime included: the manifest, the
+  // package digest and the printed headers all read the same sequence regardless of locale.
+  const ordered = [...drafts, ...(runtime === undefined ? [] : [runtime])].sort((left, right) =>
+    compareGeneratedPaths(left.path, right.path),
+  );
+  const printed = printPackage(ordered, program, provenance);
   const manifest = canonicalManifest({
     schemaVersion: LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION,
     semantic: {
       ...provenance.semantic,
+      leanProjectPath: provenance.leanProjectPath,
       modules: printed.map((module) => module.identity),
       closure: program.closure,
       generatedBodySha256: generatedPackageDigest(printed.map((module) => module.identity)),
@@ -370,11 +386,17 @@ function buildSourceMap(
     sourceColumn = declaration.span.startColumn;
     previousLine += 1;
   }
+  // A consumer resolves `sources` against the map's own directory, so the recorded path climbs out
+  // of the generated tree and back down through the Lean project. `leanProjectPath` is where that
+  // project sits relative to the package root, which is why it belongs to the semantic identity.
+  const ascent = Array.from({ length: draft.path.split('/').length - 1 }, () => '..');
   const map = {
     version: 3,
     file: draft.path.split('/').slice(-1)[0],
     sourceRoot: '',
-    sources: [source],
+    sources: [
+      [...ascent, ...provenance.leanProjectPath.split('/').filter((segment) => segment !== ''), source].join('/'),
+    ],
     names: [],
     mappings: groups.join(';'),
   };

@@ -158,6 +158,7 @@ function canonicalSemanticIdentity(semantic: LeanToTypeScriptSemanticIdentity): 
   return {
     fragmentVersion: semantic.fragmentVersion,
     entryModule: semantic.entryModule,
+    leanProjectPath: semantic.leanProjectPath,
     declarations: semantic.declarations,
     leanToolchain: {
       identity: semantic.leanToolchain.identity,
@@ -266,6 +267,7 @@ function decodeSemanticIdentity(value: unknown): LeanToTypeScriptSemanticIdentit
     [
       'fragmentVersion',
       'entryModule',
+      'leanProjectPath',
       'declarations',
       'leanToolchain',
       'modules',
@@ -299,6 +301,7 @@ function decodeSemanticIdentity(value: unknown): LeanToTypeScriptSemanticIdentit
   return {
     fragmentVersion: string(semantic['fragmentVersion'], `${location} fragment version`),
     entryModule: string(semantic['entryModule'], `${location} entry module`),
+    leanProjectPath: relativeDirectory(semantic['leanProjectPath'], `${location} Lean project path`),
     declarations,
     leanToolchain: {
       identity: string(leanToolchain['identity'], `${location} toolchain identity`),
@@ -486,6 +489,19 @@ function generatedPath(value: unknown, location: string): string {
   const segments = path.split('/');
   if (path.startsWith('/') || segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
     throw new TypeError(`${location} must be a relative path inside the generated package: ${path}`);
+  }
+  return path;
+}
+
+/**
+ * A relative directory inside or above the generated package: forward-slashed, never absolute,
+ * and never a bare `.` segment, so a recorded base can be joined without re-parsing it.
+ */
+function relativeDirectory(value: unknown, location: string): string {
+  const path = string(value, location);
+  const segments = path.split('/');
+  if (path.startsWith('/') || segments.some((segment) => segment === '' || segment === '.')) {
+    throw new TypeError(`${location} must be a relative forward-slashed directory: ${path}`);
   }
   return path;
 }

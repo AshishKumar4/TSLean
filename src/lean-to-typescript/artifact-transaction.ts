@@ -31,6 +31,21 @@ export interface ArtifactDestination {
   readonly canonicalPath: string;
 }
 
+/**
+ * What a transaction owns, independently of the file set it happens to write this time. The lock
+ * and the journal are named from the scope, so a run that emits fewer modules than the last one
+ * still contends for the same lock as a concurrent run that emits more.
+ */
+export interface ArtifactTransactionScope {
+  /** Stable identity of the owned output, hashed into the lock and journal names. */
+  readonly identity: string;
+  /**
+   * Name of the destination whose directory holds the lock. It has to be one the transaction always
+   * writes, so the lock does not move when the emitted tree grows or shrinks.
+   */
+  readonly lockDestination: string;
+}
+
 interface ArtifactMetadata {
   readonly dev: bigint;
   readonly ino: bigint;
@@ -125,9 +140,11 @@ interface UnjournaledStage {
 
 interface StagedArtifact {
   readonly destination: BoundDestination;
+  /** A removal has no staged replacement: publication leaves the destination absent. */
+  readonly removal: boolean;
   readonly stageName: string;
   readonly backupName: string;
-  readonly stagedIdentity: FileIdentity;
+  readonly stagedIdentity: FileIdentity | undefined;
   readonly originalIdentity: FileIdentity | undefined;
   originalMoved: boolean;
   stagedMoved: boolean;
@@ -137,7 +154,7 @@ interface JournalArtifact {
   readonly canonicalPath: string;
   readonly stageName: string;
   readonly backupName: string;
-  readonly stagedIdentity: SerializedIdentity;
+  readonly stagedIdentity: SerializedIdentity | null;
   readonly originalIdentity: SerializedIdentity | null;
 }
 
@@ -158,7 +175,7 @@ interface TransactionJournal {
 interface RecoveryArtifact {
   readonly destination: BoundDestination;
   readonly journal: JournalArtifact;
-  readonly stagedIdentity: FileIdentity;
+  readonly stagedIdentity: FileIdentity | undefined;
   readonly originalIdentity: FileIdentity | undefined;
   readonly destinationIdentity: FileIdentity | undefined;
   readonly stageIdentity: FileIdentity | undefined;
@@ -171,16 +188,19 @@ interface RecoveryArtifact {
  * the complete new one.
  */
 export function publishArtifacts(
+  scope: ArtifactTransactionScope,
   destinations: readonly ArtifactDestination[],
-  contents: readonly string[],
+  contents: readonly (string | undefined)[],
   platform: LeanToTypeScriptPlatform = hostLeanToTypeScriptPlatform,
 ): void {
-  publishArtifactsWithFileSystem(destinations, contents, nodeArtifactFileSystem, platform);
+  publishArtifactsWithFileSystem(scope, destinations, contents, nodeArtifactFileSystem, platform);
 }
 
+/** A destination whose content is `undefined` is removed by the same transaction that writes the rest. */
 export function publishArtifactsWithFileSystem(
+  scope: ArtifactTransactionScope,
   destinations: readonly ArtifactDestination[],
-  contents: readonly string[],
+  contents: readonly (string | undefined)[],
   filesystem: ArtifactFileSystem,
   platform: LeanToTypeScriptPlatform = hostLeanToTypeScriptPlatform,
 ): void {
@@ -192,25 +212,24 @@ export function publishArtifactsWithFileSystem(
   let publicationLock: PublicationLock | undefined;
   let transactionOwner: TransactionOwner | undefined;
   const staged: StagedArtifact[] = [];
-  const journalName = transactionJournalName(bound);
+  const journalName = transactionJournalName(scope);
   let durablyCommitted = false;
   let preserveRecoveryEvidence = false;
   let removePublicationLockWhenFinished = false;
   try {
-    publicationLock = acquirePublicationLock(bound, journalName, filesystem);
+    publicationLock = acquirePublicationLock(bound, scope, journalName, filesystem);
     for (const destination of bound) assertBoundRoute(destination, filesystem);
     recoverBoundArtifacts(bound, journalName, publicationLock, filesystem);
     transactionOwner = currentTransactionOwner();
     writePublicationLockOwner(publicationLock, transactionOwner, filesystem);
     for (let index = 0; index < bound.length; index += 1) {
       const destination = bound[index];
-      const artifactContents = contents[index];
-      if (destination === undefined || artifactContents === undefined) {
+      if (destination === undefined || index >= contents.length) {
         throw new TypeError('artifact transaction destinations and contents are misaligned');
       }
       assertPublicationLockOwned(publicationLock, filesystem);
       staged.push(
-        stageArtifact(destination, artifactContents, transactionOwner, publicationLock, bound.length, filesystem),
+        stageArtifact(destination, contents[index], transactionOwner, publicationLock, bound.length, filesystem),
       );
     }
     const prepared = transactionJournal(staged, 'prepared', transactionOwner);
@@ -308,6 +327,7 @@ export function publishArtifactsWithFileSystem(
 }
 
 export function recoverArtifactsWithFileSystem(
+  scope: ArtifactTransactionScope,
   destinations: readonly ArtifactDestination[],
   filesystem: ArtifactFileSystem,
 ): void {
@@ -315,9 +335,9 @@ export function recoverArtifactsWithFileSystem(
   let publicationLock: PublicationLock | undefined;
   let recoveryFinished = false;
   try {
-    publicationLock = acquirePublicationLock(bound, transactionJournalName(bound), filesystem);
+    publicationLock = acquirePublicationLock(bound, scope, transactionJournalName(scope), filesystem);
     for (const destination of bound) assertBoundRoute(destination, filesystem);
-    recoverBoundArtifacts(bound, transactionJournalName(bound), publicationLock, filesystem);
+    recoverBoundArtifacts(bound, transactionJournalName(scope), publicationLock, filesystem);
     recoveryFinished = true;
   } finally {
     try {
@@ -331,17 +351,21 @@ export function recoverArtifactsWithFileSystem(
   }
 }
 
+/**
+ * The lock lives beside the scope's stable manifest destination, not beside whichever generated
+ * module happens to sort first. The module set changes whenever a package grows or shrinks; the
+ * manifest does not, so every shape of the same owned tree contends for this one lock.
+ */
 function acquirePublicationLock(
   destinations: readonly BoundDestination[],
+  scope: ArtifactTransactionScope,
   journalName: string,
   filesystem: ArtifactFileSystem,
 ): PublicationLock {
-  // The lock lives beside the lexicographically first destination, so every publisher of the same
-  // destination set contends for the same file regardless of the order it was handed them.
-  const destination = [...destinations].sort((left, right) =>
-    compareCodePoints(left.canonicalPath, right.canonicalPath),
-  )[0];
-  if (destination === undefined) throw new TypeError('artifact publication requires at least one destination');
+  const destination = destinations.find((candidate) => candidate.name === scope.lockDestination);
+  if (destination === undefined) {
+    throw new TypeError(`artifact transaction scope names no destination ${scope.lockDestination}`);
+  }
   const name = `${journalName}.lock`;
   const path = childPath(destination, name);
   while (true) {
@@ -559,7 +583,7 @@ function bindDestination(destination: ArtifactDestination, filesystem: ArtifactF
 
 function stageArtifact(
   destination: BoundDestination,
-  contents: string,
+  contents: string | undefined,
   owner: TransactionOwner,
   publicationLock: PublicationLock,
   destinationCount: number,
@@ -568,6 +592,20 @@ function stageArtifact(
   assertBoundRoute(destination, filesystem);
   const stageName = transactionName(destination.filename, 'stage');
   const backupName = transactionName(destination.filename, 'backup');
+  const originalIdentity = fileIdentity(childPath(destination, destination.filename), filesystem);
+  if (contents === undefined) {
+    // A removal stages nothing. It still takes a backup, so a rollback restores the file it deleted.
+    return {
+      destination,
+      removal: true,
+      stageName,
+      backupName,
+      stagedIdentity: undefined,
+      originalIdentity,
+      originalMoved: false,
+      stagedMoved: false,
+    };
+  }
   const stagedIdentity = writeBoundFile(destination, stageName, contents, filesystem, (createdIdentity) => {
     recordUnjournaledStage(
       publicationLock,
@@ -583,10 +621,11 @@ function stageArtifact(
   });
   return {
     destination,
+    removal: false,
     stageName,
     backupName,
     stagedIdentity,
-    originalIdentity: fileIdentity(childPath(destination, destination.filename), filesystem),
+    originalIdentity,
     originalMoved: false,
     stagedMoved: false,
   };
@@ -675,6 +714,12 @@ function assertOriginalMoved(artifact: StagedArtifact, filesystem: ArtifactFileS
 }
 
 function moveStageToDestination(artifact: StagedArtifact, filesystem: ArtifactFileSystem): void {
+  if (artifact.removal || artifact.stagedIdentity === undefined) {
+    // Nothing replaces a removed destination; the backup already holds what was there.
+    artifact.stagedMoved = true;
+    assertPublishedArtifact(artifact, filesystem);
+    return;
+  }
   assertKnownFile(artifact.destination, artifact.stageName, artifact.stagedIdentity, filesystem);
   assertFileAbsent(artifact.destination, artifact.destination.filename, 'artifact destination changed', filesystem);
   filesystem.rename(
@@ -686,6 +731,10 @@ function moveStageToDestination(artifact: StagedArtifact, filesystem: ArtifactFi
 }
 
 function assertPublishedArtifact(artifact: StagedArtifact, filesystem: ArtifactFileSystem): void {
+  if (artifact.stagedIdentity === undefined) {
+    assertFileAbsent(artifact.destination, artifact.destination.filename, 'artifact removal changed', filesystem);
+    return;
+  }
   assertKnownFile(artifact.destination, artifact.destination.filename, artifact.stagedIdentity, filesystem);
 }
 
@@ -778,7 +827,7 @@ function transactionJournal(
       canonicalPath: artifact.destination.canonicalPath,
       stageName: artifact.stageName,
       backupName: artifact.backupName,
-      stagedIdentity: serializeIdentity(artifact.stagedIdentity),
+      stagedIdentity: artifact.stagedIdentity === undefined ? null : serializeIdentity(artifact.stagedIdentity),
       originalIdentity: artifact.originalIdentity === undefined ? null : serializeIdentity(artifact.originalIdentity),
     }))
     .sort((left, right) => compareCodePoints(left.canonicalPath, right.canonicalPath));
@@ -786,6 +835,13 @@ function transactionJournal(
   return { schemaVersion: 1, owner, state, artifacts: entries };
 }
 
+/**
+ * Recovers an interrupted transaction before a new publisher writes. The manifest directory is
+ * always part of a package transaction, so it anchors discovery even when the newer publisher has
+ * a smaller tree. Once a journal is found, recovery binds the JOURNAL'S destination set rather
+ * than the caller's current set: otherwise a shrink could restore only the files it still names
+ * and strand a backup for a removed module.
+ */
 function recoverBoundArtifacts(
   destinations: readonly BoundDestination[],
   journalName: string,
@@ -803,9 +859,7 @@ function recoverBoundArtifacts(
     .filter(({ path }) => filesystem.exists(path))
     .map((copy) => {
       const journalIdentity = fileIdentity(copy.path, filesystem);
-      if (journalIdentity === undefined) {
-        throw new TypeError('artifact transaction journal disappeared');
-      }
+      if (journalIdentity === undefined) throw new TypeError('artifact transaction journal disappeared');
       return { ...copy, identity: journalIdentity };
     });
   if (copies.length === 0) {
@@ -825,25 +879,43 @@ function recoverBoundArtifacts(
       throw new TypeError('artifact transaction journal identity changed');
     }
   }
-  const lockOwner = readPublicationLockState(publicationLock, destinations.length, filesystem)?.owner;
-  if (lockOwner === undefined) {
-    if (transactionOwnerIsLive(first.owner)) {
-      throw new TypeError('artifact transaction journal belongs to a live foreign publisher');
+  const journalDestinations = bindDestinations(
+    first.artifacts.map((artifact) => ({
+      name: `journal:${artifact.canonicalPath}`,
+      path: artifact.canonicalPath,
+      canonicalPath: artifact.canonicalPath,
+    })),
+    filesystem,
+  );
+  try {
+    const lockOwner = readPublicationLockState(publicationLock, journalDestinations.length, filesystem)?.owner;
+    if (lockOwner === undefined) {
+      if (transactionOwnerIsLive(first.owner)) {
+        throw new TypeError('artifact transaction journal belongs to a live foreign publisher');
+      }
+    } else if (!sameTransactionOwner(lockOwner, first.owner)) {
+      throw new TypeError('artifact transaction journal owner does not match the publication lock');
     }
-  } else if (!sameTransactionOwner(lockOwner, first.owner)) {
-    throw new TypeError('artifact transaction journal owner does not match the publication lock');
-  }
-  const state: JournalState = journals.some((journal) => journal.state === 'committed') ? 'committed' : 'prepared';
-  const recovery = prepareRecovery(destinations, first, state, filesystem);
-  for (const artifact of recovery) {
+    const state: JournalState = journals.some((journal) => journal.state === 'committed') ? 'committed' : 'prepared';
+    const recovery = prepareRecovery(journalDestinations, first, state, filesystem);
+    for (const artifact of recovery) {
+      assertPublicationLockOwned(publicationLock, filesystem);
+      recoverArtifact(artifact, state, publicationLock, filesystem);
+    }
     assertPublicationLockOwned(publicationLock, filesystem);
-    recoverArtifact(artifact, state, publicationLock, filesystem);
+    syncDirectories(journalDestinations, filesystem);
+    const cleanupError = removeCurrentJournalCopies(
+      journalDestinations,
+      journalName,
+      first.owner,
+      publicationLock,
+      filesystem,
+    );
+    if (cleanupError !== undefined) throw cleanupError;
+    syncDirectories(journalDestinations, filesystem);
+  } finally {
+    for (const destination of journalDestinations) filesystem.close(destination.directoryDescriptor);
   }
-  assertPublicationLockOwned(publicationLock, filesystem);
-  syncDirectories(destinations, filesystem);
-  const cleanupError = removeCurrentJournalCopies(destinations, journalName, first.owner, publicationLock, filesystem);
-  if (cleanupError !== undefined) throw cleanupError;
-  syncDirectories(destinations, filesystem);
 }
 
 function recoverUnjournaledStages(
@@ -899,7 +971,7 @@ function prepareRecovery(
     const prepared = {
       destination,
       journal: artifact,
-      stagedIdentity: deserializeIdentity(artifact.stagedIdentity),
+      stagedIdentity: artifact.stagedIdentity === null ? undefined : deserializeIdentity(artifact.stagedIdentity),
       originalIdentity: artifact.originalIdentity === null ? undefined : deserializeIdentity(artifact.originalIdentity),
       destinationIdentity: fileIdentity(childPath(destination, destination.filename), filesystem),
       stageIdentity: fileIdentity(childPath(destination, artifact.stageName), filesystem),
@@ -912,21 +984,34 @@ function prepareRecovery(
 }
 
 function validateRecoveryArtifact(artifact: RecoveryArtifact, state: JournalState): void {
+  const removal = artifact.stagedIdentity === undefined;
   const destinationIsStaged = optionalSameIdentity(artifact.destinationIdentity, artifact.stagedIdentity);
   const stageIsStaged = optionalSameIdentity(artifact.stageIdentity, artifact.stagedIdentity);
+  const destinationIsOriginal = optionalSameIdentity(artifact.destinationIdentity, artifact.originalIdentity);
+  const backupIsOriginal = optionalSameIdentity(artifact.backupIdentity, artifact.originalIdentity);
+  if (removal) {
+    if (artifact.stageIdentity !== undefined) {
+      throw new TypeError('artifact removal transaction has an unexpected stage');
+    }
+    if (state === 'committed') {
+      if (artifact.destinationIdentity !== undefined || (artifact.backupIdentity !== undefined && !backupIsOriginal)) {
+        throw new TypeError('committed artifact removal lost its absent destination');
+      }
+      return;
+    }
+    if (destinationIsOriginal && artifact.backupIdentity === undefined) return;
+    if (artifact.destinationIdentity === undefined && backupIsOriginal) return;
+    throw new TypeError('prepared artifact removal identities changed');
+  }
   if (state === 'committed') {
     if (!destinationIsStaged || artifact.stageIdentity !== undefined) {
       throw new TypeError('committed artifact transaction lost its published destination');
     }
-    if (
-      artifact.backupIdentity !== undefined &&
-      !optionalSameIdentity(artifact.backupIdentity, artifact.originalIdentity)
-    ) {
+    if (artifact.backupIdentity !== undefined && !backupIsOriginal) {
       throw new TypeError('committed artifact transaction backup identity changed');
     }
     return;
   }
-  const destinationIsOriginal = optionalSameIdentity(artifact.destinationIdentity, artifact.originalIdentity);
   if (destinationIsOriginal && artifact.stageIdentity === undefined && artifact.backupIdentity === undefined) return;
   if (Number(destinationIsStaged) + Number(stageIsStaged) !== 1) {
     throw new TypeError('prepared artifact transaction staged identity changed');
@@ -940,7 +1025,6 @@ function validateRecoveryArtifact(artifact: RecoveryArtifact, state: JournalStat
     }
     return;
   }
-  const backupIsOriginal = optionalSameIdentity(artifact.backupIdentity, artifact.originalIdentity);
   if (Number(destinationIsOriginal) + Number(backupIsOriginal) !== 1) {
     throw new TypeError('prepared artifact transaction original identity changed');
   }
@@ -955,12 +1039,21 @@ function recoverArtifact(
   publicationLock: PublicationLock,
   filesystem: ArtifactFileSystem,
 ): void {
+  const removal = artifact.stagedIdentity === undefined;
   if (state === 'committed') {
     assertPublicationLockOwned(publicationLock, filesystem);
+    if (removal) {
+      assertFileAbsent(
+        artifact.destination,
+        artifact.destination.filename,
+        'committed artifact removal changed',
+        filesystem,
+      );
+    }
     removeKnownFile(artifact.destination, artifact.journal.backupName, artifact.originalIdentity, filesystem);
     return;
   }
-  if (sameOptionalIdentity(artifact.destinationIdentity, artifact.stagedIdentity)) {
+  if (!removal && sameOptionalIdentity(artifact.destinationIdentity, artifact.stagedIdentity)) {
     assertPublicationLockOwned(publicationLock, filesystem);
     assertKnownFile(artifact.destination, artifact.destination.filename, artifact.stagedIdentity, filesystem);
     assertFileAbsent(
@@ -1000,7 +1093,9 @@ function recoverArtifact(
     assertKnownFile(artifact.destination, artifact.destination.filename, artifact.originalIdentity, filesystem);
   }
   assertPublicationLockOwned(publicationLock, filesystem);
-  removeKnownFile(artifact.destination, artifact.journal.stageName, artifact.stagedIdentity, filesystem);
+  if (!removal) {
+    removeKnownFile(artifact.destination, artifact.journal.stageName, artifact.stagedIdentity, filesystem);
+  }
 }
 
 function encodeJournal(journal: TransactionJournal): string {
@@ -1072,12 +1167,13 @@ function decodeJournalArtifact(value: unknown): JournalArtifact {
   const stageName = value['stageName'];
   const backupName = value['backupName'];
   const originalIdentity = value['originalIdentity'];
+  const stagedIdentity = value['stagedIdentity'];
   if (
     typeof canonicalPath !== 'string' ||
     typeof stageName !== 'string' ||
     typeof backupName !== 'string' ||
     !(originalIdentity === null || isSerializedIdentity(originalIdentity)) ||
-    !isSerializedIdentity(value['stagedIdentity'])
+    !(stagedIdentity === null || isSerializedIdentity(stagedIdentity))
   ) {
     throw new TypeError('artifact transaction journal entry is invalid');
   }
@@ -1085,8 +1181,8 @@ function decodeJournalArtifact(value: unknown): JournalArtifact {
     canonicalPath,
     stageName,
     backupName,
+    stagedIdentity,
     originalIdentity,
-    stagedIdentity: value['stagedIdentity'],
   };
 }
 
@@ -1192,9 +1288,10 @@ function deserializeIdentity(value: SerializedIdentity): FileIdentity {
   return { device: BigInt(value.device), inode: BigInt(value.inode) };
 }
 
-function transactionJournalName(destinations: readonly BoundDestination[]): string {
-  const canonicalPaths = destinations.map((destination) => destination.canonicalPath).sort(compareCodePoints);
-  const digest = createHash('sha256').update(JSON.stringify(canonicalPaths)).digest('hex');
+function transactionJournalName(scope: ArtifactTransactionScope): string {
+  const digest = createHash('sha256')
+    .update(JSON.stringify([scope.identity]))
+    .digest('hex');
   return `.tslean-transaction-${digest}.json`;
 }
 

@@ -8,17 +8,75 @@ import { compareCodePoints } from './ordering.js';
  */
 export const LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH = 'tslean-runtime.ts';
 
+/**
+ * Windows reserves these device names in every directory, with or without an extension, so a
+ * module that spells one has no portable file to be written to.
+ */
+const RESERVED_PATH_COMPONENTS: ReadonlySet<string> = new Set([
+  'con',
+  'prn',
+  'aux',
+  'nul',
+  ...Array.from({ length: 9 }, (_, index) => `com${index + 1}`),
+  ...Array.from({ length: 9 }, (_, index) => `lpt${index + 1}`),
+]);
+
+/**
+ * Lean admits `'`, `!` and `?` in a module name; a URL does not. `?` and `#` would turn the rest
+ * of an ESM specifier into a query or a fragment, `%` would introduce percent-decoding, and a
+ * separator or a traversal segment would leave the generated tree altogether. The emitted path
+ * component is therefore restricted to a subset that is literal in a specifier and portable as a
+ * filename, and a module outside it is refused by name rather than escaped into something else.
+ */
+function assertPathSafeComponent(component: string, leanModule: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(component)) {
+    throw new TypeError(
+      `Lean module ${leanModule} has a component outside the path-safe subset [A-Za-z_][A-Za-z0-9_]*: ${component}`,
+    );
+  }
+  if (RESERVED_PATH_COMPONENTS.has(component.toLowerCase())) {
+    throw new TypeError(`Lean module ${leanModule} names the reserved path component ${component}`);
+  }
+}
+
 /** Where one Lean module's declarations are emitted: `A.B.C` becomes `A/B/C.ts`. */
 export function generatedModulePath(leanModule: string): string {
   if (!isLeanModuleName(leanModule)) throw new TypeError(`invalid Lean module name: ${leanModule}`);
-  return `${leanModule.split('.').join('/')}.ts`;
+  const components = leanModule.split('.');
+  for (const component of components) assertPathSafeComponent(component, leanModule);
+  const path = `${components.join('/')}.ts`;
+  if (path === LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH) {
+    throw new TypeError(`Lean module ${leanModule} claims the generated runtime module path`);
+  }
+  return path;
+}
+
+/** The canonical order of generated modules: by path, by code point, independent of locale. */
+export function compareGeneratedPaths(left: string, right: string): number {
+  return compareCodePoints(left, right);
 }
 
 /**
- * The ESM specifier one generated module uses to reach another. Always relative and always
- * `.js`, so the emitted tree resolves under NodeNext without a path mapping.
+ * Validates a generated module path before it becomes an ESM specifier. This is deliberately
+ * stricter than `path.normalize`: normalization would silently turn an attacker-controlled `..`
+ * or separator into a different module, while generation must either preserve the module identity
+ * literally or reject it.
  */
+function assertGeneratedModulePath(path: string): void {
+  if (path === LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH) return;
+  if (!path.endsWith('.ts') || path.includes('\\') || /[?#%]/u.test(path)) {
+    throw new TypeError(`invalid generated module path: ${path}`);
+  }
+  const components = path.slice(0, -'.ts'.length).split('/');
+  if (components.length === 0 || components.some((component) => !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(component))) {
+    throw new TypeError(`invalid generated module path: ${path}`);
+  }
+}
+
+/** The ESM specifier one generated module uses to reach another. */
 export function relativeModuleSpecifier(fromPath: string, toPath: string): string {
+  assertGeneratedModulePath(fromPath);
+  assertGeneratedModulePath(toPath);
   const fromDirectory = fromPath.split('/').slice(0, -1);
   const toSegments = toPath.split('/');
   const toDirectory = toSegments.slice(0, -1);

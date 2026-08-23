@@ -73,15 +73,16 @@ describe('Lean semantic IR trust boundary', () => {
     ],
     [
       'reserved emitted name',
-      program([{ ...identityDeclaration, name: 'Example.default' }], [
-        { ...identityClosure, declaration: 'Example.default' },
-      ]),
+      program(
+        [{ ...identityDeclaration, name: 'Example.default' }],
+        [{ ...identityClosure, declaration: 'Example.default' }],
+      ),
       /is not a safe TypeScript binding name: default/u,
     ],
     [
       'colliding emitted names',
       program([identityDeclaration, otherDeclaration], [identityClosure, otherClosure]),
-      /TypeScript declaration names contains duplicates/u,
+      /Example\.identity.*Other\.identity.*both emit identity/u,
     ],
     [
       'declaration without a declaring module',
@@ -148,10 +149,10 @@ describe('Lean semantic IR trust boundary', () => {
     ],
     [
       'erased closure entry without a reason',
-      program([identityDeclaration], [
-        identityClosure,
-        { declaration: 'Example.proof', module: 'Example', role: 'erased', reason: '' },
-      ]),
+      program(
+        [identityDeclaration],
+        [identityClosure, { declaration: 'Example.proof', module: 'Example', role: 'erased', reason: '' }],
+      ),
       /closure\[1\]\.reason must be empty exactly for an emitted declaration/u,
     ],
     [

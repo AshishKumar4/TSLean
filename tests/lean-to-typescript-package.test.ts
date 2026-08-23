@@ -27,6 +27,7 @@ import {
   recoverArtifactsWithFileSystem,
   type ArtifactDestination,
   type ArtifactFileSystem,
+  type ArtifactTransactionScope,
 } from '../src/lean-to-typescript/artifact-transaction.js';
 import { runLeanToTypeScriptCli } from '../src/lean-to-typescript/cli.js';
 import { compileLeanToTypeScriptWithInputs } from '../src/lean-to-typescript/compiler.js';
@@ -57,6 +58,7 @@ describe('published Lean to TypeScript API', () => {
       ).toThrowError(/Lean-to-TypeScript v1 requires Linux/u);
       expect(() =>
         publishArtifactsWithFileSystem(
+          transactionScope(destinations),
           destinations,
           ['generated output\n', 'generated manifest\n'],
           nodeArtifactFileSystem,
@@ -243,12 +245,12 @@ describe('published Lean to TypeScript API', () => {
     [
       'a generated tree beneath an existing non-directory',
       'non-directory-ancestor',
-      'Fixture.ts has an existing non-directory ancestor',
+      '--out-dir has an existing non-directory ancestor',
     ],
     [
       'a generated tree inside a captured compiler input',
       'compiler-input',
-      'Fixture.ts must not identify compiler input target-project:lean-toolchain or an ancestor/descendant path',
+      '--out-dir must not identify compiler input --project-root or an ancestor/descendant path',
     ],
   ] as const)(
     'rejects %s without publishing the generated tree',
@@ -272,7 +274,7 @@ describe('published Lean to TypeScript API', () => {
         writeFileSync(ancestorPath, preserved);
         outputDirectory = join(ancestorPath, 'generated');
       } else {
-        outputDirectory = join(toolchainPath, 'generated');
+        outputDirectory = join(fixture.projectRoot, 'generated');
       }
       const manifestPath = join(destinationRoot, 'generated.manifest.json');
       try {
@@ -300,6 +302,39 @@ describe('published Lean to TypeScript API', () => {
     PACKED_COMPILER_TIMEOUT_MS,
   );
 
+  test(
+    'refuses an output root reached through a symbolic-link ancestor before compilation mutates it',
+    () => {
+      const fixture = createLeanProjectFixture(
+        ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
+      );
+      const destinationRoot = mkdtempSync(join(tmpdir(), 'tslean-cli-output-root-symlink-'));
+      const physical = join(destinationRoot, 'physical');
+      const alias = join(destinationRoot, 'alias');
+      mkdirSync(physical);
+      symlinkSync(physical, alias, 'dir');
+      const outputDirectory = join(alias, 'generated');
+      const manifestPath = join(destinationRoot, 'generated.manifest.json');
+      try {
+        const result = runSourceCompiler(
+          destinationRoot,
+          fixture.projectRoot,
+          fixture.sourcePath,
+          outputDirectory,
+          manifestPath,
+        );
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain('--out-dir must not be reached through a symbolic link');
+        expect(existsSync(join(physical, 'generated'))).toBe(false);
+        expect(existsSync(manifestPath)).toBe(false);
+      } finally {
+        rmSync(destinationRoot, { force: true, recursive: true });
+        fixture.dispose();
+      }
+    },
+    PACKED_COMPILER_TIMEOUT_MS,
+  );
+
   test.each([1, 2, 3])('retries recovery after the recovery process crashes on rename %i', (occurrence) => {
     const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-recovery-crash-'));
     const destinations = transactionDestinations(temporaryRoot);
@@ -318,7 +353,7 @@ describe('published Lean to TypeScript API', () => {
       const recovery = crashArtifactRecovery(temporaryRoot, destinations, 'rename', occurrence);
       expect(recovery.signal).toBe('SIGKILL');
 
-      recoverArtifactsWithFileSystem(destinations, nodeArtifactFileSystem);
+      recoverArtifactsWithFileSystem(transactionScope(destinations), destinations, nodeArtifactFileSystem);
 
       expect(readFileSync(destinations[0].path, 'utf8')).toBe(oldContents[0]);
       expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
@@ -341,7 +376,7 @@ describe('published Lean to TypeScript API', () => {
       const recovery = crashArtifactRecovery(temporaryRoot, destinations, 'remove', occurrence);
       expect(recovery.signal).toBe('SIGKILL');
 
-      recoverArtifactsWithFileSystem(destinations, nodeArtifactFileSystem);
+      recoverArtifactsWithFileSystem(transactionScope(destinations), destinations, nodeArtifactFileSystem);
 
       expect(readFileSync(destinations[0].path, 'utf8')).toBe(newContents[0]);
       expect(readFileSync(destinations[1].path, 'utf8')).toBe(newContents[1]);
@@ -414,8 +449,9 @@ describe('published Lean to TypeScript API', () => {
       const fixture = createLeanProjectFixture(
         ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
       );
-      const publicationRoot = join(fixture.projectRoot, 'publication');
-      const movedRoot = join(fixture.projectRoot, 'publication-original');
+      const publicationContainer = mkdtempSync(join(tmpdir(), 'tslean-cli-root-swap-'));
+      const publicationRoot = join(publicationContainer, 'publication');
+      const movedRoot = join(publicationContainer, 'publication-original');
       const wrapperRoot = join(fixture.projectRoot, 'wrapper');
       const markerPath = join(fixture.projectRoot, 'launcher-observed');
       mkdirSync(publicationRoot);
@@ -455,6 +491,7 @@ describe('published Lean to TypeScript API', () => {
         expect(existsSync(outputPath)).toBe(false);
         expect(existsSync(manifestPath)).toBe(false);
       } finally {
+        rmSync(publicationContainer, { force: true, recursive: true });
         fixture.dispose();
       }
     },
@@ -485,7 +522,12 @@ describe('published Lean to TypeScript API', () => {
     };
     try {
       expect(() =>
-        publishArtifactsWithFileSystem(destinations, ['new output\n', 'new manifest\n'], filesystem),
+        publishArtifactsWithFileSystem(
+          transactionScope(destinations),
+          destinations,
+          ['new output\n', 'new manifest\n'],
+          filesystem,
+        ),
       ).toThrowError(/artifact transaction file identity changed/u);
       expect(displacedStagePath).toBeDefined();
       expect(replacementStagePath).toBeDefined();
@@ -530,7 +572,12 @@ describe('published Lean to TypeScript API', () => {
     };
     try {
       expect(() =>
-        publishArtifactsWithFileSystem(destinations, ['new output\n', 'new manifest\n'], filesystem),
+        publishArtifactsWithFileSystem(
+          transactionScope(destinations),
+          destinations,
+          ['new output\n', 'new manifest\n'],
+          filesystem,
+        ),
       ).toThrowError(/artifact transaction file identity changed/u);
       expect(displacedStagePath).toBeDefined();
       expect(replacementStagePath).toBeDefined();
@@ -564,7 +611,12 @@ describe('published Lean to TypeScript API', () => {
     };
     try {
       expect(() =>
-        publishArtifactsWithFileSystem(destinations, ['new output\n', 'new manifest\n'], filesystem),
+        publishArtifactsWithFileSystem(
+          transactionScope(destinations),
+          destinations,
+          ['new output\n', 'new manifest\n'],
+          filesystem,
+        ),
       ).toThrowError(/artifact publication failed and rollback failed: artifact rollback destination changed/u);
       expect(readFileSync(destinations[0].path, 'utf8')).toBe(foreignContents);
       expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
@@ -604,7 +656,12 @@ describe('published Lean to TypeScript API', () => {
     };
     try {
       expect(() =>
-        publishArtifactsWithFileSystem(destinations, ['new output\n', 'new manifest\n'], filesystem),
+        publishArtifactsWithFileSystem(
+          transactionScope(destinations),
+          destinations,
+          ['new output\n', 'new manifest\n'],
+          filesystem,
+        ),
       ).toThrowError(/artifact publication failed and rollback failed: artifact transaction file identity changed/u);
       expect(displacedStagePath).toBeDefined();
       if (displacedStagePath === undefined) throw new TypeError('stage replacement was not injected');
@@ -645,7 +702,12 @@ describe('published Lean to TypeScript API', () => {
     };
     try {
       expect(() =>
-        publishArtifactsWithFileSystem(destinations, ['new output\n', 'new manifest\n'], filesystem),
+        publishArtifactsWithFileSystem(
+          transactionScope(destinations),
+          destinations,
+          ['new output\n', 'new manifest\n'],
+          filesystem,
+        ),
       ).toThrowError(/artifact publication failed and rollback failed: artifact transaction file identity changed/u);
       expect(displacedOutputPath).toBeDefined();
       if (displacedOutputPath === undefined) throw new TypeError('output replacement was not injected');
@@ -697,6 +759,7 @@ describe('published Lean to TypeScript API', () => {
         let threw = false;
         try {
           publishArtifactsWithFileSystem(
+            transactionScope(destinations),
             destinations,
             newContents,
             faultingArtifactFileSystem(operation, occurrence),
@@ -724,7 +787,7 @@ describe('published Lean to TypeScript API', () => {
     try {
       destinations.forEach((destination, index) => writeFileSync(destination.path, oldContents[index]));
 
-      publishArtifactsWithFileSystem(destinations, newContents, nodeArtifactFileSystem);
+      publishArtifactsWithFileSystem(transactionScope(destinations), destinations, newContents, nodeArtifactFileSystem);
 
       expect(destinations.map((destination) => readFileSync(destination.path, 'utf8'))).toEqual([...newContents]);
       expect(transactionFiles(temporaryRoot)).toEqual([]);
@@ -737,6 +800,7 @@ describe('published Lean to TypeScript API', () => {
       ] as const) {
         expect(() =>
           publishArtifactsWithFileSystem(
+            transactionScope(destinations),
             destinations,
             ['third module\n', 'third source map\n', 'third manifest\n'],
             faultingArtifactFileSystem(operation, occurrence),
@@ -745,6 +809,42 @@ describe('published Lean to TypeScript API', () => {
         expect(destinations.map((destination) => readFileSync(destination.path, 'utf8'))).toEqual([...newContents]);
         expect(transactionFiles(temporaryRoot)).toEqual([]);
       }
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('shrinks a generated tree transactionally and restores removed files on rollback', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-shrink-'));
+    const destinations = packageDestinations(temporaryRoot);
+    const fullContents = ['full module\n', 'full source map\n', 'full manifest\n'] as const;
+    const shrunkContents: readonly (string | undefined)[] = ['shrunk module\n', undefined, 'shrunk manifest\n'];
+    try {
+      destinations.forEach((destination, index) => writeFileSync(destination.path, fullContents[index]));
+
+      // The second original moves to its backup before the third rename faults. Rollback must put
+      // the source map back, not merely leave the module and manifest coherent without it.
+      expect(() =>
+        publishArtifactsWithFileSystem(
+          transactionScope(destinations),
+          destinations,
+          shrunkContents,
+          faultingArtifactFileSystem('rename', 3),
+        ),
+      ).toThrowError('injected rename failure');
+      expect(destinations.map((destination) => readFileSync(destination.path, 'utf8'))).toEqual([...fullContents]);
+      expect(transactionFiles(temporaryRoot)).toEqual([]);
+
+      publishArtifactsWithFileSystem(
+        transactionScope(destinations),
+        destinations,
+        shrunkContents,
+        nodeArtifactFileSystem,
+      );
+      expect(readFileSync(destinations[0].path, 'utf8')).toBe('shrunk module\n');
+      expect(existsSync(destinations[1].path)).toBe(false);
+      expect(readFileSync(destinations[2].path, 'utf8')).toBe('shrunk manifest\n');
+      expect(transactionFiles(temporaryRoot)).toEqual([]);
     } finally {
       rmSync(temporaryRoot, { force: true, recursive: true });
     }
@@ -790,7 +890,7 @@ describe('published Lean to TypeScript API', () => {
         const crashed = crashArtifactTransaction(temporaryRoot, destinations, newContents, operation, occurrence);
         expect(crashed.signal).toBe('SIGKILL');
 
-        recoverArtifactsWithFileSystem(destinations, nodeArtifactFileSystem);
+        recoverArtifactsWithFileSystem(transactionScope(destinations), destinations, nodeArtifactFileSystem);
 
         const expected = expectedVersion === 'old' ? oldContents : newContents;
         expect(readFileSync(destinations[0].path, 'utf8')).toBe(expected[0]);
@@ -820,7 +920,12 @@ describe('published Lean to TypeScript API', () => {
       expect(crashed.signal).toBe('SIGKILL');
       expect(transactionFiles(temporaryRoot).filter((name) => name.includes('.tslean-stage-'))).toHaveLength(1);
 
-      publishArtifactsWithFileSystem(destinations, finalContents, nodeArtifactFileSystem);
+      publishArtifactsWithFileSystem(
+        transactionScope(destinations),
+        destinations,
+        finalContents,
+        nodeArtifactFileSystem,
+      );
 
       expect(readFileSync(destinations[0].path, 'utf8')).toBe(finalContents[0]);
       expect(readFileSync(destinations[1].path, 'utf8')).toBe(finalContents[1]);
@@ -860,7 +965,12 @@ describe('published Lean to TypeScript API', () => {
       writeFileSync(manifestStagePath, foreignContents);
 
       expect(() =>
-        publishArtifactsWithFileSystem(destinations, ['final output\n', 'final manifest\n'], nodeArtifactFileSystem),
+        publishArtifactsWithFileSystem(
+          transactionScope(destinations),
+          destinations,
+          ['final output\n', 'final manifest\n'],
+          nodeArtifactFileSystem,
+        ),
       ).toThrowError(/artifact transaction file identity changed/u);
 
       expect(readFileSync(outputStagePath, 'utf8')).toBe('abandoned output\n');
@@ -914,6 +1024,7 @@ describe('published Lean to TypeScript API', () => {
 
   test.each([
     ['same-directory order', false],
+
     ['reversed cross-directory order', true],
   ] as const)(
     'rebinds a blocked contender after a successful owner removes the lock in %s',
@@ -969,6 +1080,40 @@ describe('published Lean to TypeScript API', () => {
       }
     },
   );
+  test('serializes a growing publisher and a shrinking publisher through the stable manifest lock', async () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-shape-contention-'));
+    const full = packageDestinations(temporaryRoot);
+    const fullContents = ['old module\n', 'old source map\n', 'old manifest\n'] as const;
+    const shrinkContents: readonly (string | undefined)[] = ['shrunk module\n', undefined, 'shrunk manifest\n'];
+    full.forEach((destination, index) => writeFileSync(destination.path, fullContents[index]));
+    const owner = startPausedCrashingArtifactTransaction(temporaryRoot, full, [
+      'growing module\n',
+      'growing source map\n',
+      'growing manifest\n',
+    ]);
+    try {
+      await waitForPath(owner.readyPath, owner.child);
+      // Same manifest destination, different output shape. A destination-set-derived lock would
+      // let this contender acquire immediately; the scope lock keeps it blocked.
+      const contender = startObservedArtifactTransaction(temporaryRoot, full, shrinkContents);
+      await waitForPath(contender.attemptedPath, contender.child);
+      await waitForProcessTurn();
+      expect(existsSync(contender.acquiredPath)).toBe(false);
+      writeFileSync(owner.releasePath, 'continue\n');
+      const crashed = await collectChild(owner.child);
+      expect(crashed.signal).toBe('SIGKILL');
+      const published = await collectChild(contender.child);
+      expect(published.status).toBe(0);
+      expect(readFileSync(full[0].path, 'utf8')).toBe('shrunk module\n');
+      expect(existsSync(full[1].path)).toBe(false);
+      expect(readFileSync(full[2].path, 'utf8')).toBe('shrunk manifest\n');
+      expect(transactionFiles(temporaryRoot)).toEqual([]);
+    } finally {
+      writeFileSync(owner.releasePath, 'cleanup\n');
+      if (owner.child.exitCode === null && owner.child.signalCode === null) owner.child.kill('SIGKILL');
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
 
   test('serializes a cross-directory pair independent of destination order', async () => {
     const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-cross-directory-contender-'));
@@ -1105,6 +1250,7 @@ describe('published Lean to TypeScript API', () => {
 
       expect(() =>
         publishArtifactsWithFileSystem(
+          transactionScope(destinations),
           destinations,
           ['contender output\n', 'contender manifest\n'],
           nodeArtifactFileSystem,
@@ -1116,7 +1262,7 @@ describe('published Lean to TypeScript API', () => {
       writeFileSync(owner.releasePath, 'continue\n');
       const failedOwner = await collectChild(owner.child);
       expect(failedOwner.status).not.toBe(0);
-      recoverArtifactsWithFileSystem(destinations, nodeArtifactFileSystem);
+      recoverArtifactsWithFileSystem(transactionScope(destinations), destinations, nodeArtifactFileSystem);
       expect(readFileSync(destinations[0].path, 'utf8')).toBe(oldContents[0]);
       expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
       expect(transactionFiles(temporaryRoot)).toEqual([]);
@@ -1164,7 +1310,12 @@ describe('published Lean to TypeScript API', () => {
     };
     try {
       expect(() =>
-        publishArtifactsWithFileSystem(destinations, ['new output\n', 'new manifest\n'], filesystem),
+        publishArtifactsWithFileSystem(
+          transactionScope(destinations),
+          destinations,
+          ['new output\n', 'new manifest\n'],
+          filesystem,
+        ),
       ).toThrowError(/artifact publication lock identity changed/u);
       expect(foreignLock).toBeDefined();
       expect(readFileSync(lockPath)).toEqual(foreignLock);
@@ -1196,7 +1347,12 @@ describe('published Lean to TypeScript API', () => {
       const lockNames = readdirSync(temporaryRoot).filter((name) => name.endsWith('.lock'));
       expect(lockNames).toHaveLength(1);
 
-      publishArtifactsWithFileSystem(destinations, ['second output\n', 'second manifest\n'], nodeArtifactFileSystem);
+      publishArtifactsWithFileSystem(
+        transactionScope(destinations),
+        destinations,
+        ['second output\n', 'second manifest\n'],
+        nodeArtifactFileSystem,
+      );
 
       expect(readFileSync(destinations[0].path, 'utf8')).toBe('second output\n');
       expect(readFileSync(destinations[1].path, 'utf8')).toBe('second manifest\n');
@@ -1232,9 +1388,9 @@ describe('published Lean to TypeScript API', () => {
         (name) => [name, readFileSync(join(temporaryRoot, name))] as const,
       );
 
-      expect(() => recoverArtifactsWithFileSystem(destinations, nodeArtifactFileSystem)).toThrowError(
-        /journal owner does not match the publication lock/u,
-      );
+      expect(() =>
+        recoverArtifactsWithFileSystem(transactionScope(destinations), destinations, nodeArtifactFileSystem),
+      ).toThrowError(/journal owner does not match the publication lock/u);
       expect(readFileSync(destinations[0].path)).toEqual(beforeOutput);
       expect(existsSync(destinations[1].path)).toBe(beforeManifest !== undefined);
       if (beforeManifest !== undefined) expect(readFileSync(destinations[1].path)).toEqual(beforeManifest);
@@ -1255,9 +1411,9 @@ describe('published Lean to TypeScript API', () => {
     const journalPath = join(temporaryRoot, transactionJournalFilename(destinations));
     writeFileSync(journalPath, '{not-json\n');
     try {
-      expect(() => recoverArtifactsWithFileSystem(destinations, nodeArtifactFileSystem)).toThrowError(
-        /journal is corrupt/u,
-      );
+      expect(() =>
+        recoverArtifactsWithFileSystem(transactionScope(destinations), destinations, nodeArtifactFileSystem),
+      ).toThrowError(/journal is corrupt/u);
       expect(readFileSync(destinations[0].path, 'utf8')).toBe(oldContents[0]);
       expect(readFileSync(destinations[1].path, 'utf8')).toBe(oldContents[1]);
       expect(readFileSync(journalPath, 'utf8')).toBe('{not-json\n');
@@ -1286,10 +1442,9 @@ describe('published Lean to TypeScript API', () => {
       const beforeOutput = readFileSync(destinations[0].path);
       const beforeManifestExists = existsSync(destinations[1].path);
       const beforeManifest = beforeManifestExists ? readFileSync(destinations[1].path) : undefined;
-
-      expect(() => recoverArtifactsWithFileSystem(destinations, nodeArtifactFileSystem)).toThrowError(
-        /names different destinations/u,
-      );
+      expect(() =>
+        recoverArtifactsWithFileSystem(transactionScope(destinations), destinations, nodeArtifactFileSystem),
+      ).toThrowError(/journal entry names invalid transaction files/u);
       expect(readFileSync(destinations[0].path)).toEqual(beforeOutput);
       expect(existsSync(destinations[1].path)).toBe(beforeManifestExists);
       if (beforeManifest !== undefined) expect(readFileSync(destinations[1].path)).toEqual(beforeManifest);
@@ -1325,6 +1480,7 @@ describe('published Lean to TypeScript API', () => {
         let threw = false;
         try {
           publishArtifactsWithFileSystem(
+            transactionScope(destinations),
             destinations,
             newContents,
             faultingArtifactFileSystem(operation, occurrence),
@@ -1367,9 +1523,9 @@ describe('published Lean to TypeScript API', () => {
       },
     };
     try {
-      expect(() => publishArtifactsWithFileSystem(destinations, newContents, swappingFileSystem)).toThrowError(
-        /artifact destination changed during compilation/u,
-      );
+      expect(() =>
+        publishArtifactsWithFileSystem(transactionScope(destinations), destinations, newContents, swappingFileSystem),
+      ).toThrowError(/artifact destination changed during compilation/u);
       expect(readFileSync(join(movedRoot, 'generated.ts'), 'utf8')).toBe(oldContents[0]);
       expect(readFileSync(join(movedRoot, 'generated.manifest.json'), 'utf8')).toBe(oldContents[1]);
       expect(existsSync(destinations[0].path)).toBe(false);
@@ -1476,12 +1632,13 @@ describe('published Lean to TypeScript API', () => {
       const fixture = createLeanProjectFixture(
         ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
       );
+      const destinationRoot = mkdtempSync(join(tmpdir(), 'tslean-cli-manifest-input-alias-'));
       const toolchainPath = join(fixture.projectRoot, 'lean-toolchain');
       const original = readFileSync(toolchainPath);
-      const outputDirectory = join(fixture.projectRoot, 'generated');
+      const outputDirectory = join(destinationRoot, 'generated');
       try {
         const result = runSourceCompiler(
-          fixture.projectRoot,
+          destinationRoot,
           fixture.projectRoot,
           fixture.sourcePath,
           outputDirectory,
@@ -1493,12 +1650,12 @@ describe('published Lean to TypeScript API', () => {
         expect(readFileSync(toolchainPath)).toEqual(original);
         expect(existsSync(outputDirectory)).toBe(false);
       } finally {
+        rmSync(destinationRoot, { force: true, recursive: true });
         fixture.dispose();
       }
     },
     PACKED_COMPILER_TIMEOUT_MS,
   );
-
   test(
     'compiles a separate Lean package through the packed subpath export',
     () => {
@@ -1815,9 +1972,13 @@ function transactionDestinations(
 }
 
 /** One generated module, its source map sidecar, and the manifest: the smallest real package. */
-function packageDestinations(
-  root: string,
-): readonly [ArtifactDestination, ArtifactDestination, ArtifactDestination] {
+function transactionScope(destinations: readonly ArtifactDestination[]): ArtifactTransactionScope {
+  const manifest = destinations.find((destination) => destination.name === '--manifest');
+  if (manifest === undefined) throw new TypeError('transaction test destinations have no manifest');
+  return { identity: `test:${manifest.canonicalPath}`, lockDestination: '--manifest' };
+}
+
+function packageDestinations(root: string): readonly [ArtifactDestination, ArtifactDestination, ArtifactDestination] {
   const paths = ['Fixture.ts', 'Fixture.ts.map', 'generated.manifest.json'].map((name) => join(root, name));
   const [modulePath, sourceMapPath, manifestPath] = paths;
   if (modulePath === undefined || sourceMapPath === undefined || manifestPath === undefined) {
@@ -1868,6 +2029,7 @@ function crashArtifactTransaction(
     [
       `import { nodeArtifactFileSystem, publishArtifactsWithFileSystem } from ${JSON.stringify(moduleUrl)};`,
       `const destinations = ${JSON.stringify(destinations)};`,
+      `const scope = ${JSON.stringify(transactionScope(destinations))};`,
       `const contents = ${JSON.stringify(contents)};`,
       `const operation = ${JSON.stringify(operation)};`,
       `const occurrence = ${occurrence};`,
@@ -1889,7 +2051,7 @@ function crashArtifactTransaction(
       "    if (operation === 'fsync' && ++synchronizations === occurrence) process.kill(process.pid, 'SIGKILL');",
       '  },',
       '};',
-      'publishArtifactsWithFileSystem(destinations, contents, filesystem);',
+      'publishArtifactsWithFileSystem(scope, destinations, contents, filesystem);',
       '',
     ].join('\n'),
   );
@@ -1909,6 +2071,7 @@ function crashArtifactRecovery(
     [
       `import { nodeArtifactFileSystem, recoverArtifactsWithFileSystem } from ${JSON.stringify(moduleUrl)};`,
       `const destinations = ${JSON.stringify(destinations)};`,
+      `const scope = ${JSON.stringify(transactionScope(destinations))};`,
       `const operation = ${JSON.stringify(operation)};`,
       `const occurrence = ${occurrence};`,
       'let removals = 0;',
@@ -1924,7 +2087,7 @@ function crashArtifactRecovery(
       "    if (operation === 'remove' && ++removals === occurrence) process.kill(process.pid, 'SIGKILL');",
       '  },',
       '};',
-      'recoverArtifactsWithFileSystem(destinations, filesystem);',
+      'recoverArtifactsWithFileSystem(scope, destinations, filesystem);',
       '',
     ].join('\n'),
   );
@@ -1933,8 +2096,8 @@ function crashArtifactRecovery(
 
 function startPausedCrashingArtifactTransaction(
   root: string,
-  destinations: readonly [ArtifactDestination, ArtifactDestination],
-  contents: readonly [string, string],
+  destinations: readonly ArtifactDestination[],
+  contents: readonly (string | undefined)[],
   crashAfterThirdRename = true,
 ): { readonly child: ReturnType<typeof spawn>; readonly readyPath: string; readonly releasePath: string } {
   const moduleUrl = pathToFileURL(join(repositoryRoot, 'src', 'lean-to-typescript', 'artifact-transaction.ts')).href;
@@ -1947,7 +2110,8 @@ function startPausedCrashingArtifactTransaction(
       "import { existsSync, writeFileSync } from 'node:fs';",
       `import { nodeArtifactFileSystem, publishArtifactsWithFileSystem } from ${JSON.stringify(moduleUrl)};`,
       `const destinations = ${JSON.stringify(destinations)};`,
-      `const contents = ${JSON.stringify(contents)};`,
+      `const scope = ${JSON.stringify(transactionScope(destinations))};`,
+      `const contents = ${JSON.stringify(contents)}.map((value) => value === null ? undefined : value);`,
       `const crashAfterThirdRename = ${JSON.stringify(crashAfterThirdRename)};`,
       `const readyPath = ${JSON.stringify(readyPath)};`,
       `const releasePath = ${JSON.stringify(releasePath)};`,
@@ -1967,7 +2131,7 @@ function startPausedCrashingArtifactTransaction(
       "    if (crashAfterThirdRename && renames === 3) process.kill(process.pid, 'SIGKILL');",
       '  },',
       '};',
-      'publishArtifactsWithFileSystem(destinations, contents, filesystem);',
+      'publishArtifactsWithFileSystem(scope, destinations, contents, filesystem);',
       '',
     ].join('\n'),
   );
@@ -1980,8 +2144,8 @@ function startPausedCrashingArtifactTransaction(
 
 function startObservedArtifactTransaction(
   root: string,
-  destinations: readonly [ArtifactDestination, ArtifactDestination],
-  contents: readonly [string, string],
+  destinations: readonly ArtifactDestination[],
+  contents: readonly (string | undefined)[],
 ): {
   readonly acquiredPath: string;
   readonly attemptedPath: string;
@@ -1997,7 +2161,8 @@ function startObservedArtifactTransaction(
       "import { writeFileSync } from 'node:fs';",
       `import { nodeArtifactFileSystem, publishArtifactsWithFileSystem } from ${JSON.stringify(moduleUrl)};`,
       `const destinations = ${JSON.stringify(destinations)};`,
-      `const contents = ${JSON.stringify(contents)};`,
+      `const scope = ${JSON.stringify(transactionScope(destinations))};`,
+      `const contents = ${JSON.stringify(contents)}.map((value) => value === null ? undefined : value);`,
       `const attemptedPath = ${JSON.stringify(attemptedPath)};`,
       `const acquiredPath = ${JSON.stringify(acquiredPath)};`,
       'let lockAttempts = 0;',
@@ -2010,7 +2175,7 @@ function startObservedArtifactTransaction(
       "    writeFileSync(acquiredPath, String(lockAttempts) + '\\n');",
       '  },',
       '};',
-      'publishArtifactsWithFileSystem(destinations, contents, filesystem);',
+      'publishArtifactsWithFileSystem(scope, destinations, contents, filesystem);',
       '',
     ].join('\n'),
   );
@@ -2085,9 +2250,10 @@ function reassignPublicationLock(source: string, transactionId: string): string 
     .join('\n')}\n`;
 }
 
-function transactionJournalFilename(destinations: readonly [ArtifactDestination, ArtifactDestination]): string {
+function transactionJournalFilename(destinations: readonly ArtifactDestination[]): string {
+  const scope = transactionScope(destinations);
   const digest = createHash('sha256')
-    .update(JSON.stringify(destinations.map((destination) => destination.canonicalPath).sort(compareCodePoints)))
+    .update(JSON.stringify([scope.identity]))
     .digest('hex');
   return `.tslean-transaction-${digest}.json`;
 }

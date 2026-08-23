@@ -61,7 +61,11 @@ export function runLeanToTypeScriptCli(
   const outputDirectory = resolve(options.outputDirectory);
   const manifestPath = resolve(options.manifestPath);
   // The tree's shape is only known after compilation, so isolation is checked twice: once for the
-  // destinations the caller named, and again for every file the emitted package turns out to need.
+  // root and the manifest the caller named, and again for every file the emitted package needs.
+  const initialRoot = assertOutputRootIsIsolated(outputDirectory, [
+    { name: '--source', path: sourcePath },
+    { name: '--project-root', path: projectRoot },
+  ]);
   const initialDestinations = assertArtifactPathsAreIsolated(
     [{ name: '--manifest', path: manifestPath }],
     [{ name: '--source', path: sourcePath }],
@@ -72,10 +76,16 @@ export function runLeanToTypeScriptCli(
       moduleName: options.moduleName,
       sourcePath,
       declarations: options.declarations,
+      outputDirectory,
     },
     platform,
   );
   const emitted = compilation.package;
+  const compilerInputs = compilation.inputs.map(({ identity, path }) => ({ name: identity, path }));
+  // The root is re-bound against the complete input closure, and its identity has to be the one
+  // that was bound before compilation: a swapped root cannot be published into.
+  const currentRoot = assertOutputRootIsIsolated(outputDirectory, compilerInputs);
+  assertSameDestinationIdentities([initialRoot], [currentRoot]);
   const files = [
     ...emitted.modules.flatMap((module) => [
       { name: module.path, path: join(outputDirectory, module.path), contents: module.code },
@@ -91,19 +101,29 @@ export function runLeanToTypeScriptCli(
     ]),
     { name: '--manifest', path: manifestPath, contents: `${JSON.stringify(emitted.manifest, null, 2)}\n` },
   ];
-  const destinations = files.map(({ name, path }) => ({ name, path }));
-  const currentDestinations = assertArtifactPathsAreIsolated(
-    destinations,
-    compilation.inputs.map(({ identity, path }) => ({ name: identity, path })),
-  );
+  for (const file of files) {
+    if (file.name === '--manifest') continue;
+    if (!isWithin(currentRoot.canonicalPath, resolve(file.path))) {
+      throw new TypeError(`generated file escapes the output root: ${file.path}`);
+    }
+  }
+  const stale = staleGeneratedFiles(outputDirectory, emitted);
+  const destinations = [
+    ...files.map(({ name, path }) => ({ name, path })),
+    ...stale.map((path) => ({ name: `stale:${relative(outputDirectory, path).split(sep).join('/')}`, path })),
+  ];
+  const currentDestinations = assertArtifactPathsAreIsolated(destinations, compilerInputs);
   assertSameDestinationIdentities(
     initialDestinations,
     currentDestinations.filter((destination) => destination.name === '--manifest'),
   );
   if (!options.check) {
+    // One transaction over the whole owned tree: the manifest names the exact file set, so a run
+    // that emits fewer modules than the last one removes the rest instead of leaving them behind.
     publishArtifacts(
+      { identity: `${currentRoot.canonicalPath}\0${manifestPath}`, lockDestination: '--manifest' },
       currentDestinations,
-      files.map((file) => file.contents),
+      [...files.map((file) => file.contents), ...stale.map(() => undefined)],
       platform,
     );
     return;
@@ -119,7 +139,8 @@ export function runLeanToTypeScriptCli(
   if (semanticIdentityDigest(recorded.semantic) !== semanticIdentityDigest(emitted.manifest.semantic)) {
     throw new TypeError(`generated artifact is stale: ${recordedPath}`);
   }
-  assertNoUnexpectedGeneratedFiles(outputDirectory, emitted);
+  const [unexpected] = stale;
+  if (unexpected !== undefined) throw new TypeError(`generated tree holds an unexpected file: ${unexpected}`);
   reportEnvironmentAttestation(recordedPath, recorded, emitted.manifest, options.requireAttestation);
 }
 
@@ -200,18 +221,43 @@ function requiredDestination(destinations: readonly FilesystemIdentity[], name: 
 }
 
 /**
- * A stale generated file left behind by an earlier layout would still type-check and still be
- * imported, so `--check` fails when the output directory holds a `.ts` or `.ts.map` file the
- * emitted package does not name.
+ * Binds the generated package root before anything is written to it. The root is where the whole
+ * tree lands, so it is checked as a unit: it must be a real directory reached without traversing a
+ * symlink, it must not be the Lean project or any compiler input, and its canonical identity is
+ * re-read after compilation so a swapped root cannot be published into.
  */
-function assertNoUnexpectedGeneratedFiles(outputDirectory: string, emitted: LeanToTypeScriptPackage): void {
-  if (!existsSync(outputDirectory)) return;
+function assertOutputRootIsIsolated(outputDirectory: string, compilerInputs: readonly NamedPath[]): FilesystemIdentity {
+  const root = filesystemIdentity({ name: '--out-dir', path: outputDirectory });
+  if (root.nonDirectoryAncestor) throw new TypeError('--out-dir has an existing non-directory ancestor');
+  if (existsSync(root.canonicalPath) && !statSync(root.canonicalPath).isDirectory()) {
+    throw new TypeError('--out-dir must name a directory');
+  }
+  // `canonicalPath` resolved every symlink, so a root reached through one is refused by name.
+  if (resolve(outputDirectory) !== root.canonicalPath) {
+    throw new TypeError(`--out-dir must not be reached through a symbolic link: ${outputDirectory}`);
+  }
+  for (const input of compilerInputs.map(filesystemIdentity)) {
+    if (filesystemRelationship(root, input) !== 'disjoint') {
+      throw new TypeError(`--out-dir must not identify compiler input ${input.name} or an ancestor/descendant path`);
+    }
+  }
+  return root;
+}
+
+/**
+ * Generated files the emitted package does not name. A run that emits fewer modules than the last
+ * one has to remove the rest: a stale module still type-checks and is still importable, so leaving
+ * it behind would let a deleted Lean module keep a live TypeScript twin.
+ */
+function staleGeneratedFiles(outputDirectory: string, emitted: LeanToTypeScriptPackage): readonly string[] {
+  if (!existsSync(outputDirectory)) return [];
   const expected = new Set(
     emitted.modules.flatMap((module) => [
       resolve(outputDirectory, module.path),
       ...(module.sourceMap === undefined ? [] : [resolve(outputDirectory, module.sourceMap.path)]),
     ]),
   );
+  const found: string[] = [];
   const pending = [outputDirectory];
   while (pending.length > 0) {
     const directory = pending.pop();
@@ -223,9 +269,10 @@ function assertNoUnexpectedGeneratedFiles(outputDirectory: string, emitted: Lean
         continue;
       }
       if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.ts.map')) continue;
-      if (!expected.has(path)) throw new TypeError(`generated tree holds an unexpected file: ${path}`);
+      if (!expected.has(path)) found.push(path);
     }
   }
+  return found.sort();
 }
 
 function assertSameDestinationIdentities(
@@ -249,6 +296,10 @@ function assertSameDestinationIdentities(
       throw new TypeError('artifact destination changed during compilation');
     }
   }
+}
+
+function isWithin(root: string, path: string): boolean {
+  return path === root || path.startsWith(`${root}${sep}`);
 }
 
 function filesystemIdentity(namedPath: NamedPath): FilesystemIdentity {

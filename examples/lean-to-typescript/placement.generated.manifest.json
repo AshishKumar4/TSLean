@@ -3,6 +3,7 @@
   "semantic": {
     "fragmentVersion": "tslean-structural-first-order-v4",
     "entryModule": "TSLean.Examples.Placement",
+    "leanProjectPath": "../../../lean",
     "declarations": [
       "TSLean.Examples.Placement.choosePlacement"
     ],
@@ -67,7 +68,7 @@
           }
         ],
         "bodySha256": "sha256:cae734266b3c3d3ddbd10e528bc6f85ef290baca088cc1907064d0073314618f",
-        "sourceMapSha256": "sha256:b8463b7534a30fa6fd601375e55e1173888f3a9e949334211e336ed553cd0c5d"
+        "sourceMapSha256": "sha256:46e79d4c9e300218770759d53ddedaf1d98d7114af8908efa577c8e432d43444"
       }
     ],
     "closure": [
@@ -360,22 +361,22 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:artifact-transaction",
-        "sha256": "sha256:520ca67f489cbcfc7da7efd470375ea7aec58b880c8d2c7d1a4275adce02b07a"
+        "sha256": "sha256:b9716dd0754843469e74cc52280e74c03ce09c6f1b1e0d971a4b64bd5e8f083f"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:cli",
-        "sha256": "sha256:38ad9be9055a8f9a8b2b170af19564f6863d7494958cc9425793e8c8dc71d940"
+        "sha256": "sha256:cafda93b9d6c902da6b3f1d3f08b0cfbc7e8f3ff05f2c2100149ecfc58789e71"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:compiler",
-        "sha256": "sha256:d2ae9fce7e5ff5cdee452d17c4ee07985c0921a0f93006aba206bd13217d5c32"
+        "sha256": "sha256:375f3cb05f5adfb170a28a09de99ab87810da84cfb39724ac4dd67f2e5aa72e6"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:emitter",
-        "sha256": "sha256:ee84a3c1594506edf95e85c9fa77d6157751f2ee188f20f7ac6847ca8affe28b"
+        "sha256": "sha256:48ae669cf81d2414c9b39567f963a7544b267fd1361d78baa13e09fbb8da2ec8"
       },
       {
         "kind": "compiler-source",
@@ -390,7 +391,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:ir",
-        "sha256": "sha256:21030736f9e42504d2cb0274e239969397aa82136f8ce9469aea4bc15f47d265"
+        "sha256": "sha256:c07cc8126ab444173a2ce1d3318760e8d2d4d4940203593ade28e3288f4b596d"
       },
       {
         "kind": "compiler-source",
@@ -400,7 +401,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:manifest",
-        "sha256": "sha256:0595876e8d3f513d8413a0904dfa906e0afc989f3f3c4dd748844cc0e8e623fe"
+        "sha256": "sha256:f79fe54f1cab595a69b1c1f00f256d93af997ac9b1000ab0c5a9893aaccd7a12"
       },
       {
         "kind": "compiler-source",
@@ -415,7 +416,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:package-layout",
-        "sha256": "sha256:4d17534f8ccfdcb7d18b3380c4f9383948fea6692561901f4ce95e3cc5d7f33a"
+        "sha256": "sha256:0880be680c81ddcd4af0dd0aa421c15f813e628eb96b30d11a3ac0ddda141192"
       },
       {
         "kind": "compiler-source",
@@ -468,7 +469,7 @@
         "sha256": "sha256:651c8accb402b0c071cd336e9d3dc0a55516b1bfb434ddc4801f14936785b1d2"
       }
     ],
-    "inputClosureSha256": "sha256:0ce774e8c6f7a521e26d5a2064806a2d3ae2f984bed7f936b42df43fd856e779",
+    "inputClosureSha256": "sha256:675e18e7d9fba9842e4a244a4c540e894710b7a12510f4efa33c8844448dea25",
     "semanticIrSha256": "sha256:196adc6b4440a5ce67221c5a98c217dafb7a1bc6e565b90120e838233954667b",
     "generatedBodySha256": "sha256:63e29b246e204156ea0e15f5b07f3cc7522d7730f435bba47f66f490842988e4"
   },
