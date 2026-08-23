@@ -227,10 +227,7 @@ function printPackage(
         : statement,
     );
     assertImportsAreExported(draft, entries, drafts, owners);
-    const body = printModuleBody(
-      entries.map((entry) => importStatement(entry)),
-      statements,
-    );
+    const body = printModuleBody(entries.map(importStatement), statements);
     const generated = moduleDeclarations(draft, declarations, body.lines, provenance);
     const sourceMap = buildSourceMap(draft, generated, provenance);
     return {
@@ -564,7 +561,8 @@ function planProgram(program: LeanSemanticProgram): EmitContext {
     fields: allocator.allocate('fields'),
     field: allocator.allocate('field'),
   };
-  const boundary = planBoundary(program, types, prelude);
+  const roots = new Set(program.roots);
+  const boundary = planBoundary(program, roots, types, prelude);
   const used = new Set(boundary.validators);
   for (const name of boundary.types) {
     const decoder = decoders.get(name);
@@ -572,7 +570,7 @@ function planProgram(program: LeanSemanticProgram): EmitContext {
     used.add(decoder);
   }
   return {
-    roots: new Set(program.roots),
+    roots,
     declarationNames,
     types,
     methods,
@@ -592,10 +590,10 @@ function planProgram(program: LeanSemanticProgram): EmitContext {
  */
 function planBoundary(
   program: LeanSemanticProgram,
+  roots: ReadonlySet<string>,
   types: ReadonlyMap<string, TypePlan>,
   prelude: PreludeNames,
 ): BoundaryPlan {
-  const roots = new Set(program.roots);
   const boundaryTypes = new Set<string>();
   const validators = new Set<string>();
   const walk = (type: LeanType): void => {
