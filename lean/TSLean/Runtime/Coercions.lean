@@ -17,14 +17,14 @@ instance : Coe Int Float where coe := intToFloat
 instance : Coe Nat Int  where coe := natToInt
 
 def strLength  (s : String)   : Nat    := s.length
-def strTrim    (s : String)   : String := s.trimAscii.toString
+def strTrim    (s : String)   : String := s.trim
 def strToUpper (s : String)   : String := s.toUpper
 def strToLower (s : String)   : String := s.toLower
 
 def strSlice (s : String) (start stop : Nat) : String :=
   let chars := s.toList; let n := chars.length
   let i := min start n;  let j := min stop n
-  if i ≥ j then "" else String.ofList (chars.drop i |>.take (j - i))
+  if i ≥ j then "" else String.mk (chars.drop i |>.take (j - i))
 
 def strIncludes (s needle : String) : Bool :=
   needle.isEmpty || Nat.any (s.toList.length - needle.toList.length + 1)
@@ -39,11 +39,11 @@ def strRepeat (s : String) (n : Nat) : String := (List.replicate n s).foldl (· 
 
 def strPadStart (s : String) (targetLen : Nat) (padChar : Char := ' ') : String :=
   if s.length ≥ targetLen then s
-  else String.ofList (List.replicate (targetLen - s.length) padChar) ++ s
+  else String.mk (List.replicate (targetLen - s.length) padChar) ++ s
 
 def strPadEnd (s : String) (targetLen : Nat) (padChar : Char := ' ') : String :=
   if s.length ≥ targetLen then s
-  else s ++ String.ofList (List.replicate (targetLen - s.length) padChar)
+  else s ++ String.mk (List.replicate (targetLen - s.length) padChar)
 
 def charCodeAt (s : String) (i : Nat) : Option Nat := s.toList[i]?.map (·.toNat)
 
@@ -72,12 +72,12 @@ theorem strPadStart_length_ge (s : String) (n : Nat) (c : Char) : (strPadStart s
   simp only [strPadStart]
   split
   · omega
-  · simp [String.length_append, String.length_ofList, List.length_replicate]
+  · simp [String.length_append, String.length_mk, List.length_replicate]
 theorem strPadEnd_length_ge (s : String) (n : Nat) (c : Char) : (strPadEnd s n c).length ≥ s.length := by
   simp only [strPadEnd]
   split
   · omega
-  · simp [String.length_append, String.length_ofList, List.length_replicate]
+  · simp [String.length_append, String.length_mk, List.length_replicate]
 
 theorem strRepeat_length_zero (s : String) : (strRepeat s 0).length = 0 := by
   simp [strRepeat]
@@ -86,7 +86,7 @@ theorem strPadStart_at_least_n (s : String) (n : Nat) (c : Char) : (strPadStart 
   simp only [strPadStart]
   split
   · omega
-  · simp [String.length_append, String.length_ofList, List.length_replicate]; omega
+  · simp [String.length_append, String.length_mk, List.length_replicate]; omega
 
 theorem intToNat_nonneg : ∀ (i : Int), 0 ≤ intToNat i := by
   intro i; cases i <;> simp [intToNat]

@@ -74,7 +74,7 @@ def insert (m : AssocMap α β) (k : α) (v : β) : AssocMap α β :=
 
 def erase (m : AssocMap α β) (k : α) : AssocMap α β :=
   { entries := m.entries.filter fun (k', _) => !(k' == k),
-    nodup   := by apply List.Nodup.sublist _ m.nodup; apply List.Sublist.map; exact List.filter_sublist }
+    nodup   := by apply List.Nodup.sublist _ m.nodup; apply List.Sublist.map; exact List.filter_sublist _ }
 
 def size (m : AssocMap α β) : Nat := m.entries.length
 def keys (m : AssocMap α β) : List α := m.entries.map Prod.fst

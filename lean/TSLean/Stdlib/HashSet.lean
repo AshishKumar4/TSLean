@@ -120,7 +120,7 @@ private theorem foldl_preserves_contains (l : List α) (acc : TSHashSet α) (x :
 private theorem foldl_contains_member (l : List α) (acc : TSHashSet α) (x : α) (h : x ∈ l) :
     (l.foldl (fun a y => a.insert y) acc).contains x = true := by
   induction l generalizing acc with
-  | nil => exact absurd h List.not_mem_nil
+  | nil => exact absurd h (List.not_mem_nil _)
   | cons hd tl ih =>
     simp only [List.foldl_cons]
     rcases List.mem_cons.mp h with rfl | ht
@@ -168,7 +168,7 @@ theorem size_insert_le (s : TSHashSet α) (x : α) :
 theorem size_erase_le (s : TSHashSet α) (x : α) :
     (s.erase x).size ≤ s.size := by
   simp only [erase, size]
-  exact List.length_erase_le
+  exact List.length_erase_le x s.elems
 
 -- fromList contains all elements
 theorem fromList_contains_all (l : List α) :

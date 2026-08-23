@@ -61,10 +61,13 @@ instance : Ord RoomId       where compare a b := compare a.val b.val
 instance : Ord MessageId    where compare a b := compare a.val b.val
 instance : Ord SessionToken where compare a b := compare a.val b.val
 
-theorem UserId.val_injective      : Function.Injective UserId.val      := fun a b h => by cases a; cases b; exact congrArg UserId.mk h
-theorem RoomId.val_injective      : Function.Injective RoomId.val      := fun a b h => by cases a; cases b; exact congrArg RoomId.mk h
-theorem MessageId.val_injective   : Function.Injective MessageId.val   := fun a b h => by cases a; cases b; exact congrArg MessageId.mk h
-theorem SessionToken.val_injective: Function.Injective SessionToken.val := fun a b h => by cases a; cases b; exact congrArg SessionToken.mk h
+-- Stated as the unfolding of `Function.Injective`, which 4.16 core does not provide. The
+-- strict-implicit binders are load-bearing: `eq_iff_val_eq` and `eq_of_val_eq` below apply
+-- these to the equality alone.
+theorem UserId.val_injective      : ∀ ⦃a b : UserId⦄,       a.val = b.val → a = b := fun a b h => by cases a; cases b; exact congrArg UserId.mk h
+theorem RoomId.val_injective      : ∀ ⦃a b : RoomId⦄,       a.val = b.val → a = b := fun a b h => by cases a; cases b; exact congrArg RoomId.mk h
+theorem MessageId.val_injective   : ∀ ⦃a b : MessageId⦄,    a.val = b.val → a = b := fun a b h => by cases a; cases b; exact congrArg MessageId.mk h
+theorem SessionToken.val_injective: ∀ ⦃a b : SessionToken⦄, a.val = b.val → a = b := fun a b h => by cases a; cases b; exact congrArg SessionToken.mk h
 
 theorem UserId.eq_iff_val_eq (a b : UserId) : a = b ↔ a.val = b.val := ⟨fun h => by cases h; rfl, fun h => UserId.val_injective h⟩
 theorem RoomId.eq_iff_val_eq (a b : RoomId) : a = b ↔ a.val = b.val := ⟨fun h => by cases h; rfl, fun h => RoomId.val_injective h⟩

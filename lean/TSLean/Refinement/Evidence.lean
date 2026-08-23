@@ -1,5 +1,12 @@
 namespace TSLean.Refinement
 
+-- Backfills two core lemmas absent from Lean 4.16.
+private theorem orEqLeftIffImp : ∀ {a b : Bool}, ((a || b) = a) ↔ (b → a) := by decide
+
+private theorem permAnyEq {α : Type u} {l₁ l₂ : List α} {f : α → Bool} (perm : l₁.Perm l₂) :
+    l₁.any f = l₂.any f := by
+  rw [Bool.eq_iff_iff]; simp [perm.mem_iff]
+
 /-- The source of authority carried by evidence. -/
 inductive EvidenceKind where
   | proved
@@ -36,7 +43,7 @@ private theorem Assumption.isValid_iff (assumption : Assumption) :
 /-- Creates deterministic assumption metadata, rejecting empty statements or reasons. -/
 def Assumption.create (statement reason : String) : Option Assumption :=
   if statement = "" ∨ reason = "" then none
-  else some (.mk (deterministicId statement reason) statement reason)
+  else some (Assumption.mk (deterministicId statement reason) statement reason)
 
 /-- Metadata returned by `Assumption.create` satisfies the assumption invariant. -/
 theorem Assumption.valid_of_create {statement reason : String} {assumption : Assumption}
@@ -98,7 +105,7 @@ def Guard.deterministicId (statement : String) : String := guardDeterministicId 
 def Guard.create (statement : String) (nonempty : statement ≠ "")
     (check : α → Bool) (sound : ∀ value, check value = true → predicate value) :
     Guard α predicate :=
-  .mk (guardDeterministicId statement) statement check sound nonempty rfl
+  Guard.mk (guardDeterministicId statement) statement check sound nonempty rfl
 
 /-- A receipt indexed by the guard and value that actually passed its check. -/
 structure GuardReceipt {α : Type u} {predicate : α → Prop}
@@ -183,13 +190,13 @@ inductive ProofStatus (claim : Prop) where
 
 /-- Creates evidence directly from a proof, with no requirements. -/
 def Evidence.proved (proof : claim) : Evidence claim :=
-  .mk (.proved proof) [] [] (by simp) (by simp)
+  Evidence.mk (.proved proof) [] [] (by simp) (by simp)
 
 /-- Runs a sound guard and records the exact accepted check as provenance. -/
 def Evidence.ofGuard (guard : Guard α predicate) (value : α)
     (accepted : guard.check value = true) : Evidence (predicate value) :=
   let receipt : GuardReceipt guard value := ⟨accepted⟩
-  .mk (.guarded (guard.sound value receipt.accepted)) [] [guard.metadata]
+  Evidence.mk (.guarded (guard.sound value receipt.accepted)) [] [guard.metadata]
     (by simp) (by
       intro metadata member
       simp only [List.mem_singleton] at member
@@ -200,7 +207,7 @@ def Evidence.ofGuard (guard : Guard α predicate) (value : α)
 
 /-- Creates assumed evidence only from a validated, nonempty assumption set. -/
 def Evidence.assumed (requirements : ValidAssumptions) : Evidence claim :=
-  .mk .assumed requirements.entries [] requirements.valid (by simp)
+  Evidence.mk .assumed requirements.entries [] requirements.valid (by simp)
 
 /-- The evidence category, independent of provenance metadata. -/
 def Evidence.kind (evidence : Evidence claim) : EvidenceKind :=
@@ -258,7 +265,7 @@ private def EvidenceAuthority.and (left : EvidenceAuthority leftClaim)
 /-- Composition retains every assumption and guard regardless of proof status. -/
 def Evidence.and (left : Evidence leftClaim) (right : Evidence rightClaim) :
     Evidence (leftClaim ∧ rightClaim) :=
-  .mk (left.authority.and right.authority)
+  Evidence.mk (left.authority.and right.authority)
     (left.rawAssumptions ++ right.rawAssumptions)
     (left.rawGuards ++ right.rawGuards)
     (by
@@ -280,7 +287,7 @@ def Evidence.map (transform : claim → nextClaim) (evidence : Evidence claim) :
     | .proved proof => EvidenceAuthority.proved (transform proof)
     | .guarded proof => EvidenceAuthority.guarded (transform proof)
     | .assumed => EvidenceAuthority.assumed
-  .mk authority evidence.rawAssumptions evidence.rawGuards
+  Evidence.mk authority evidence.rawAssumptions evidence.rawGuards
     evidence.assumptionsValid evidence.guardsValid
 
 /-- Mapping a claim does not alter provenance metadata. -/
@@ -341,7 +348,7 @@ private theorem foldAssumption_valid (source accumulator : List Assumption)
       · intro entry member
         exact sourceValid entry (List.mem_cons_of_mem current member)
       · apply insertAssumption_valid accumulator current accumulatorValid
-        exact sourceValid current List.mem_cons_self
+        exact sourceValid current (List.mem_cons_self _ _)
 
 private theorem foldAssumption_nodup (source accumulator : List Assumption)
     (unique : (accumulator.map (·.id)).Nodup) :
@@ -406,7 +413,7 @@ private theorem foldGuard_valid (source accumulator : List GuardMetadata)
       · intro entry member
         exact sourceValid entry (List.mem_cons_of_mem current member)
       · apply insertGuard_valid accumulator current accumulatorValid
-        exact sourceValid current List.mem_cons_self
+        exact sourceValid current (List.mem_cons_self _ _)
 
 private theorem foldGuard_nodup (source accumulator : List GuardMetadata)
     (unique : (accumulator.map (·.id)).Nodup) :
@@ -447,7 +454,7 @@ private theorem any_insertAssumption (entries : List Assumption) (assumption : A
     simp only [Bool.false_eq_true, ↓reduceIte, List.any_cons]
   · exact Bool.or_comm _ _
   · apply Eq.symm
-    apply Bool.or_eq_left_iff_imp.mpr
+    apply orEqLeftIffImp.mpr
     intro same
     have sameId : assumption.id = id := beq_iff_eq.mp same
     subst id
@@ -468,7 +475,7 @@ private theorem normalizeAssumptions_any (entries : List Assumption) (id : Strin
   unfold normalizeAssumptions
   rw [any_foldAssumptions]
   simp only [List.any_nil, Bool.false_or]
-  exact (List.mergeSort_perm entries _).any_eq
+  exact permAnyEq (List.mergeSort_perm entries _)
 
 private theorem any_insertGuard (entries : List GuardMetadata) (guard : GuardMetadata)
     (id : String) :
@@ -479,7 +486,7 @@ private theorem any_insertGuard (entries : List GuardMetadata) (guard : GuardMet
     simp only [Bool.false_eq_true, ↓reduceIte, List.any_cons]
   · exact Bool.or_comm _ _
   · apply Eq.symm
-    apply Bool.or_eq_left_iff_imp.mpr
+    apply orEqLeftIffImp.mpr
     intro same
     have sameId : guard.id = id := beq_iff_eq.mp same
     subst id
@@ -500,7 +507,7 @@ private theorem normalizeGuards_any (entries : List GuardMetadata) (id : String)
   unfold normalizeGuards
   rw [any_foldGuards]
   simp only [List.any_nil, Bool.false_or]
-  exact (List.mergeSort_perm entries _).any_eq
+  exact permAnyEq (List.mergeSort_perm entries _)
 
 /-- Composition preserves metadata validity. -/
 theorem Evidence.and_metadata_valid (left : Evidence leftClaim) (right : Evidence rightClaim) :
