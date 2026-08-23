@@ -341,7 +341,7 @@ private theorem argumentZero_valid (machine : Machine proofPlatform) (arguments 
   | none => rfl
   | some value =>
       have member : value ∈ arguments.toList :=
-        Array.mem_toList_iff.mpr (Array.mem_of_getElem? found)
+        (Array.mem_toList_iff value arguments).mpr (Array.mem_of_getElem? found)
       exact List.all_eq_true.mp valid value member
 
 private def realisticProofHook : BodyHook proofPlatform := fun ref receiver arguments machine =>
