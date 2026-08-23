@@ -9,7 +9,7 @@ structure MaterializedFixtures where
 
 private def parseDecimalInt? (value : String) : Option Int :=
   match value.toList with
-  | '-' :: rest => (String.ofList rest).toNat?.map fun magnitude => -(Int.ofNat magnitude)
+  | '-' :: rest => (String.mk rest).toNat?.map fun magnitude => -(Int.ofNat magnitude)
   | _ => value.toNat?.map Int.ofNat
 
 private def parseUnits (value : Lean.Json) : Except String JSString := do
