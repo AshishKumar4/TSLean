@@ -64,7 +64,8 @@ private theorem nodup_of_map {α β : Type _} (f : α → β) :
   | head :: tail, nodup => by
       rw [List.map_cons, List.nodup_cons] at nodup
       exact List.nodup_cons.mpr
-        ⟨fun member => nodup.1 (List.mem_map_of_mem (l := tail) f member), nodup_of_map f tail nodup.2⟩
+        ⟨fun member => nodup.1 (List.mem_map_of_mem (l := tail) member),
+          nodup_of_map f tail nodup.2⟩
 
 /-- Relabels a field codec's typed faults. Every field codec in one schema reports the same fault
 types while each carrier's committed codec has its own, so listing `Bool.codec` beside `String.codec`
@@ -825,7 +826,7 @@ private theorem defineFields_ok (old : Heap) (root : RefId) (rootFresh : old.siz
         · rw [otherDescriptors (.string entry.1) (by
             intro keyEq
             exact keyFresh (PropertyKey.string.inj keyEq ▸
-              List.mem_map_of_mem (l := defined) (fun entry : JSString × Value => entry.1) member))]
+              List.mem_map_of_mem (l := defined) member))]
           exact descriptors entry member
         · rw [show entry = field from by simpa using member]
           exact nextDescriptor
@@ -943,8 +944,7 @@ private theorem decodeFields_sound : ∀ (schema : Schema.{u})
             split at decoded
             · exact absurd decoded (by simp)
             · rename_i restFields restDecoded
-              simp only [Except.ok.injEq] at decoded
-              subst decoded
+              cases Except.ok.inj decoded
               exact ⟨codecs.1.decode_sound fieldDecoded,
                 decodeFields_sound rest codecs.2 heap restValues (index + 1) restFields restDecoded⟩
 
@@ -1236,7 +1236,8 @@ theorem decode_invalidRef (schema : Schema.{u})
     (fault : HeapFault) (missing : heap.get? ref = .error fault) :
     (codec schema codecs).decode heap (.object ref) = .error (.shape (.invalidRef ref)) := by
   change decode schema codecs heap (.object ref) = _
-  simp [decode, inspectRecord, Bind.bind, Except.bind, Pure.pure, Except.pure, missing]
+  simp [decode, inspectRecord, Bind.bind, Except.bind, Pure.pure, Except.pure, missing,
+    throw, throwThe, MonadExceptOf.throw]
 
 /-- Decoding rejects references to objects of any other kind with their exact kind tag. -/
 theorem decode_wrongKind (schema : Schema.{u})
@@ -1249,13 +1250,13 @@ theorem decode_wrongKind (schema : Schema.{u})
   cases kindEq : object.kind with
   | ordinary => exact absurd kindEq notOrdinary
   | array slots => simp [decode, inspectRecord, Bind.bind, Except.bind, Pure.pure, Except.pure,
-      found, kindEq]
+      found, kindEq, throw, throwThe, MonadExceptOf.throw]
   | function slots => simp [decode, inspectRecord, Bind.bind, Except.bind, Pure.pure, Except.pure,
-      found, kindEq]
+      found, kindEq, throw, throwThe, MonadExceptOf.throw]
   | arrayIterator slots => simp [decode, inspectRecord, Bind.bind, Except.bind, Pure.pure,
-      Except.pure, found, kindEq]
+      Except.pure, found, kindEq, throw, throwThe, MonadExceptOf.throw]
   | primitiveWrapper slots => simp [decode, inspectRecord, Bind.bind, Except.bind, Pure.pure,
-      Except.pure, found, kindEq]
+      Except.pure, found, kindEq, throw, throwThe, MonadExceptOf.throw]
 
 /-- Decoding rejects an ordinary object that inherits from anything, naming its exact prototype. A
 null prototype is what makes "no extra keys" an observation instead of an assumption, so a record
@@ -1268,7 +1269,7 @@ theorem decode_wrongPrototype (schema : Schema.{u})
       .error (.shape (.wrongPrototype prototype)) := by
   change decode schema codecs heap (.object ref) = _
   simp [decode, inspectRecord, Bind.bind, Except.bind, Pure.pure, Except.pure, found, ordinary,
-    inherits]
+    inherits, throw, throwThe, MonadExceptOf.throw]
 
 /-- Decoding rejects a non-extensible ordinary object. `preventExtensions` is irreversible in the
 model, so such an object can never be produced by this codec's own encoder. -/
@@ -1280,7 +1281,7 @@ theorem decode_notExtensible (schema : Schema.{u})
     (codec schema codecs).decode heap (.object ref) = .error (.shape .notExtensible) := by
   change decode schema codecs heap (.object ref) = _
   simp [decode, inspectRecord, Bind.bind, Except.bind, Pure.pure, Except.pure, found, ordinary,
-    prototypeEq, frozen]
+    prototypeEq, frozen, throw, throwThe, MonadExceptOf.throw]
 
 /-- A record codec over a presentable schema is lawful outright.
 

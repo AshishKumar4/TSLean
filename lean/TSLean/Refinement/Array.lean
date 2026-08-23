@@ -764,8 +764,9 @@ theorem encode_total {elementCodec : Codec α ElementEncodeFault ElementDecodeFa
         obtain ⟨encodedValue, valueMember, entryEq⟩ : ∃ value, value ∈ values ∧ some value = entry := by
           simpa using member
         obtain ⟨index, inBounds, indexEq⟩ :=
-          List.getElem_of_mem ((Array.mem_toList_iff encodedValue values).mpr valueMember)
-        have indexBound : index < values.size := by simpa using inBounds
+          List.getElem_of_mem (Array.mem_toList_iff.mpr valueMember)
+        have indexBound : index < values.size := by
+          simpa only [Array.length_toList] using inBounds
         obtain ⟨related, valueAt, relation⟩ := elements index (by simpa [valuesSize] using indexBound)
         have valueAtIndex : values[index] = related := by
           rw [show (#[] : _root_.Array Value).size = 0 from rfl, Nat.zero_add,
@@ -884,7 +885,8 @@ theorem decode_invalidRef (elementCodec : Codec α ElementEncodeFault ElementDec
     (heap : Heap) (ref : RefId) (fault : HeapFault) (missing : heap.get? ref = .error fault) :
     (codec elementCodec).decode heap (.object ref) = .error (.shape (.invalidRef ref)) := by
   change decode elementCodec heap (.object ref) = _
-  simp [decode, inspectDense, Bind.bind, Except.bind, Pure.pure, Except.pure, missing]
+  simp [decode, inspectDense, Bind.bind, Except.bind, Pure.pure, Except.pure, missing,
+    throw, throwThe, MonadExceptOf.throw]
 
 /-- Decoding rejects references to objects of any other kind with their exact kind tag. -/
 theorem decode_wrongKind (elementCodec : Codec α ElementEncodeFault ElementDecodeFault element)
@@ -896,13 +898,13 @@ theorem decode_wrongKind (elementCodec : Codec α ElementEncodeFault ElementDeco
   cases kindEq : object.kind with
   | array slots => exact absurd kindEq (notArray slots)
   | ordinary => simp [decode, inspectDense, Bind.bind, Except.bind, Pure.pure, Except.pure,
-      found, kindEq]
+      found, kindEq, throw, throwThe, MonadExceptOf.throw]
   | function slots => simp [decode, inspectDense, Bind.bind, Except.bind, Pure.pure, Except.pure,
-      found, kindEq]
+      found, kindEq, throw, throwThe, MonadExceptOf.throw]
   | arrayIterator slots => simp [decode, inspectDense, Bind.bind, Except.bind, Pure.pure,
-      Except.pure, found, kindEq]
+      Except.pure, found, kindEq, throw, throwThe, MonadExceptOf.throw]
   | primitiveWrapper slots => simp [decode, inspectDense, Bind.bind, Except.bind, Pure.pure,
-      Except.pure, found, kindEq]
+      Except.pure, found, kindEq, throw, throwThe, MonadExceptOf.throw]
 
 end Array
 
