@@ -18,11 +18,11 @@ inductive RunResult (P : Platform) (α : Type) where
 namespace RunResult
 
 /-- Requires a predicate of the committed machine in every terminal result. -/
-def AllMachines (predicate : Machine P → Prop) : RunResult P α → Prop
+@[simp] def AllMachines (predicate : Machine P → Prop) : RunResult P α → Prop
   | .done _ machine | .exhausted machine | .fault _ machine => predicate machine
 
 /-- Final-machine validity and execution identity continuity for every terminal outcome. -/
-def MachinePreserved (initial : Machine P) : RunResult P α → Prop
+@[simp] def MachinePreserved (initial : Machine P) : RunResult P α → Prop
   | .done _ final | .exhausted final | .fault _ final =>
       final.WellFormed ∧ initial.ContinuesFrom final
 
@@ -36,7 +36,7 @@ theorem MachinePreserved.trans {initial middle : Machine P} {result : RunResult 
         Machine.continuesFrom_trans initial middle final first preserved.2⟩
 
 /-- Validity of every JavaScript value carried by a completion. -/
-def CompletionValuesValid (normalValid : α → Machine P → Prop) : RunResult P α → Prop
+@[simp] def CompletionValuesValid (normalValid : α → Machine P → Prop) : RunResult P α → Prop
   | .done (.normal value) machine => normalValid value machine
   | .done (.returned value) machine | .done (.thrown value) machine =>
       machine.heap.valueValid value = true

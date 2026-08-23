@@ -184,7 +184,8 @@ theorem declare_preservesResults (environment : EnvId) (name : JSString) (mutabl
           have firstContinues := Machine.allocateCell_continuesFrom machine
             ⟨.uninitialized, mutable⟩
           have foundWithCell : withCell.getEnvironment environment = .ok record := by
-            simpa [withCell, Machine.allocateCell] using found
+            change machine.getEnvironment environment = .ok record
+            exact found
           have bindingsValid : ∀ (bindingName : JSString) (bindingCell : CellId),
               bindings[bindingName]? = some bindingCell → withCell.ValidCellId bindingCell := by
             intro bindingName bindingCell bindingFound

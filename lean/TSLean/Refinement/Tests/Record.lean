@@ -305,7 +305,8 @@ theorem record_codec_contract_witness :
   refine ⟨value, next, root, encoded, extension, related, decoded, valueEq, fresh,
     related.root_valueValid, keysEq, shape, accepted,
     nodup_of_related extension.nextWellFormed related,
-    ⟨flagEncoded, flagFound, flagRelated, ?_⟩, values, inspected, by simpa using length⟩
+    ⟨flagEncoded, flagFound, flagRelated, ?_⟩, values, inspected,
+      by simpa [fieldKeys, demoSchema] using length⟩
   rw [flagFound] at validFound
   have descriptorsEqual := PropertyDescriptor.data.inj (Option.some.inj (Except.ok.inj validFound))
   cases descriptorsEqual
@@ -396,10 +397,10 @@ end RecordContracts
 open RecordContracts (flagKey labelKey extraKey FieldFault demoSchema demoCodecs demoRecord
   nestedSchema nestedCodecs)
 
-private instance : DecidableEq (Record.Native demoSchema) :=
+private instance demoRecordDecidableEq : DecidableEq (Record.Native demoSchema) :=
   inferInstanceAs (DecidableEq (Bool × String × PUnit))
 
-private instance : DecidableEq (Record.Native nestedSchema) :=
+private instance nestedRecordDecidableEq : DecidableEq (Record.Native nestedSchema) :=
   inferInstanceAs (DecidableEq ((Bool × String × PUnit) × PUnit))
 
 private def check (label : String) (condition : Bool) : IO Unit :=
@@ -634,7 +635,9 @@ private def testNestedRecords : IO Unit := do
   check "the guard accepts the nested record"
     ((Record.recordShapeGuard (Record.fieldKeys nestedSchema) heap).check value)
   let decoded ← orFail "nested decode" (Record.decode nestedSchema nestedCodecs heap value)
-  check "the nested roundtrip returns the original record" (decide (decoded = (demoRecord, PUnit.unit)))
+  check "the nested roundtrip returns the original record"
+    (@decide (decoded = (demoRecord, PUnit.unit))
+      (nestedRecordDecidableEq decoded (demoRecord, PUnit.unit)))
   match Record.inspectRecord (Record.fieldKeys nestedSchema) heap value with
   | .error _ => throw (IO.userError "record fixture failed: the outer record was rejected")
   | .ok (_, inner) =>
@@ -702,7 +705,8 @@ private def measureRoundtrip (count : Nat) : IO Unit := do
       orFail "scale encode" (Record.encode demoSchema demoCodecs heap (index % 2 == 0, "", PUnit.unit))
     let decoded ← orFail "scale decode" (Record.decode demoSchema demoCodecs next value)
     check "the scale roundtrip returns the original record"
-      (decide (decoded = ((index % 2 == 0), "", PUnit.unit)))
+      (@decide (decoded = ((index % 2 == 0), "", PUnit.unit))
+        (demoRecordDecidableEq decoded ((index % 2 == 0), "", PUnit.unit)))
     heap := next
   let elapsed := (← IO.monoMsNow) - start
   IO.println s!"record-refinement-roundtrip records={count} totalMs={elapsed}"

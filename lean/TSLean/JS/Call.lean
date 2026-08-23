@@ -193,27 +193,31 @@ theorem call_preservesWellFormed (hook : BodyHook P) (ref : RefId) (thisValue : 
     JSM.PreservesWellFormed (call hook ref thisValue arguments) := by
   intro machine valid
   unfold call
-  cases slotsResult : machine.heap.functionSlots? ref with
-  | error fault => exact ⟨valid, machine.continuesFrom_refl⟩
-  | ok slots =>
-      cases slots with
-      | none => exact ⟨valid, machine.continuesFrom_refl⟩
-      | some slots =>
-          simp_all
-          split <;> rename_i branch
-          · exact ⟨valid, machine.continuesFrom_refl⟩
-          · split
-            · exact ⟨valid, machine.continuesFrom_refl⟩
-            · let receiver := match slots.kind, slots.lexicalThis with
-                | .arrow, some lexicalThis => lexicalThis
-                | _, _ => thisValue
-              cases inputs : firstInvalidCallValue? machine.heap receiver arguments with
-              | some invalid => exact ⟨valid, machine.continuesFrom_refl⟩
-              | none =>
-                  apply normalizeBody_machinePreserved
-                  exact (hookPreserves ref receiver arguments).1 machine valid
-                    ⟨⟨slots, slotsResult⟩,
-                      firstInvalidCallValue?_none machine.heap receiver arguments inputs⟩
+  split
+  · exact ⟨valid, machine.continuesFrom_refl⟩
+  · exact ⟨valid, machine.continuesFrom_refl⟩
+  · rename_i _result slots slotsResult
+    split
+    · exact ⟨valid, machine.continuesFrom_refl⟩
+    · let receiver := match slots.kind, slots.lexicalThis with
+        | .arrow, some lexicalThis => lexicalThis
+        | _, _ => thisValue
+      change RunResult.MachinePreserved machine
+        (if slots.kind = .arrow && slots.lexicalThis.isNone then
+          .fault (heapFault .invalidFunctionMetadata) machine
+        else
+          match firstInvalidCallValue? machine.heap receiver arguments with
+          | some invalid => .fault (.runtime (.danglingEscapingValue invalid)) machine
+          | none => normalizeBody undefined id (hook ref receiver arguments) machine)
+      split
+      · exact ⟨valid, machine.continuesFrom_refl⟩
+      · cases inputs : firstInvalidCallValue? machine.heap receiver arguments with
+        | some invalid => exact ⟨valid, machine.continuesFrom_refl⟩
+        | none =>
+            apply normalizeBody_machinePreserved
+            exact (hookPreserves ref receiver arguments).1 machine valid
+              ⟨⟨slots, slotsResult⟩,
+                firstInvalidCallValue?_none machine.heap receiver arguments inputs⟩
 
 /-- Checked call dispatch preserves continuity and validates every normal or thrown result. -/
 theorem call_preservesResults (hook : BodyHook P) (ref : RefId) (thisValue : Value)
@@ -223,25 +227,29 @@ theorem call_preservesResults (hook : BodyHook P) (ref : RefId) (thisValue : Val
   refine ⟨call_preservesWellFormed hook ref thisValue arguments hookPreserves, ?_⟩
   intro machine valid
   unfold call
-  cases slotsResult : machine.heap.functionSlots? ref with
-  | error fault => trivial
-  | ok slots =>
-      cases slots with
-      | none => rfl
-      | some slots =>
-          simp_all
-          split
-          · rfl
-          · split
-            · trivial
-            · let receiver := match slots.kind, slots.lexicalThis with
-                | .arrow, some lexicalThis => lexicalThis
-                | _, _ => thisValue
-              cases inputs : firstInvalidCallValue? machine.heap receiver arguments with
-              | some invalid => trivial
-              | none =>
-                  simpa [receiver, inputs] using
-                    normalizeBody_resultsValid undefined id (hook ref receiver arguments) machine
+  split
+  · trivial
+  · rfl
+  · rename_i _result slots slotsResult
+    split
+    · rfl
+    · let receiver := match slots.kind, slots.lexicalThis with
+        | .arrow, some lexicalThis => lexicalThis
+        | _, _ => thisValue
+      change RunResult.CompletionValuesValid
+        (fun value machine => machine.heap.valueValid value = true)
+        (if slots.kind = .arrow && slots.lexicalThis.isNone then
+          .fault (heapFault .invalidFunctionMetadata) machine
+        else
+          match firstInvalidCallValue? machine.heap receiver arguments with
+          | some invalid => .fault (.runtime (.danglingEscapingValue invalid)) machine
+          | none => normalizeBody undefined id (hook ref receiver arguments) machine)
+      split
+      · trivial
+      · cases inputs : firstInvalidCallValue? machine.heap receiver arguments with
+        | some invalid => trivial
+        | none =>
+            exact normalizeBody_resultsValid undefined id (hook ref receiver arguments) machine
 
 end Call
 
