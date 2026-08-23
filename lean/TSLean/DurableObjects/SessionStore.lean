@@ -32,7 +32,7 @@ def SessionStore.getFresh (store : SessionStore) (tok : SessionToken) (now : Nat
 
 def SessionStore.prune (store : SessionStore) (now : Nat) : SessionStore :=
   { entries := store.entries.filter (fun (_, s) => s.isFresh now),
-    nodup   := by apply List.Nodup.sublist _ store.nodup; apply List.Sublist.map; exact List.filter_sublist _ }
+    nodup   := by apply List.Nodup.sublist _ store.nodup; apply List.Sublist.map; exact List.filter_sublist }
 
 theorem no_stale_reads (store : SessionStore) (tok : SessionToken) (now : Nat)
     (s : Session) (h : store.getFresh tok now = some s) : s.isFresh now = true := by
@@ -59,8 +59,8 @@ private theorem findSome_mem (l : List (SessionToken × Session)) (tok : Session
     simp only [List.findSome?] at h
     by_cases hcidk : (hd.1 == tok)
     · simp only [hcidk, ite_true] at h
-      exact ⟨hd, List.mem_cons_self _ _, Option.some_inj.mp h⟩
-    · simp only [hcidk, Bool.not_true, ↓reduceIte, ite_false] at h
+      exact ⟨hd, List.mem_cons_self, Option.some_inj.mp h⟩
+    · simp only [hcidk, ↓reduceIte, ite_false] at h
       obtain ⟨p, hp, heq⟩ := ih h
       exact ⟨p, List.mem_cons_of_mem _ hp, heq⟩
 
@@ -73,7 +73,9 @@ theorem prune_removes_expired (store : SessionStore) (tok : SessionToken) (now :
 
 theorem extend_refreshes (s : Session) (ttlMs now : Nat) (h : ttlMs > 0) :
     (s.extend ttlMs now).isFresh (now + ttlMs - 1) = true := by
-  simp [Session.extend, Session.isFresh]; omega
+  have h0 : 0 < ttlMs := h
+  simp only [Session.extend, Session.isFresh]
+  exact decide_eq_true (by omega)
 
 -- Additional theorems
 

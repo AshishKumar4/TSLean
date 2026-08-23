@@ -73,19 +73,17 @@ theorem tryAllow_allowed_count (r : RateLimiter) (now : Nat) (h : (r.tryAllow no
     · simp at h
   -- bound count by events length, then events length by maxCount
   have hevents : (r.tryAllow now).2.events.length ≤ r.maxCount := by
-    simp only [RateLimiter.tryAllow, RateLimiter.prune]
-    split
-    · next hg =>
+    have key : RateLimiter.tryAllow r now =
+        if (RateLimiter.prune r now).events.length < r.maxCount then
+          (true, { RateLimiter.prune r now with events := now :: (RateLimiter.prune r now).events })
+        else (false, RateLimiter.prune r now) := rfl
+    rw [key]
+    by_cases hg : (RateLimiter.prune r now).events.length < r.maxCount
+    · rw [if_pos hg]
       simp only [List.length_cons]
-      have := List.length_filter_le (fun t => decide (now - t < r.windowMs)) r.events
       omega
-    · next hng =>
-      -- false branch: returns (r.prune now), whose events.length ≥ maxCount (since ¬hguard)
-      -- Actually hguard says prune.length < maxCount, and this contradicts the false branch!
-      -- Wait: hng is NOT about hguard... let me reconsider
-      -- hng means NOT (prune.length < maxCount), so prune.length ≥ maxCount
-      -- hguard says prune.length < maxCount -- contradiction with hng!
-      exact absurd hguard (Nat.not_lt.mpr (Nat.le_of_not_lt hng))
+    · rw [if_neg hg]
+      exact absurd hguard (Nat.not_lt.mpr (Nat.le_of_not_lt hg))
   exact Nat.le_trans (countInWindow_le_events _ now) hevents
 
 theorem empty_count (windowMs maxCount now : Nat) :

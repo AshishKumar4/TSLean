@@ -94,7 +94,7 @@ private theorem list_filter_ne_lt (l : List QueueMessage) (id : Nat)
   induction l with
   | nil =>
     obtain ⟨m, hm, _⟩ := hmem
-    exact absurd hm (List.not_mem_nil _)
+    exact absurd hm List.not_mem_nil
   | cons hd tl ih =>
     obtain ⟨m, hml, hmid⟩ := hmem
     simp only [List.mem_cons] at hml

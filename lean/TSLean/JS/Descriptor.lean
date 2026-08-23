@@ -310,21 +310,27 @@ private theorem validatedResult_okSatisfies (update : DescriptorUpdate)
           split
           · cases update.writable with
             | absent =>
-                apply okSatisfies_then (predicate := predicate)
-                split <;> apply okSatisfies_then (predicate := predicate) <;>
+                dsimp only
+                split
+                · apply okSatisfies_then (predicate := predicate)
                   exact okSatisfies_pure predicate _ sameValid
+                · exact okSatisfies_pure predicate _ sameValid
             | present writable =>
                 cases writable with
                 | false =>
-                    apply okSatisfies_then (predicate := predicate)
-                    split <;> apply okSatisfies_then (predicate := predicate) <;>
+                    dsimp only
+                    split
+                    · apply okSatisfies_then (predicate := predicate)
                       exact okSatisfies_pure predicate _ sameValid
+                    · exact okSatisfies_pure predicate _ sameValid
                 | true =>
+                    dsimp only
                     apply okSatisfies_then (predicate := predicate)
-                    split <;> apply okSatisfies_then (predicate := predicate) <;>
+                    split
+                    · apply okSatisfies_then (predicate := predicate)
                       exact okSatisfies_pure predicate _ sameValid
-          · apply okSatisfies_then (predicate := predicate)
-            exact okSatisfies_pure predicate _ sameValid
+                    · exact okSatisfies_pure predicate _ sameValid
+          · exact okSatisfies_pure predicate _ sameValid
   | accessor accessor =>
       cases kind with
       | generic =>
@@ -339,8 +345,10 @@ private theorem validatedResult_okSatisfies (update : DescriptorUpdate)
       | accessor =>
           intro sameValid _
           simp only [validatedResult]
-          split <;> apply okSatisfies_then (predicate := predicate) <;>
+          split
+          · apply okSatisfies_then (predicate := predicate)
             exact okSatisfies_pure predicate _ sameValid
+          · exact okSatisfies_pure predicate _ sameValid
 
 private theorem existingChecks_okSatisfies (update : DescriptorUpdate)
     (current : PropertyDescriptor) (final : Except DescriptorRejection α)
@@ -356,12 +364,27 @@ private theorem existingChecks_okSatisfies (update : DescriptorUpdate)
   split
   · cases update.configurable with
     | absent =>
-        apply okSatisfies_then (predicate := predicate)
-        split <;> apply okSatisfies_then (predicate := predicate) <;> exact finalValid
+        dsimp only
+        split
+        · apply okSatisfies_then (predicate := predicate)
+          exact finalValid
+        · exact finalValid
     | present configurable =>
-        cases configurable <;> apply okSatisfies_then (predicate := predicate) <;>
-          (split <;> apply okSatisfies_then (predicate := predicate) <;> exact finalValid)
-  · apply okSatisfies_then (predicate := predicate)
+        cases configurable with
+        | false =>
+            dsimp only
+            split
+            · apply okSatisfies_then (predicate := predicate)
+              exact finalValid
+            · exact finalValid
+        | true =>
+            dsimp only
+            apply okSatisfies_then (predicate := predicate)
+            split
+            · apply okSatisfies_then (predicate := predicate)
+              exact finalValid
+            · exact finalValid
+  · dsimp only
     exact finalValid
 
 private theorem applyValidatedDescriptor_some_okSatisfies (update : DescriptorUpdate)
@@ -386,20 +409,21 @@ theorem applyValidatedDescriptor_data_writable (update : DescriptorUpdate)
     simp only [Bind.bind, Except.bind, Pure.pure, Except.pure] at applied
     repeat first
       | split at applied
-      | cases update.configurable <;> simp_all
-      | cases update.writable <;> simp_all
       | contradiction
   all_goals
-    simp_all [applySameKind, FieldUpdate.apply]
+    try simp only [Except.ok.injEq] at applied
+    all_goals try cases applied
   all_goals
     repeat first
       | split at applied
-      | cases update.writable <;> simp_all
       | contradiction
   all_goals
-    try simp only [Except.ok.injEq, PropertyDescriptor.data.injEq] at applied
-    cases applied
-    try simp_all
+    try simp only [Except.ok.injEq] at applied
+    all_goals try cases applied
+    all_goals first
+      | rfl
+      | cases update.writable <;> simp [FieldUpdate.apply]
+      | cases update.configurable <;> simp [FieldUpdate.apply]
 
 /-- Successful validated descriptor application preserves all supplied reference-validity policies. -/
 theorem applyValidatedDescriptor_referencesValid (update : DescriptorUpdate)

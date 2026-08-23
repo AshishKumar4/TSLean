@@ -42,7 +42,7 @@ theorem validLength_iff (s : String) (lo hi : Nat) :
 
 theorem validLength_false_iff (s : String) (lo hi : Nat) :
     validLength s lo hi = false ↔ ¬(lo ≤ s.length ∧ s.length ≤ hi) := by
-  simp [validLength, Bool.not_eq_true, decide_eq_false_iff_not, decide_eq_true_eq]
+  simp [validLength, decide_eq_false_iff_not, decide_eq_true_eq]
 
 theorem nonEmpty_iff (s : String) : nonEmpty s = true ↔ s.length > 0 := by
   simp [nonEmpty, decide_eq_true_eq]
@@ -52,9 +52,7 @@ private theorem string_length_eq_zero_iff (s : String) : s.length = 0 ↔ s = ""
   constructor
   · intro h
     apply String.ext
-    change s.data.length = 0 at h
-    change s.data = []
-    exact List.length_eq_zero.mp h
+    simpa using List.length_eq_zero_iff.mp h
   · rintro rfl
     rfl
 
@@ -107,13 +105,13 @@ theorem isValidIdentifier_empty : isValidIdentifier "" = false := by simp [isVal
 theorem containsChar_append_left (s t : String) (c : Char) (h : containsChar s c = true) :
     containsChar (s ++ t) c = true := by
   rw [containsChar_iff] at *
-  change c ∈ s.data ++ t.data
+  rw [String.toList_append]
   exact List.mem_append.mpr (Or.inl h)
 
 theorem containsChar_append_right (s t : String) (c : Char) (h : containsChar t c = true) :
     containsChar (s ++ t) c = true := by
   rw [containsChar_iff] at *
-  change c ∈ s.data ++ t.data
+  rw [String.toList_append]
   exact List.mem_append.mpr (Or.inr h)
 
 theorem nonEmpty_append_left (s t : String) (h : nonEmpty s = true) : nonEmpty (s ++ t) = true := by
@@ -134,7 +132,7 @@ theorem validateMessageId_iff (s : String) : (validateMessageId s).isSome ↔ 1 
 
 theorem isAlphanumeric_append (s t : String) (hs : isAlphanumeric s = true) (ht : isAlphanumeric t = true) :
     isAlphanumeric (s ++ t) = true := by
-  simp only [isAlphanumeric, String.toList, String.data_append, List.all_append, Bool.and_eq_true]
+  simp only [isAlphanumeric, String.toList_append, List.all_append, Bool.and_eq_true]
   simp only [isAlphanumeric] at hs ht
   exact ⟨hs, ht⟩
 
