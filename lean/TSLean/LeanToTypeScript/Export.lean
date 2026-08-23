@@ -14,7 +14,7 @@ private def node (kind : String) (fields : List (String × Json) := []) : Json :
   object (("kind", .str kind) :: fields)
 
 private def documentationFields (environment : Environment) (name : Name) : List (String × Json) :=
-  match docStringExt.find? (level := .server) environment name with
+  match docStringExt.find? environment name with
   | some documentation => [("doc", .str documentation)]
   | none => []
 
@@ -65,7 +65,7 @@ private def ensureDeclarationName (name : Name) : Except String Unit := do
 
 private def declarationModule? (environment : Environment) (name : Name) : Option Name := do
   let index ← environment.getModuleIdxFor? name
-  environment.header.moduleNames[index]?
+  environment.header.moduleNames[index.toNat]?
 
 private def declaredInModules (environment : Environment) (modules : NameSet) (name : Name) : Bool :=
   (declarationModule? environment name).any modules.contains
@@ -358,11 +358,8 @@ private partial def expressionNode (environment : Environment) (targetModules : 
           throw "matches on more than one discriminant are outside this fragment version"
         unless matcherInfo.getNumDiscrEqs = 0 do
           throw "matches binding discriminant equations are outside the checked fragment"
-        unless matcherInfo.overlaps.isEmpty do
-          throw "matches with overlapping alternatives are outside the checked fragment"
-        for alternative in matcherInfo.altInfos do
-          unless alternative.numOverlaps = 0 do
-            throw "match alternatives carrying overlap assumptions are outside the checked fragment"
+        -- Lean 4.16 has no representation for overlapping match alternatives, so the shape check
+        -- below is what refuses an alternative carrying anything beyond its constructor fields.
         unless arguments.length = matcherInfo.arity do
           throw s!"matcher {name} received an unsupported elaborated shape"
         let some motive := arguments[matcherInfo.getMotivePos]?
@@ -383,8 +380,16 @@ private partial def expressionNode (environment : Environment) (targetModules : 
         for constructorName in constructors do
           let some alternativeIndex := alternativeIndexOf alternatives constructorName
             | throw s!"match on {dataName} does not decide {constructorName}"
-          let some alternative := matcherInfo.altInfos[alternativeIndex]?
+          let some (.ctorInfo constructorInfo) := environment.find? constructorName
+            | throw s!"constructor {constructorName} is absent from the elaborated environment"
+          let some alternativeParameters := matcherInfo.altNumParams[alternativeIndex]?
             | throw s!"matcher {name} has no alternative {alternativeIndex}"
+          -- A nullary alternative is thunked behind one `Unit` binder; every other alternative
+          -- abstracts exactly its constructor's fields. Any other parameter count means the
+          -- alternative carries discriminant equations or overlap assumptions.
+          let hasUnitThunk := constructorInfo.numFields = 0
+          unless alternativeParameters = constructorInfo.numFields + (if hasUnitThunk then 1 else 0) do
+            throw s!"matcher {name} alternative {alternativeIndex} carries parameters beyond its constructor fields"
           let some encoded := arguments[matcherInfo.getFirstAltPos + alternativeIndex]?
             | throw s!"matcher {name} received no alternative for {constructorName}"
           -- Lean thunks a nullary alternative behind an unused `Unit` binder; the fragment
@@ -392,7 +397,7 @@ private partial def expressionNode (environment : Environment) (targetModules : 
           -- payload-carrying alternative instead abstracts its constructor's fields in
           -- declaration order, so peeling those binders leaves the arm's own de Bruijn indices
           -- pointing at the fields, innermost binder last.
-          let value ← if alternative.hasUnitThunk then
+          let value ← if hasUnitThunk then
               match encoded.consumeMData with
               | .lam _ _ thunkBody _ =>
                   if thunkBody.hasLooseBVar 0 then
@@ -401,7 +406,7 @@ private partial def expressionNode (environment : Environment) (targetModules : 
               | _ => throw s!"matcher {name} thunked alternative is not an abstraction"
             else
               let mut body := encoded
-              for _ in [0 : alternative.numFields] do
+              for _ in [0 : constructorInfo.numFields] do
                 match body.consumeMData with
                 | .lam _ _ inner _ => body := inner
                 | _ => throw s!"matcher {name} alternative does not abstract its constructor fields"
@@ -846,7 +851,7 @@ private def exportPackage (entryModule : Name) (targetModules : NameSet) (roots 
     let some span := spans[name]?
       | throwError "{name}: source range disappeared before encoding"
     spanned := (match declaration with
-      | .obj fields => Json.obj (fields.insert "span" span)
+      | .obj fields => Json.obj (fields.insert compare "span" span)
       | other => other) :: spanned
   pure (object [
     ("schemaVersion", .num 1),
