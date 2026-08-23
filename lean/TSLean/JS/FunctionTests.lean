@@ -62,7 +62,7 @@ private def testFunctionMetadata : IO Unit := do
   | _, _ => assert! false
   assert! machine.heap.isCallable arrow matches .ok true
   assert! machine.heap.isConstructor arrow matches .ok false
-  assert! own machine.heap arrow "prototype" = none
+  assert! (own machine.heap arrow "prototype").isNone
   match own machine.heap constructor "prototype", own machine.heap prototype "constructor" with
   | some (.data forward), some (.data backward) =>
       assert! forward.value = .object prototype
