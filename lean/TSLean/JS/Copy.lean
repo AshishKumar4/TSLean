@@ -304,19 +304,13 @@ theorem objectAssign_preservesResults (hook : BodyHook P) (target : Value) (sour
         tail.2 afterTarget afterTargetValid targetValid.1⟩
   cases target with
   | object ref =>
-      apply JSM.bind_preservesResults
-      · exact JSM.pure_preservesResults (fun _ _ => True) () (by intros; trivial)
-      · intro _ machine valid _
-        exact ⟨rest.1 machine valid, rest.2 machine valid⟩
+      exact rest
   | primitive primitive =>
       cases primitive with
       | null | undefined =>
           exact ⟨JSM.throwJS_preservesWellFormed _, by intros; rfl⟩
       | boolean value | number value | string value | bigint value | symbol value =>
-          apply JSM.bind_preservesResults
-          · exact JSM.pure_preservesResults (fun _ _ => True) () (by intros; trivial)
-          · intro _ machine valid _
-            exact ⟨rest.1 machine valid, rest.2 machine valid⟩
+          exact rest
 
 private def spreadSources (hook : BodyHook P) (target : RefId)
     (exclusions : List PropertyKey) : List Value → JSM P Unit

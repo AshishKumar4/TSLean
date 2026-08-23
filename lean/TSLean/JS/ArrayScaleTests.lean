@@ -25,9 +25,9 @@ private def allocateArray (heap : Heap) (values : Array (Option Value)) : IO (Re
 private def arrayScale : IO Unit := do
   let totalStart ← IO.monoMsNow
   let constructionStart ← IO.monoMsNow
-  let denseValues := Array.mkArray 100000 (some undefined)
+  let denseValues := Array.replicate 100000 (some undefined)
   let (dense, heap) ← allocateArray Heap.empty denseValues
-  let sparseValues := (Array.mkArray 100000 none)
+  let sparseValues := (Array.replicate 100000 none)
     |>.setIfInBounds 0 (some undefined)
     |>.setIfInBounds 99999 (some undefined)
   let (sparse, heap) ← allocateArray heap sparseValues
@@ -57,7 +57,7 @@ private def arrayScale : IO Unit := do
 private def iteratorScale : IO Unit := do
   let totalStart ← IO.monoMsNow
   let constructionStart ← IO.monoMsNow
-  let (array, heap) ← allocateArray Heap.empty (Array.mkArray 100000 (some undefined))
+  let (array, heap) ← allocateArray Heap.empty (Array.replicate 100000 (some undefined))
   let machine := (Machine.initial platform 10).setHeap heap
   let (iterator, machine) ← match Iterator.arrayValues array machine with
     | .done (.normal iterator) next => pure (iterator, next)

@@ -349,7 +349,7 @@ private theorem argumentZero_valid (machine : Machine proofPlatform) (arguments 
   | none => rfl
   | some value =>
       have member : value ∈ arguments.toList :=
-        (Array.mem_toList_iff value arguments).mpr (Array.mem_of_getElem? found)
+        Array.mem_toList_iff.mpr (Array.mem_of_getElem? found)
       exact List.all_eq_true.mp valid value member
 
 private def realisticProofHook : BodyHook proofPlatform := fun ref receiver arguments machine =>
@@ -643,18 +643,18 @@ private def parentSource : Machine proofPlatform :=
   | .error _ => machine
 
 private def parentReset : Machine proofPlatform :=
-  match parentSource.setEnvironment ⟨1⟩ ⟨none, Std.HashMap.empty⟩ with
+  match parentSource.setEnvironment ⟨1⟩ ⟨none, Std.HashMap.emptyWithCapacity⟩ with
   | .ok next => next
   | .error _ => parentSource
 
 private theorem parent_reset_rejected : ¬parentSource.ContinuesFrom parentReset := by
   intro continued
   have oldFound : parentSource.environments[1]? =
-      some ⟨some ⟨0⟩, Std.HashMap.empty⟩ := by rfl
+      some ⟨some ⟨0⟩, Std.HashMap.emptyWithCapacity⟩ := by rfl
   obtain ⟨nextEnvironment, nextFound, parentEq, bindings⟩ :=
-    continued.2.2.2.2.2.2 1 ⟨some ⟨0⟩, Std.HashMap.empty⟩ oldFound
+    continued.2.2.2.2.2.2 1 ⟨some ⟨0⟩, Std.HashMap.emptyWithCapacity⟩ oldFound
   have newFound : parentReset.environments[1]? =
-      some ⟨none, Std.HashMap.empty⟩ := by rfl
+      some ⟨none, Std.HashMap.emptyWithCapacity⟩ := by rfl
   rw [newFound] at nextFound
   simp at nextFound
   subst nextEnvironment
@@ -667,7 +667,7 @@ private def bindingSource : Machine proofPlatform :=
   | _ => machine
 
 private def bindingReset : Machine proofPlatform :=
-  match bindingSource.setEnvironment ⟨0⟩ ⟨none, Std.HashMap.empty⟩ with
+  match bindingSource.setEnvironment ⟨0⟩ ⟨none, Std.HashMap.emptyWithCapacity⟩ with
   | .ok next => next
   | .error _ => bindingSource
 
@@ -677,7 +677,7 @@ private theorem binding_removal_rejected : ¬bindingSource.ContinuesFrom binding
   -- declaration's own definition with the collection's rewriting lemmas.
   have oldFound : ∃ record, bindingSource.environments[0]? = some record ∧
       record.bindings[JSString.ofLeanString "kept"]? = some ⟨0⟩ := by
-    refine ⟨⟨none, Std.HashMap.empty.insert (JSString.ofLeanString "kept") ⟨0⟩⟩,
+    refine ⟨⟨none, Std.HashMap.emptyWithCapacity.insert (JSString.ofLeanString "kept") ⟨0⟩⟩,
       ?_, by simp⟩
     simp [bindingSource, Environment.declare, Machine.getEnvironment, Machine.allocateCell,
       Machine.setEnvironment, Machine.initial]
@@ -685,14 +685,14 @@ private theorem binding_removal_rejected : ¬bindingSource.ContinuesFrom binding
   obtain ⟨nextEnvironment, nextFound, parentEq, bindings⟩ :=
     continued.2.2.2.2.2.2 0 record environmentFound
   have newFound : bindingReset.environments[0]? =
-      some ⟨none, Std.HashMap.empty⟩ := by
+      some ⟨none, Std.HashMap.emptyWithCapacity⟩ := by
     have inBounds : 0 < bindingSource.environments.size :=
       (Array.getElem?_eq_some_iff.mp environmentFound).choose
     have resetBy : bindingSource.setEnvironment ⟨0⟩
-        ⟨none, Std.HashMap.empty⟩ = .ok bindingReset := by
+        ⟨none, Std.HashMap.emptyWithCapacity⟩ = .ok bindingReset := by
       unfold bindingReset
       cases updated : bindingSource.setEnvironment ⟨0⟩
-          ⟨none, Std.HashMap.empty⟩ with
+          ⟨none, Std.HashMap.emptyWithCapacity⟩ with
       | error fault =>
           unfold Machine.setEnvironment at updated
           simp [inBounds] at updated

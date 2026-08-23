@@ -64,10 +64,9 @@ private def run : IO Unit := do
   let cycleStart ← IO.monoMsNow
   let cycleMs ← match cycleEq : safeHeap.setPrototypeOf prototype (some leaf) with
   | .ok (false, unchanged) =>
-      have identity : unchanged = safeHeap :=
+      have _identity : unchanged = safeHeap :=
         Heap.failed_setPrototypeOf_preserves_heap safeHeap unchanged prototype (some leaf) cycleEq
-      match identity with
-      | rfl => pure ((← IO.monoMsNow) - cycleStart)
+      pure ((← IO.monoMsNow) - cycleStart)
   | _ => throw (IO.userError "deep prototype cycle was not rejected")
   let lookupStart ← IO.monoMsNow
   let result := Instanceof.ordinaryHasInstance call constructor (.object leaf)

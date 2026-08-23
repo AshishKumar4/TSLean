@@ -84,7 +84,10 @@ theorem bind_assoc (program : CoercionProgram α) (next : α → CoercionProgram
   | typeError message | throw message => rfl
 
 instance : LawfulMonad CoercionProgram := LawfulMonad.mk' CoercionProgram
-  (by intro α program; simpa only [id_map] using bind_pure program)
+  (by
+    intro α program
+    change program >>= pure = program
+    exact bind_pure program)
   pure_bind bind_assoc
 
 /-- Raises one typed operation into the free program. -/
@@ -1268,7 +1271,7 @@ structure JSMEffectsContract (target : CoercionEffects (JSM P))
   ordinary : Instanceof.OrdinaryHasInstanceContract ordinary
 
 /-- Free programs whose explicit throws are intrinsically valid primitive values. -/
-def Safe : CoercionProgram α → Prop
+@[simp] def Safe : CoercionProgram α → Prop
   | .pure _ => True
   | .get _ _ _ next => ∀ value, Safe (next value)
   | .call _ _ _ next => ∀ value, Safe (next value)
@@ -1277,6 +1280,10 @@ def Safe : CoercionProgram α → Prop
   | .typeError _ => True
   | .throw (.primitive _) => True
   | .throw (.object _) => False
+@[simp] theorem safe_pure (value : α) : Safe (Pure.pure value : CoercionProgram α) := by
+  change Safe (.pure value)
+  trivial
+
 
 /-- Predicate satisfied by every possible normal leaf of a free program. -/
 def Results (predicate : α → Prop) : CoercionProgram α → Prop
@@ -1513,7 +1520,7 @@ theorem safe_tryOrdinaryMethods (receiver : RefId) (names : List String) :
       unfold AbstractOperations.tryOrdinaryMethodsWith
       apply Safe.bind (safe_tryOrdinaryMethod receiver name)
       intro result
-      cases result <;> simp [Safe, induction]
+      cases result <;> simp [induction]
 
 theorem safe_ordinaryToPrimitive (receiver : RefId) (hint : PreferredType) :
     Safe (AbstractOperations.ordinaryToPrimitiveWith effects receiver hint) := by
@@ -1571,7 +1578,7 @@ private theorem safe_primitiveAgainstObject (primitive : Primitive) (object : Re
 theorem safe_looseEqual (left right : Value) :
     Safe (AbstractEquality.looseEqualWith effects left right) := by
   cases left <;> cases right <;>
-    simp [AbstractEquality.looseEqualWith, safe_primitiveAgainstObject, Safe]
+    simp [AbstractEquality.looseEqualWith, safe_primitiveAgainstObject]
 
 private theorem safe_stringAddition (left right : Primitive) :
     Safe (do
@@ -2037,8 +2044,11 @@ theorem getMethod_preservesResults (hook : BodyHook P)
                 cases equal
                 exact ⟨Heap.isCallable_true_valueValid final.heap method callableResult,
                   callableResult⟩⟩
-      simpa [continuation] using
-        And.intro (continuationPreserves.1 machine valid) (continuationPreserves.2 machine valid)
+      change
+        (JSM.bind ((CoercionEffects.forJSM hook).isCallable method) continuation machine).MachinePreserved machine ∧
+        (JSM.bind ((CoercionEffects.forJSM hook).isCallable method) continuation machine).CompletionValuesValid
+          (GetMethodResultValid (P := P))
+      exact ⟨continuationPreserves.1 machine valid, continuationPreserves.2 machine valid⟩
 
 /-- OrdinaryToPrimitive returns a reference-free primitive and validates every abrupt value. -/
 theorem ordinaryToPrimitive_preservesResults (hook : BodyHook P)
