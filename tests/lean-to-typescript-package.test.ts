@@ -1882,7 +1882,9 @@ describe('published Lean to TypeScript API', () => {
       // Every input a registered declaration accepts is decoded by an exported boundary that reads
       // the named union, never `unknown`: a consumer whose lint forbids unparsed parameters has to
       // be able to adopt the artifact unmodified, and a model with no adapter has nowhere else to
-      // put the boundary.
+      // put the boundary. The match is exact, so registering a model whose input is optional stops
+      // here rather than passing on the boundary of the type the `Option` wraps: how the artifact
+      // presents presence is a decision, and there is no such model yet to decide it against.
       expect(readFileSync(generatedPath, 'utf8')).not.toMatch(/:\s*unknown\b/u);
       expect(undecodedInputs(generatedPath, entrypoint['declarations'] as readonly string[])).toEqual([]);
 

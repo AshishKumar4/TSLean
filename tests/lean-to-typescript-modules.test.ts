@@ -572,6 +572,8 @@ describe('Lean package to TypeScript module tree', () => {
             '  | .first => box.flag && flag',
             '  | .second => flag',
             '',
+            'def passes (tag : Option Tag) : Option Tag := tag',
+            '',
             'end Fixture',
             '',
           ].join('\n'),
@@ -582,7 +584,7 @@ describe('Lean package to TypeScript module tree', () => {
           projectRoot: fixture.projectRoot,
           moduleName: 'Fixture.Entry',
           sourcePath: join(fixture.sourceRoot, 'Fixture', 'Entry.lean'),
-          declarations: ['Fixture.reads'],
+          declarations: ['Fixture.passes', 'Fixture.reads'],
         } satisfies LeanToTypeScriptRequest;
         const emitted = compileLeanToTypeScript(request);
         verifyLeanToTypeScriptPackage(emitted);
@@ -609,6 +611,11 @@ describe('Lean package to TypeScript module tree', () => {
           'export function reads(tag: Tag, box: Box, flag: boolean): boolean {',
         );
         expect(code.get('Fixture/Entry.ts')).toContain('import { type Box } from "./Box.js";');
+        // An optional input names the same boundary: presence is the caller's to resolve, and the
+        // type it wraps gets no second decoder for being reached through an `Option`.
+        expect(code.get('Fixture/Entry.ts')).toContain(
+          'export function passes(tag: Tag | undefined): Tag | undefined {',
+        );
         expect(occurrences(': unknown')).toBe(0);
         expect(moduleBytes(compileLeanToTypeScript(request))).toEqual(moduleBytes(emitted));
       } finally {
