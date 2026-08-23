@@ -22,7 +22,7 @@ theorem gcd'_dvd_right (a b : Nat) : gcd' a b ∣ b := Nat.gcd_dvd_right a b
 theorem gcd'_comm (a b : Nat) : gcd' a b = gcd' b a := Nat.gcd_comm a b
 theorem lcm'_comm (a b : Nat) : lcm' a b = lcm' b a := Nat.lcm_comm a b
 theorem abs'_nonneg (x : Int) : (abs' x : Int) ≥ 0 := by
-  simpa only [abs'] using Int.ofNat_nonneg x.natAbs
+  simpa only [abs'] using Int.natCast_nonneg x.natAbs
 theorem abs'_neg (x : Int) (h : x ≤ 0) : (abs' x : Int) = -x := by
   simpa only [abs'] using Int.ofNat_natAbs_of_nonpos h
 theorem abs'_pos (x : Int) (h : 0 ≤ x) : (abs' x : Int) = x := by
@@ -74,7 +74,7 @@ theorem ilog2_two : ilog2 2 = 1 :=
   Nat.le_antisymm (Nat.le_of_lt_succ ((Nat.log2_lt (k := 2) (by decide)).mpr (by decide)))
     ((Nat.le_log2 (k := 1) (by decide)).mpr (by decide))
 theorem gcd_le_left (a b : Nat) (h : 0 < a) : gcd' a b ≤ a := Nat.gcd_le_left b h
-theorem gcd_le_right (a b : Nat) (h : 0 < b) : gcd' a b ≤ b := Nat.gcd_le_right b h
+theorem gcd_le_right (a b : Nat) (h : 0 < b) : gcd' a b ≤ b := Nat.gcd_le_right a h
 theorem lcm_dvd_mul_left (a b : Nat) : a ∣ lcm' a b := Nat.dvd_lcm_left a b
 theorem lcm_dvd_mul_right (a b : Nat) : b ∣ lcm' a b := Nat.dvd_lcm_right a b
 
