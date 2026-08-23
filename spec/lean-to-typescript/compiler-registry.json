@@ -21,7 +21,7 @@
       },
       "generatedTarget": {
         "source": "examples/lean-to-typescript/generated/TSLean/Examples/Placement.ts",
-        "manifest": "examples/lean-to-typescript/placement.generated.manifest.json"
+        "manifest": "examples/lean-to-typescript/generated/tslean.manifest.json"
       },
       "runtimeAdapter": "examples/lean-to-typescript/placement.adapter.ts",
       "boundsArtifact": "spec/lean-to-typescript/placement.bounds.json"
@@ -47,7 +47,7 @@
       },
       "generatedTarget": {
         "source": "examples/agent-core/facets/generated/AgentCore/Facets/Enforcement.ts",
-        "manifest": "examples/agent-core/facets/enforcement.generated.manifest.json"
+        "manifest": "examples/agent-core/facets/generated/tslean.manifest.json"
       },
       "boundsArtifact": "spec/lean-to-typescript/enforcement.bounds.json"
     }

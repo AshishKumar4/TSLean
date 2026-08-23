@@ -59,7 +59,7 @@
             }
           }
         ],
-        "bodySha256": "sha256:e6d5a2c625b5907ff47a9ba962abe0f385f6983916634b8ca8e24817472cb0eb",
+        "bodySha256": "sha256:8c55f34edf70cdf9177010b209b508ad0a99509a75fc3954c8494e4cbc9c4f69",
         "sourceMapSha256": "sha256:268df1d4e5eeee1616b8876ff6a40b9a63d374c210c7a4c653beec9518d9cdf0"
       },
       {
@@ -107,7 +107,7 @@
             }
           }
         ],
-        "bodySha256": "sha256:892c1eb3c52d5a13fc427e3c616ad7ffca1fa0a2bc69f6c8640699da5bbaa982",
+        "bodySha256": "sha256:7675c4c116342070990539179b2a99a80e2d72be433ee84462ef9b2d16d67fe0",
         "sourceMapSha256": "sha256:6fd4f42e98aee229e613f584de1b69719cbb40c2a141ca950659b9c48e015b41"
       },
       {
@@ -541,12 +541,12 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:artifact-transaction",
-        "sha256": "sha256:b9716dd0754843469e74cc52280e74c03ce09c6f1b1e0d971a4b64bd5e8f083f"
+        "sha256": "sha256:38bf0064330acace5a9da2ddc361fe4ffd8ef485869a9b781b1ff2780d8fcbfe"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:cli",
-        "sha256": "sha256:cafda93b9d6c902da6b3f1d3f08b0cfbc7e8f3ff05f2c2100149ecfc58789e71"
+        "sha256": "sha256:28ec5cde17a6459b13a72695b374e56003ad6bba838723e61f5d8146bd92d1e8"
       },
       {
         "kind": "compiler-source",
@@ -556,7 +556,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:emitter",
-        "sha256": "sha256:48ae669cf81d2414c9b39567f963a7544b267fd1361d78baa13e09fbb8da2ec8"
+        "sha256": "sha256:19648b27537e9547b870ad8da5140cda5c899a4bdb0cf2a6e7c45faa3367d047"
       },
       {
         "kind": "compiler-source",
@@ -571,7 +571,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:ir",
-        "sha256": "sha256:c07cc8126ab444173a2ce1d3318760e8d2d4d4940203593ade28e3288f4b596d"
+        "sha256": "sha256:387472025190c34fc5bb6f3ab2bc77d9ed3a352d359dd2c7c8ca99482bcbaca6"
       },
       {
         "kind": "compiler-source",
@@ -591,12 +591,12 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:package",
-        "sha256": "sha256:79035f40ba92e0be7da5fc7a7171433f88cfeeeac8a59172e87d1fb258b42baf"
+        "sha256": "sha256:58e4014bb006e15059e3461d941cf56061df3b25843e52d901f32caf718aa48d"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:package-layout",
-        "sha256": "sha256:0880be680c81ddcd4af0dd0aa421c15f813e628eb96b30d11a3ac0ddda141192"
+        "sha256": "sha256:020e02e764da150f55e55fb4cac9a051af2562b19df3578190beb1452b351c07"
       },
       {
         "kind": "compiler-source",
@@ -611,7 +611,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:spec:compiler-registry.json",
-        "sha256": "sha256:93a77d09448ad06c10ca35eff770fda22f554107c2acdd99495096a22dc2f108"
+        "sha256": "sha256:61b7bd5b65e06f7f65e1b743903565d5e41dbdc950e25aa8591fe82ba3f3287b"
       },
       {
         "kind": "compiler-source",
@@ -659,9 +659,9 @@
         "sha256": "sha256:651c8accb402b0c071cd336e9d3dc0a55516b1bfb434ddc4801f14936785b1d2"
       }
     ],
-    "inputClosureSha256": "sha256:20ffff57c6fc9b19c8f4839d36f3850ed184a2dee86b8a0f87dbdc443b990574",
+    "inputClosureSha256": "sha256:feebdf46169be00b8477dc6d41fd63a47161b1a7884407f2fc9b3c44712eb47f",
     "semanticIrSha256": "sha256:506ca7bc62f2597f467a5f15150a77335e1af01c6eb9c2f6a3ef88c46198db7d",
-    "generatedBodySha256": "sha256:0c65bce36253e04e6ae09e2338a917657a1c3711a8f9efc700d0e4e5aa90b5b9"
+    "generatedBodySha256": "sha256:19fb59c451dec3b307a009e0586002398ad8f7eed67d90ba982e62e02fbcbe11"
   },
   "environment": {
     "runtime": "node:v22.22.3",

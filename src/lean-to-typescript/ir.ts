@@ -204,19 +204,23 @@ function assertClosureAccountsFor(
 }
 
 /**
- * A qualified Lean name becomes its final component in TypeScript. Two different Lean modules can
- * legally declare `Config`; one generated module that imports both could not name them without an
- * aliasing policy the checked fragment has not specified. Refuse the collision before emission,
- * naming both sources instead of collapsing one into an arbitrary Map entry.
+ * A qualified Lean name becomes its final component in TypeScript. No two declarations may claim
+ * one emitted binding: cross-module aliases have no checked representation policy, and a malformed
+ * IR that attributes both to one module would otherwise produce duplicate TS bindings. Refuse both
+ * shapes before emission, naming the declarations rather than letting a Map choose one.
  */
 function assertDistinctEmittedDeclarationNames(declarations: readonly LeanDeclaration[]): void {
   const owners = new Map<string, LeanDeclaration>();
   for (const declaration of [...declarations].sort((left, right) => compareCodePoints(left.name, right.name))) {
     const emitted = localName(declaration.name);
     const existing = owners.get(emitted);
-    if (existing !== undefined && existing.module !== declaration.module) {
+    if (existing !== undefined) {
+      const detail =
+        existing.module === declaration.module
+          ? `both are attributed to Lean module ${declaration.module}`
+          : `are attributed to different Lean modules ${existing.module} and ${declaration.module}`;
       throw new TypeError(
-        `${existing.name} (${existing.module}) and ${declaration.name} (${declaration.module}) both emit ${emitted}; rename one before compiling this module tree`,
+        `${existing.name} and ${declaration.name} both emit ${emitted}; ${detail}; rename one before compiling this module tree`,
       );
     }
     owners.set(emitted, declaration);

@@ -23,7 +23,7 @@ const repositoryRoot = resolve(import.meta.dirname, '..');
 const leanRoot = join(repositoryRoot, 'lean');
 const sourcePath = join(leanRoot, 'TSLean', 'Examples', 'Placement.lean');
 const generatedRoot = join(repositoryRoot, 'examples', 'lean-to-typescript', 'generated');
-const manifestPath = join(repositoryRoot, 'examples', 'lean-to-typescript', 'placement.generated.manifest.json');
+const manifestPath = join(repositoryRoot, 'examples', 'lean-to-typescript', 'generated', 'tslean.manifest.json');
 const request = {
   projectRoot: leanRoot,
   moduleName: 'TSLean.Examples.Placement',
@@ -36,7 +36,8 @@ const enforcementManifestPath = join(
   'examples',
   'agent-core',
   'facets',
-  'enforcement.generated.manifest.json',
+  'generated',
+  'tslean.manifest.json',
 );
 const enforcementRequest = {
   projectRoot: leanRoot,
@@ -199,9 +200,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
         },
       },
     };
-    expect(() => verifyLeanToTypeScriptPackage(misfiled)).toThrowError(
-      /input .* belongs to the other identity plane/u,
-    );
+    expect(() => verifyLeanToTypeScriptPackage(misfiled)).toThrowError(/input .* belongs to the other identity plane/u);
   });
 
   test('generates byte-identical artifacts under a different generating runtime', () => {
@@ -230,7 +229,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     ).toThrowError(/Lean source path does not define module TSLean\.Examples\.Placement/u);
   });
 
-  test('emits a root declared by an imported module into that module\'s own generated file', () => {
+  test("emits a root declared by an imported module into that module's own generated file", () => {
     const fixture = createLeanProjectFixture('import Policy.Extra\n', 'Policy');
     const dependencyDirectory = join(fixture.sourceRoot, 'Policy');
     mkdirSync(dependencyDirectory, { recursive: true });
@@ -273,7 +272,10 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
             declarations: [declaration],
           }),
         ).toThrowError(
-          new RegExp(`exported declaration ${declaration.replace('.', '\\.')} is outside the frozen target module closure`, 'u'),
+          new RegExp(
+            `exported declaration ${declaration.replace('.', '\\.')} is outside the frozen target module closure`,
+            'u',
+          ),
         );
       }
     } finally {
@@ -550,9 +552,9 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
           sha256: sha256(readFileSync(wrapperPath)),
         }),
       );
-      expect(
-        emitted.manifest.environment.inputs.some((input) => input.identity.startsWith('toolchain-runtime:')),
-      ).toBe(true);
+      expect(emitted.manifest.environment.inputs.some((input) => input.identity.startsWith('toolchain-runtime:'))).toBe(
+        true,
+      );
       const canonicalLake = spawnSync(launcherPath, ['env', 'which', 'lake'], {
         cwd: fixture.projectRoot,
         encoding: 'utf8',
@@ -1334,9 +1336,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       });
       const code = entryCode(emitted);
       expect(code).toContain('export type Seam = "inSession" | "crossSession" | "external";');
-      expect(code).toContain(
-        'return seam === "inSession" ? true : seam === "crossSession" ? trusted : false;',
-      );
+      expect(code).toContain('return seam === "inSession" ? true : seam === "crossSession" ? trusted : false;');
       expect(code).not.toContain('class');
       const admits = requireFunction(evaluateGeneratedModuleExports(code), 'admits');
       expect([

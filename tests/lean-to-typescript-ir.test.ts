@@ -85,6 +85,14 @@ describe('Lean semantic IR trust boundary', () => {
       /Example\.identity.*Other\.identity.*both emit identity/u,
     ],
     [
+      'colliding emitted names attributed to the same module',
+      program(
+        [identityDeclaration, { ...otherDeclaration, module: 'Example' }],
+        [identityClosure, { ...otherClosure, module: 'Example' }],
+      ),
+      /Example\.identity.*Other\.identity.*both emit identity.*both are attributed to Lean module Example/u,
+    ],
+    [
       'declaration without a declaring module',
       program([
         {

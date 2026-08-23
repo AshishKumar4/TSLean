@@ -6,10 +6,11 @@ TSLean now has a working compiler slice from elaborated Lean 4 declarations to
 TypeScript. The first fragment is deliberately small. It covers pure, total,
 first-order decisions over finite algebraic data and immutable records.
 
-The pilot compiles `TSLean.Examples.Placement.choosePlacement` to the checked-in
-`examples/lean-to-typescript/placement.generated.ts`. The generated function is the
-only TypeScript implementation of that decision. An exhaustive test compares all 4,096
-inputs with Lean.
+The placement pilot compiles `TSLean.Examples.Placement.choosePlacement` to
+`examples/lean-to-typescript/generated/TSLean/Examples/Placement.ts`. Its manifest
+is `examples/lean-to-typescript/generated/tslean.manifest.json`. The generated
+function is the only TypeScript implementation of that decision. An exhaustive
+test compares all 4,096 inputs with Lean.
 
 This establishes deterministic generation and exhaustive agreement for that finite
 decision. It does not prove a general Lean-to-TypeScript refinement theorem.

@@ -2,7 +2,7 @@
   "name": "tslean",
   "version": "0.1.0",
   "type": "module",
-  "description": "TypeScript \u2192 Lean 4 transpiler under semantic reconstruction",
+  "description": "TypeScript → Lean 4 transpiler under semantic reconstruction",
   "main": "dist/codegen/index.js",
   "types": "dist/codegen/index.d.ts",
   "exports": {
@@ -44,9 +44,9 @@
     "format:check:foundation": "prettier --check 'scripts/*.mjs' 'evidence/*.json' package.json",
     "differential:generate": "bun scripts/generate-differential-manifest.mjs",
     "differential:check": "bun scripts/generate-differential-manifest.mjs --check && bun scripts/check-differential-inventory.mjs",
-    "lean-to-typescript:generate": "node dist/lean-to-typescript/cli.js --project-root lean --module TSLean.Examples.Placement --source lean/TSLean/Examples/Placement.lean --declaration TSLean.Examples.Placement.choosePlacement --out-dir examples/lean-to-typescript/generated --manifest examples/lean-to-typescript/placement.generated.manifest.json",
+    "lean-to-typescript:generate": "node dist/lean-to-typescript/cli.js --project-root lean --module TSLean.Examples.Placement --source lean/TSLean/Examples/Placement.lean --declaration TSLean.Examples.Placement.choosePlacement --out-dir examples/lean-to-typescript/generated --manifest examples/lean-to-typescript/generated/tslean.manifest.json",
     "lean-to-typescript:check": "bun run lean-to-typescript:generate --check",
-    "lean-to-typescript:enforcement:generate": "node dist/lean-to-typescript/cli.js --project-root lean --module AgentCore.Facets.Enforcement --source lean/AgentCore/Facets/Enforcement.lean --declaration AgentCore.Facets.enforcementFloor --declaration AgentCore.Facets.claimHonorsEnforcementFloor --out-dir examples/agent-core/facets/generated --manifest examples/agent-core/facets/enforcement.generated.manifest.json",
+    "lean-to-typescript:enforcement:generate": "node dist/lean-to-typescript/cli.js --project-root lean --module AgentCore.Facets.Enforcement --source lean/AgentCore/Facets/Enforcement.lean --declaration AgentCore.Facets.enforcementFloor --declaration AgentCore.Facets.claimHonorsEnforcementFloor --out-dir examples/agent-core/facets/generated --manifest examples/agent-core/facets/generated/tslean.manifest.json",
     "lean-to-typescript:enforcement:check": "bun run lean-to-typescript:enforcement:generate --check",
     "benchmark:coercion-effects": "cd lean && lake exe js-coercion-effects-benchmark",
     "evidence:generate": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase5-remove-false-claims-input.json",
@@ -112,7 +112,7 @@
     "js:trust": "bun scripts/check-js-axioms.mjs --evidence evidence/phase5-remove-false-claims-input.json",
     "verify": "bun run format:check:foundation && bun run differential:check && bun run js:trust && bun run evidence:check && bun run lint && bun run build && bun run lean-to-typescript:check && bun run lean-to-typescript:enforcement:check && bun run lean-to-typescript:package:check && bun run test && bun run lean:gate && cd lean && lake build",
     "prepublishOnly": "bun run verify",
-    "lean-to-typescript:package:generate": "node dist/lean-to-typescript/cli.js --project-root lean --module TSLean.Examples.Package.Decision --source lean/TSLean/Examples/Package/Decision.lean --declaration TSLean.Examples.Package.decideAccess --declaration TSLean.Examples.Package.grantedCapability --declaration TSLean.Examples.Package.Policy.effective --out-dir examples/lean-to-typescript/package/generated --manifest examples/lean-to-typescript/package/generated.manifest.json",
+    "lean-to-typescript:package:generate": "node dist/lean-to-typescript/cli.js --project-root lean --module TSLean.Examples.Package.Decision --source lean/TSLean/Examples/Package/Decision.lean --declaration TSLean.Examples.Package.decideAccess --declaration TSLean.Examples.Package.grantedCapability --declaration TSLean.Examples.Package.Policy.effective --out-dir examples/lean-to-typescript/package/generated --manifest examples/lean-to-typescript/package/generated/tslean.manifest.json",
     "lean-to-typescript:package:check": "bun run lean-to-typescript:package:generate --check"
   },
   "keywords": [
@@ -151,6 +151,7 @@
     "eslint-config-prettier": "^10.1.8",
     "oxlint": "1.78.0",
     "prettier": "^3.8.2",
+    "source-map-js": "^1.2.1",
     "tsx": "^4.21.0",
     "typescript-eslint": "^8.58.1",
     "vitest": "^4.1.2"

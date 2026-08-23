@@ -3,7 +3,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { LeanToTypeScriptManifest, LeanToTypeScriptPackage } from './artifact.js';
+import type { LeanToTypeScriptManifest } from './artifact.js';
 import {
   decodeManifest,
   environmentAttestationDigest,
@@ -66,6 +66,7 @@ export function runLeanToTypeScriptCli(
     { name: '--source', path: sourcePath },
     { name: '--project-root', path: projectRoot },
   ]);
+  assertManifestIsInsideOutputRoot(outputDirectory, manifestPath);
   const initialDestinations = assertArtifactPathsAreIsolated(
     [{ name: '--manifest', path: manifestPath }],
     [{ name: '--source', path: sourcePath }],
@@ -101,29 +102,67 @@ export function runLeanToTypeScriptCli(
     ]),
     { name: '--manifest', path: manifestPath, contents: `${JSON.stringify(emitted.manifest, null, 2)}\n` },
   ];
-  for (const file of files) {
-    if (file.name === '--manifest') continue;
-    if (!isWithin(currentRoot.canonicalPath, resolve(file.path))) {
-      throw new TypeError(`generated file escapes the output root: ${file.path}`);
+  // Validate every file the fresh package names before opening a previous manifest. A hostile
+  // manifest alias may be arbitrary bytes; it must first be rejected as an alias/input collision,
+  // not parsed as if it were trusted compiler metadata.
+  const baseDestinations = assertArtifactPathsAreIsolated(
+    files.map(({ name, path }) => ({ name, path })),
+    compilerInputs,
+  );
+  assertSameDestinationIdentities(
+    initialDestinations,
+    baseDestinations.filter((destination) => destination.name === '--manifest'),
+  );
+  for (const destination of baseDestinations) {
+    if (destination.name === '--manifest') continue;
+    if (!isWithin(currentRoot.canonicalPath, destination.canonicalPath)) {
+      throw new TypeError(`generated file escapes the output root through a symbolic link: ${destination.path}`);
     }
   }
-  const stale = staleGeneratedFiles(outputDirectory, emitted);
+  const priorOwned = priorOwnedGeneratedFiles(
+    outputDirectory,
+    requiredDestination(baseDestinations, '--manifest').canonicalPath,
+  );
+  const expected = new Set(files.filter((file) => file.name !== '--manifest').map((file) => resolve(file.path)));
+  const existing = generatedFilesUnder(outputDirectory);
+  const unexpected = existing.filter((path) => !expected.has(path) && !priorOwned.has(path));
+  const obsolete = existing.filter((path) => !expected.has(path) && priorOwned.has(path));
+  const [unexpectedPath] = unexpected;
+  if (unexpectedPath !== undefined) {
+    throw new TypeError(`generated tree holds an unexpected file: ${unexpectedPath}`);
+  }
+  for (const path of [...expected, ...obsolete]) {
+    assertGeneratedPathHasNoSymlink(outputDirectory, path);
+  }
   const destinations = [
     ...files.map(({ name, path }) => ({ name, path })),
-    ...stale.map((path) => ({ name: `stale:${relative(outputDirectory, path).split(sep).join('/')}`, path })),
+    ...obsolete.map((path) => ({ name: `obsolete:${relative(outputDirectory, path).split(sep).join('/')}`, path })),
   ];
   const currentDestinations = assertArtifactPathsAreIsolated(destinations, compilerInputs);
   assertSameDestinationIdentities(
     initialDestinations,
     currentDestinations.filter((destination) => destination.name === '--manifest'),
   );
+  // This check uses canonical destinations, not lexical joins: a generated child directory may be
+  // swapped for a symlink after the output root itself was bound.
+  for (const destination of currentDestinations) {
+    if (destination.name === '--manifest') continue;
+    if (!isWithin(currentRoot.canonicalPath, destination.canonicalPath)) {
+      throw new TypeError(`generated file escapes the output root through a symbolic link: ${destination.path}`);
+    }
+  }
+  const manifestDestination = requiredDestination(currentDestinations, '--manifest');
+  const scope = {
+    identity: currentRoot.canonicalPath,
+    root: currentRoot.canonicalPath,
+  };
   if (!options.check) {
-    // One transaction over the whole owned tree: the manifest names the exact file set, so a run
-    // that emits fewer modules than the last one removes the rest instead of leaving them behind.
+    // One transaction over the files the old manifest owned and the new manifest names. An unknown
+    // sibling is never a deletion candidate, even if it looks like generated TypeScript.
     publishArtifacts(
-      { identity: `${currentRoot.canonicalPath}\0${manifestPath}`, lockDestination: '--manifest' },
+      scope,
       currentDestinations,
-      [...files.map((file) => file.contents), ...stale.map(() => undefined)],
+      [...files.map((file) => file.contents), ...obsolete.map(() => undefined)],
       platform,
     );
     return;
@@ -134,14 +173,18 @@ export function runLeanToTypeScriptCli(
     if (file.name === '--manifest') continue;
     assertCurrent(destination.canonicalPath, file.contents);
   }
-  const recordedPath = requiredDestination(currentDestinations, '--manifest').canonicalPath;
-  const recorded = readManifest(recordedPath);
+  const recorded = readManifest(manifestDestination.canonicalPath);
   if (semanticIdentityDigest(recorded.semantic) !== semanticIdentityDigest(emitted.manifest.semantic)) {
-    throw new TypeError(`generated artifact is stale: ${recordedPath}`);
+    throw new TypeError(`generated artifact is stale: ${manifestDestination.canonicalPath}`);
   }
-  const [unexpected] = stale;
-  if (unexpected !== undefined) throw new TypeError(`generated tree holds an unexpected file: ${unexpected}`);
-  reportEnvironmentAttestation(recordedPath, recorded, emitted.manifest, options.requireAttestation);
+  const [obsoletePath] = obsolete;
+  if (obsoletePath !== undefined) throw new TypeError(`generated tree holds an obsolete file: ${obsoletePath}`);
+  reportEnvironmentAttestation(
+    manifestDestination.canonicalPath,
+    recorded,
+    emitted.manifest,
+    options.requireAttestation,
+  );
 }
 
 /**
@@ -226,6 +269,19 @@ function requiredDestination(destinations: readonly FilesystemIdentity[], name: 
  * symlink, it must not be the Lean project or any compiler input, and its canonical identity is
  * re-read after compilation so a swapped root cannot be published into.
  */
+
+/**
+ * A package root owns one manifest sidecar. Requiring it inside `--out-dir` gives publication one
+ * durable ownership domain: same root/different manifest and same manifest/different root are
+ * rejected before either could contend for only part of the same generated tree.
+ */
+function assertManifestIsInsideOutputRoot(outputDirectory: string, manifestPath: string): void {
+  const root = resolve(outputDirectory);
+  const manifest = resolve(manifestPath);
+  if (!isWithin(root, manifest) || manifest === root) {
+    throw new TypeError('--manifest must be a file inside --out-dir');
+  }
+}
 function assertOutputRootIsIsolated(outputDirectory: string, compilerInputs: readonly NamedPath[]): FilesystemIdentity {
   const root = filesystemIdentity({ name: '--out-dir', path: outputDirectory });
   if (root.nonDirectoryAncestor) throw new TypeError('--out-dir has an existing non-directory ancestor');
@@ -245,18 +301,24 @@ function assertOutputRootIsIsolated(outputDirectory: string, compilerInputs: rea
 }
 
 /**
- * Generated files the emitted package does not name. A run that emits fewer modules than the last
- * one has to remove the rest: a stale module still type-checks and is still importable, so leaving
- * it behind would let a deleted Lean module keep a live TypeScript twin.
+ * Files the previous manifest explicitly owned. A manifest is the authority for deleting generated
+ * source: an arbitrary `.ts` sibling is somebody else's file even if it happens to live below the
+ * output root.
  */
-function staleGeneratedFiles(outputDirectory: string, emitted: LeanToTypeScriptPackage): readonly string[] {
-  if (!existsSync(outputDirectory)) return [];
-  const expected = new Set(
-    emitted.modules.flatMap((module) => [
+function priorOwnedGeneratedFiles(outputDirectory: string, manifestPath: string): ReadonlySet<string> {
+  if (!existsSync(manifestPath)) return new Set();
+  const manifest = readManifest(manifestPath);
+  return new Set(
+    manifest.semantic.modules.flatMap((module) => [
       resolve(outputDirectory, module.path),
-      ...(module.sourceMap === undefined ? [] : [resolve(outputDirectory, module.sourceMap.path)]),
+      ...(module.sourceMapSha256 === '' ? [] : [resolve(outputDirectory, `${module.path}.map`)]),
     ]),
   );
+}
+
+/** Every TypeScript source or source-map file physically present below the output root. */
+function generatedFilesUnder(outputDirectory: string): readonly string[] {
+  if (!existsSync(outputDirectory)) return [];
   const found: string[] = [];
   const pending = [outputDirectory];
   while (pending.length > 0) {
@@ -268,11 +330,30 @@ function staleGeneratedFiles(outputDirectory: string, emitted: LeanToTypeScriptP
         pending.push(path);
         continue;
       }
-      if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.ts.map')) continue;
-      if (!expected.has(path)) found.push(path);
+      if (entry.name.endsWith('.ts') || entry.name.endsWith('.ts.map')) found.push(path);
     }
   }
   return found.sort();
+}
+
+/**
+ * Every component from the owned root to one generated file has to be a real directory or file.
+ * Following a child symlink would let a file whose lexical path is inside `--out-dir` be published
+ * or removed outside it; the publisher refuses it before filesystem identities are bound.
+ */
+function assertGeneratedPathHasNoSymlink(outputDirectory: string, path: string): void {
+  const relativePath = relative(outputDirectory, path);
+  if (relativePath === '' || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+    throw new TypeError(`generated file escapes the output root: ${path}`);
+  }
+  let current = outputDirectory;
+  for (const segment of relativePath.split(sep)) {
+    current = join(current, segment);
+    const metadata = lstatIfPresent(current);
+    if (metadata?.isSymbolicLink()) {
+      throw new TypeError(`generated file path contains a symbolic link: ${current}`);
+    }
+  }
 }
 
 function assertSameDestinationIdentities(

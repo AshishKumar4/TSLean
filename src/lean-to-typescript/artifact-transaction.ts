@@ -32,19 +32,19 @@ export interface ArtifactDestination {
 }
 
 /**
- * What a transaction owns, independently of the file set it happens to write this time. The lock
- * and the journal are named from the scope, so a run that emits fewer modules than the last one
- * still contends for the same lock as a concurrent run that emits more.
+ * What a transaction owns, independently of the file set it happens to write this time. The root
+ * owns both the lock and an anchor journal copy, so a grow/shrink or a different manifest spelling
+ * still serializes with every publisher that can touch this generated tree.
  */
 export interface ArtifactTransactionScope {
-  /** Stable identity of the owned output, hashed into the lock and journal names. */
+  /** Stable identity of the owned output root, hashed into the lock and journal names. */
   readonly identity: string;
-  /**
-   * Name of the destination whose directory holds the lock. It has to be one the transaction always
-   * writes, so the lock does not move when the emitted tree grows or shrinks.
-   */
-  readonly lockDestination: string;
+  /** Canonical directory that owns every destination and holds the stable lock/journal anchor. */
+  readonly root: string;
 }
+
+/** A conceptual child used only to bind the scope root directory by descriptor. */
+const SCOPE_LOCK_ANCHOR = '.tslean-scope';
 
 interface ArtifactMetadata {
   readonly dev: bigint;
@@ -208,7 +208,10 @@ export function publishArtifactsWithFileSystem(
   if (destinations.length !== contents.length) {
     throw new TypeError('artifact transaction requires one content for each destination');
   }
+  assertDestinationsWithinScope(scope, destinations);
   const bound = bindDestinations(destinations, filesystem);
+  const scopeRoot = bindScopeRoot(scope, filesystem);
+  const journalDirectories = uniqueDirectories([...bound, scopeRoot]);
   let publicationLock: PublicationLock | undefined;
   let transactionOwner: TransactionOwner | undefined;
   const staged: StagedArtifact[] = [];
@@ -217,9 +220,9 @@ export function publishArtifactsWithFileSystem(
   let preserveRecoveryEvidence = false;
   let removePublicationLockWhenFinished = false;
   try {
-    publicationLock = acquirePublicationLock(bound, scope, journalName, filesystem);
+    publicationLock = acquirePublicationLock(scopeRoot, journalName, filesystem);
     for (const destination of bound) assertBoundRoute(destination, filesystem);
-    recoverBoundArtifacts(bound, journalName, publicationLock, filesystem);
+    recoverBoundArtifacts(bound, scopeRoot, journalName, publicationLock, filesystem);
     transactionOwner = currentTransactionOwner();
     writePublicationLockOwner(publicationLock, transactionOwner, filesystem);
     for (let index = 0; index < bound.length; index += 1) {
@@ -233,8 +236,8 @@ export function publishArtifactsWithFileSystem(
       );
     }
     const prepared = transactionJournal(staged, 'prepared', transactionOwner);
-    writeJournalCopies(bound, journalName, prepared, publicationLock, filesystem);
-    syncDirectories(bound, filesystem);
+    writeJournalCopies(journalDirectories, journalName, prepared, publicationLock, filesystem);
+    syncDirectories(journalDirectories, filesystem);
     assertPublicationLockOwned(publicationLock, filesystem);
     for (const artifact of staged) assertDestinationUnchanged(artifact, filesystem);
     for (const artifact of staged) {
@@ -251,14 +254,22 @@ export function publishArtifactsWithFileSystem(
     for (const artifact of staged) assertPublishedArtifact(artifact, filesystem);
     for (const destination of bound) assertBoundRoute(destination, filesystem);
     const committed = { ...prepared, state: 'committed' } as const;
-    for (const directory of uniqueDirectories(bound)) {
+    for (const directory of journalDirectories) {
       writeBoundFile(directory, committedJournalName(journalName), encodeJournal(committed), filesystem);
       filesystem.fsync(directory.directoryDescriptor);
       for (const artifact of staged) assertPublishedArtifact(artifact, filesystem);
       durablyCommitted = true;
     }
     assertPublicationLockOwned(publicationLock, filesystem);
-    finishCommittedTransaction(staged, bound, journalName, transactionOwner, publicationLock, filesystem);
+    finishCommittedTransaction(
+      staged,
+      bound,
+      journalDirectories,
+      journalName,
+      transactionOwner,
+      publicationLock,
+      filesystem,
+    );
     removePublicationLockWhenFinished = true;
   } catch (error: unknown) {
     if (publicationLock === undefined) throw error;
@@ -270,7 +281,15 @@ export function publishArtifactsWithFileSystem(
       for (const artifact of staged) assertPublishedArtifact(artifact, filesystem);
       try {
         if (transactionOwner !== undefined) {
-          finishCommittedTransaction(staged, bound, journalName, transactionOwner, ownedPublicationLock, filesystem);
+          finishCommittedTransaction(
+            staged,
+            bound,
+            journalDirectories,
+            journalName,
+            transactionOwner,
+            ownedPublicationLock,
+            filesystem,
+          );
           removePublicationLockWhenFinished = true;
         }
       } catch (cleanupError: unknown) {
@@ -282,14 +301,20 @@ export function publishArtifactsWithFileSystem(
     let unjournaledCleanupError: Error | undefined;
     if (rollbackError === undefined && transactionOwner !== undefined) {
       try {
-        recoverUnjournaledStages(bound, ownedPublicationLock, filesystem);
+        recoverUnjournaledStages(ownedPublicationLock, filesystem);
       } catch (cleanupError: unknown) {
         unjournaledCleanupError = cleanupError instanceof Error ? cleanupError : new TypeError(String(cleanupError));
       }
     }
     const journalCleanupError =
       rollbackError === undefined && unjournaledCleanupError === undefined && transactionOwner !== undefined
-        ? removeCurrentJournalCopies(bound, journalName, transactionOwner, ownedPublicationLock, filesystem)
+        ? removeCurrentJournalCopies(
+            journalDirectories,
+            journalName,
+            transactionOwner,
+            ownedPublicationLock,
+            filesystem,
+          )
         : undefined;
     if (rollbackError !== undefined || journalCleanupError !== undefined || unjournaledCleanupError !== undefined) {
       preserveRecoveryEvidence = true;
@@ -321,6 +346,7 @@ export function publishArtifactsWithFileSystem(
       }
     } finally {
       if (publicationLock !== undefined) filesystem.close(publicationLock.descriptor);
+      filesystem.close(scopeRoot.directoryDescriptor);
       for (const destination of bound) filesystem.close(destination.directoryDescriptor);
     }
   }
@@ -331,13 +357,15 @@ export function recoverArtifactsWithFileSystem(
   destinations: readonly ArtifactDestination[],
   filesystem: ArtifactFileSystem,
 ): void {
+  assertDestinationsWithinScope(scope, destinations);
   const bound = bindDestinations(destinations, filesystem);
+  const scopeRoot = bindScopeRoot(scope, filesystem);
   let publicationLock: PublicationLock | undefined;
   let recoveryFinished = false;
   try {
-    publicationLock = acquirePublicationLock(bound, scope, transactionJournalName(scope), filesystem);
+    publicationLock = acquirePublicationLock(scopeRoot, transactionJournalName(scope), filesystem);
     for (const destination of bound) assertBoundRoute(destination, filesystem);
-    recoverBoundArtifacts(bound, transactionJournalName(scope), publicationLock, filesystem);
+    recoverBoundArtifacts(bound, scopeRoot, transactionJournalName(scope), publicationLock, filesystem);
     recoveryFinished = true;
   } finally {
     try {
@@ -346,26 +374,22 @@ export function recoverArtifactsWithFileSystem(
       }
     } finally {
       if (publicationLock !== undefined) filesystem.close(publicationLock.descriptor);
+      filesystem.close(scopeRoot.directoryDescriptor);
       for (const destination of bound) filesystem.close(destination.directoryDescriptor);
     }
   }
 }
 
 /**
- * The lock lives beside the scope's stable manifest destination, not beside whichever generated
- * module happens to sort first. The module set changes whenever a package grows or shrinks; the
- * manifest does not, so every shape of the same owned tree contends for this one lock.
+ * The lock and anchor journal live in the scope root, not beside a particular destination. Every
+ * shape of the same generated tree therefore contends here, including partial overlaps where only
+ * the manifest or only a module path would otherwise be shared.
  */
 function acquirePublicationLock(
-  destinations: readonly BoundDestination[],
-  scope: ArtifactTransactionScope,
+  destination: BoundDestination,
   journalName: string,
   filesystem: ArtifactFileSystem,
 ): PublicationLock {
-  const destination = destinations.find((candidate) => candidate.name === scope.lockDestination);
-  if (destination === undefined) {
-    throw new TypeError(`artifact transaction scope names no destination ${scope.lockDestination}`);
-  }
   const name = `${journalName}.lock`;
   const path = childPath(destination, name);
   while (true) {
@@ -508,6 +532,25 @@ function publicationLockIsOwned(publicationLock: PublicationLock, filesystem: Ar
 function removePublicationLock(publicationLock: PublicationLock, filesystem: ArtifactFileSystem): void {
   assertPublicationLockOwned(publicationLock, filesystem);
   removeKnownFile(publicationLock.destination, publicationLock.name, publicationLock.identity, filesystem);
+}
+
+/** A scope root owns every file it publishes or recovers; partial external sets are refused. */
+function assertDestinationsWithinScope(
+  scope: ArtifactTransactionScope,
+  destinations: readonly ArtifactDestination[],
+): void {
+  const root = scope.root.endsWith('/') ? scope.root.slice(0, -1) : scope.root;
+  if (root === '') throw new TypeError('artifact transaction scope root is invalid');
+  for (const destination of destinations) {
+    if (destination.canonicalPath === root || destination.canonicalPath.startsWith(`${root}/`)) continue;
+    throw new TypeError(`artifact destination ${destination.name} is outside transaction scope ${scope.root}`);
+  }
+}
+
+/** Binds the stable transaction root without treating the conceptual anchor as a publish target. */
+function bindScopeRoot(scope: ArtifactTransactionScope, filesystem: ArtifactFileSystem): BoundDestination {
+  const path = join(scope.root, SCOPE_LOCK_ANCHOR);
+  return bindDestination({ name: 'scope', path, canonicalPath: path }, filesystem);
 }
 
 /**
@@ -798,6 +841,7 @@ function cleanupUnpublishedFiles(
 function finishCommittedTransaction(
   artifacts: readonly StagedArtifact[],
   destinations: readonly BoundDestination[],
+  journalDirectories: readonly BoundDestination[],
   journalName: string,
   owner: TransactionOwner,
   publicationLock: PublicationLock,
@@ -812,7 +856,13 @@ function finishCommittedTransaction(
   for (const artifact of artifacts) assertPublishedArtifact(artifact, filesystem);
   assertPublicationLockOwned(publicationLock, filesystem);
   syncDirectories(destinations, filesystem);
-  const journalCleanupError = removeCurrentJournalCopies(destinations, journalName, owner, publicationLock, filesystem);
+  const journalCleanupError = removeCurrentJournalCopies(
+    journalDirectories,
+    journalName,
+    owner,
+    publicationLock,
+    filesystem,
+  );
   if (journalCleanupError !== undefined) throw journalCleanupError;
   syncDirectories(destinations, filesystem);
 }
@@ -844,12 +894,13 @@ function transactionJournal(
  */
 function recoverBoundArtifacts(
   destinations: readonly BoundDestination[],
+  scopeRoot: BoundDestination,
   journalName: string,
   publicationLock: PublicationLock,
   filesystem: ArtifactFileSystem,
 ): void {
   assertPublicationLockOwned(publicationLock, filesystem);
-  const copies = uniqueDirectories(destinations)
+  const copies = uniqueDirectories([...destinations, scopeRoot])
     .flatMap((destination) =>
       [journalName, committedJournalName(journalName)].map((name) => ({
         destination,
@@ -863,7 +914,7 @@ function recoverBoundArtifacts(
       return { ...copy, identity: journalIdentity };
     });
   if (copies.length === 0) {
-    recoverUnjournaledStages(destinations, publicationLock, filesystem);
+    recoverUnjournaledStages(publicationLock, filesystem);
     return;
   }
   const journals = copies.map(({ path }) => decodeJournal(filesystem.read(path)));
@@ -903,51 +954,66 @@ function recoverBoundArtifacts(
       recoverArtifact(artifact, state, publicationLock, filesystem);
     }
     assertPublicationLockOwned(publicationLock, filesystem);
-    syncDirectories(journalDestinations, filesystem);
+    const recoveryDirectories = uniqueDirectories([...journalDestinations, scopeRoot]);
+    syncDirectories(recoveryDirectories, filesystem);
     const cleanupError = removeCurrentJournalCopies(
-      journalDestinations,
+      recoveryDirectories,
       journalName,
       first.owner,
       publicationLock,
       filesystem,
     );
     if (cleanupError !== undefined) throw cleanupError;
-    syncDirectories(journalDestinations, filesystem);
+    syncDirectories(recoveryDirectories, filesystem);
   } finally {
     for (const destination of journalDestinations) filesystem.close(destination.directoryDescriptor);
   }
 }
 
-function recoverUnjournaledStages(
-  destinations: readonly BoundDestination[],
-  publicationLock: PublicationLock,
-  filesystem: ArtifactFileSystem,
-): void {
-  const state = readPublicationLockState(publicationLock, destinations.length, filesystem);
+/**
+ * Removes stages written before a prepared journal existed. The lock is the only durable record at
+ * that point, so its canonical paths decide the recovery set — not the NEW publisher's current
+ * tree. A shrink after an old larger-set publisher staged a soon-removed module must still find
+ * and clean that stage, otherwise every later run would fail on a path it no longer names.
+ */
+function recoverUnjournaledStages(publicationLock: PublicationLock, filesystem: ArtifactFileSystem): void {
+  const state = readPublicationLockState(publicationLock, Number.MAX_SAFE_INTEGER, filesystem);
   if (state === undefined || state.stages.length === 0) return;
-  const recoverable: {
-    readonly destination: BoundDestination;
-    readonly identity: FileIdentity;
-    readonly name: string;
-  }[] = [];
-  for (const stage of state.stages) {
-    const destination = destinations.find((entry) => entry.canonicalPath === stage.canonicalPath);
-    if (destination === undefined || !isTransactionName(stage.stageName, 'stage', destination.filename)) {
-      throw new TypeError('artifact publication lock names an invalid stage');
+  const stageDestinations = bindDestinations(
+    state.stages.map((stage) => ({
+      name: `stage:${stage.canonicalPath}`,
+      path: stage.canonicalPath,
+      canonicalPath: stage.canonicalPath,
+    })),
+    filesystem,
+  );
+  try {
+    const recoverable: {
+      readonly destination: BoundDestination;
+      readonly identity: FileIdentity;
+      readonly name: string;
+    }[] = [];
+    for (const stage of state.stages) {
+      const destination = stageDestinations.find((entry) => entry.canonicalPath === stage.canonicalPath);
+      if (destination === undefined || !isTransactionName(stage.stageName, 'stage', destination.filename)) {
+        throw new TypeError('artifact publication lock names an invalid stage');
+      }
+      const expected = deserializeIdentity(stage.stagedIdentity);
+      const actual = fileIdentity(childPath(destination, stage.stageName), filesystem);
+      if (actual === undefined) continue;
+      if (!sameIdentity(actual, expected)) {
+        throw new TypeError('artifact transaction file identity changed');
+      }
+      recoverable.push({ destination, identity: expected, name: stage.stageName });
     }
-    const expected = deserializeIdentity(stage.stagedIdentity);
-    const actual = fileIdentity(childPath(destination, stage.stageName), filesystem);
-    if (actual === undefined) continue;
-    if (!sameIdentity(actual, expected)) {
-      throw new TypeError('artifact transaction file identity changed');
+    for (const stage of recoverable) {
+      assertPublicationLockOwned(publicationLock, filesystem);
+      removeKnownFile(stage.destination, stage.name, stage.identity, filesystem);
     }
-    recoverable.push({ destination, identity: expected, name: stage.stageName });
+    syncDirectories(stageDestinations, filesystem);
+  } finally {
+    for (const destination of stageDestinations) filesystem.close(destination.directoryDescriptor);
   }
-  for (const stage of recoverable) {
-    assertPublicationLockOwned(publicationLock, filesystem);
-    removeKnownFile(stage.destination, stage.name, stage.identity, filesystem);
-  }
-  syncDirectories(destinations, filesystem);
 }
 
 function prepareRecovery(

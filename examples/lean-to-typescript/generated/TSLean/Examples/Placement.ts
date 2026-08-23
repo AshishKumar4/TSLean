@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Placement
  * Generated module: TSLean/Examples/Placement.ts
  * Package entry module: TSLean.Examples.Placement
- * Semantic identity: sha256:d8af628b3ac8e07691435b64dc793c45ffe9514715b60487edd4b06316c61951
- * Input closure: sha256:675e18e7d9fba9842e4a244a4c540e894710b7a12510f4efa33c8844448dea25
+ * Semantic identity: sha256:6ad6ed4369ed5e9a9f1838655e752b57348088742d1eb605f4f5771f9051c9d4
+ * Input closure: sha256:69b9ed0f993df14c27dae0e74db9c74b38a02b250f78e27c9f6f219682430a4e
  * Semantic IR: sha256:196adc6b4440a5ce67221c5a98c217dafb7a1bc6e565b90120e838233954667b
  * Generated module body: sha256:cae734266b3c3d3ddbd10e528bc6f85ef290baca088cc1907064d0073314618f
  * Generated package body: sha256:63e29b246e204156ea0e15f5b07f3cc7522d7730f435bba47f66f490842988e4

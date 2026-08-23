@@ -158,15 +158,15 @@ describe('published Lean to TypeScript API', () => {
       const modulePath = join(outputDirectory, 'Fixture.ts');
       let manifestPath: string;
       if (aliasKind === 'symlink-parent') {
-        const aliasDirectory = join(destinationRoot, 'alias');
+        const aliasDirectory = join(outputDirectory, 'alias');
         symlinkSync(outputDirectory, aliasDirectory, 'dir');
         manifestPath = join(aliasDirectory, 'Fixture.ts');
       } else if (aliasKind === 'hardlink') {
         writeFileSync(modulePath, 'preserve hard-linked artifact\n');
-        manifestPath = join(destinationRoot, 'generated.manifest.json');
+        manifestPath = join(outputDirectory, 'tslean.manifest.json');
         linkSync(modulePath, manifestPath);
       } else {
-        manifestPath = join(destinationRoot, 'generated.manifest.json');
+        manifestPath = join(outputDirectory, 'tslean.manifest.json');
         symlinkSync(modulePath, manifestPath, 'file');
       }
       const original = existsSync(modulePath) ? readFileSync(modulePath) : undefined;
@@ -197,7 +197,7 @@ describe('published Lean to TypeScript API', () => {
   );
 
   test.each([
-    ['--manifest', 'generated', '--manifest must not contain the other artifact destination Fixture.ts'],
+    ['--manifest', 'generated', '--manifest must be a file inside --out-dir'],
     [
       'Fixture.ts',
       join('generated', 'Fixture.ts', 'generated.manifest.json'),
@@ -277,7 +277,7 @@ describe('published Lean to TypeScript API', () => {
       } else {
         outputDirectory = join(fixture.projectRoot, 'generated');
       }
-      const manifestPath = join(destinationRoot, 'generated.manifest.json');
+      const manifestPath = join(outputDirectory, 'tslean.manifest.json');
       try {
         const result = runSourceCompiler(
           destinationRoot,
@@ -315,7 +315,7 @@ describe('published Lean to TypeScript API', () => {
       mkdirSync(physical);
       symlinkSync(physical, alias, 'dir');
       const outputDirectory = join(alias, 'generated');
-      const manifestPath = join(destinationRoot, 'generated.manifest.json');
+      const manifestPath = join(outputDirectory, 'tslean.manifest.json');
       try {
         const result = runSourceCompiler(
           destinationRoot,
@@ -327,6 +327,71 @@ describe('published Lean to TypeScript API', () => {
         expect(result.status).not.toBe(0);
         expect(result.stderr).toContain('--out-dir must not be reached through a symbolic link');
         expect(existsSync(join(physical, 'generated'))).toBe(false);
+        expect(existsSync(manifestPath)).toBe(false);
+      } finally {
+        rmSync(destinationRoot, { force: true, recursive: true });
+        fixture.dispose();
+      }
+    },
+    PACKED_COMPILER_TIMEOUT_MS,
+  );
+
+  test(
+    'refuses an unowned TypeScript sibling instead of deleting it during generation',
+    () => {
+      const fixture = createLeanProjectFixture(
+        ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
+      );
+      const destinationRoot = mkdtempSync(join(tmpdir(), 'tslean-cli-unowned-file-'));
+      const outputDirectory = join(destinationRoot, 'generated');
+      const manifestPath = join(outputDirectory, 'tslean.manifest.json');
+      const keepPath = join(outputDirectory, 'Keep.ts');
+      mkdirSync(outputDirectory);
+      writeFileSync(keepPath, 'export const keep = true;\n');
+      try {
+        const result = runSourceCompiler(
+          destinationRoot,
+          fixture.projectRoot,
+          fixture.sourcePath,
+          outputDirectory,
+          manifestPath,
+        );
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain(`generated tree holds an unexpected file: ${keepPath}`);
+        expect(readFileSync(keepPath, 'utf8')).toBe('export const keep = true;\n');
+        expect(existsSync(manifestPath)).toBe(false);
+      } finally {
+        rmSync(destinationRoot, { force: true, recursive: true });
+        fixture.dispose();
+      }
+    },
+    PACKED_COMPILER_TIMEOUT_MS,
+  );
+
+  test(
+    'refuses a generated child path that resolves through a symbolic link outside the output root',
+    () => {
+      const fixture = createLeanProjectFixture(
+        ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
+      );
+      const destinationRoot = mkdtempSync(join(tmpdir(), 'tslean-cli-child-symlink-'));
+      const outputDirectory = join(destinationRoot, 'generated');
+      const escapedPath = join(destinationRoot, 'outside.ts');
+      const manifestPath = join(outputDirectory, 'tslean.manifest.json');
+      mkdirSync(outputDirectory);
+      writeFileSync(escapedPath, 'export const outside = true;\n');
+      symlinkSync(escapedPath, join(outputDirectory, 'Fixture.ts'), 'file');
+      try {
+        const result = runSourceCompiler(
+          destinationRoot,
+          fixture.projectRoot,
+          fixture.sourcePath,
+          outputDirectory,
+          manifestPath,
+        );
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain('generated file escapes the output root through a symbolic link');
+        expect(readFileSync(escapedPath, 'utf8')).toBe('export const outside = true;\n');
         expect(existsSync(manifestPath)).toBe(false);
       } finally {
         rmSync(destinationRoot, { force: true, recursive: true });
@@ -387,13 +452,13 @@ describe('published Lean to TypeScript API', () => {
     }
   });
 
-  test('rejects an existing directory as --manifest before compilation without creating the generated tree', () => {
+  test('rejects an existing directory as --manifest before compilation without creating generated files', () => {
     const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-cli-directory-destination-'));
-    const directoryPath = join(temporaryRoot, 'existing-directory');
-    const preservedInDirectoryPath = join(directoryPath, 'preserved.txt');
     const outputDirectory = join(temporaryRoot, 'generated');
+    const directoryPath = join(outputDirectory, 'manifest');
+    const preservedInDirectoryPath = join(directoryPath, 'preserved.txt');
     const directoryOriginal = Buffer.from('preserve directory contents\n');
-    mkdirSync(directoryPath);
+    mkdirSync(directoryPath, { recursive: true });
     writeFileSync(preservedInDirectoryPath, directoryOriginal);
     try {
       const result = runSourceCompiler(
@@ -407,7 +472,7 @@ describe('published Lean to TypeScript API', () => {
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain('--manifest must not identify an existing directory');
       expect(readFileSync(preservedInDirectoryPath)).toEqual(directoryOriginal);
-      expect(existsSync(outputDirectory)).toBe(false);
+      expect(readdirSync(outputDirectory)).toEqual(['manifest']);
     } finally {
       rmSync(temporaryRoot, { force: true, recursive: true });
     }
@@ -936,6 +1001,41 @@ describe('published Lean to TypeScript API', () => {
     }
   });
 
+  test('recovers pre-journal stages from an older larger tree before publishing a smaller tree', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-prejournal-shrink-'));
+    const full = packageDestinations(temporaryRoot);
+    const smaller = [full[0], full[2]] as const;
+    const oldContents = ['old module\n', 'old source map\n', 'old manifest\n'] as const;
+    full.forEach((destination, index) => writeFileSync(destination.path, oldContents[index]));
+    try {
+      // This kills after the second stage was written and lock-recorded, but before the prepared
+      // journal. `Fixture.ts.map` is absent from the next publisher's destination set.
+      const crashed = crashArtifactTransaction(
+        temporaryRoot,
+        full,
+        ['abandoned module\n', 'abandoned source map\n', 'abandoned manifest\n'],
+        'write',
+        5,
+      );
+      expect(crashed.signal).toBe('SIGKILL');
+      expect(transactionFiles(temporaryRoot).filter((name) => name.includes('.tslean-stage-'))).toHaveLength(2);
+
+      publishArtifactsWithFileSystem(
+        transactionScope(smaller),
+        smaller,
+        ['smaller module\n', 'smaller manifest\n'],
+        nodeArtifactFileSystem,
+      );
+
+      expect(readFileSync(full[0].path, 'utf8')).toBe('smaller module\n');
+      expect(readFileSync(full[1].path, 'utf8')).toBe('old source map\n');
+      expect(readFileSync(full[2].path, 'utf8')).toBe('smaller manifest\n');
+      expect(transactionFiles(temporaryRoot)).toEqual([]);
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
   test('preserves every recorded pre-journal stage when any identity was replaced', () => {
     const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-prejournal-replacement-'));
     const destinations = transactionDestinations(temporaryRoot);
@@ -1081,22 +1181,31 @@ describe('published Lean to TypeScript API', () => {
       }
     },
   );
-  test('serializes a growing publisher and a shrinking publisher through the stable manifest lock', async () => {
+  test('serializes overlapping trees with different manifests through the stable root lock', async () => {
     const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-shape-contention-'));
-    const full = packageDestinations(temporaryRoot);
-    const fullContents = ['old module\n', 'old source map\n', 'old manifest\n'] as const;
-    const shrinkContents: readonly (string | undefined)[] = ['shrunk module\n', undefined, 'shrunk manifest\n'];
-    full.forEach((destination, index) => writeFileSync(destination.path, fullContents[index]));
-    const owner = startPausedCrashingArtifactTransaction(temporaryRoot, full, [
+    const smaller = transactionDestinations(temporaryRoot);
+    const extraPath = join(temporaryRoot, 'Extra.ts');
+    const growingManifest = join(temporaryRoot, 'growing.manifest.json');
+    const growing = [
+      smaller[0],
+      { name: 'Extra.ts', path: extraPath, canonicalPath: extraPath },
+      { name: '--manifest', path: growingManifest, canonicalPath: growingManifest },
+    ] as const;
+    writeFileSync(smaller[0].path, 'old module\n');
+    writeFileSync(smaller[1].path, 'old smaller manifest\n');
+    const owner = startPausedCrashingArtifactTransaction(temporaryRoot, growing, [
       'growing module\n',
-      'growing source map\n',
+      'growing extra module\n',
       'growing manifest\n',
     ]);
     try {
       await waitForPath(owner.readyPath, owner.child);
-      // Same manifest destination, different output shape. A destination-set-derived lock would
-      // let this contender acquire immediately; the scope lock keeps it blocked.
-      const contender = startObservedArtifactTransaction(temporaryRoot, full, shrinkContents);
+      // Same root and overlapping module path, but a genuinely different manifest and destination
+      // set. Pair-derived or manifest-derived locks would race; the root lock keeps it blocked.
+      const contender = startObservedArtifactTransaction(temporaryRoot, smaller, [
+        'smaller module\n',
+        'smaller manifest\n',
+      ]);
       await waitForPath(contender.attemptedPath, contender.child);
       await waitForProcessTurn();
       expect(existsSync(contender.acquiredPath)).toBe(false);
@@ -1105,9 +1214,10 @@ describe('published Lean to TypeScript API', () => {
       expect(crashed.signal).toBe('SIGKILL');
       const published = await collectChild(contender.child);
       expect(published.status).toBe(0);
-      expect(readFileSync(full[0].path, 'utf8')).toBe('shrunk module\n');
-      expect(existsSync(full[1].path)).toBe(false);
-      expect(readFileSync(full[2].path, 'utf8')).toBe('shrunk manifest\n');
+      expect(readFileSync(smaller[0].path, 'utf8')).toBe('smaller module\n');
+      expect(readFileSync(smaller[1].path, 'utf8')).toBe('smaller manifest\n');
+      expect(existsSync(extraPath)).toBe(false);
+      expect(existsSync(growingManifest)).toBe(false);
       expect(transactionFiles(temporaryRoot)).toEqual([]);
     } finally {
       writeFileSync(owner.releasePath, 'cleanup\n');
@@ -1461,9 +1571,9 @@ describe('published Lean to TypeScript API', () => {
     ['rename', 4, 'old'],
     ['write', 7, 'old'],
     ['write', 8, 'old'],
-    ['write', 9, 'new'],
-    ['fsync', 17, 'new'],
-    ['fsync', 18, 'new'],
+    ['write', 9, 'old'],
+    ['fsync', 17, 'old'],
+    ['fsync', 18, 'old'],
   ] as const)(
     'keeps cross-directory publication recoverable when %s operation %i fails',
     (operation, occurrence, expectedVersion) => {
@@ -1540,9 +1650,10 @@ describe('published Lean to TypeScript API', () => {
 
   test('rejects --manifest beneath an existing non-directory before compilation', () => {
     const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-cli-nondirectory-ancestor-'));
-    const ancestorPath = join(temporaryRoot, 'existing-file');
     const outputDirectory = join(temporaryRoot, 'generated');
+    const ancestorPath = join(outputDirectory, 'existing-file');
     const ancestorOriginal = Buffer.from('preserve ancestor bytes\n');
+    mkdirSync(outputDirectory);
     writeFileSync(ancestorPath, ancestorOriginal);
     const descendantPath = join(ancestorPath, 'generated-artifact');
     try {
@@ -1557,7 +1668,7 @@ describe('published Lean to TypeScript API', () => {
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain('--manifest has an existing non-directory ancestor');
       expect(readFileSync(ancestorPath)).toEqual(ancestorOriginal);
-      expect(existsSync(outputDirectory)).toBe(false);
+      expect(existsSync(outputDirectory)).toBe(true);
       expect(existsSync(descendantPath)).toBe(false);
     } finally {
       rmSync(temporaryRoot, { force: true, recursive: true });
@@ -1573,16 +1684,17 @@ describe('published Lean to TypeScript API', () => {
       const sourcePath = join(projectRoot, 'Fixture.lean');
       const original = Buffer.from('def preserved : Bool := true\n');
       writeFileSync(sourcePath, original);
+      const outputDirectory = join(temporaryRoot, 'generated');
+      mkdirSync(outputDirectory);
       let aliasedPath: string;
       if (aliasKind === 'symlink-parent') {
-        const aliasRoot = join(temporaryRoot, 'alias-project');
+        const aliasRoot = join(outputDirectory, 'alias-project');
         symlinkSync(projectRoot, aliasRoot, 'dir');
         aliasedPath = join(aliasRoot, 'Fixture.lean');
       } else {
-        aliasedPath = join(temporaryRoot, 'source-alias');
+        aliasedPath = join(outputDirectory, 'source-alias');
         linkSync(sourcePath, aliasedPath);
       }
-      const outputDirectory = join(temporaryRoot, 'generated');
       try {
         const result = runSourceCompiler(temporaryRoot, projectRoot, sourcePath, outputDirectory, aliasedPath);
 
@@ -1590,7 +1702,7 @@ describe('published Lean to TypeScript API', () => {
         expect(result.stderr).toContain('--manifest must not identify compiler input --source');
         expect(readFileSync(sourcePath)).toEqual(original);
         expect(readFileSync(aliasedPath)).toEqual(original);
-        expect(existsSync(outputDirectory)).toBe(false);
+        expect(existsSync(outputDirectory)).toBe(true);
       } finally {
         rmSync(temporaryRoot, { force: true, recursive: true });
       }
@@ -1598,7 +1710,7 @@ describe('published Lean to TypeScript API', () => {
   );
 
   test.each(['direct', 'hardlink'] as const)(
-    'rejects a %s-path --manifest descendant of the explicit Lean source before compilation',
+    'rejects a %s-path manifest outside the owned output root before compilation',
     (sourcePathKind) => {
       const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-cli-source-descendant-'));
       const projectRoot = join(temporaryRoot, 'project');
@@ -1614,12 +1726,9 @@ describe('published Lean to TypeScript API', () => {
         const result = runSourceCompiler(temporaryRoot, projectRoot, sourcePath, outputDirectory, descendantPath);
 
         expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain(
-          '--manifest must not identify compiler input --source or an ancestor/descendant path',
-        );
+        expect(result.stderr).toContain('--manifest must be a file inside --out-dir');
         expect(readFileSync(sourcePath)).toEqual(sourceOriginal);
         expect(readFileSync(destinationAncestor)).toEqual(sourceOriginal);
-        expect(existsSync(outputDirectory)).toBe(false);
         expect(existsSync(descendantPath)).toBe(false);
       } finally {
         rmSync(temporaryRoot, { force: true, recursive: true });
@@ -1637,19 +1746,22 @@ describe('published Lean to TypeScript API', () => {
       const toolchainPath = join(fixture.projectRoot, 'lean-toolchain');
       const original = readFileSync(toolchainPath);
       const outputDirectory = join(destinationRoot, 'generated');
+      const manifestPath = join(outputDirectory, 'manifest');
+      mkdirSync(outputDirectory);
+      linkSync(toolchainPath, manifestPath);
       try {
         const result = runSourceCompiler(
           destinationRoot,
           fixture.projectRoot,
           fixture.sourcePath,
           outputDirectory,
-          toolchainPath,
+          manifestPath,
         );
 
         expect(result.status).not.toBe(0);
         expect(result.stderr).toContain('--manifest must not identify compiler input target-project:lean-toolchain');
         expect(readFileSync(toolchainPath)).toEqual(original);
-        expect(existsSync(outputDirectory)).toBe(false);
+        expect(existsSync(outputDirectory)).toBe(true);
       } finally {
         rmSync(destinationRoot, { force: true, recursive: true });
         fixture.dispose();
@@ -1746,7 +1858,7 @@ describe('published Lean to TypeScript API', () => {
         makeTreeReadOnly(installedPackageRoot);
         const outputDirectory = join(consumerRoot, 'generated');
         const generatedPath = join(outputDirectory, 'Consumer.ts');
-        const manifestPath = join(consumerRoot, 'generated.manifest.json');
+        const manifestPath = join(outputDirectory, 'tslean.manifest.json');
         const compilerArguments = [
           '--project-root',
           leanRoot,
@@ -2042,11 +2154,14 @@ function transactionDestinations(
   ];
 }
 
-/** One generated module, its source map sidecar, and the manifest: the smallest real package. */
+/** Stable root scope for direct transaction tests, including the cross-directory cases. */
 function transactionScope(destinations: readonly ArtifactDestination[]): ArtifactTransactionScope {
-  const manifest = destinations.find((destination) => destination.name === '--manifest');
-  if (manifest === undefined) throw new TypeError('transaction test destinations have no manifest');
-  return { identity: `test:${manifest.canonicalPath}`, lockDestination: '--manifest' };
+  const paths = destinations.map((destination) => destination.canonicalPath.split('/').slice(0, -1));
+  const [first] = paths;
+  if (first === undefined) throw new TypeError('transaction test destinations are empty');
+  const common = first.filter((segment, index) => paths.every((path) => path[index] === segment));
+  const root = common.join('/') || '/';
+  return { identity: `test:${root}`, root };
 }
 
 function packageDestinations(root: string): readonly [ArtifactDestination, ArtifactDestination, ArtifactDestination] {
@@ -2088,8 +2203,8 @@ function faultingArtifactFileSystem(operation: FaultOperation, occurrence: numbe
 
 function crashArtifactTransaction(
   root: string,
-  destinations: readonly [ArtifactDestination, ArtifactDestination],
-  contents: readonly [string, string],
+  destinations: readonly ArtifactDestination[],
+  contents: readonly (string | undefined)[],
   operation: FaultOperation,
   occurrence: number,
 ): ReturnType<typeof spawnSync> {
@@ -2101,7 +2216,7 @@ function crashArtifactTransaction(
       `import { nodeArtifactFileSystem, publishArtifactsWithFileSystem } from ${JSON.stringify(moduleUrl)};`,
       `const destinations = ${JSON.stringify(destinations)};`,
       `const scope = ${JSON.stringify(transactionScope(destinations))};`,
-      `const contents = ${JSON.stringify(contents)};`,
+      `const contents = ${JSON.stringify(contents)}.map((value) => value === null ? undefined : value);`,
       `const operation = ${JSON.stringify(operation)};`,
       `const occurrence = ${occurrence};`,
       'let writes = 0;',

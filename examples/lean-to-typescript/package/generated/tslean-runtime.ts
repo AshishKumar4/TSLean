@@ -4,11 +4,11 @@
  * Lean module: (generated package runtime)
  * Generated module: tslean-runtime.ts
  * Package entry module: TSLean.Examples.Package.Decision
- * Semantic identity: sha256:4f5d40cf29139415f0162b2ebd68212cc547f92ab7345e664cd343bbf1416204
- * Input closure: sha256:20ffff57c6fc9b19c8f4839d36f3850ed184a2dee86b8a0f87dbdc443b990574
+ * Semantic identity: sha256:8b0b80ad75588b383b278a0f3e49863847e92a33b8446124b09094dd9054d340
+ * Input closure: sha256:feebdf46169be00b8477dc6d41fd63a47161b1a7884407f2fc9b3c44712eb47f
  * Semantic IR: sha256:506ca7bc62f2597f467a5f15150a77335e1af01c6eb9c2f6a3ef88c46198db7d
  * Generated module body: sha256:2c85d01f5dff8e897739629008278283b66717688250613c04a663980704293a
- * Generated package body: sha256:0c65bce36253e04e6ae09e2338a917657a1c3711a8f9efc700d0e4e5aa90b5b9
+ * Generated package body: sha256:19fb59c451dec3b307a009e0586002398ad8f7eed67d90ba982e62e02fbcbe11
  * Lean toolchain: leanprover/lean4:v4.29.0
  * Lean: Lean (version 4.29.0, x86_64-unknown-linux-gnu, commit 98dc76e3c0a9b856c9b98726b713fb04fab16740, Release)
  * Lake: Lake version 5.0.0-src+98dc76e (Lean version 4.29.0)

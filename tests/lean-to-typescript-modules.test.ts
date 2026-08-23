@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import { SourceMapConsumer, type RawSourceMap } from 'source-map-js';
 import ts from 'typescript';
 import { describe, expect, test } from 'vitest';
 import {
@@ -27,7 +28,7 @@ import { Policy } from '../examples/lean-to-typescript/package/generated/TSLean/
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const leanRoot = join(repositoryRoot, 'lean');
 const generatedRoot = join(repositoryRoot, 'examples', 'lean-to-typescript', 'package', 'generated');
-const manifestPath = join(repositoryRoot, 'examples', 'lean-to-typescript', 'package', 'generated.manifest.json');
+const manifestPath = join(generatedRoot, 'tslean.manifest.json');
 
 const packageRequest = {
   projectRoot: leanRoot,
@@ -74,6 +75,7 @@ describe('Lean package to TypeScript module tree', () => {
       'TSLean/Examples/Package/Policy.ts',
       'TSLean/Examples/Package/Policy.ts.map',
       'tslean-runtime.ts',
+      'tslean.manifest.json',
     ]);
     const manifest = committedManifest();
     expect(manifest.semantic.modules.map((module) => [module.path, module.leanModule])).toEqual([
@@ -170,8 +172,7 @@ describe('Lean package to TypeScript module tree', () => {
       }
     }
   });
-
-  test('decodes every source map back to the span its manifest records', () => {
+  test('uses a standard source-map consumer to resolve every mapping to its Lean span', () => {
     const manifest = committedManifest();
     for (const module of manifest.semantic.modules) {
       if (module.leanModule === '') {
@@ -180,21 +181,34 @@ describe('Lean package to TypeScript module tree', () => {
       }
       const map: unknown = JSON.parse(readGenerated(`${module.path}.map`));
       if (typeof map !== 'object' || map === null) throw new TypeError('source map is not an object');
-      const decoded = map as { version: number; sources: string[]; mappings: string; file: string };
+      const decoded = map as { version: number; sources: string[]; mappings: string; file: string; names: string[] };
       expect(decoded.version).toBe(3);
-      expect(resolve(dirname(join(generatedRoot, `${module.path}.map`)), decoded.sources[0] ?? '')).toBe(
-        join(leanRoot, `${module.leanModule.split('.').join('/')}.lean`),
-      );
+      const mapDirectory = dirname(join(generatedRoot, `${module.path}.map`));
+      const sourcePath = join(leanRoot, `${module.leanModule.split('.').join('/')}.lean`);
+      expect(resolve(mapDirectory, decoded.sources[0] ?? '')).toBe(sourcePath);
       expect(decoded.file).toBe(module.path.split('/').slice(-1)[0]);
-      const segments = decodeMappings(decoded.mappings);
-      expect(segments.length).toBeGreaterThan(0);
-      for (const segment of segments) {
-        const declaration = module.declarations.find((candidate) => candidate.line === segment.generatedLine);
-        if (declaration === undefined)
-          throw new TypeError(`source map names an unmapped line ${segment.generatedLine}`);
-        expect(segment.sourceIndex).toBe(0);
-        expect(segment.sourceLine + 1).toBe(declaration.span.startLine);
-        expect(segment.sourceColumn).toBe(declaration.span.startColumn);
+      const consumer = new SourceMapConsumer(decoded as unknown as RawSourceMap);
+      const mappings: {
+        generatedLine: number;
+        generatedColumn: number;
+        originalLine: number | null;
+        originalColumn: number | null;
+        source: string | null;
+      }[] = [];
+      consumer.eachMapping((mapping) => mappings.push(mapping));
+      expect(mappings.length).toBeGreaterThan(0);
+      for (const mapping of mappings) {
+        const declaration = module.declarations.find((candidate) => candidate.line === mapping.generatedLine);
+        if (declaration === undefined) {
+          throw new TypeError(`source map consumer named an unmapped line ${mapping.generatedLine}`);
+        }
+        const original = consumer.originalPositionFor({
+          line: mapping.generatedLine,
+          column: mapping.generatedColumn,
+        });
+        expect(resolve(mapDirectory, original.source ?? '')).toBe(sourcePath);
+        expect(original.line).toBe(declaration.span.startLine);
+        expect(original.column).toBe(declaration.span.startColumn);
       }
     }
   });
@@ -381,6 +395,59 @@ describe('Lean package to TypeScript module tree', () => {
     expect(recorded).toEqual([...recorded].sort(compareGeneratedPaths));
   });
 
+  test(
+    'orders a real lowercase module after the runtime module by canonical path',
+    () => {
+      const fixture = createLeanPackageFixture([
+        {
+          name: 'Zoo.Data',
+          source: [
+            'namespace Zoo',
+            '',
+            'inductive Colour where',
+            '  | red',
+            '  | blue',
+            '  deriving DecidableEq, Repr',
+            '',
+            'end Zoo',
+            '',
+          ].join('\n'),
+        },
+        {
+          name: 'zoo.Entry',
+          source: [
+            'import Zoo.Data',
+            '',
+            'namespace zoo',
+            '',
+            'def decide (enabled : Bool) (colour : Zoo.Colour) : Bool :=',
+            '  match colour with',
+            '  | .red => enabled',
+            '  | .blue => false',
+            '',
+            'end zoo',
+            '',
+          ].join('\n'),
+        },
+      ]);
+      try {
+        const emitted = compileLeanToTypeScript({
+          projectRoot: fixture.projectRoot,
+          moduleName: 'zoo.Entry',
+          sourcePath: join(fixture.sourceRoot, 'zoo', 'Entry.lean'),
+          declarations: ['zoo.decide'],
+          outputDirectory: join(fixture.projectRoot, 'out'),
+        });
+        const paths = emitted.modules.map((module) => module.path);
+        expect(paths).toEqual(['Zoo/Data.ts', LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH, 'zoo/Entry.ts']);
+        expect(paths).toEqual([...paths].sort(compareGeneratedPaths));
+        expect(emitted.manifest.semantic.modules.map((module) => module.path)).toEqual(paths);
+      } finally {
+        fixture.dispose();
+      }
+    },
+    COMPILATION_TIMEOUT_MS,
+  );
   test('records a source map source that resolves from the map to the real Lean file', () => {
     const manifest = committedManifest();
     for (const module of manifest.semantic.modules) {
@@ -715,57 +782,6 @@ function topologicalOrder(imports: ReadonlyMap<string, readonly string[]>): read
     for (const entries of remaining.values()) for (const path of ready) entries.delete(path);
   }
   return ordered;
-}
-
-interface MappingSegment {
-  readonly generatedLine: number;
-  readonly generatedColumn: number;
-  readonly sourceIndex: number;
-  readonly sourceLine: number;
-  readonly sourceColumn: number;
-}
-
-const BASE64_DIGITS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-
-/** Decodes a version 3 `mappings` string into absolute positions. */
-function decodeMappings(mappings: string): readonly MappingSegment[] {
-  const segments: MappingSegment[] = [];
-  let sourceIndex = 0;
-  let sourceLine = 0;
-  let sourceColumn = 0;
-  for (const [line, group] of mappings.split(';').entries()) {
-    if (group === '') continue;
-    let generatedColumn = 0;
-    for (const segment of group.split(',')) {
-      const values = decodeVariableLengthQuantities(segment);
-      if (values.length !== 4) throw new TypeError('source map segment is not a four-field mapping');
-      generatedColumn += values[0] ?? 0;
-      sourceIndex += values[1] ?? 0;
-      sourceLine += values[2] ?? 0;
-      sourceColumn += values[3] ?? 0;
-      segments.push({ generatedLine: line + 1, generatedColumn, sourceIndex, sourceLine, sourceColumn });
-    }
-  }
-  return segments;
-}
-
-function decodeVariableLengthQuantities(segment: string): readonly number[] {
-  const values: number[] = [];
-  let shift = 0;
-  let accumulated = 0;
-  for (const character of segment) {
-    const digit = BASE64_DIGITS.indexOf(character);
-    if (digit < 0) throw new TypeError(`source map digit is invalid: ${character}`);
-    accumulated += (digit & 0b11111) << shift;
-    if ((digit & 0b100000) !== 0) {
-      shift += 5;
-      continue;
-    }
-    values.push((accumulated & 1) === 1 ? -(accumulated >>> 1) : accumulated >>> 1);
-    shift = 0;
-    accumulated = 0;
-  }
-  return values;
 }
 
 function grants(): readonly Grant[] {

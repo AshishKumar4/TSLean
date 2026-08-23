@@ -4,11 +4,11 @@
  * Lean module: AgentCore.Facets.Enforcement
  * Generated module: AgentCore/Facets/Enforcement.ts
  * Package entry module: AgentCore.Facets.Enforcement
- * Semantic identity: sha256:1e68fc29f6ab490bf0f28f5be274b8fb115e7f7ac0b23bce18534d00ad76e28b
- * Input closure: sha256:0f9d7540439da98f3d3242222071ff382ef8023ccab3b7a8a537b1086e0e6f06
+ * Semantic identity: sha256:4b0d304be769b57c3819eb1c5ce9325592d8b450c250ff6f9838cc3ba6a44108
+ * Input closure: sha256:9e2211d2478bd7ee8b336d5acd761502bb1d4fbb0586167c143ffe3813bf4322
  * Semantic IR: sha256:4f2bf513f7e5dbbaf2454df7dff787650b6d2bd56d3df85b03b0461798d5978a
- * Generated module body: sha256:b3221ed478a774ea669388799a9b2e03566d3734b232befcdc258b7925d3d309
- * Generated package body: sha256:f332a39a82fbe097075c94b2e9b0d36b0b5abd37cca11aef16a803531a6821fc
+ * Generated module body: sha256:a99bf7c2cb6d81d90f45eadb273ffc0b5bd01f680641d47310181fce1c4bd0f3
+ * Generated package body: sha256:d34f6d0a21e454c5ceae3d2b7ddf917f1debc81f71d0b6db6d4eaee2d6f7134f
  * Lean toolchain: leanprover/lean4:v4.29.0
  * Lean: Lean (version 4.29.0, x86_64-unknown-linux-gnu, commit 98dc76e3c0a9b856c9b98726b713fb04fab16740, Release)
  * Lake: Lake version 5.0.0-src+98dc76e (Lean version 4.29.0)
@@ -64,4 +64,28 @@ export function claimHonorsEnforcementFloor(claimed: Impact, derived: Impact, se
  */
 export function enforcementFloor(impact: Impact, turnOwnedSession: boolean, sessionFilesystemTarget: boolean): EnforcementTier {
     return admitsDirect(impact, turnOwnedSession, sessionFilesystemTarget) ? "direct" : "mediated";
+}
+
+function requireImpact(value: GeneratedData, name: string): Impact {
+    if (value === "observe" || value === "mutate" || value === "externalSend" || value === "execute" || value === "delegate" || value === "administer") {
+        return value;
+    }
+    throw new TypeError(`${name} must name a Impact`);
+}
+
+export const Impact = Object.freeze({
+    fromData(value: GeneratedData): Impact {
+        return requireImpact(value, "Impact");
+    }
+});
+
+export type GeneratedData = boolean | number | string | null | undefined | readonly GeneratedData[] | {
+    readonly [key: string]: GeneratedData;
+};
+
+export function requireBoolean(value: GeneratedData, name: string): boolean {
+    if (value === true || value === false) {
+        return value;
+    }
+    throw new TypeError(`${name} must be a boolean`);
 }

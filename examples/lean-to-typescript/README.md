@@ -1,7 +1,8 @@
 # Lean to TypeScript pilot
 
-`placement.generated.ts` is generated directly from the kernel-checked declarations in
-`lean/TSLean/Examples/Placement.lean`. It is the executable TypeScript implementation;
+`generated/TSLean/Examples/Placement.ts` is generated directly from the
+kernel-checked declarations in `lean/TSLean/Examples/Placement.lean`. Its manifest
+is `generated/tslean.manifest.json`. It is the executable TypeScript implementation;
 there is no handwritten decision twin.
 
 In a writable source checkout, build the package and regenerate the artifact and its
