@@ -281,8 +281,8 @@ private def testPlatform : IO Unit := do
       assert! machine.platform.timeIndex = 1
       assert! machine.platform.randomIndex = 0
       assert! machine.platform.fetchIndex = 0
-      assert! machine.platform.randoms = #[]
-      assert! machine.platform.fetches = #[]
+      assert! machine.platform.randoms.isEmpty
+      assert! machine.platform.fetches.isEmpty
   | _ => assert! false
 
 private def testCatchExcludesModelFaults : IO Unit := do
