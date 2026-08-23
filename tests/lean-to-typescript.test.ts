@@ -804,7 +804,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     ['Nat', 'def rejected (value : Nat) : Nat := value', 'Fixture.rejected'],
     // `String`'s own closure carries an `extern` implementation, so the metadata audit refuses it
     // before the type rule is reached; both refusals are fail-closed and attributable.
-    ['String', 'def rejected (value : String) : String := value', 'String.ofByteArray'],
+    ['String', 'def rejected (value : String) : String := value', 'String.mk'],
   ])('rejects unsupported built-in data type %s in the Lean exporter', (_type, declarationSource, declaration) => {
     expect(unsupportedSourceError(declarationSource, 'Fixture.rejected')).toMatchObject({
       code: 'UNSUPPORTED_LEAN_FRAGMENT',
@@ -820,8 +820,23 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     });
   });
 
+  test(
+    'rejects a enum declared in Prop',
+    () => {
+      const source = [
+        'inductive EnumProp : Prop where',
+        '  | value',
+        'def rejected (_value : EnumProp) : Bool := true',
+      ].join('\n');
+      expect(unsupportedSourceError(source, 'Fixture.rejected')).toMatchObject({
+        code: 'UNSUPPORTED_LEAN_FRAGMENT',
+        declaration: 'Fixture.EnumProp',
+      });
+    },
+    30_000,
+  );
+
   test.each([
-    ['enum', 'Prop', ['inductive EnumProp : Prop where', '  | value'], 'EnumProp'],
     ['structure', 'Prop', ['structure StructProp : Prop where'], 'StructProp'],
     ['enum', 'Type 1', ['inductive EnumType1 : Type 1 where', '  | value'], 'EnumType1'],
     ['structure', 'Type 1', ['structure StructType1 : Type 1 where'], 'StructType1'],
@@ -843,24 +858,24 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     ['reserved declaration', 'def «default» (value : Bool) : Bool := value', 'Fixture.default', 'Fixture.default'],
     [
       'Unicode declaration dependency',
-      ['def café (value : Bool) : Bool := value', 'def rejected (value : Bool) : Bool := café value'].join('\n'),
+      ['def «café» (value : Bool) : Bool := value', 'def rejected (value : Bool) : Bool := «café» value'].join('\n'),
       'Fixture.rejected',
-      'Fixture.café',
+      'Fixture.«café»',
     ],
     [
       'Unicode structure field',
       [
         'structure UnicodeField where',
-        '  café : Bool',
-        'def rejected (value : UnicodeField) : Bool := value.café',
+        '  «café» : Bool',
+        'def rejected (value : UnicodeField) : Bool := value.«café»',
       ].join('\n'),
       'Fixture.rejected',
       'Fixture.UnicodeField',
     ],
-    ['Unicode parameter', 'def rejected (café : Bool) : Bool := café', 'Fixture.rejected', 'Fixture.rejected'],
+    ['Unicode parameter', 'def rejected («café» : Bool) : Bool := «café»', 'Fixture.rejected', 'Fixture.rejected'],
     [
       'Unicode let binder',
-      'def rejected (value : Bool) : Bool := let café := value; café',
+      'def rejected (value : Bool) : Bool := let «café» := value; «café»',
       'Fixture.rejected',
       'Fixture.rejected',
     ],
