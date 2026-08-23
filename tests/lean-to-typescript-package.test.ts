@@ -181,7 +181,11 @@ describe('published Lean to TypeScript API', () => {
         );
 
         expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain('Fixture.ts and --manifest must identify distinct filesystem paths');
+        expect(result.stderr).toContain(
+          aliasKind === 'hardlink'
+            ? 'Fixture.ts and --manifest must identify distinct filesystem paths'
+            : 'generated file path contains a symbolic link',
+        );
         expect(existsSync(modulePath)).toBe(original !== undefined);
         if (original !== undefined) {
           expect(readFileSync(modulePath)).toEqual(original);
@@ -394,6 +398,38 @@ describe('published Lean to TypeScript API', () => {
         expect(result.stderr).toContain('generated file escapes the output root through a symbolic link');
         expect(readFileSync(escapedPath, 'utf8')).toBe('export const outside = true;\n');
         expect(existsSync(manifestPath)).toBe(false);
+      } finally {
+        rmSync(destinationRoot, { force: true, recursive: true });
+        fixture.dispose();
+      }
+    },
+    PACKED_COMPILER_TIMEOUT_MS,
+  );
+
+  test(
+    'refuses an in-root manifest symlink that targets an external file',
+    () => {
+      const fixture = createLeanProjectFixture(
+        ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
+      );
+      const destinationRoot = mkdtempSync(join(tmpdir(), 'tslean-cli-manifest-symlink-'));
+      const outputDirectory = join(destinationRoot, 'generated');
+      const externalManifest = join(destinationRoot, 'external.manifest.json');
+      const manifestPath = join(outputDirectory, 'tslean.manifest.json');
+      mkdirSync(outputDirectory);
+      writeFileSync(externalManifest, '{"external":true}\n');
+      symlinkSync(externalManifest, manifestPath, 'file');
+      try {
+        const result = runSourceCompiler(
+          destinationRoot,
+          fixture.projectRoot,
+          fixture.sourcePath,
+          outputDirectory,
+          manifestPath,
+        );
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain('generated file path contains a symbolic link');
+        expect(readFileSync(externalManifest, 'utf8')).toBe('{"external":true}\n');
       } finally {
         rmSync(destinationRoot, { force: true, recursive: true });
         fixture.dispose();
@@ -1032,6 +1068,56 @@ describe('published Lean to TypeScript API', () => {
       expect(readFileSync(full[1].path, 'utf8')).toBe('old source map\n');
       expect(readFileSync(full[2].path, 'utf8')).toBe('smaller manifest\n');
       expect(transactionFiles(temporaryRoot)).toEqual([]);
+    } finally {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('uses the root committed marker before a nested marker to recover a smaller tree after a crash', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-transaction-root-marker-'));
+    const nestedRoot = join(temporaryRoot, 'nested');
+    mkdirSync(nestedRoot);
+    const modulePath = join(nestedRoot, 'Module.ts');
+    const manifestPath = join(nestedRoot, 'tslean.manifest.json');
+    const full = [
+      { name: 'Module.ts', path: modulePath, canonicalPath: modulePath },
+      { name: '--manifest', path: manifestPath, canonicalPath: manifestPath },
+    ] as const;
+    const scope: ArtifactTransactionScope = { identity: `test:${temporaryRoot}`, root: temporaryRoot };
+    writeFileSync(modulePath, 'old module\n');
+    writeFileSync(manifestPath, 'old manifest\n');
+    const moduleUrl = pathToFileURL(join(repositoryRoot, 'src', 'lean-to-typescript', 'artifact-transaction.ts')).href;
+    const crashPath = join(temporaryRoot, 'crash-after-first-committed-marker.mjs');
+    writeFileSync(
+      crashPath,
+      [
+        `import { nodeArtifactFileSystem, publishArtifactsWithFileSystem } from ${JSON.stringify(moduleUrl)};`,
+        `const scope = ${JSON.stringify(scope)};`,
+        `const destinations = ${JSON.stringify(full)};`,
+        "const contents = ['new module\\n', 'new manifest\\n'];",
+        'let committedWrites = 0;',
+        'const filesystem = {',
+        '  ...nodeArtifactFileSystem,',
+        '  write(descriptor, value) {',
+        '    nodeArtifactFileSystem.write(descriptor, value);',
+        `    if (value.includes('"state":"committed"') && ++committedWrites === 1) process.kill(process.pid, 'SIGKILL');`,
+        '  },',
+        '};',
+        'publishArtifactsWithFileSystem(scope, destinations, contents, filesystem);',
+        '',
+      ].join('\n'),
+    );
+    try {
+      const crashed = spawnSync('bun', [crashPath], { cwd: temporaryRoot, encoding: 'utf8' });
+      expect(crashed.signal).toBe('SIGKILL');
+
+      // The next publisher has only the manifest in its current tree. Root-first ordering makes
+      // the root committed marker discoverable, so journal-recorded nested paths finish as new.
+      recoverArtifactsWithFileSystem(scope, [full[1]], nodeArtifactFileSystem);
+      expect(readFileSync(modulePath, 'utf8')).toBe('new module\n');
+      expect(readFileSync(manifestPath, 'utf8')).toBe('new manifest\n');
+      expect(transactionFiles(temporaryRoot)).toEqual([]);
+      expect(transactionFiles(nestedRoot)).toEqual([]);
     } finally {
       rmSync(temporaryRoot, { force: true, recursive: true });
     }
@@ -1700,7 +1786,11 @@ describe('published Lean to TypeScript API', () => {
         const result = runSourceCompiler(temporaryRoot, projectRoot, sourcePath, outputDirectory, aliasedPath);
 
         expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain('--manifest must not identify compiler input --source');
+        expect(result.stderr).toContain(
+          aliasKind === 'symlink-parent'
+            ? 'generated file path contains a symbolic link'
+            : '--manifest must not identify compiler input --source',
+        );
         expect(readFileSync(sourcePath)).toEqual(original);
         expect(readFileSync(aliasedPath)).toEqual(original);
         expect(existsSync(outputDirectory)).toBe(true);

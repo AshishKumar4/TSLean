@@ -541,12 +541,12 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:artifact-transaction",
-        "sha256": "sha256:38bf0064330acace5a9da2ddc361fe4ffd8ef485869a9b781b1ff2780d8fcbfe"
+        "sha256": "sha256:be688b8a21cae888cf8d98c6de56a148715cc936952637de0a1f3739ec835509"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:cli",
-        "sha256": "sha256:28ec5cde17a6459b13a72695b374e56003ad6bba838723e61f5d8146bd92d1e8"
+        "sha256": "sha256:6d640dc1bc9021b5a5b32c7f6272ecc10082a3d6694b612f7c1e8167c13dd6d8"
       },
       {
         "kind": "compiler-source",
@@ -659,7 +659,7 @@
         "sha256": "sha256:b3f7d43e005c36e7980721171c8809899ec3c0bc338f35568f54606beb7149a8"
       }
     ],
-    "inputClosureSha256": "sha256:c342b96d4d1eb1bcfcea0eabecf05b64c58141535c828b0cf1abaf4241f69b51",
+    "inputClosureSha256": "sha256:7bb7b150a93a50d3c3c029b3abf498fd3faef6ed7c87d90a71eca9ce59ac8931",
     "semanticIrSha256": "sha256:3ba4598b25b41720cde1cd01b13dd08a31b3e7cc41e2571b575b89cc0cd25cf9",
     "generatedBodySha256": "sha256:19fb59c451dec3b307a009e0586002398ad8f7eed67d90ba982e62e02fbcbe11"
   },

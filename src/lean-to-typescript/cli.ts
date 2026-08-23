@@ -67,6 +67,7 @@ export function runLeanToTypeScriptCli(
     { name: '--project-root', path: projectRoot },
   ]);
   assertManifestIsInsideOutputRoot(outputDirectory, manifestPath);
+  assertGeneratedPathHasNoSymlink(outputDirectory, manifestPath);
   const initialDestinations = assertArtifactPathsAreIsolated(
     [{ name: '--manifest', path: manifestPath }],
     [{ name: '--source', path: sourcePath }],
@@ -104,7 +105,8 @@ export function runLeanToTypeScriptCli(
   ];
   // Validate every file the fresh package names before opening a previous manifest. A hostile
   // manifest alias may be arbitrary bytes; it must first be rejected as an alias/input collision,
-  // not parsed as if it were trusted compiler metadata.
+  // and every manifest component is rechecked after compilation for a symlink swap.
+  assertGeneratedPathHasNoSymlink(outputDirectory, manifestPath);
   const baseDestinations = assertArtifactPathsAreIsolated(
     files.map(({ name, path }) => ({ name, path })),
     compilerInputs,
@@ -114,7 +116,6 @@ export function runLeanToTypeScriptCli(
     baseDestinations.filter((destination) => destination.name === '--manifest'),
   );
   for (const destination of baseDestinations) {
-    if (destination.name === '--manifest') continue;
     if (!isWithin(currentRoot.canonicalPath, destination.canonicalPath)) {
       throw new TypeError(`generated file escapes the output root through a symbolic link: ${destination.path}`);
     }
@@ -131,7 +132,7 @@ export function runLeanToTypeScriptCli(
   if (unexpectedPath !== undefined) {
     throw new TypeError(`generated tree holds an unexpected file: ${unexpectedPath}`);
   }
-  for (const path of [...expected, ...obsolete]) {
+  for (const path of [...expected, ...obsolete, manifestPath]) {
     assertGeneratedPathHasNoSymlink(outputDirectory, path);
   }
   const destinations = [
@@ -146,7 +147,6 @@ export function runLeanToTypeScriptCli(
   // This check uses canonical destinations, not lexical joins: a generated child directory may be
   // swapped for a symlink after the output root itself was bound.
   for (const destination of currentDestinations) {
-    if (destination.name === '--manifest') continue;
     if (!isWithin(currentRoot.canonicalPath, destination.canonicalPath)) {
       throw new TypeError(`generated file escapes the output root through a symbolic link: ${destination.path}`);
     }

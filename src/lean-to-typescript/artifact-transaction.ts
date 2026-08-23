@@ -211,7 +211,7 @@ export function publishArtifactsWithFileSystem(
   assertDestinationsWithinScope(scope, destinations);
   const bound = bindDestinations(destinations, filesystem);
   const scopeRoot = bindScopeRoot(scope, filesystem);
-  const journalDirectories = uniqueDirectories([...bound, scopeRoot]);
+  const journalDirectories = rootFirstJournalDirectories(scopeRoot, bound);
   let publicationLock: PublicationLock | undefined;
   let transactionOwner: TransactionOwner | undefined;
   const staged: StagedArtifact[] = [];
@@ -900,7 +900,7 @@ function recoverBoundArtifacts(
   filesystem: ArtifactFileSystem,
 ): void {
   assertPublicationLockOwned(publicationLock, filesystem);
-  const copies = uniqueDirectories([...destinations, scopeRoot])
+  const copies = rootFirstJournalDirectories(scopeRoot, destinations)
     .flatMap((destination) =>
       [journalName, committedJournalName(journalName)].map((name) => ({
         destination,
@@ -954,7 +954,7 @@ function recoverBoundArtifacts(
       recoverArtifact(artifact, state, publicationLock, filesystem);
     }
     assertPublicationLockOwned(publicationLock, filesystem);
-    const recoveryDirectories = uniqueDirectories([...journalDestinations, scopeRoot]);
+    const recoveryDirectories = rootFirstJournalDirectories(scopeRoot, journalDestinations);
     syncDirectories(recoveryDirectories, filesystem);
     const cleanupError = removeCurrentJournalCopies(
       recoveryDirectories,
@@ -1405,6 +1405,24 @@ function uniqueDirectories(destinations: readonly BoundDestination[]): readonly 
     unique.set(`${destination.directoryIdentity.device}:${destination.directoryIdentity.inode}`, destination);
   }
   return [...unique.values()];
+}
+
+/**
+ * The root anchor is written before any nested journal copy. A crash that reaches a nested
+ * prepared/committed marker therefore always leaves the root marker for a later smaller tree to
+ * discover; `durablyCommitted` becomes true only after that root committed marker is fsynced.
+ */
+function rootFirstJournalDirectories(
+  scopeRoot: BoundDestination,
+  destinations: readonly BoundDestination[],
+): readonly BoundDestination[] {
+  const directories = uniqueDirectories([...destinations, scopeRoot]);
+  return [...directories].sort((left, right) => {
+    const leftRoot = sameIdentity(left.directoryIdentity, scopeRoot.directoryIdentity);
+    const rightRoot = sameIdentity(right.directoryIdentity, scopeRoot.directoryIdentity);
+    if (leftRoot !== rightRoot) return leftRoot ? -1 : 1;
+    return compareCodePoints(left.canonicalPath, right.canonicalPath);
+  });
 }
 
 function removeKnownFile(
