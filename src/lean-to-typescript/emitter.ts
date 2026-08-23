@@ -142,13 +142,14 @@ function emitModuleDeclarations(program: LeanSemanticProgram, context: EmitConte
 }
 
 /**
- * The generated decoders, each in the module that declares the type it reads. A decoder reached
- * only through another decoder is discovered when that one is built, so the set is closed by
- * repeating until no new decoder appears.
+ * The generated decoders, each in the module that declares the type it reads, together with the
+ * `fromData` boundary for a type an external caller has to build itself. A decoder reached only
+ * through another decoder is discovered when that one is built, so the set is closed by repeating
+ * until no new decoder appears.
  */
 function appendGeneratedDecoders(drafts: readonly ModuleDraft[], context: EmitContext): void {
   const owners = new Map(drafts.map((draft) => [draft.leanModule, draft]));
-  const built = new Map<string, { readonly leanName: string; readonly statement: ts.Statement }[]>();
+  const built = new Map<string, { readonly leanName: string; readonly statements: readonly ts.Statement[] }[]>();
   const emitted = new Set<string>();
   const decoders = [...context.prelude.decoders].sort(([left], [right]) => compareCodePoints(left, right));
   for (let progressed = true; progressed;) {
@@ -161,7 +162,7 @@ function appendGeneratedDecoders(drafts: readonly ModuleDraft[], context: EmitCo
       const owner = owners.get(declaration.module);
       if (owner === undefined) throw new TypeError(`generated decoder for ${leanName} has no module`);
       const existing = built.get(declaration.module);
-      const entry = { leanName, statement: emitStructuralDecoder(leanName, name, context) };
+      const entry = { leanName, statements: emitBoundaryDecoder(leanName, name, context) };
       if (existing === undefined) built.set(declaration.module, [entry]);
       else existing.push(entry);
       progressed = true;
@@ -171,7 +172,7 @@ function appendGeneratedDecoders(drafts: readonly ModuleDraft[], context: EmitCo
     const owner = owners.get(leanModule);
     if (owner === undefined) throw new TypeError(`generated decoders have no module: ${leanModule}`);
     for (const entry of [...entries].sort((left, right) => compareCodePoints(left.leanName, right.leanName))) {
-      owner.statements.push(entry.statement);
+      owner.statements.push(...entry.statements);
     }
   }
 }
@@ -212,13 +213,8 @@ function printPackage(
   provenance: LeanToTypeScriptProvenance,
 ): readonly PrintedModule[] {
   const owners = new Map<string, string>();
-  const typeOnly = new Set<string>();
   for (const draft of drafts) {
     for (const name of declaredNames(draft.statements)) owners.set(name, draft.path);
-    for (const statement of draft.statements) {
-      if (!ts.isInterfaceDeclaration(statement) && !ts.isTypeAliasDeclaration(statement)) continue;
-      typeOnly.add(statement.name.text);
-    }
   }
   const imports = new Map(drafts.map((draft) => [draft.path, moduleImports(draft.path, draft.statements, owners)]));
   const required = new Set([...imports.values()].flatMap((entries) => entries.flatMap((entry) => entry.names)));
@@ -232,7 +228,7 @@ function printPackage(
     );
     assertImportsAreExported(draft, entries, drafts, owners);
     const body = printModuleBody(
-      entries.map((entry) => importStatement(entry, typeOnly)),
+      entries.map((entry) => importStatement(entry)),
       statements,
     );
     const generated = moduleDeclarations(draft, declarations, body.lines, provenance);
@@ -475,6 +471,18 @@ interface CodecLocals {
   readonly field: string;
 }
 
+/**
+ * What the generated package exports for a caller to decode with: a `fromData` for every data type
+ * a root declaration accepts, and the shared validator behind every primitive one, so an external
+ * input is parsed at the boundary instead of asserted past it.
+ */
+interface BoundaryPlan {
+  /** Structural Lean data types whose declaring module exports `fromData` for them. */
+  readonly types: ReadonlySet<string>;
+  /** Prelude validators the boundary hands a caller directly. */
+  readonly validators: ReadonlySet<string>;
+}
+
 interface EmitContext {
   readonly roots: ReadonlySet<string>;
   readonly declarationNames: ReadonlyMap<string, string>;
@@ -483,6 +491,7 @@ interface EmitContext {
   readonly reserved: readonly string[];
   readonly prelude: PreludeNames;
   readonly locals: CodecLocals;
+  readonly boundary: BoundaryPlan;
   readonly used: Set<string>;
 }
 
@@ -555,6 +564,13 @@ function planProgram(program: LeanSemanticProgram): EmitContext {
     fields: allocator.allocate('fields'),
     field: allocator.allocate('field'),
   };
+  const boundary = planBoundary(program, types, prelude);
+  const used = new Set(boundary.validators);
+  for (const name of boundary.types) {
+    const decoder = decoders.get(name);
+    if (decoder === undefined) throw new TypeError(`missing generated decoder for ${name}`);
+    used.add(decoder);
+  }
   return {
     roots: new Set(program.roots),
     declarationNames,
@@ -563,8 +579,47 @@ function planProgram(program: LeanSemanticProgram): EmitContext {
     reserved,
     prelude,
     locals,
-    used: new Set(),
+    boundary,
+    used,
   };
+}
+
+/**
+ * The decode boundary an external caller has to cross: the type of every parameter a root
+ * declaration takes, and the shared validator each primitive parameter is read by. A type reached
+ * only through another type's field is read by that type's own codec, so the boundary is exactly
+ * the callable surface and never wider.
+ */
+function planBoundary(
+  program: LeanSemanticProgram,
+  types: ReadonlyMap<string, TypePlan>,
+  prelude: PreludeNames,
+): BoundaryPlan {
+  const roots = new Set(program.roots);
+  const boundaryTypes = new Set<string>();
+  const validators = new Set<string>();
+  const walk = (type: LeanType): void => {
+    switch (type.kind) {
+      case 'boolean':
+        validators.add(prelude.requireBoolean);
+        return;
+      case 'option':
+        walk(type.inner);
+        return;
+      case 'named': {
+        const plan = types.get(type.name);
+        if (plan === undefined) throw new TypeError(`root parameter names an undeclared type ${type.name}`);
+        // A value object already carries `fromData`; a structural type gets one beside its decoder.
+        if (!plan.nominal) boundaryTypes.add(type.name);
+        return;
+      }
+    }
+  };
+  for (const declaration of program.declarations) {
+    if (declaration.kind !== 'function' || !roots.has(declaration.name)) continue;
+    for (const parameter of declaration.parameters) walk(parameter.type);
+  }
+  return { types: boundaryTypes, validators };
 }
 
 /**
@@ -1428,8 +1483,9 @@ function assertStructuralDataImage(plan: TypePlan, context: EmitContext, name: s
 /**
  * The boundary type and the primitive validators every generated codec shares. They are built in
  * reverse dependency order, so a validator reached only through another one is still emitted, and
- * returned in a fixed order so the bytes are stable. The per-type decoders are emitted separately,
- * each in the module that declares its type.
+ * returned in a fixed order so the bytes are stable. A validator that reads a root declaration's
+ * own parameter is exported, because there the caller is the one holding the undecoded value. The
+ * per-type decoders are emitted separately, each in the module that declares its type.
  */
 function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
   const { prelude, locals } = context;
@@ -1437,11 +1493,14 @@ function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
   const name = ts.factory.createIdentifier(locals.name);
   const fields = ts.factory.createIdentifier(locals.fields);
   const dataRecord = dataRecordType(prelude.dataBoundary);
+  const booleanBoundary: readonly ts.Modifier[] | undefined = context.boundary.validators.has(prelude.requireBoolean)
+    ? [modifier(ts.SyntaxKind.ExportKeyword)]
+    : undefined;
   const requireBooleanDeclaration: ts.Statement[] = [];
   if (context.used.has(prelude.requireBoolean)) {
     requireBooleanDeclaration.push(
       ts.factory.createFunctionDeclaration(
-        undefined,
+        booleanBoundary,
         undefined,
         prelude.requireBoolean,
         undefined,
@@ -1583,6 +1642,54 @@ function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
     ? [emitDataBoundaryAlias(prelude.dataBoundary)]
     : [];
   return [...boundaryDeclaration, ...isDataObjectDeclaration, ...dataFieldsDeclaration, ...requireBooleanDeclaration];
+}
+
+/**
+ * A structural type's decoder, and — where the type is part of the package's decode boundary — the
+ * `fromData` a caller reaches it through. The companion names the type where a field decode names
+ * the field it read, so an external caller and an inner field get the same validation with the
+ * diagnostic each of them can act on.
+ */
+function emitBoundaryDecoder(leanName: string, emitted: string, context: EmitContext): readonly ts.Statement[] {
+  const decoder = emitStructuralDecoder(leanName, emitted, context);
+  if (!context.boundary.types.has(leanName)) return [decoder];
+  return [decoder, emitBoundaryCompanion(requiredTypePlan(context, leanName), emitted, context)];
+}
+
+/**
+ * `T.fromData` beside `type T`: a caller decodes the same way whether the type lowered to a value
+ * object or to a union, so which lowering the Lean source implies never reaches a call site. The
+ * alias lives in type space and the companion in value space, so one name carries both.
+ */
+function emitBoundaryCompanion(plan: TypePlan, decoder: string, context: EmitContext): ts.Statement {
+  return constantStatement(
+    plan.typeName,
+    freeze(
+      ts.factory.createObjectLiteralExpression(
+        [
+          ts.factory.createMethodDeclaration(
+            undefined,
+            undefined,
+            'fromData',
+            undefined,
+            undefined,
+            [dataParameter(context.locals.value, context)],
+            ts.factory.createTypeReferenceNode(plan.typeName),
+            block(
+              ts.factory.createReturnStatement(
+                callPrelude(context, decoder, [
+                  ts.factory.createIdentifier(context.locals.value),
+                  ts.factory.createStringLiteral(plan.typeName),
+                ]),
+              ),
+            ),
+          ),
+        ],
+        true,
+      ),
+    ),
+    [modifier(ts.SyntaxKind.ExportKeyword)],
+  );
 }
 
 function emitStructuralDecoder(leanName: string, emitted: string, context: EmitContext): ts.Statement {
@@ -2122,9 +2229,9 @@ function readonlyProperty(field: string, type: ts.TypeNode): ts.PropertySignatur
   );
 }
 
-function constantStatement(name: string, initializer: ts.Expression): ts.Statement {
+function constantStatement(name: string, initializer: ts.Expression, modifiers?: readonly ts.Modifier[]): ts.Statement {
   return ts.factory.createVariableStatement(
-    undefined,
+    modifiers,
     ts.factory.createVariableDeclarationList(
       [ts.factory.createVariableDeclaration(name, undefined, undefined, initializer)],
       ts.NodeFlags.Const,
@@ -2136,14 +2243,16 @@ function block(...statements: readonly ts.Statement[]): ts.Block {
   return ts.factory.createBlock(statements, true);
 }
 
-function freezeThis(): ts.Statement {
-  return ts.factory.createExpressionStatement(
-    ts.factory.createCallExpression(
-      ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('Object'), 'freeze'),
-      undefined,
-      [ts.factory.createThis()],
-    ),
+function freeze(value: ts.Expression): ts.Expression {
+  return ts.factory.createCallExpression(
+    ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('Object'), 'freeze'),
+    undefined,
+    [value],
   );
+}
+
+function freezeThis(): ts.Statement {
+  return ts.factory.createExpressionStatement(freeze(ts.factory.createThis()));
 }
 
 function guard(condition: ts.Expression, message: ts.Expression | string): ts.Statement {

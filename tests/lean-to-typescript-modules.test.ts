@@ -19,8 +19,8 @@ import {
   grantedCapability,
 } from '../examples/lean-to-typescript/package/generated/TSLean/Examples/Package/Decision.js';
 import {
+  Capability,
   Grant,
-  type Capability,
 } from '../examples/lean-to-typescript/package/generated/TSLean/Examples/Package/Capability.js';
 import { Policy } from '../examples/lean-to-typescript/package/generated/TSLean/Examples/Package/Policy.js';
 
@@ -495,6 +495,122 @@ describe('Lean package to TypeScript module tree', () => {
         expect(data?.code).toContain('export type Colour = "red" | "blue";');
         // No codec is reached, so no shared runtime module is invented for it.
         expect(emitted.modules.some((module) => module.path === LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH)).toBe(false);
+      } finally {
+        fixture.dispose();
+      }
+    },
+    COMPILATION_TIMEOUT_MS,
+  );
+
+  test('decodes an external input through the exported boundary of the module that declares it', () => {
+    // `Capability` lowers to a union and `Policy` to a value object, and both are decoded the same
+    // way, so a caller never has to know which lowering the Lean source implied.
+    for (const capability of capabilities) expect(Capability.fromData(capability)).toBe(capability);
+    for (const refused of ['root', '', 'Read', 7, true, null, undefined, {}]) {
+      expect(() => Capability.fromData(refused)).toThrowError(/^Capability must name a Capability$/u);
+    }
+    const granted = { read: true, write: false, administer: false };
+    const policy = Policy.fromData({ granted, ceiling: 'read', frozen: false });
+    expect(decideAccess(policy, Capability.fromData('read'))).toBe('allow');
+    expect(grantedCapability(policy, Capability.fromData('write'))).toBeUndefined();
+    // A field decode reaches the same decoder across the module edge and reports the field it read
+    // rather than the type, so one type has one decoder and still two diagnostics.
+    expect(() => Policy.fromData({ granted, ceiling: 'root', frozen: false })).toThrowError(
+      /^Policy ceiling must name a Capability$/u,
+    );
+    expect(importBlock('TSLean/Examples/Package/Policy.ts')).toContain(
+      'import { type Capability, Grant, type GrantData, requireCapability } from "./Capability.js";',
+    );
+    expect(
+      generatedFiles().filter(
+        (path) => path.endsWith('.ts') && readGenerated(path).includes('function requireCapability('),
+      ),
+    ).toEqual(['TSLean/Examples/Package/Capability.ts']);
+  });
+
+  test(
+    'exports one decode boundary per root input, in the module that declares its type',
+    () => {
+      const fixture = createLeanPackageFixture([
+        {
+          name: 'Fixture.Tag',
+          source: [
+            'namespace Fixture',
+            '',
+            'inductive Tag where',
+            '  | first',
+            '  | second',
+            '',
+            'end Fixture',
+            '',
+          ].join('\n'),
+        },
+        {
+          name: 'Fixture.Box',
+          source: [
+            'import Fixture.Tag',
+            '',
+            'namespace Fixture',
+            '',
+            'structure Box where',
+            '  tag : Tag',
+            '  flag : Bool',
+            '',
+            'end Fixture',
+            '',
+          ].join('\n'),
+        },
+        {
+          name: 'Fixture.Entry',
+          source: [
+            'import Fixture.Box',
+            '',
+            'namespace Fixture',
+            '',
+            'def reads (tag : Tag) (box : Box) (flag : Bool) : Bool :=',
+            '  match tag with',
+            '  | .first => box.flag && flag',
+            '  | .second => flag',
+            '',
+            'end Fixture',
+            '',
+          ].join('\n'),
+        },
+      ]);
+      try {
+        const request = {
+          projectRoot: fixture.projectRoot,
+          moduleName: 'Fixture.Entry',
+          sourcePath: join(fixture.sourceRoot, 'Fixture', 'Entry.lean'),
+          declarations: ['Fixture.reads'],
+        } satisfies LeanToTypeScriptRequest;
+        const emitted = compileLeanToTypeScript(request);
+        verifyLeanToTypeScriptPackage(emitted);
+        const code = new Map(emitted.modules.map((module) => [module.path, module.code]));
+        const occurrences = (needle: string): number =>
+          emitted.modules.reduce((total, module) => total + module.code.split(needle).length - 1, 0);
+        // Every input `reads` takes is decoded by an export of the module that declares its type:
+        // the two data types through `fromData`, the primitive through the shared validator.
+        expect(code.get('Fixture/Tag.ts')).toContain('export const Tag = Object.freeze({');
+        expect(code.get('Fixture/Box.ts')).toContain('export const Box = Object.freeze({');
+        expect(code.get(LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH)).toContain(
+          'export function requireBoolean(value: GeneratedData, name: string): boolean {',
+        );
+        // The declaring module owns the decoder and the nested one imports it, so neither the
+        // decoder nor the boundary is emitted twice anywhere in the package.
+        expect(code.get('Fixture/Box.ts')).toContain('import { type Tag, requireTag } from "./Tag.js";');
+        expect(code.get('Fixture/Box.ts')).toContain('requireTag(data["tag"], "Box tag")');
+        expect(occurrences('function requireTag(')).toBe(1);
+        expect(occurrences('function requireBox(')).toBe(1);
+        expect(occurrences('Object.freeze({')).toBe(2);
+        expect(occurrences('fromData(value: GeneratedData)')).toBe(2);
+        // The entry module states the decision over decoded values and imports nothing to run.
+        expect(code.get('Fixture/Entry.ts')).toContain(
+          'export function reads(tag: Tag, box: Box, flag: boolean): boolean {',
+        );
+        expect(code.get('Fixture/Entry.ts')).toContain('import { type Box } from "./Box.js";');
+        expect(occurrences(': unknown')).toBe(0);
+        expect(moduleBytes(compileLeanToTypeScript(request))).toEqual(moduleBytes(emitted));
       } finally {
         fixture.dispose();
       }

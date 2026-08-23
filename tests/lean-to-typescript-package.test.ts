@@ -19,6 +19,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import ts from 'typescript';
 import { describe, expect, test } from 'vitest';
 import { choosePlacementFromData } from '../examples/lean-to-typescript/placement.adapter.js';
 import {
@@ -1872,17 +1873,18 @@ describe('published Lean to TypeScript API', () => {
       expect(oracleSuite).toContain(String(oracle['selector']));
       for (const path of registryPaths(model)) expect(statSync(join(repositoryRoot, path)).isFile()).toBe(true);
 
-      const generatedSource = readFileSync(join(repositoryRoot, String(target['source'])), 'utf8');
+      const generatedPath = join(repositoryRoot, String(target['source']));
       const adapter = model['runtimeAdapter'];
       if (typeof adapter === 'string') {
         const specifier = relative(dirname(adapter), String(target['source'])).replace(/\.ts$/u, '.js');
         expect(readFileSync(join(repositoryRoot, adapter), 'utf8')).toContain(`from './${specifier}'`);
-      } else {
-        // The codec's own boundary is a named union, never `unknown`: a consumer whose lint
-        // forbids unparsed parameters has to be able to adopt the artifact unmodified.
-        expect(generatedSource).toContain('public static fromData(value: GeneratedData)');
-        expect(generatedSource).not.toMatch(/:\s*unknown\b/u);
       }
+      // Every input a registered declaration accepts is decoded by an exported boundary that reads
+      // the named union, never `unknown`: a consumer whose lint forbids unparsed parameters has to
+      // be able to adopt the artifact unmodified, and a model with no adapter has nowhere else to
+      // put the boundary.
+      expect(readFileSync(generatedPath, 'utf8')).not.toMatch(/:\s*unknown\b/u);
+      expect(undecodedInputs(generatedPath, entrypoint['declarations'] as readonly string[])).toEqual([]);
 
       const bounds: unknown = JSON.parse(readFileSync(join(repositoryRoot, String(model['boundsArtifact'])), 'utf8'));
       if (!isRecord(bounds) || !Array.isArray(bounds['operations'])) {
@@ -1955,6 +1957,73 @@ function registryPaths(model: Record<string, unknown>): readonly string[] {
     ...(typeof model['runtimeAdapter'] === 'string' ? [model['runtimeAdapter']] : []),
     String(model['boundsArtifact']),
   ];
+}
+
+/**
+ * Which inputs of a generated module's registered declarations no exported boundary decodes. A
+ * boundary is an exported call that reads the module's own data union and returns the input's
+ * exact type: a validator, or `fromData` on an exported value. Whatever is left is an input a
+ * consumer could only get past by asserting.
+ */
+function undecodedInputs(source: string, declarations: readonly string[]): readonly string[] {
+  const program = ts.createProgram([source], {
+    lib: ['lib.es2022.d.ts'],
+    module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    noEmit: true,
+    strict: true,
+    target: ts.ScriptTarget.ES2022,
+  });
+  const checker = program.getTypeChecker();
+  const file = program.getSourceFile(source);
+  if (file === undefined) throw new TypeError(`generated module did not load: ${source}`);
+  const moduleSymbol = checker.getSymbolAtLocation(file);
+  if (moduleSymbol === undefined) throw new TypeError(`generated module exports nothing: ${source}`);
+  const exported = checker.getExportsOfModule(moduleSymbol);
+  const decoded = decodableTypes(checker, exported);
+  const undecoded: string[] = [];
+  for (const declaration of declarations) {
+    const name = declaration.split('.').slice(-1).join('');
+    const symbol = exported.find((candidate) => candidate.name === name);
+    if (symbol === undefined) throw new TypeError(`generated module does not export ${name}`);
+    const [signature] = symbolType(checker, symbol).getCallSignatures();
+    if (signature === undefined) throw new TypeError(`registered declaration ${name} is not callable`);
+    for (const parameter of signature.getParameters()) {
+      const type = symbolType(checker, parameter);
+      if (decoded.has(type)) continue;
+      undecoded.push(`${name}(${parameter.name}: ${checker.typeToString(type)})`);
+    }
+  }
+  return undecoded;
+}
+
+/** The exact types the module's exported boundary builds out of its own data union. */
+function decodableTypes(checker: ts.TypeChecker, exported: readonly ts.Symbol[]): ReadonlySet<ts.Type> {
+  const decoded = new Set<ts.Type>();
+  for (const symbol of exported) {
+    if (symbol.valueDeclaration === undefined) continue;
+    const type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration);
+    const signatures = [...type.getCallSignatures()];
+    const fromData = type.getProperty('fromData');
+    const member = fromData?.declarations?.[0];
+    if (fromData !== undefined && member !== undefined) {
+      signatures.push(...checker.getTypeOfSymbolAtLocation(fromData, member).getCallSignatures());
+    }
+    for (const signature of signatures) {
+      const [input] = signature.getParameters();
+      if (input === undefined) continue;
+      if (checker.typeToString(symbolType(checker, input)) !== 'GeneratedData') continue;
+      decoded.add(signature.getReturnType());
+    }
+  }
+  return decoded;
+}
+
+/** A symbol's type at its own declaration. A mapped-type member has declarations but no value one. */
+function symbolType(checker: ts.TypeChecker, symbol: ts.Symbol): ts.Type {
+  const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
+  if (declaration === undefined) throw new TypeError(`symbol ${symbol.name} has no declaration`);
+  return checker.getTypeOfSymbolAtLocation(symbol, declaration);
 }
 
 type FaultOperation = 'fsync' | 'rename' | 'write';

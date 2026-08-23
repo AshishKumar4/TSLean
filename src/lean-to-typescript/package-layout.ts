@@ -152,26 +152,42 @@ export function exportedFunction(statement: ts.FunctionDeclaration): ts.Function
   );
 }
 
+/** What one module refers to, split by whether the reference survives type erasure. */
+export interface ModuleReferences {
+  readonly all: ReadonlySet<string>;
+  readonly values: ReadonlySet<string>;
+}
+
 /**
- * Every name a statement uses as a value or a type. A name in declaration, member, or property
- * position binds or selects rather than refers, so it is skipped: the result is exactly the set
- * of free names the module has to resolve, and a generated local can never collide with one
- * because the identifier allocator reserves every declaration name first.
+ * Every name a statement uses, and which of them the module still needs once types are erased. A
+ * name in declaration, member, or property position binds or selects rather than refers, so it is
+ * skipped: the result is exactly the set of free names the module has to resolve, and a generated
+ * local can never collide with one because the identifier allocator reserves every declaration
+ * name first.
  */
-export function referencedNames(statements: readonly ts.Statement[]): ReadonlySet<string> {
-  const names = new Set<string>();
-  const visit = (node: ts.Node): void => {
+export function referencedNames(statements: readonly ts.Statement[]): ModuleReferences {
+  const all = new Set<string>();
+  const values = new Set<string>();
+  const visit = (node: ts.Node, inType: boolean): void => {
     if (ts.isIdentifier(node)) {
-      names.add(node.text);
+      all.add(node.text);
+      if (!inType) values.add(node.text);
+      return;
+    }
+    // `typeof x` and a heritage clause name a value from inside a type, so the reference returns
+    // to value position rather than being erased with the type that encloses it.
+    if (ts.isTypeQueryNode(node) || ts.isExpressionWithTypeArguments(node)) {
+      visit(ts.isTypeQueryNode(node) ? node.exprName : node.expression, false);
+      for (const argument of node.typeArguments ?? []) visit(argument, true);
       return;
     }
     const bound = boundName(node);
     ts.forEachChild(node, (child) => {
-      if (child !== bound) visit(child);
+      if (child !== bound) visit(child, inType || ts.isTypeNode(child));
     });
   };
-  for (const statement of statements) visit(statement);
-  return names;
+  for (const statement of statements) visit(statement, false);
+  return { all, values };
 }
 
 function boundName(node: ts.Node): ts.Node | undefined {
@@ -200,6 +216,8 @@ function boundName(node: ts.Node): ts.Node | undefined {
 export interface ModuleImport {
   readonly specifier: string;
   readonly names: readonly string[];
+  /** Imported names this module only ever mentions in type position. */
+  readonly typeOnly: ReadonlySet<string>;
 }
 
 /**
@@ -212,8 +230,9 @@ export function moduleImports(
   statements: readonly ts.Statement[],
   owners: NameOwners,
 ): readonly ModuleImport[] {
+  const references = referencedNames(statements);
   const byOwner = new Map<string, string[]>();
-  for (const name of referencedNames(statements)) {
+  for (const name of references.all) {
     const owner = owners.get(name);
     if (owner === undefined || owner === path) continue;
     const existing = byOwner.get(owner);
@@ -225,15 +244,16 @@ export function moduleImports(
     .map(([owner, names]) => ({
       specifier: relativeModuleSpecifier(path, owner),
       names: [...names].sort(compareCodePoints),
+      typeOnly: new Set(names.filter((name) => !references.values.has(name))),
     }));
 }
 
 /**
- * One import declaration per source module. Every name carries an inline `type` marker when the
- * owner emits it as a type only, so the emitted tree is correct under `verbatimModuleSyntax` and
- * a reader can see which names disappear at runtime.
+ * One import declaration per source module. A name the importing module only mentions in type
+ * position carries an inline `type` marker, so the emitted tree is correct under
+ * `verbatimModuleSyntax` and a reader can see which names disappear at runtime.
  */
-export function importStatement(entry: ModuleImport, typeOnly: ReadonlySet<string>): ts.Statement {
+export function importStatement(entry: ModuleImport): ts.Statement {
   return ts.factory.createImportDeclaration(
     undefined,
     ts.factory.createImportClause(
@@ -241,7 +261,7 @@ export function importStatement(entry: ModuleImport, typeOnly: ReadonlySet<strin
       undefined,
       ts.factory.createNamedImports(
         entry.names.map((name) =>
-          ts.factory.createImportSpecifier(typeOnly.has(name), undefined, ts.factory.createIdentifier(name)),
+          ts.factory.createImportSpecifier(entry.typeOnly.has(name), undefined, ts.factory.createIdentifier(name)),
         ),
       ),
     ),

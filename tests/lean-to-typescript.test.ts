@@ -1224,6 +1224,37 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     expect(code).not.toContain('class');
   });
 
+  test('exports one validating decode boundary for every enforcement input', () => {
+    const emitted = compileLeanToTypeScript(enforcementRequest);
+    const code = entryCode(emitted);
+    const generated = evaluateGeneratedModuleExports(code);
+    const fromData = requireMethod(generated['Impact'], 'fromData');
+    const requireBoolean = requireFunction(generated, 'requireBoolean');
+    const floor = requireFunction(generated, 'enforcementFloor');
+    // The boundary admits exactly what Lean declares and refuses every other value a JSON
+    // document can deliver in an impact's place, including one shaped like a tagged constructor.
+    for (const impact of IMPACT_KINDS) expect(fromData(impact)).toBe(impact);
+    for (const refused of ['sudo', '', 'Observe', 7, 0, true, null, undefined, {}, ['observe']]) {
+      expect(() => fromData(refused)).toThrowError(/^Impact must name a Impact$/u);
+    }
+    expect(() => fromData({ kind: 'observe' })).toThrowError(/^Impact must name a Impact$/u);
+    // A primitive input is validated too, by value rather than by `typeof`, so neither the string
+    // `"true"` nor a truthy number reaches a decision.
+    for (const admitted of [true, false]) expect(requireBoolean(admitted, 'turnOwnedSession')).toBe(admitted);
+    for (const refused of ['true', 'false', 1, 0, '', null, undefined, {}]) {
+      expect(() => requireBoolean(refused, 'turnOwnedSession')).toThrowError(/^turnOwnedSession must be a boolean$/u);
+    }
+    // End to end from undecoded data: nothing between the caller and the decision is asserted.
+    expect(floor(fromData('mutate'), requireBoolean(true, 'owned'), requireBoolean(false, 'own'))).toBe('mediated');
+    expect(floor(fromData('observe'), requireBoolean(false, 'owned'), requireBoolean(false, 'own'))).toBe('direct');
+    // One decoder and one boundary for the one type, and no value object invented to carry them.
+    expect([...code.matchAll(/function requireImpact\(/gu)]).toHaveLength(1);
+    expect([...code.matchAll(/export const Impact = Object\.freeze\(\{/gu)]).toHaveLength(1);
+    expect(code).toContain('export function requireBoolean(value: GeneratedData, name: string): boolean {');
+    expect(code).not.toContain('class');
+    expect(code).not.toMatch(/:\s*unknown\b/u);
+  });
+
   test('lowers a behaviour-carrying nullary inductive to singletons with a total tag codec', () => {
     const fixture = createLeanProjectFixture(
       [
