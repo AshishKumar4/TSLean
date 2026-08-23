@@ -48,6 +48,16 @@ theorem nonEmpty_iff (s : String) : nonEmpty s = true ↔ s.length > 0 := by
   simp [nonEmpty, decide_eq_true_eq]
 
 theorem nonEmpty_empty : nonEmpty "" = false := by simp [nonEmpty]
+private theorem string_length_eq_zero_iff (s : String) : s.length = 0 ↔ s = "" := by
+  constructor
+  · intro h
+    apply String.ext
+    change s.data.length = 0 at h
+    change s.data = []
+    exact List.length_eq_zero.mp h
+  · rintro rfl
+    rfl
+
 
 theorem nonEmpty_iff_ne_empty (s : String) : nonEmpty s = true ↔ s ≠ "" := by
   simp [nonEmpty, decide_eq_true_eq]
@@ -55,7 +65,7 @@ theorem nonEmpty_iff_ne_empty (s : String) : nonEmpty s = true ↔ s ≠ "" := b
   · intro h heq; rw [heq] at h; simp at h
   · intro h
     cases Nat.eq_zero_or_pos s.length with
-    | inl hz => exact absurd (String.length_eq_zero_iff.mp hz) h
+    | inl hz => exact absurd (Iff.mp (string_length_eq_zero_iff s) hz) h
     | inr hp => exact hp
 
 theorem containsChar_iff (s : String) (c : Char) : containsChar s c = true ↔ c ∈ s.toList := by
@@ -96,11 +106,15 @@ theorem isValidIdentifier_empty : isValidIdentifier "" = false := by simp [isVal
 
 theorem containsChar_append_left (s t : String) (c : Char) (h : containsChar s c = true) :
     containsChar (s ++ t) c = true := by
-  rw [containsChar_iff] at *; simp [String.toList_append, List.mem_append]; exact Or.inl h
+  rw [containsChar_iff] at *
+  change c ∈ s.data ++ t.data
+  exact List.mem_append.mpr (Or.inl h)
 
 theorem containsChar_append_right (s t : String) (c : Char) (h : containsChar t c = true) :
     containsChar (s ++ t) c = true := by
-  rw [containsChar_iff] at *; simp [String.toList_append, List.mem_append]; exact Or.inr h
+  rw [containsChar_iff] at *
+  change c ∈ s.data ++ t.data
+  exact List.mem_append.mpr (Or.inr h)
 
 theorem nonEmpty_append_left (s t : String) (h : nonEmpty s = true) : nonEmpty (s ++ t) = true := by
   rw [nonEmpty_iff] at *; simp [String.length_append]; omega
@@ -120,8 +134,9 @@ theorem validateMessageId_iff (s : String) : (validateMessageId s).isSome ↔ 1 
 
 theorem isAlphanumeric_append (s t : String) (hs : isAlphanumeric s = true) (ht : isAlphanumeric t = true) :
     isAlphanumeric (s ++ t) = true := by
-  simp only [isAlphanumeric, String.toList_append, List.all_append, Bool.and_eq_true]
-  simp only [isAlphanumeric] at hs ht; exact ⟨hs, ht⟩
+  simp only [isAlphanumeric, String.toList, String.data_append, List.all_append, Bool.and_eq_true]
+  simp only [isAlphanumeric] at hs ht
+  exact ⟨hs, ht⟩
 
 theorem isValidIdentifier_nonempty (s : String) (h : isValidIdentifier s = true) : s.length > 0 := by
   simp only [isValidIdentifier] at h
@@ -129,7 +144,7 @@ theorem isValidIdentifier_nonempty (s : String) (h : isValidIdentifier s = true)
   | nil => rw [hlist] at h; simp at h
   | cons c cs =>
     have : s.toList.length ≥ 1 := by rw [hlist]; simp
-    rwa [← String.length_toList]
+    exact this
 
 -- isEmailLike_nonempty: if it validates as email-like, string is nonempty
 theorem isEmailLike_nonempty (s : String) (h : isEmailLike s = true) :
@@ -147,7 +162,7 @@ theorem isEmailLike_nonempty (s : String) (h : isEmailLike s = true) :
         simp only [nonEmpty, Bool.and_eq_true, decide_eq_true_eq] at h
         -- hd.length > 0, and hd is a piece of s, so s.length > 0
         exact Nat.pos_of_ne_zero (fun hz => by
-          have hs_empty := String.length_eq_zero_iff.mp hz
+          have hs_empty := Iff.mp (string_length_eq_zero_iff s) hz
           rw [hs_empty] at hsp
           -- "".splitOn "@" = [""] ≠ ["hd", "hd2"]
           have : ("" : String).splitOn "@" = [""] := by native_decide

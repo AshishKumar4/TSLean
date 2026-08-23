@@ -62,7 +62,7 @@ private theorem batch_delete_preserves_absent (s : Storage) (k : StorageKey) (ks
 theorem batch_delete_contains_false (s : Storage) (k : StorageKey) (ks : List StorageKey)
     (h : k ∈ ks) : (batch_delete s ks).contains k = false := by
   induction ks generalizing s with
-  | nil => exact absurd h List.not_mem_nil
+  | nil => exact absurd h (List.not_mem_nil _)
   | cons hd tl ih =>
     simp only [batch_delete, List.foldl_cons]
     rcases List.mem_cons.mp h with rfl | ht
