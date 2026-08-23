@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
   "baseRevision": "e0665cdb7f2fae5e9092ba3dacb96ae26edf2227",
-  "branch": "rebuild/semantic-core",
+  "branch": "trust-integration-416",
   "toolchain": {
-    "bun": "1.3.14",
-    "node": "v22.23.1",
-    "typescript": "6.0.3",
-    "vitest": "vitest/4.1.10 darwin-arm64 node-v22.23.1",
+    "bun": "1.4.0",
+    "node": "v22.22.3",
+    "typescript": "6.0.2",
+    "vitest": "vitest/4.1.11 linux-x64 node-v22.22.3",
     "prettier": "3.9.6",
-    "eslint": "v10.8.0",
-    "lean": "Lean (version 4.29.0, arm64-apple-darwin24.6.0, commit 98dc76e3c0a9b856c9b98726b713fb04fab16740, Release)",
-    "lake": "Lake version 5.0.0-src+98dc76e (Lean version 4.29.0)"
+    "eslint": "v10.9.0",
+    "lean": "Lean (version 4.16.0, x86_64-unknown-linux-gnu, commit 128a1e6b0a82, Release)",
+    "lake": "Lake version 5.0.0-128a1e6 (Lean version 4.16.0)"
   },
   "counts": {
     "tests": {

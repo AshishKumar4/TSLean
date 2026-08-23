@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase1-arrays-manifest.json",
   "baseRevision": "5b4da5a67288cf920bcba80d1e897000b73e90f4",
-  "branch": "rebuild/semantic-core",
+  "branch": "trust-integration-416",
   "counts": {
     "tests": {
       "files": 42,

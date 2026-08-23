@@ -64,8 +64,15 @@ theorem clamp_in_range (x lo hi : Int) (h : lo ≤ hi) : lo ≤ clamp x lo hi �
 theorem isPow2_four : isPow2 4 = true := by decide
 theorem isPow2_eight : isPow2 8 = true := by decide
 theorem not_isPow2_three : isPow2 3 = false := by decide
-theorem ilog2_one : ilog2 1 = 0 := by native_decide
-theorem ilog2_two : ilog2 2 = 1 := by native_decide
+-- `decide` cannot reduce `Nat.log2` in this toolchain: it is well-founded recursion there.
+-- Both literals follow from `log2_two_pow` bounds instead, so nothing rests on `native_decide`.
+theorem ilog2_one : ilog2 1 = 0 :=
+  Nat.le_antisymm (Nat.le_of_lt_succ ((Nat.log2_lt (k := 1) (by decide)).mpr (by decide)))
+    (Nat.zero_le _)
+
+theorem ilog2_two : ilog2 2 = 1 :=
+  Nat.le_antisymm (Nat.le_of_lt_succ ((Nat.log2_lt (k := 2) (by decide)).mpr (by decide)))
+    ((Nat.le_log2 (k := 1) (by decide)).mpr (by decide))
 theorem gcd_le_left (a b : Nat) (h : 0 < a) : gcd' a b ≤ a := Nat.gcd_le_left b h
 theorem gcd_le_right (a b : Nat) (h : 0 < b) : gcd' a b ≤ b := Nat.gcd_le_right b h
 theorem lcm_dvd_mul_left (a b : Nat) : a ∣ lcm' a b := Nat.dvd_lcm_left a b

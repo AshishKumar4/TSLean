@@ -1,8 +1,11 @@
 -- TSLean.Runtime.Basic
 -- Core type definitions for the TypeScript → Lean 4 runtime
 
--- Stands in for 4.29 core's `deriving instance BEq for ByteArray` (Init/Data/ByteArray/Basic.lean); redundant once off 4.16.
-deriving instance BEq for ByteArray
+-- Stands in for 4.29 core's `instBEqByteArray` (Init/Data/ByteArray/Basic.lean); redundant once off 4.16.
+-- Written out rather than derived: the 4.16 derivation compiles through `lcProof`, which would put an
+-- unallowed axiom into the emitted trusted base this module sits at the top of. Equality goes through
+-- `toList` for the same reason — `Array` equality lowers to a proof-carrying loop here.
+instance : BEq ByteArray := ⟨fun a b => a.toList == b.toList⟩
 
 namespace TSLean
 

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outputPath": "evidence/baseline-manifest.json",
   "upstreamRevision": "3c16098c2317929700c57f7419a80c924d4948a0",
-  "branch": "rebuild/semantic-core",
+  "branch": "trust-integration-416",
   "counts": {
     "original": {
       "typescriptErrors": 24,

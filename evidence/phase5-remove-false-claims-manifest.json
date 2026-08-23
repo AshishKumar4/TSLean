@@ -1,26 +1,26 @@
 {
   "schemaVersion": 1,
   "baseRevision": "48c59ed8ee6ca579fb925ad158448de443067949",
-  "branch": "rebuild/semantic-core",
+  "branch": "trust-integration-416",
   "toolchain": {
-    "bun": "1.3.14",
+    "bun": "1.4.0",
     "node": "v22.22.3",
     "typescript": "6.0.2",
-    "vitest": "vitest/4.1.2 linux-x64 node-v22.22.3",
+    "vitest": "vitest/4.1.11 linux-x64 node-v22.22.3",
     "prettier": "3.9.6",
-    "eslint": "v10.8.1",
-    "lean": "Lean (version 4.29.0, x86_64-unknown-linux-gnu, commit 98dc76e3c0a9b856c9b98726b713fb04fab16740, Release)",
-    "lake": "Lake version 5.0.0-src+98dc76e (Lean version 4.29.0)"
+    "eslint": "v10.9.0",
+    "lean": "Lean (version 4.16.0, x86_64-unknown-linux-gnu, commit 128a1e6b0a82, Release)",
+    "lake": "Lake version 5.0.0-128a1e6 (Lean version 4.16.0)"
   },
   "counts": {
     "tests": {
-      "files": 49,
-      "passed": 1875,
+      "files": 45,
+      "passed": 1682,
       "failed": 0,
       "todo": 10
     },
     "lean": {
-      "jobs": 184,
+      "jobs": 180,
       "status": "passed"
     },
     "corpus": {
@@ -167,13 +167,12 @@
     }
   ],
   "hashes": {
-    "source": "sha256:d6528c4bf9ac4e77d528c9ea2e5504202e4c4994c6588c12fc1e12623d37afa7",
-    "leanToTypeScriptCompiler": "sha256:be34f08b36a055cd401fc61c96d90fa525c0d62ccb4bcbd0379e911781b56819",
-    "jsRuntime": "sha256:de59f2c8c1cfbd7865cfbe8f677e98159a2a47b1aeeee6015fb39b77a742b662",
+    "source": "sha256:165eb474983872ff69ec2da7fe073226247f61c723a6f1c8e31a9c2b322da203",
+    "jsRuntime": "sha256:0548554dfa0803092cb6cb784558019708bc0aad6ebfa8c33d1711fa408e3d33",
     "refinementRuntimeAndBarrel": "sha256:65ac151e483e7803ecea297427f47d3e282b364345c541306d26281d73a19619",
-    "refinementTestsAuditRegistry": "sha256:899396394e4f924f6b2ea65b448b15a6f2bef1be558b12ac931e2c9a24b6df57",
+    "refinementTestsAuditRegistry": "sha256:362ef6a302c3afde878cb632ee4b3736173a1790f7c0938f945101c546f8b47b",
     "corpus": "sha256:813ba0e3fa8d02912872c4451cf33773aa0fc627dac24f68f770e25506fa1903",
     "differentialSpecHarness": "sha256:a60e709b193d859da6521ab4179c645fd0c33cb50cfa9d1fba9f486a4feb6eb5",
-    "trustEvidenceInfrastructure": "sha256:82486c5651487f6a24c33fef8372cacfc5ec2509d8b686f0f6b65fcb558f85e4"
+    "trustEvidenceInfrastructure": "sha256:41909a11f17d351840f5eaa7d089fd13e1634c5de598944f886992575353a123"
   }
 }

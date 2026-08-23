@@ -2,16 +2,16 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase5-emitted-tcb-manifest.json",
   "baseRevision": "110c1296e1dce0f67601c13e5863e13ee9252eac",
-  "branch": "rebuild/semantic-core",
+  "branch": "trust-integration-416",
   "counts": {
     "tests": {
-      "files": 45,
-      "passed": 1690,
+      "files": 50,
+      "passed": 1931,
       "failed": 0,
       "todo": 10
     },
     "lean": {
-      "jobs": 180,
+      "jobs": 184,
       "status": "passed"
     },
     "corpus": {
@@ -41,8 +41,8 @@
     "build": "passed",
     "emittedTrustedBase": {
       "imports": 22,
-      "modules": 2088,
-      "declarations": 6166
+      "modules": 1171,
+      "declarations": 5354
     }
   },
   "refinementProofs": {

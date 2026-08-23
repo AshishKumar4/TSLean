@@ -2,11 +2,22 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase2-heap-allocation-manifest.json",
   "baseRevision": "54ca2aac56c74745a496f23f34176fe521c1c5e3",
-  "branch": "rebuild/semantic-core",
+  "branch": "trust-integration-416",
   "counts": {
-    "tests": { "files": 43, "passed": 1633, "failed": 0, "todo": 8 },
-    "lean": { "jobs": 172, "status": "passed" },
-    "corpus": { "entries": 102, "red": 102 },
+    "tests": {
+      "files": 43,
+      "passed": 1633,
+      "failed": 0,
+      "todo": 8
+    },
+    "lean": {
+      "jobs": 172,
+      "status": "passed"
+    },
+    "corpus": {
+      "entries": 102,
+      "red": 102
+    },
     "auditedTheorems": 252,
     "differential": {
       "scenarioGroups": 16,
@@ -34,7 +45,10 @@
     "assumptions": [
       {
         "id": "lean-float-bits",
-        "primitives": { "ofBits": "Float.ofBits", "toBits": "Float.toBits" },
+        "primitives": {
+          "ofBits": "Float.ofBits",
+          "toBits": "Float.toBits"
+        },
         "statement": "Lean's Float bit conversion primitives preserve the intended finite binary64 encodings used by JSNumber."
       },
       {
@@ -49,18 +63,28 @@
       },
       {
         "id": "lean-float-comparison",
-        "primitives": { "lessThan": "LT.lt Float" },
+        "primitives": {
+          "lessThan": "LT.lt Float"
+        },
         "statement": "Lean's executable Float ordering agrees with the finite binary64 ordering used by ECMAScript Number comparison."
       },
       {
         "id": "lean-float-of-scientific",
-        "primitives": { "ofScientific": "Float.ofScientific" },
+        "primitives": {
+          "ofScientific": "Float.ofScientific"
+        },
         "statement": "Lean's Float.ofScientific supplies an executable decimal candidate; exact integer rounding checks and corrects that candidate at binary64 boundaries."
       }
     ]
   },
   "formalDebt": {
-    "counts": { "heap": 2, "array": 1, "hookConditional": 3, "effectfulEquivalence": 1, "total": 7 },
+    "counts": {
+      "heap": 2,
+      "array": 1,
+      "hookConditional": 3,
+      "effectfulEquivalence": 1,
+      "total": 7
+    },
     "obligations": [
       {
         "id": "heap-public-mutation-preservation",
@@ -100,19 +124,51 @@
     ]
   },
   "knownTodos": [
-    { "id": "completion-nested-forof-erased", "location": "tests/e2e-v3.test.ts" },
-    { "id": "completion-process-items-forof-erased", "location": "tests/pipeline-full.test.ts" },
-    { "id": "completion-process-items-forof-erased-cli", "location": "tests/e2e/cli.test.ts" },
-    { "id": "completion-process-items-forof-erased-e2e", "location": "tests/e2e/advanced.test.ts" },
-    { "id": "completion-safe-divide-catch-none", "location": "tests/all-fixtures.test.ts" },
-    { "id": "objects-anonymous-shorthand-default", "location": "tests/parser-types.test.ts" },
-    { "id": "objects-renamed-shorthand-default", "location": "tests/parser-types.test.ts" },
-    { "id": "selfhost-typemap-one-hole", "location": "tests/parser-advanced.test.ts" }
+    {
+      "id": "completion-nested-forof-erased",
+      "location": "tests/e2e-v3.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased",
+      "location": "tests/pipeline-full.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased-cli",
+      "location": "tests/e2e/cli.test.ts"
+    },
+    {
+      "id": "completion-process-items-forof-erased-e2e",
+      "location": "tests/e2e/advanced.test.ts"
+    },
+    {
+      "id": "completion-safe-divide-catch-none",
+      "location": "tests/all-fixtures.test.ts"
+    },
+    {
+      "id": "objects-anonymous-shorthand-default",
+      "location": "tests/parser-types.test.ts"
+    },
+    {
+      "id": "objects-renamed-shorthand-default",
+      "location": "tests/parser-types.test.ts"
+    },
+    {
+      "id": "selfhost-typemap-one-hole",
+      "location": "tests/parser-advanced.test.ts"
+    }
   ],
   "validation": {
     "revision": "ac8ad990e39863a9eedb3ffdcd61b8b2c663aade",
-    "testFiles": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.files" },
-    "todos": { "directory": "tests", "suffix": ".test.ts", "countPath": "tests.todo" },
+    "testFiles": {
+      "directory": "tests",
+      "suffix": ".test.ts",
+      "countPath": "tests.files"
+    },
+    "todos": {
+      "directory": "tests",
+      "suffix": ".test.ts",
+      "countPath": "tests.todo"
+    },
     "corpus": {
       "path": "spec/corpus/counterexamples.json",
       "entriesPath": "corpus.entries",
@@ -173,35 +229,50 @@
         "jsonPath": "entries",
         "countPath": "differential.coverage.modelCovered",
         "measure": "count",
-        "where": { "path": "classification", "equals": "model-covered" }
+        "where": {
+          "path": "classification",
+          "equals": "model-covered"
+        }
       },
       {
         "path": "spec/differential/corpus-coverage.json",
         "jsonPath": "entries",
         "countPath": "differential.coverage.compilerOnly",
         "measure": "count",
-        "where": { "path": "classification", "equals": "compiler-only" }
+        "where": {
+          "path": "classification",
+          "equals": "compiler-only"
+        }
       },
       {
         "path": "spec/differential/corpus-coverage.json",
         "jsonPath": "entries",
         "countPath": "differential.coverage.modelPending",
         "measure": "count",
-        "where": { "path": "classification", "equals": "model-pending" }
+        "where": {
+          "path": "classification",
+          "equals": "model-pending"
+        }
       },
       {
         "path": "spec/differential/corpus-coverage.json",
         "jsonPath": "entries",
         "countPath": "differential.coverage.proofIntegrity",
         "measure": "count",
-        "where": { "path": "classification", "equals": "proof-integrity" }
+        "where": {
+          "path": "classification",
+          "equals": "proof-integrity"
+        }
       },
       {
         "path": "spec/differential/corpus-coverage.json",
         "jsonPath": "entries",
         "countPath": "differential.coverage.scale",
         "measure": "count",
-        "where": { "path": "classification", "equals": "scale" }
+        "where": {
+          "path": "classification",
+          "equals": "scale"
+        }
       },
       {
         "path": "spec/differential/manifest.json",

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase2-ordered-props-manifest.json",
   "baseRevision": "04d31a1dc46450ba532c5553b9ebadf3784f5bba",
-  "branch": "rebuild/semantic-core",
+  "branch": "trust-integration-416",
   "counts": {
     "tests": {
       "files": 43,
@@ -45,7 +45,10 @@
     "assumptions": [
       {
         "id": "lean-float-bits",
-        "primitives": { "ofBits": "Float.ofBits", "toBits": "Float.toBits" },
+        "primitives": {
+          "ofBits": "Float.ofBits",
+          "toBits": "Float.toBits"
+        },
         "statement": "Lean's Float bit conversion primitives preserve the intended finite binary64 encodings used by JSNumber."
       },
       {
@@ -60,12 +63,16 @@
       },
       {
         "id": "lean-float-comparison",
-        "primitives": { "lessThan": "LT.lt Float" },
+        "primitives": {
+          "lessThan": "LT.lt Float"
+        },
         "statement": "Lean's executable Float ordering agrees with the finite binary64 ordering used by ECMAScript Number comparison."
       },
       {
         "id": "lean-float-of-scientific",
-        "primitives": { "ofScientific": "Float.ofScientific" },
+        "primitives": {
+          "ofScientific": "Float.ofScientific"
+        },
         "statement": "Lean's Float.ofScientific supplies an executable decimal candidate; exact integer rounding checks and corrects that candidate at binary64 boundaries."
       }
     ]
@@ -222,35 +229,50 @@
         "jsonPath": "entries",
         "countPath": "differential.coverage.modelCovered",
         "measure": "count",
-        "where": { "path": "classification", "equals": "model-covered" }
+        "where": {
+          "path": "classification",
+          "equals": "model-covered"
+        }
       },
       {
         "path": "spec/differential/corpus-coverage.json",
         "jsonPath": "entries",
         "countPath": "differential.coverage.compilerOnly",
         "measure": "count",
-        "where": { "path": "classification", "equals": "compiler-only" }
+        "where": {
+          "path": "classification",
+          "equals": "compiler-only"
+        }
       },
       {
         "path": "spec/differential/corpus-coverage.json",
         "jsonPath": "entries",
         "countPath": "differential.coverage.modelPending",
         "measure": "count",
-        "where": { "path": "classification", "equals": "model-pending" }
+        "where": {
+          "path": "classification",
+          "equals": "model-pending"
+        }
       },
       {
         "path": "spec/differential/corpus-coverage.json",
         "jsonPath": "entries",
         "countPath": "differential.coverage.proofIntegrity",
         "measure": "count",
-        "where": { "path": "classification", "equals": "proof-integrity" }
+        "where": {
+          "path": "classification",
+          "equals": "proof-integrity"
+        }
       },
       {
         "path": "spec/differential/corpus-coverage.json",
         "jsonPath": "entries",
         "countPath": "differential.coverage.scale",
         "measure": "count",
-        "where": { "path": "classification", "equals": "scale" }
+        "where": {
+          "path": "classification",
+          "equals": "scale"
+        }
       },
       {
         "path": "spec/differential/manifest.json",

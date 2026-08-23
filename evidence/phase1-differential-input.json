@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase1-differential-manifest.json",
   "baseRevision": "be709a49dd663bef8c37545a58a80a8403381839",
-  "branch": "rebuild/semantic-core",
+  "branch": "trust-integration-416",
   "counts": {
     "tests": {
       "files": 43,

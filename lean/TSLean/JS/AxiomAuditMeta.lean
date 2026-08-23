@@ -32,6 +32,21 @@ private def declaringModule (environment : Environment) (name : Name) : Option N
   environment.header.moduleNames[index.toNat]?
 
 /--
+Names of declarations the compiler derives from already-elaborated source: compiled-code stages
+(`._cstageN`), recursion-specialization placeholders (`._specN`), and `partial def` machinery
+(`._unsafe_rec`).
+
+They are never authored, and on this toolchain they carry codegen artifacts — `lcProof` standing in
+for erased proofs, specialized-recursion lemmas declared as axioms — that say nothing about the
+source the gate judges. Source-level taint stays visible: it sits on the authored declaration the
+auxiliary was derived from, which the audit still selects.
+-/
+private def compilerDerivedName (name : Name) : Bool :=
+  match name with
+  | .str _ suffix => suffix.startsWith "_cstage" || suffix.startsWith "_spec_" || suffix == "_unsafe_rec"
+  | _ => false
+
+/--
 Audit the public, proposition-valued declarations of a namespace.
 
 Deliberately partial: it sees neither private declarations, nor compiler-internal ones, nor
@@ -42,8 +57,9 @@ name a namespace rather than a module.
 syntax "#audit_proofs " ident : command
 
 /--
-Audit *every* declaration of every imported module whose name starts with the given module
-prefix — private, compiler-internal and non-`Prop` declarations included.
+Audit every *authored* declaration of every imported module whose name starts with the given
+module prefix — private and non-`Prop` declarations included; compiler-derived auxiliaries
+(`compilerDerivedName`) are excluded.
 
 The prefix selects modules, not namespaces, so a declaration cannot escape the audit by living
 in a namespace that does not match the module it was compiled into.
@@ -60,6 +76,7 @@ elab_rules : command
         liftTermElabM do Meta.isProp info.type
   | `(#audit_constants $moduleId:ident) =>
       auditSelected fun environment name _ => do
+        if compilerDerivedName name then return false
         match declaringModule environment name with
         | none => return false
         | some module => return moduleId.getId.isPrefixOf module

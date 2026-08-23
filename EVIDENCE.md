@@ -1815,3 +1815,69 @@ properly first requires deciding what the `uuid` mapping should point at, since 
 never existed. And `DurableObjectId` and `DurableObjectStorage` have no `Repr`/`BEq` instances, so the
 equality half of the deriving decision has the same shape of defect the carrier check just fixed --
 pre-existing, and not introduced here.
+
+## Merging the trust cleanup into the Lean 4.16 toolchain
+
+The two remote trust commits — clearing the emitted trusted base of unallowed axioms, then auditing
+what the compiler emits — landed on `rebuild/semantic-core`, which still targets Lean 4.29. This
+repository's integrated line now targets Lean 4.16.0, pinned because Agent Core's formal library is.
+The merge (`27a91ab` on `trust-integration-416`) resolved four conflicts semantically: `RPC.lean`
+kept the axiom removal and mooted the 4.16-only `toSubstring` fix it had carried for the deleted
+instance; `package.json` kept both the emitted-TCB evidence wiring and the lean-to-typescript
+targets; `check-js-axioms.mjs` and its test kept both the 4.16 build-layout path and the
+module-level audit machinery. A first reconciliation commit followed. Three defects remained, all
+found by running the gates rather than by inspection, and each is fixed at the source.
+
+**Two literal theorems re-tainted the trusted base.** The reconciliation restored
+`ilog2_one`/`ilog2_two` in `Stdlib/Numeric.lean` as `native_decide`, because 4.16 cannot `decide`
+through the well-founded `Nat.log2`. That injects `Lean.ofReduceBool` exactly as the cleanup's other
+removals did — the gate failed naming `_auxLemma.1`. Both literals are proved instead from
+`Nat.log2_lt`, `Nat.le_log2` and antisymmetry; `#print axioms` shows only `propext`.
+
+**A derived instance compiled through `lcProof`.** The 4.16 integration added
+`deriving instance BEq for ByteArray` where 4.29 core supplies one. The derivation compiles to a
+private `beqByteArray` whose stage constants carry `lcProof`. The instance is written out instead,
+comparing through `toList`: 4.16 lowers `Array` equality to a proof-carrying loop, so element-wise
+list equality is the formulation whose compilation stays clean.
+
+**The constant audit selected compiler machinery.** On this toolchain every compiled module's
+environment carries derived declarations — `._cstageN` code stages holding `lcProof`,
+`._specN` specialization lemmas the compiler declares as axioms, and `._unsafe_rec` partial-definition
+machinery. `#audit_constants` selected them all and died on the first one, unable to see anything
+past it. It now selects authored declarations only: private and non-`Prop` included, compiler-derived
+names excluded. Nothing about the threat model loosens — `sorryAx`, source-declared axioms and
+`native_decide`'s `Lean.ofReduceBool` all sit on authored declarations and are still refused, which
+the planted-fixture tests in `tests/js-trust.test.ts` continue to prove. Proof counts are unaffected:
+603 JS proofs before and after, byte-for-byte the same command.
+
+Counts re-measured on this tree and pinned in `evidence/phase5-emitted-tcb-input.json`: 184 Lean
+jobs, 50 test files with 1,931 passed and 10 todo, 22 emitted imports, 1,171 loaded modules (4.29's
+larger Std graph gave 2,088), 5,354 audited declarations (6,166 including the now-excluded compiler
+artifacts), differential unchanged at 7,587 comparisons, refinement 263 audited / 250 required.
+
+Commands:
+
+```text
+$ cd lean && lake build
+Build completed successfully.  # 184 jobs
+
+$ bun run js:trust
+Emitted trusted base passed: 22 emitted library imports, 1171 loaded modules, 5354 audited declarations
+JS trust checks passed: 603 elaborated proof declarations
+Refinement trust gate passed: 263 audited proof declarations; 250 required production theorems
+
+$ bun run evidence:emitted-tcb:generate && bun run evidence:emitted-tcb:check
+evidence/phase5-emitted-tcb-manifest.json: evidence current, attestation matches
+
+$ bun run test
+Test Files  50 passed (50)
+Tests  1931 passed | 10 todo (1941)
+```
+
+The merge had also zippered `phase5-remove-false-claims-input.json`: the remote side froze that
+snapshot at `110c129`, the 4.16 side had kept it live and added a compiler provenance group, and the
+conflict resolution kept both — a frozen snapshot with one live group and the other side's counts,
+which no revision could reproduce. The repo keeps one live snapshot (`phase5-emitted-tcb`, whose
+`source` group already covers the compiler sources) and freezes history, so the file went back to
+the frozen shape and its manifest was regenerated. All 29 historical inputs record the branch they
+are checked on; each now records this one, and all 31 evidence checks pass on this branch.
