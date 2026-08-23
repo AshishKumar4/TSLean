@@ -176,7 +176,10 @@ theorem bind_preservesWellFormed (action : JSM P α) (next : α → JSM P β)
       | returned value | thrown value | «break» label | «continue» label =>
           exact ⟨nextValid, firstContinues⟩
   | exhausted nextMachine | fault fault nextMachine =>
-      simpa [result] using actionPreserves machine valid
+      have preserved := actionPreserves machine valid
+      rw [result] at preserved
+      change nextMachine.WellFormed ∧ machine.ContinuesFrom nextMachine
+      exact preserved
 
 /-- Result validity composes through normal-result sequencing. -/
 theorem bind_preservesResults (action : JSM P α) (next : α → JSM P β)
@@ -203,7 +206,10 @@ theorem bind_preservesResults (action : JSM P α) (next : α → JSM P β)
                 exact ⟨second.1, Machine.continuesFrom_trans _ _ _ firstMachine.2 second.2⟩
         | returned value | thrown value | «break» label | «continue» label => exact firstMachine
     | exhausted nextMachine | fault fault nextMachine =>
-        simpa [result] using actionPreserves.1 machine valid
+        have preserved := actionPreserves.1 machine valid
+        rw [result] at preserved
+        change nextMachine.WellFormed ∧ machine.ContinuesFrom nextMachine
+        exact preserved
   · intro machine valid
     unfold JSM.bind
     cases result : action machine with
@@ -242,7 +248,10 @@ theorem bind_preservesResultsWhen (action : JSM P α) (next : α → JSM P β)
                   Machine.continuesFrom_trans _ _ _ firstMachine.2 second.2⟩
         | returned value | thrown value | «break» label | «continue» label => exact firstMachine
     | exhausted nextMachine | fault fault nextMachine =>
-        simpa [result] using actionPreserves.1 machine valid preconditionValid
+        have preserved := actionPreserves.1 machine valid preconditionValid
+        rw [result] at preserved
+        change nextMachine.WellFormed ∧ machine.ContinuesFrom nextMachine
+        exact preserved
   · intro machine valid preconditionValid
     unfold JSM.bind
     cases result : action machine with
@@ -304,7 +313,9 @@ theorem unchanged_preservesWellFormed (result : Machine P → RunResult P α)
   intro machine valid
   cases outcome : result machine with
   | done completion next | exhausted next | fault fault next =>
-      have : next = machine := by simpa [outcome] using unchanged machine
+      have same := unchanged machine
+      rw [outcome] at same
+      have : next = machine := same
       subst next
       exact ⟨valid, machine.continuesFrom_refl⟩
 
