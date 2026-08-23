@@ -1571,7 +1571,10 @@ private theorem deleteArrayIndicesFrom_blocked_lookups (properties next : Ordere
   rw [split] at descending nodup
   have beforeGt := pairwise_split_before_gt before after blocked descending nodup
   have afterLe := pairwise_split_after_le before after blocked descending
-  have beforeValid : before.Nodup := (List.nodup_append.mp nodup).1
+  have beforeValid : before.Nodup := by
+    change before.Pairwise (· ≠ ·)
+    change (before ++ blocked :: after).Pairwise (· ≠ ·) at nodup
+    exact (List.pairwise_append.mp nodup).1
   have beforeParsed : ∀ index ∈ before,
       PropertyKey.arrayIndex? (PropertyKey.arrayIndexString index) = some index := by
     intro index member
@@ -3793,7 +3796,7 @@ private theorem appendObject_preserves_wellFormed (heap : Heap) (newObject : Obj
   unfold WellFormed isWellFormed at valid ⊢
   simp only [Bool.and_eq_true] at valid ⊢
   refine ⟨⟨⟨?_, idsValid⟩, by simpa [functionCount] using countValid⟩, ?_⟩
-  · rw [Array.toList_push, List.all_append, List.all_cons, List.all_nil]
+  · rw [Array.push_toList, List.all_append, List.all_cons, List.all_nil]
     simp only [Bool.and_true, Bool.and_eq_true]
     refine ⟨?_, newValid⟩
     rw [List.all_eq_true] at valid ⊢
@@ -3834,7 +3837,7 @@ private theorem appendTwoObjects_preserves_wellFormed (heap : Heap)
   unfold WellFormed isWellFormed at valid ⊢
   simp only [Bool.and_eq_true] at valid ⊢
   refine ⟨⟨⟨?_, idsValid⟩, by simpa [functionCount] using countValid⟩, ?_⟩
-  · simp only [Array.toList_push, List.all_append, List.all_cons, List.all_nil,
+  · simp only [Array.push_toList, List.all_append, List.all_cons, List.all_nil,
       Bool.and_true, Bool.and_eq_true]
     refine ⟨⟨?_, firstValid⟩, secondValid⟩
     rw [List.all_eq_true] at valid ⊢
@@ -6204,7 +6207,7 @@ private theorem mergeSort_cons_range (index : Nat) :
     (le := fun left right => decide (left ≤ right) = true)
     (fun left right _ _ leftLe rightLe =>
       Nat.le_antisymm (of_decide_eq_true leftLe) (of_decide_eq_true rightLe))
-    (List.pairwise_mergeSort (fun left middle right leftLe middleLe => by
+    (List.sorted_mergeSort (fun left middle right leftLe middleLe => by
         simp only [decide_eq_true_eq] at leftLe middleLe ⊢
         omega)
       (fun left right => by simp only [Bool.or_eq_true, decide_eq_true_eq]; omega) _)
