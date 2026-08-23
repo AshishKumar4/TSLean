@@ -4010,7 +4010,7 @@ private theorem descriptorUpdateReferencesValid_iff_policy (heap : Heap)
   unfold DescriptorUpdateReferencesValid DescriptorUpdate.ReferencesValid
   constructor
   · rintro ⟨valueValid, getValid, setValid⟩
-    refine ⟨by simpa only using valueValid, ?_, ?_⟩
+    refine ⟨by simpa using valueValid, ?_, ?_⟩
     · cases getEq : update.get with
       | absent => trivial
       | present getter =>
@@ -4022,7 +4022,7 @@ private theorem descriptorUpdateReferencesValid_iff_policy (heap : Heap)
           simp only [setEq] at setValid ⊢
           cases setter <;> simp_all
   · rintro ⟨valueValid, getValid, setValid⟩
-    refine ⟨by simpa only using valueValid, ?_, ?_⟩
+    refine ⟨by simpa using valueValid, ?_, ?_⟩
     · cases getEq : update.get with
       | absent => trivial
       | present getter =>
@@ -4637,6 +4637,11 @@ theorem wellFormed_getOwnProperty_data_valueValid (heap : Heap) (ref : RefId)
           simp only [Pure.pure, Except.pure, Except.ok.injEq] at found
           have optionFound : (syntheticWrapperDescriptor? slots key).orElse
               (fun _ => object.properties.lookup key) = some (.data descriptor) := by
+            rw [show (syntheticWrapperDescriptor? slots key).orElse
+                (fun _ => object.properties.lookup key) =
+              (syntheticWrapperDescriptor? slots key).or
+                (object.properties.lookup key) from by
+              cases syntheticWrapperDescriptor? slots key <;> rfl]
             exact found
           cases syntheticFound : syntheticWrapperDescriptor? slots key with
           | none =>
