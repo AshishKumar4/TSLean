@@ -108,6 +108,15 @@ structure Heap where
   objects : Array ObjectRecord
   nextFunctionId : Nat
 
+/-- Constructs an object record without exposing its private representation. -/
+private abbrev ObjectRecord.fromFields (properties : OrderedProps) (prototype : Option RefId)
+    (extensible : Bool) (kind : ObjectKind) : ObjectRecord :=
+  ⟨properties, prototype, extensible, kind⟩
+
+/-- Constructs a heap without exposing its private representation. -/
+private abbrev Heap.fromObjects (objects : Array ObjectRecord) (nextFunctionId : Nat) : Heap :=
+  ⟨objects, nextFunctionId⟩
+
 /-- Heap validation and access failures. -/
 inductive HeapFault where
   | invalidRef (ref : RefId)
@@ -133,7 +142,7 @@ inductive DefinePropertyFault where
 namespace Heap
 
 /-- The empty valid heap. -/
-def empty : Heap := .mk #[] 0
+def empty : Heap := Heap.fromObjects #[] 0
 
 /-- Number of stable allocated references. -/
 def size (heap : Heap) : Nat := heap.objects.size
@@ -162,7 +171,8 @@ def allocate (heap : Heap) (prototype : Option RefId := none) (extensible : Bool
     Except HeapFault (RefId × Heap) :=
   if validPrototype heap prototype then
     let ref := ⟨heap.objects.size⟩
-    .ok (ref, .mk (heap.objects.push (.mk OrderedProps.empty prototype extensible .ordinary))
+    .ok (ref, Heap.fromObjects
+      (heap.objects.push (ObjectRecord.fromFields OrderedProps.empty prototype extensible .ordinary))
       heap.nextFunctionId)
   else
     match prototype with
@@ -181,8 +191,9 @@ def allocatePrimitiveWrapper (heap : Heap) (value : Primitive)
     .error (.cannotBoxPrimitive value)
   else if validPrototype heap prototype then
     let ref := ⟨heap.objects.size⟩
-    .ok (ref, .mk (heap.objects.push (.mk OrderedProps.empty prototype true
-      (.primitiveWrapper ⟨value⟩))) heap.nextFunctionId)
+    .ok (ref, Heap.fromObjects
+      (heap.objects.push (ObjectRecord.fromFields OrderedProps.empty prototype true
+        (.primitiveWrapper ⟨value⟩))) heap.nextFunctionId)
   else
     match prototype with
     | some ref => .error (.invalidPrototype ref)
@@ -202,7 +213,7 @@ private def floorLog2 (n : Nat) : Nat := floorLog2Aux 64 n
 
 private def replace (heap : Heap) (ref : RefId) (object : ObjectRecord) : Except HeapFault Heap :=
   if inBounds : ref.value < heap.objects.size then
-    .ok (.mk (heap.objects.set ref.value object inBounds) heap.nextFunctionId)
+    .ok (Heap.fromObjects (heap.objects.set ref.value object inBounds) heap.nextFunctionId)
   else .error (.invalidRef ref)
 
 /-- Replacing an existing object does not change the stable reference arena size. -/
@@ -317,7 +328,7 @@ private def appendArray (heap : Heap) (prototype : Option RefId)
           (.data ⟨value, true, true, true⟩)
     (index + 1, properties)) (0, OrderedProps.empty) |>.2
   let ref := ⟨heap.objects.size⟩
-  (ref, .mk (heap.objects.push (.mk properties prototype true
+  (ref, Heap.fromObjects (heap.objects.push (ObjectRecord.fromFields properties prototype true
     (.array ⟨elements.size, true⟩))) heap.nextFunctionId)
 
 /-- Allocates an array from an indexed collection, validating the prototype and every present object
@@ -375,8 +386,9 @@ def allocateArrayIterator (heap : Heap) (target : RefId)
       | .error _ => throw (.invalidPrototype ref)
   | none => pure ()
   let ref := ⟨heap.objects.size⟩
-  pure (ref, .mk (heap.objects.push (.mk OrderedProps.empty prototype true
-    (.arrayIterator ⟨target, 0, false⟩))) heap.nextFunctionId)
+  pure (ref, Heap.fromObjects
+    (heap.objects.push (ObjectRecord.fromFields OrderedProps.empty prototype true
+      (.arrayIterator ⟨target, 0, false⟩))) heap.nextFunctionId)
 
 /-- Advances iterator state against the target's current length. A completed iterator remains done
 even if the target later grows. -/
@@ -479,7 +491,8 @@ private def appendFunction (heap : Heap) (environment : EnvId) (kind : FunctionK
   let ref := ⟨heap.objects.size⟩
   let slots : FunctionSlots :=
     ⟨⟨heap.nextFunctionId⟩, environment, kind, constructible, constructorMode, homeObject, lexicalThis⟩
-  (ref, .mk (heap.objects.push (.mk properties prototype true (.function slots)))
+  (ref, Heap.fromObjects (heap.objects.push
+    (ObjectRecord.fromFields properties prototype true (.function slots)))
     (heap.nextFunctionId + 1))
 
 /-- Allocates one validated function object. Environment validity is checked by the machine layer. -/
@@ -541,9 +554,9 @@ def allocateConstructorPair (heap : Heap) (environment : EnvId)
           let slots : FunctionSlots :=
             ⟨⟨heap.nextFunctionId⟩, environment, kind, true, constructorMode, none, none⟩
           let objects := heap.objects
-            |>.push (.mk constructorProperties functionPrototype true (.function slots))
-            |>.push (.mk prototypeProperties objectPrototype true .ordinary)
-          .ok (constructorRef, prototypeRef, .mk objects (heap.nextFunctionId + 1))
+            |>.push (ObjectRecord.fromFields constructorProperties functionPrototype true (.function slots))
+            |>.push (ObjectRecord.fromFields prototypeProperties objectPrototype true .ordinary)
+          .ok (constructorRef, prototypeRef, Heap.fromObjects objects (heap.nextFunctionId + 1))
 
 private def validateDescriptorReferences (heap : Heap) (update : DescriptorUpdate) :
     Except DefinePropertyFault Unit := do
@@ -1687,12 +1700,12 @@ private def defineArrayLength (heap : Heap) (ref : RefId) (object : ObjectRecord
             let deleted := deleteArrayIndicesFrom object.properties newLength
             match deleted.1 with
             | none =>
-                heap.replace ref (.mk deleted.2 object.prototype object.extensible
-                    (.array ⟨newLength, descriptor.writable⟩))
+                heap.replace ref (ObjectRecord.fromFields deleted.2 object.prototype object.extensible
+                  (.array ⟨newLength, descriptor.writable⟩))
                   |>.mapError DefinePropertyFault.heap |>.map fun next => (true, next)
             | some blocked =>
-                heap.replace ref (.mk deleted.2 object.prototype object.extensible
-                    (.array ⟨blocked + 1, descriptor.writable⟩))
+                heap.replace ref (ObjectRecord.fromFields deleted.2 object.prototype object.extensible
+                  (.array ⟨blocked + 1, descriptor.writable⟩))
                   |>.mapError DefinePropertyFault.heap |>.map fun next => (false, next)
 
 private def defineArrayIndex (heap : Heap) (ref : RefId) (object : ObjectRecord)
@@ -2209,7 +2222,7 @@ theorem ContinuesFrom.preserves_stableKind {heap next : Heap} (continued : heap.
 
 private theorem pushObject_continuesFrom (heap : Heap) (object : ObjectRecord)
     (nextFunctionId : Nat) :
-    heap.ContinuesFrom (.mk (heap.objects.push object) nextFunctionId) := by
+    heap.ContinuesFrom (Heap.fromObjects (heap.objects.push object) nextFunctionId) := by
   refine ⟨by simp [size], ?_⟩
   intro ref kind found
   unfold objectKind? get? at found ⊢
@@ -2223,11 +2236,11 @@ private theorem pushObject_continuesFrom (heap : Heap) (object : ObjectRecord)
 
 private theorem pushTwoObjects_continuesFrom (heap : Heap) (first second : ObjectRecord)
     (nextFunctionId : Nat) :
-    heap.ContinuesFrom (.mk (heap.objects.push first |>.push second) nextFunctionId) := by
-  exact continuesFrom_trans heap (.mk (heap.objects.push first) nextFunctionId)
-    (.mk (heap.objects.push first |>.push second) nextFunctionId)
+    heap.ContinuesFrom (Heap.fromObjects (heap.objects.push first |>.push second) nextFunctionId) := by
+  exact continuesFrom_trans heap (Heap.fromObjects (heap.objects.push first) nextFunctionId)
+    (Heap.fromObjects (heap.objects.push first |>.push second) nextFunctionId)
     (pushObject_continuesFrom heap first nextFunctionId)
-    (pushObject_continuesFrom (.mk (heap.objects.push first) nextFunctionId) second nextFunctionId)
+    (pushObject_continuesFrom (Heap.fromObjects (heap.objects.push first) nextFunctionId) second nextFunctionId)
 
 /-- Heap continuity preserves validity of every previously valid value. -/
 theorem ContinuesFrom.preserves_valueValid {heap next : Heap} (continued : heap.ContinuesFrom next)
@@ -2268,6 +2281,15 @@ private def finishPrototypePath (colors : Array PrototypeColor) (path : List Ref
     Array PrototypeColor :=
   path.foldl (fun current ref => current.setIfInBounds ref.value .done) colors
 
+private theorem setIfInBounds_push (colors : Array PrototypeColor) (index : Nat)
+    (value appended : PrototypeColor) (inBounds : index < colors.size) :
+    (colors.push appended).setIfInBounds index value =
+      (colors.setIfInBounds index value).push appended := by
+  apply Array.toList_inj.mp
+  rw [Array.toList_setIfInBounds, Array.push_toList, Array.push_toList,
+    Array.toList_setIfInBounds]
+  exact List.set_append_left _ _ (by simpa using inBounds)
+
 private def visitPrototype (heap : Heap) : Nat → Array PrototypeColor → List RefId → RefId →
     Option (Array PrototypeColor)
   | 0, _, _, _ => none
@@ -2296,7 +2318,7 @@ private def validatePrototypeGraphAux (heap : Heap) : Nat → Nat → Array Prot
 
 /-- Stack-safe linear prototype graph validation. Each object changes color at most twice. -/
 def prototypeGraphAcyclic (heap : Heap) : Bool :=
-  validatePrototypeGraphAux heap heap.size 0 (Array.replicate heap.size .unseen)
+  validatePrototypeGraphAux heap heap.size 0 (Array.mkArray heap.size .unseen)
 
 private def prototypeAt (heap : Heap) (index : Nat) : Option (Option RefId) :=
   (heap.objects[index]?).map (·.prototype)
@@ -2387,9 +2409,7 @@ private theorem finishPrototypePath_push (colors : Array PrototypeColor) (path :
         simpa using valid item (by simp [member])
       rw [show (colors.push .unseen).setIfInBounds ref.value .done =
           (colors.setIfInBounds ref.value .done).push .unseen by
-        rw [Array.setIfInBounds_def, dif_pos (by simp; omega)]
-        rw [Array.setIfInBounds_def, dif_pos refValid]
-        rw [Array.set_push, dif_pos refValid]]
+        exact setIfInBounds_push colors ref.value .done .unseen refValid]
       exact ih _ restValid
 
 private theorem visitPrototype_fuel_mono (heap : Heap) (fuel : Nat)
@@ -2428,7 +2448,7 @@ private theorem visitPrototype_push (heap : Heap) (newObject : ObjectRecord)
     (refValid : ref.value < heap.size)
     (pathValid : ∀ item ∈ path, item.value < heap.size) :
     visitPrototype
-        (.mk (heap.objects.push newObject) nextFunctionId) fuel
+        (Heap.fromObjects (heap.objects.push newObject) nextFunctionId) fuel
         (colors.push .unseen) path ref =
       (visitPrototype heap fuel colors path ref).map (·.push .unseen) := by
   induction fuel generalizing colors path ref with
@@ -2449,31 +2469,31 @@ private theorem visitPrototype_push (heap : Heap) (newObject : ObjectRecord)
               cases color with
               | done =>
                   simp only [Option.map_some]
-                  rw [finishPrototypePath_push colors path]
-                  intro item member
-                  rw [colorsSize]
-                  exact pathValid item member
+                  exact congrArg some (finishPrototypePath_push colors path (by
+                    intro item member
+                    rw [colorsSize]
+                    exact pathValid item member))
               | visiting => simp
               | unseen =>
                   have setPush : (colors.push .unseen).setIfInBounds ref.value .visiting =
                       (colors.setIfInBounds ref.value .visiting).push .unseen := by
-                    rw [Array.setIfInBounds_def, dif_pos (by simp; omega)]
-                    rw [Array.setIfInBounds_def, dif_pos (by omega)]
-                    rw [Array.set_push, dif_pos (by omega)]
+                    exact setIfInBounds_push colors ref.value .visiting .unseen (by
+                      simpa [colorsSize] using refValid)
                   rw [setPush]
                   cases prototypeEq : object.prototype with
                   | none =>
                       simp only [prototypeEq, Option.map_some]
-                      rw [finishPrototypePath_push]
-                      intro item member
-                      simp only [List.mem_cons] at member
-                      cases member with
-                      | inl same =>
-                          rw [Array.size_setIfInBounds, colorsSize]
-                          simpa [same] using refValid
-                      | inr member =>
-                          rw [Array.size_setIfInBounds, colorsSize]
-                          exact pathValid item member
+                      exact congrArg some (finishPrototypePath_push
+                        (colors.setIfInBounds ref.value .visiting) (ref :: path) (by
+                          intro item member
+                          simp only [List.mem_cons] at member
+                          cases member with
+                          | inl same =>
+                              rw [Array.size_setIfInBounds, colorsSize]
+                              simpa [same] using refValid
+                          | inr member =>
+                              rw [Array.size_setIfInBounds, colorsSize]
+                              exact pathValid item member))
                   | some parent =>
                       simp only [prototypeEq]
                       have parentValid : parent.value < heap.size := by
@@ -3247,9 +3267,9 @@ private theorem prototypeGraphAcyclic_of_terminates (heap : Heap)
     heap.prototypeGraphAcyclic = true := by
   unfold prototypeGraphAcyclic
   apply validatePrototypeGraphAux_of_terminates heap heap.size 0
-    (Array.replicate heap.size .unseen) (by simp)
+    (Array.mkArray heap.size .unseen) (by simp)
   · intro ref found
-    rw [Array.getElem?_replicate] at found
+    rw [Array.getElem?_mkArray] at found
     split at found <;> simp_all
   · exact terminates
   · omega
@@ -3260,9 +3280,9 @@ private theorem validatePrototypeGraphAux_push_end (heap : Heap) (newObject : Ob
       (fun prototype => prototype.value < heap.size) = true)
     (colorsSize : colors.size = heap.size)
     (allDone : ∀ i < heap.size, colors[i]? = some .done) :
-    validatePrototypeGraphAux (.mk (heap.objects.push newObject) nextFunctionId)
+    validatePrototypeGraphAux (Heap.fromObjects (heap.objects.push newObject) nextFunctionId)
       (remaining + 1) heap.size (colors.push .unseen) = true := by
-  let next : Heap := .mk (heap.objects.push newObject) nextFunctionId
+  let next : Heap := Heap.fromObjects (heap.objects.push newObject) nextFunctionId
   change validatePrototypeGraphAux next (remaining + 1) heap.size
     (colors.push .unseen) = true
   have nextSize : next.size = heap.size + 1 := by simp [next, size]
@@ -3330,7 +3350,7 @@ private theorem validatePrototypeGraphAux_push (heap : Heap) (newObject : Object
     (colorsSize : colors.size = heap.size)
     (doneBefore : ∀ i < index, colors[i]? = some .done)
     (valid : validatePrototypeGraphAux heap remaining index colors = true) :
-    validatePrototypeGraphAux (.mk (heap.objects.push newObject) nextFunctionId)
+    validatePrototypeGraphAux (Heap.fromObjects (heap.objects.push newObject) nextFunctionId)
       (remaining + 1) index (colors.push .unseen) = true := by
   induction remaining generalizing index colors with
   | zero =>
@@ -3372,13 +3392,13 @@ private theorem validatePrototypeGraphAux_push (heap : Heap) (newObject : Object
                     (heap.size + 1) colors [] ⟨index⟩ referencesValid colorsSize indexOld (by simp)
                   rw [visited] at pushedVisit
                   have nextVisited := visitPrototype_fuel_mono
-                    (.mk (heap.objects.push newObject) nextFunctionId) (heap.size + 1)
+                    (Heap.fromObjects (heap.objects.push newObject) nextFunctionId) (heap.size + 1)
                     (colors.push .unseen) [] ⟨index⟩ (nextColors.push .unseen) (by simpa using pushedVisit)
-                  have nextSize : (.mk (heap.objects.push newObject) nextFunctionId : Heap).size + 1 =
+                  have nextSize : (Heap.fromObjects (heap.objects.push newObject) nextFunctionId : Heap).size + 1 =
                       heap.size + 1 + 1 := by simp [size]
                   have nextVisited' : visitPrototype
-                      (.mk (heap.objects.push newObject) nextFunctionId)
-                      ((.mk (heap.objects.push newObject) nextFunctionId : Heap).size + 1)
+                      (Heap.fromObjects (heap.objects.push newObject) nextFunctionId)
+                      ((Heap.fromObjects (heap.objects.push newObject) nextFunctionId : Heap).size + 1)
                       (colors.push .unseen) [] ⟨index⟩ = some (nextColors.push .unseen) := by
                     rw [nextSize]
                     exact nextVisited
@@ -3404,13 +3424,13 @@ private theorem validatePrototypeGraphAux_push (heap : Heap) (newObject : Object
                     (heap.size + 1) colors [] ⟨index⟩ referencesValid colorsSize indexOld (by simp)
                   rw [visited] at pushedVisit
                   have nextVisited := visitPrototype_fuel_mono
-                    (.mk (heap.objects.push newObject) nextFunctionId) (heap.size + 1)
+                    (Heap.fromObjects (heap.objects.push newObject) nextFunctionId) (heap.size + 1)
                     (colors.push .unseen) [] ⟨index⟩ (nextColors.push .unseen) (by simpa using pushedVisit)
-                  have nextSize : (.mk (heap.objects.push newObject) nextFunctionId : Heap).size + 1 =
+                  have nextSize : (Heap.fromObjects (heap.objects.push newObject) nextFunctionId : Heap).size + 1 =
                       heap.size + 1 + 1 := by simp [size]
                   have nextVisited' : visitPrototype
-                      (.mk (heap.objects.push newObject) nextFunctionId)
-                      ((.mk (heap.objects.push newObject) nextFunctionId : Heap).size + 1)
+                      (Heap.fromObjects (heap.objects.push newObject) nextFunctionId)
+                      ((Heap.fromObjects (heap.objects.push newObject) nextFunctionId : Heap).size + 1)
                       (colors.push .unseen) [] ⟨index⟩ = some (nextColors.push .unseen) := by
                     rw [nextSize]
                     exact nextVisited
@@ -3436,15 +3456,15 @@ private theorem prototypeGraphAcyclic_push (heap : Heap) (newObject : ObjectReco
     (newPrototypeValid : newObject.prototype.all
       (fun prototype => prototype.value < heap.size) = true)
     (valid : heap.prototypeGraphAcyclic = true) :
-    prototypeGraphAcyclic (.mk (heap.objects.push newObject) nextFunctionId) = true := by
+    prototypeGraphAcyclic (Heap.fromObjects (heap.objects.push newObject) nextFunctionId) = true := by
   unfold prototypeGraphAcyclic at valid ⊢
   have pushed := validatePrototypeGraphAux_push heap newObject nextFunctionId heap.size 0
-    (Array.replicate heap.size .unseen) referencesValid newPrototypeValid (by simp) (by simp) valid
-  simpa [size, Array.replicate_succ] using pushed
+    (Array.mkArray heap.size .unseen) referencesValid newPrototypeValid (by simp) (by simp) valid
+  simpa [size, Array.mkArray_succ] using pushed
 
 private theorem valueValid_push (heap : Heap) (newObject : ObjectRecord)
     (nextFunctionId : Nat) (value : Value) (valid : heap.valueValid value = true) :
-    valueValid (.mk (heap.objects.push newObject) nextFunctionId) value = true := by
+    valueValid (Heap.fromObjects (heap.objects.push newObject) nextFunctionId) value = true := by
   cases value with
   | primitive value => rfl
   | object ref =>
@@ -3454,7 +3474,7 @@ private theorem valueValid_push (heap : Heap) (newObject : ObjectRecord)
 
 private theorem callableReferenceValid_push (heap : Heap) (newObject : ObjectRecord)
     (nextFunctionId : Nat) (ref : RefId) (valid : callableReferenceValid heap ref = true) :
-    callableReferenceValid (.mk (heap.objects.push newObject) nextFunctionId) ref = true := by
+    callableReferenceValid (Heap.fromObjects (heap.objects.push newObject) nextFunctionId) ref = true := by
   unfold callableReferenceValid isCallable functionSlots? at valid ⊢
   cases found : heap.get? ref with
   | error fault =>
@@ -3467,7 +3487,7 @@ private theorem callableReferenceValid_push (heap : Heap) (newObject : ObjectRec
         | some current =>
             have := (Array.getElem?_eq_some_iff.mp lookup).choose
             simpa [size] using this
-      have nextFound : (.mk (heap.objects.push newObject) nextFunctionId : Heap).get? ref = .ok object := by
+      have nextFound : (Heap.fromObjects (heap.objects.push newObject) nextFunctionId : Heap).get? ref = .ok object := by
         unfold get? at found ⊢
         rw [Array.getElem?_push, if_neg (by simpa [size] using Nat.ne_of_lt refValid)]
         exact found
@@ -3478,7 +3498,7 @@ private theorem callableReferenceValid_push (heap : Heap) (newObject : ObjectRec
 private theorem descriptorReferencesValid_push (heap : Heap) (newObject : ObjectRecord)
     (nextFunctionId : Nat) (descriptor : PropertyDescriptor)
     (valid : descriptorReferencesValid heap descriptor = true) :
-    descriptorReferencesValid (.mk (heap.objects.push newObject) nextFunctionId) descriptor = true := by
+    descriptorReferencesValid (Heap.fromObjects (heap.objects.push newObject) nextFunctionId) descriptor = true := by
   cases descriptor with
   | data descriptor => exact valueValid_push heap newObject nextFunctionId descriptor.value valid
   | accessor descriptor =>
@@ -3490,7 +3510,7 @@ private theorem descriptorReferencesValid_push (heap : Heap) (newObject : Object
 private theorem objectReferencesValid_push (heap : Heap) (newObject object : ObjectRecord)
     (nextFunctionId : Nat) (countMono : heap.nextFunctionId ≤ nextFunctionId)
     (valid : objectReferencesValid heap object = true) :
-    objectReferencesValid (.mk (heap.objects.push newObject) nextFunctionId) object = true := by
+    objectReferencesValid (Heap.fromObjects (heap.objects.push newObject) nextFunctionId) object = true := by
   unfold objectReferencesValid at valid ⊢
   simp only [Bool.and_eq_true] at valid ⊢
   refine ⟨⟨⟨valid.1.1.1, ?_⟩, ?_⟩, ?_⟩
@@ -3541,9 +3561,9 @@ private theorem objectReferencesValid_push_two (heap : Heap) (first second objec
     (nextFunctionId : Nat) (countMono : heap.nextFunctionId ≤ nextFunctionId)
     (valid : objectReferencesValid heap object = true) :
     objectReferencesValid
-      (.mk ((heap.objects.push first).push second) nextFunctionId) object = true := by
+      (Heap.fromObjects ((heap.objects.push first).push second) nextFunctionId) object = true := by
   exact objectReferencesValid_push
-    (.mk (heap.objects.push first) nextFunctionId) second object nextFunctionId (Nat.le_refl _)
+    (Heap.fromObjects (heap.objects.push first) nextFunctionId) second object nextFunctionId (Nat.le_refl _)
     (objectReferencesValid_push heap first object nextFunctionId countMono valid)
 
 private theorem prototypeGraphAcyclic_push_two (heap : Heap) (first second : ObjectRecord)
@@ -3557,8 +3577,8 @@ private theorem prototypeGraphAcyclic_push_two (heap : Heap) (first second : Obj
       (fun prototype => prototype.value < heap.size) = true)
     (valid : heap.prototypeGraphAcyclic = true) :
     prototypeGraphAcyclic
-      (.mk ((heap.objects.push first).push second) nextFunctionId) = true := by
-  let afterFirst : Heap := .mk (heap.objects.push first) nextFunctionId
+      (Heap.fromObjects ((heap.objects.push first).push second) nextFunctionId) = true := by
+  let afterFirst : Heap := Heap.fromObjects (heap.objects.push first) nextFunctionId
   apply prototypeGraphAcyclic_push afterFirst second nextFunctionId
   · intro index object found
     unfold afterFirst at found ⊢
@@ -3667,12 +3687,12 @@ theorem prototypeGraphAcyclic_iff (heap : Heap) (referencesValid : heap.Prototyp
   constructor
   · intro graphValid
     have doneTerminates : DoneReferencesTerminate heap
-        (Array.replicate heap.size PrototypeColor.unseen) := by
+        (Array.mkArray heap.size PrototypeColor.unseen) := by
       intro ref done
-      rw [Array.getElem?_replicate] at done
+      rw [Array.getElem?_mkArray] at done
       split at done <;> simp_all
     have terminates := validatePrototypeGraphAux_terminates heap heap.size 0
-      (Array.replicate heap.size PrototypeColor.unseen) referencesValid (by simp) (by simp)
+      (Array.mkArray heap.size PrototypeColor.unseen) referencesValid (by simp) (by simp)
       doneTerminates graphValid
     intro ref refValid cyclic
     exact prototypeTerminates_not_cyclic (terminates ref refValid) cyclic
@@ -3686,7 +3706,7 @@ private theorem wellFormed_prototype_terminates (heap : Heap) (valid : heap.Well
     fun child object parent found prototypeEq =>
       wellFormed_prototype_valid heap valid child object parent found prototypeEq
   have graphValid : validatePrototypeGraphAux heap heap.size 0
-      (Array.replicate heap.size .unseen) = true := by
+      (Array.mkArray heap.size .unseen) = true := by
     unfold WellFormed isWellFormed at valid
     simp only [Bool.and_eq_true] at valid
     exact valid.2
@@ -3787,12 +3807,12 @@ private theorem appendObject_preserves_wellFormed (heap : Heap) (newObject : Obj
     (newPrototypeValid : newObject.prototype.all
       (fun prototype => prototype.value < heap.size) = true)
     (newValid : objectReferencesValid
-      (.mk (heap.objects.push newObject) nextFunctionId) newObject = true)
+      (Heap.fromObjects (heap.objects.push newObject) nextFunctionId) newObject = true)
     (idsValid : functionIdsSequential 0
-      (functionSlotList (.mk (heap.objects.push newObject) nextFunctionId)) = true)
-    (countValid : (functionSlotList (.mk (heap.objects.push newObject) nextFunctionId)).length =
+      (functionSlotList (Heap.fromObjects (heap.objects.push newObject) nextFunctionId)) = true)
+    (countValid : (functionSlotList (Heap.fromObjects (heap.objects.push newObject) nextFunctionId)).length =
       nextFunctionId) :
-    WellFormed (.mk (heap.objects.push newObject) nextFunctionId) := by
+    WellFormed (Heap.fromObjects (heap.objects.push newObject) nextFunctionId) := by
   unfold WellFormed isWellFormed at valid ⊢
   simp only [Bool.and_eq_true] at valid ⊢
   refine ⟨⟨⟨?_, idsValid⟩, by simpa [functionCount] using countValid⟩, ?_⟩
@@ -3825,15 +3845,15 @@ private theorem appendTwoObjects_preserves_wellFormed (heap : Heap)
     (secondPrototypeValid : second.prototype.all
       (fun prototype => prototype.value < heap.size) = true)
     (firstValid : objectReferencesValid
-      (.mk ((heap.objects.push first).push second) nextFunctionId) first = true)
+      (Heap.fromObjects ((heap.objects.push first).push second) nextFunctionId) first = true)
     (secondValid : objectReferencesValid
-      (.mk ((heap.objects.push first).push second) nextFunctionId) second = true)
+      (Heap.fromObjects ((heap.objects.push first).push second) nextFunctionId) second = true)
     (idsValid : functionIdsSequential 0
-      (functionSlotList (.mk ((heap.objects.push first).push second) nextFunctionId)) = true)
+      (functionSlotList (Heap.fromObjects ((heap.objects.push first).push second) nextFunctionId)) = true)
     (countValid :
-      (functionSlotList (.mk ((heap.objects.push first).push second) nextFunctionId)).length =
+      (functionSlotList (Heap.fromObjects ((heap.objects.push first).push second) nextFunctionId)).length =
         nextFunctionId) :
-    WellFormed (.mk ((heap.objects.push first).push second) nextFunctionId) := by
+    WellFormed (Heap.fromObjects ((heap.objects.push first).push second) nextFunctionId) := by
   unfold WellFormed isWellFormed at valid ⊢
   simp only [Bool.and_eq_true] at valid ⊢
   refine ⟨⟨⟨?_, idsValid⟩, by simpa [functionCount] using countValid⟩, ?_⟩
@@ -4334,8 +4354,8 @@ private theorem machineReferencesPreserved_trans (first second third : Heap)
 private theorem defineArrayLength_preserves_machineReferences (heap next : Heap) (ref : RefId)
     (properties : OrderedProps) (prototype : Option RefId) (extensible : Bool)
     (slots : ArraySlots) (update : DescriptorUpdate) (kind : DescriptorKind) (success : Bool)
-    (found : heap.get? ref = .ok (.mk properties prototype extensible (.array slots)))
-    (defined : defineArrayLength heap ref (.mk properties prototype extensible (.array slots))
+    (found : heap.get? ref = .ok (ObjectRecord.fromFields properties prototype extensible (.array slots)))
+    (defined : defineArrayLength heap ref (ObjectRecord.fromFields properties prototype extensible (.array slots))
       slots update kind = .ok (success, next)) : MachineReferencesPreserved heap next := by
   unfold defineArrayLength at defined
   let requestedLength : Except DefinePropertyFault (Nat × DescriptorUpdate) :=
@@ -4356,11 +4376,11 @@ private theorem defineArrayLength_preserves_machineReferences (heap next : Heap)
         | Except.ok (.accessor _) => Except.ok (false, heap)
         | Except.ok (.data descriptor) =>
             if slots.length < newLength then
-              (heap.replace ref (.mk properties prototype extensible
+              (heap.replace ref (ObjectRecord.fromFields properties prototype extensible
                 (.array ⟨newLength, descriptor.writable⟩))).mapError DefinePropertyFault.heap
                 |>.map fun next => (true, next)
             else if slots.length = newLength then
-              (heap.replace ref (.mk properties prototype extensible
+              (heap.replace ref (ObjectRecord.fromFields properties prototype extensible
                 (.array ⟨newLength, descriptor.writable⟩))).mapError DefinePropertyFault.heap
                 |>.map fun next => (true, next)
             else if !slots.lengthWritable then Except.ok (false, heap)
@@ -4368,11 +4388,11 @@ private theorem defineArrayLength_preserves_machineReferences (heap next : Heap)
               let deleted := deleteArrayIndicesFrom properties newLength
               match deleted.1 with
               | none =>
-                  (heap.replace ref (.mk deleted.2 prototype extensible
+                  (heap.replace ref (ObjectRecord.fromFields deleted.2 prototype extensible
                     (.array ⟨newLength, descriptor.writable⟩))).mapError DefinePropertyFault.heap
                     |>.map fun next => (true, next)
               | some blocked =>
-                  (heap.replace ref (.mk deleted.2 prototype extensible
+                  (heap.replace ref (ObjectRecord.fromFields deleted.2 prototype extensible
                     (.array ⟨blocked + 1, descriptor.writable⟩))).mapError DefinePropertyFault.heap
                     |>.map fun next => (false, next)) = .ok (success, next) at defined
   cases requested : requestedLength with
@@ -4397,28 +4417,28 @@ private theorem defineArrayLength_preserves_machineReferences (heap next : Heap)
               simp only at defined
               by_cases grow : slots.length < newLength
               · simp [grow] at defined
-                cases replaced : heap.replace ref (.mk properties prototype extensible
+                cases replaced : heap.replace ref (ObjectRecord.fromFields properties prototype extensible
                     (.array ⟨newLength, descriptor.writable⟩)) with
                 | error fault => rw [replaced] at defined; contradiction
                 | ok replacedHeap =>
                     simp [replaced] at defined
                     obtain ⟨rfl, rfl⟩ := defined
                     exact replaceArray_preserves_machineReferences heap next ref
-                      (.mk properties prototype extensible (.array slots))
-                      (.mk properties prototype extensible
+                      (ObjectRecord.fromFields properties prototype extensible (.array slots))
+                      (ObjectRecord.fromFields properties prototype extensible
                         (.array ⟨newLength, descriptor.writable⟩)) slots
                       ⟨newLength, descriptor.writable⟩ found rfl rfl replaced
               · by_cases equal : slots.length = newLength
                 · simp [grow, equal] at defined
-                  cases replaced : heap.replace ref (.mk properties prototype extensible
+                  cases replaced : heap.replace ref (ObjectRecord.fromFields properties prototype extensible
                       (.array ⟨newLength, descriptor.writable⟩)) with
                   | error fault => rw [replaced] at defined; contradiction
                   | ok replacedHeap =>
                       simp [replaced] at defined
                       obtain ⟨rfl, rfl⟩ := defined
                       exact replaceArray_preserves_machineReferences heap next ref
-                        (.mk properties prototype extensible (.array slots))
-                        (.mk properties prototype extensible
+                        (ObjectRecord.fromFields properties prototype extensible (.array slots))
+                        (ObjectRecord.fromFields properties prototype extensible
                           (.array ⟨newLength, descriptor.writable⟩)) slots
                         ⟨newLength, descriptor.writable⟩ found rfl rfl replaced
                 · cases writable : slots.lengthWritable with
@@ -4433,28 +4453,28 @@ private theorem defineArrayLength_preserves_machineReferences (heap next : Heap)
                           cases blocked with
                           | none =>
                               simp only [swept] at defined
-                              cases replaced : heap.replace ref (.mk finalProperties prototype
+                              cases replaced : heap.replace ref (ObjectRecord.fromFields finalProperties prototype
                                   extensible (.array ⟨newLength, descriptor.writable⟩)) with
                               | error fault => rw [replaced] at defined; contradiction
                               | ok replacedHeap =>
                                   simp [replaced] at defined
                                   obtain ⟨rfl, rfl⟩ := defined
                                   exact replaceArray_preserves_machineReferences heap next ref
-                                    (.mk properties prototype extensible (.array slots))
-                                    (.mk finalProperties prototype extensible
+                                    (ObjectRecord.fromFields properties prototype extensible (.array slots))
+                                    (ObjectRecord.fromFields finalProperties prototype extensible
                                       (.array ⟨newLength, descriptor.writable⟩)) slots
                                     ⟨newLength, descriptor.writable⟩ found rfl rfl replaced
                           | some blocked =>
                               simp only [swept] at defined
-                              cases replaced : heap.replace ref (.mk finalProperties prototype
+                              cases replaced : heap.replace ref (ObjectRecord.fromFields finalProperties prototype
                                   extensible (.array ⟨blocked + 1, descriptor.writable⟩)) with
                               | error fault => rw [replaced] at defined; contradiction
                               | ok replacedHeap =>
                                   simp [replaced] at defined
                                   obtain ⟨rfl, rfl⟩ := defined
                                   exact replaceArray_preserves_machineReferences heap next ref
-                                    (.mk properties prototype extensible (.array slots))
-                                    (.mk finalProperties prototype extensible
+                                    (ObjectRecord.fromFields properties prototype extensible (.array slots))
+                                    (ObjectRecord.fromFields finalProperties prototype extensible
                                       (.array ⟨blocked + 1, descriptor.writable⟩)) slots
                                     ⟨blocked + 1, descriptor.writable⟩ found rfl rfl replaced
 
@@ -4615,10 +4635,8 @@ theorem wellFormed_getOwnProperty_data_valueValid (heap : Heap) (ref : RefId)
       | primitiveWrapper slots =>
           simp only [kindEq] at found
           simp only [Pure.pure, Except.pure, Except.ok.injEq] at found
-          have optionFound : (syntheticWrapperDescriptor? slots key).or
-              (object.properties.lookup key) = some (.data descriptor) := by
-            change (syntheticWrapperDescriptor? slots key).or (object.properties.lookup key) =
-              some (.data descriptor) at found
+          have optionFound : (syntheticWrapperDescriptor? slots key).orElse
+              (fun _ => object.properties.lookup key) = some (.data descriptor) := by
             exact found
           cases syntheticFound : syntheticWrapperDescriptor? slots key with
           | none =>
@@ -4627,7 +4645,8 @@ theorem wellFormed_getOwnProperty_data_valueValid (heap : Heap) (ref : RefId)
                 (descriptorReferencesValid heap) objectValid.1.1.2 key (.data descriptor) optionFound
           | some synthetic =>
               rw [syntheticFound] at optionFound
-              simp at optionFound
+              change some synthetic = some (.data descriptor) at optionFound
+              injection optionFound with syntheticEq
               subst synthetic
               exact syntheticWrapperDescriptor_data_valueValid heap slots key descriptor syntheticFound
 
@@ -4836,16 +4855,16 @@ theorem setPrototypeOf_preserves_wellFormed (heap next : Heap) (target : RefId)
 private theorem replaceArrayRecord_preserves_wellFormed (heap next : Heap) (target : RefId)
     (oldProperties newProperties : OrderedProps) (prototype : Option RefId) (extensible : Bool)
     (oldSlots newSlots : ArraySlots) (valid : heap.WellFormed)
-    (found : heap.get? target = .ok (.mk oldProperties prototype extensible (.array oldSlots)))
+    (found : heap.get? target = .ok (ObjectRecord.fromFields oldProperties prototype extensible (.array oldSlots)))
     (propertiesValid : newProperties.WellFormed)
     (descriptorsValid : newProperties.descriptors.all (descriptorReferencesValid heap) = true)
-    (replaced : heap.replace target (.mk newProperties prototype extensible (.array newSlots)) =
+    (replaced : heap.replace target (ObjectRecord.fromFields newProperties prototype extensible (.array newSlots)) =
       .ok next)
     (slotsValid : arraySlotsValid
-      (.mk newProperties prototype extensible (.array newSlots)) newSlots = true) :
+      (ObjectRecord.fromFields newProperties prototype extensible (.array newSlots)) newSlots = true) :
     next.WellFormed := by
-  let current : ObjectRecord := .mk oldProperties prototype extensible (.array oldSlots)
-  let replacement : ObjectRecord := .mk newProperties prototype extensible (.array newSlots)
+  let current : ObjectRecord := ObjectRecord.fromFields oldProperties prototype extensible (.array oldSlots)
+  let replacement : ObjectRecord := ObjectRecord.fromFields newProperties prototype extensible (.array newSlots)
   have sourceValid := wellFormed_object heap target current valid found
   have callablePreserved : ∀ ref,
       callableReferenceValid next ref = callableReferenceValid heap ref := by
@@ -5013,14 +5032,14 @@ the complete heap invariant when the replacement slots satisfy the full array co
 theorem replaceArray_preserves_wellFormed (heap next : Heap) (target : RefId)
     (properties : OrderedProps) (prototype : Option RefId) (extensible : Bool)
     (oldSlots newSlots : ArraySlots) (valid : heap.WellFormed)
-    (found : heap.get? target = .ok (.mk properties prototype extensible (.array oldSlots)))
-    (replaced : heap.replace target (.mk properties prototype extensible (.array newSlots)) =
+    (found : heap.get? target = .ok (ObjectRecord.fromFields properties prototype extensible (.array oldSlots)))
+    (replaced : heap.replace target (ObjectRecord.fromFields properties prototype extensible (.array newSlots)) =
       .ok next)
     (slotsValid : arraySlotsValid
-      (.mk properties prototype extensible (.array newSlots)) newSlots = true) :
+      (ObjectRecord.fromFields properties prototype extensible (.array newSlots)) newSlots = true) :
     next.WellFormed := by
   have sourceValid := wellFormed_object heap target
-    (.mk properties prototype extensible (.array oldSlots)) valid found
+    (ObjectRecord.fromFields properties prototype extensible (.array oldSlots)) valid found
   unfold objectReferencesValid at sourceValid
   simp only [Bool.and_eq_true] at sourceValid
   exact replaceArrayRecord_preserves_wellFormed heap next target properties properties prototype
@@ -5030,25 +5049,25 @@ private theorem replaceArrayPropertiesAndSlots_preserves_wellFormed
     (heap next : Heap) (target : RefId) (oldProperties newProperties : OrderedProps)
     (prototype : Option RefId) (extensible : Bool) (oldSlots newSlots : ArraySlots)
     (valid : heap.WellFormed)
-    (found : heap.get? target = .ok (.mk oldProperties prototype extensible (.array oldSlots)))
+    (found : heap.get? target = .ok (ObjectRecord.fromFields oldProperties prototype extensible (.array oldSlots)))
     (propertiesValid : newProperties.WellFormed)
     (descriptorsValid : newProperties.descriptors.all (descriptorReferencesValid heap) = true)
     (oldSlotsValid : arraySlotsValid
-      (.mk newProperties prototype extensible (.array oldSlots)) oldSlots = true)
+      (ObjectRecord.fromFields newProperties prototype extensible (.array oldSlots)) oldSlots = true)
     (newSlotsValid : arraySlotsValid
-      (.mk newProperties prototype extensible (.array newSlots)) newSlots = true)
+      (ObjectRecord.fromFields newProperties prototype extensible (.array newSlots)) newSlots = true)
     (replaced : heap.replace target
-      (.mk newProperties prototype extensible (.array newSlots)) = .ok next) :
+      (ObjectRecord.fromFields newProperties prototype extensible (.array newSlots)) = .ok next) :
     next.WellFormed := by
   let middleRecord : ObjectRecord :=
-    .mk newProperties prototype extensible (.array oldSlots)
+    ObjectRecord.fromFields newProperties prototype extensible (.array oldSlots)
   let finalRecord : ObjectRecord :=
-    .mk newProperties prototype extensible (.array newSlots)
+    ObjectRecord.fromFields newProperties prototype extensible (.array newSlots)
   unfold replace at replaced
   split at replaced
   · rename_i inBounds
     cases replaced
-    let middle : Heap := .mk (heap.objects.set target.value middleRecord inBounds)
+    let middle : Heap := Heap.fromObjects (heap.objects.set target.value middleRecord inBounds)
       heap.nextFunctionId
     have middleReplaced : heap.replace target middleRecord = .ok middle := by
       unfold replace
@@ -5056,29 +5075,29 @@ private theorem replaceArrayPropertiesAndSlots_preserves_wellFormed
     have middleFound : middle.get? target = .ok middleRecord :=
       get?_replace_same heap middle target middleRecord middleReplaced
     have finalReplaced : middle.replace target finalRecord =
-        .ok (.mk (heap.objects.set target.value finalRecord inBounds) heap.nextFunctionId) := by
+        .ok (Heap.fromObjects (heap.objects.set target.value finalRecord inBounds) heap.nextFunctionId) := by
       unfold replace
       have middleBound : target.value < middle.objects.size := by
         simpa [middle] using inBounds
       simp [middleBound, middle, finalRecord, Array.set_set, inBounds]
     have middleValid : middle.WellFormed := by
       apply replace_preserves_wellFormed heap middle target
-        (.mk oldProperties prototype extensible (.array oldSlots)) middleRecord valid found rfl rfl
+        (ObjectRecord.fromFields oldProperties prototype extensible (.array oldSlots)) middleRecord valid found rfl rfl
         middleReplaced
       have sourceValid := wellFormed_object heap target
-        (.mk oldProperties prototype extensible (.array oldSlots)) valid found
+        (ObjectRecord.fromFields oldProperties prototype extensible (.array oldSlots)) valid found
       unfold objectReferencesValid at sourceValid ⊢
       simp only [Bool.and_eq_true] at sourceValid ⊢
       refine ⟨⟨⟨propertiesValid, ?_⟩, ?_⟩, oldSlotsValid⟩
       · rw [List.all_eq_true] at descriptorsValid ⊢
         intro descriptor member
         rw [descriptorReferencesValid_replace heap middle target
-          (.mk oldProperties prototype extensible (.array oldSlots)) middleRecord found rfl
+          (ObjectRecord.fromFields oldProperties prototype extensible (.array oldSlots)) middleRecord found rfl
           middleReplaced]
         exact descriptorsValid descriptor member
       · simpa [replace_size heap middle target middleRecord middleReplaced] using sourceValid.1.2
     exact replaceArray_preserves_wellFormed middle
-      (.mk (heap.objects.set target.value finalRecord inBounds) heap.nextFunctionId) target
+      (Heap.fromObjects (heap.objects.set target.value finalRecord inBounds) heap.nextFunctionId) target
       newProperties prototype extensible oldSlots newSlots middleValid middleFound finalReplaced
       newSlotsValid
   · contradiction
@@ -5090,7 +5109,7 @@ private theorem blockedArrayShrinkReplacement_preserves_wellFormed
     (arrayKind : object.kind = .array oldSlots)
     (swept : deleteArrayIndicesFrom object.properties newLength = (some blocked, properties))
     (replaced : heap.replace target
-      (.mk properties object.prototype object.extensible
+      (ObjectRecord.fromFields properties object.prototype object.extensible
         (.array ⟨blocked + 1, lengthWritable⟩)) = .ok next) : next.WellFormed := by
   have sourceValid := wellFormed_object heap target object valid found
   unfold objectReferencesValid at sourceValid
@@ -5125,7 +5144,7 @@ private theorem blockedArrayShrinkReplacement_preserves_wellFormed
   have blockedLt : blocked < oldSlots.length := by simpa using blockedOldBound
   have oldLengthBound : oldSlots.length ≤ maxArrayLength := by simpa using oldArrayValid.1
   have oldSlotsForProperties : arraySlotsValid
-      (.mk properties object.prototype object.extensible (.array oldSlots)) oldSlots = true := by
+      (ObjectRecord.fromFields properties object.prototype object.extensible (.array oldSlots)) oldSlots = true := by
     unfold arraySlotsValid
     simp only [Bool.and_eq_true]
     refine ⟨oldArrayValid.1, OrderedProps.keysAll_of_lookup properties _ ?_⟩
@@ -5134,7 +5153,7 @@ private theorem blockedArrayShrinkReplacement_preserves_wellFormed
       oldPropertiesValid key descriptor (by rw [swept]; exact finalFound)
     exact OrderedProps.key_of_lookup_satisfies object.properties _ oldArrayValid.2 key descriptor oldFound
   have newSlotsValid : arraySlotsValid
-      (.mk properties object.prototype object.extensible
+      (ObjectRecord.fromFields properties object.prototype object.extensible
         (.array ⟨blocked + 1, lengthWritable⟩)) ⟨blocked + 1, lengthWritable⟩ = true := by
     unfold arraySlotsValid
     simp only [Bool.and_eq_true]
@@ -5157,7 +5176,7 @@ private theorem blockedArrayShrinkReplacement_preserves_wellFormed
           omega
   apply replaceArrayPropertiesAndSlots_preserves_wellFormed heap next target object.properties
     properties object.prototype object.extensible oldSlots ⟨blocked + 1, lengthWritable⟩ valid
-  · have objectEq : ObjectRecord.mk object.properties object.prototype object.extensible
+  · have objectEq : ObjectRecord.fromFields object.properties object.prototype object.extensible
         (.array oldSlots) = object := by
       cases object
       simp_all
@@ -5177,7 +5196,7 @@ private theorem unblockedArrayShrinkReplacement_preserves_wellFormed
     (shrink : newLength < oldSlots.length)
     (swept : deleteArrayIndicesFrom object.properties newLength = (none, properties))
     (replaced : heap.replace target
-      (.mk properties object.prototype object.extensible
+      (ObjectRecord.fromFields properties object.prototype object.extensible
         (.array ⟨newLength, lengthWritable⟩)) = .ok next) : next.WellFormed := by
   have sourceValid := wellFormed_object heap target object valid found
   unfold objectReferencesValid at sourceValid
@@ -5195,7 +5214,7 @@ private theorem unblockedArrayShrinkReplacement_preserves_wellFormed
   simp only [Bool.and_eq_true] at oldArrayValid
   have oldLengthBound : oldSlots.length ≤ maxArrayLength := by simpa using oldArrayValid.1
   have oldSlotsForProperties : arraySlotsValid
-      (.mk properties object.prototype object.extensible (.array oldSlots)) oldSlots = true := by
+      (ObjectRecord.fromFields properties object.prototype object.extensible (.array oldSlots)) oldSlots = true := by
     unfold arraySlotsValid
     simp only [Bool.and_eq_true]
     refine ⟨oldArrayValid.1, OrderedProps.keysAll_of_lookup properties _ ?_⟩
@@ -5204,7 +5223,7 @@ private theorem unblockedArrayShrinkReplacement_preserves_wellFormed
       oldPropertiesValid key descriptor (by rw [swept]; exact finalFound)
     exact OrderedProps.key_of_lookup_satisfies object.properties _ oldArrayValid.2 key descriptor oldFound
   have newSlotsValid : arraySlotsValid
-      (.mk properties object.prototype object.extensible
+      (ObjectRecord.fromFields properties object.prototype object.extensible
         (.array ⟨newLength, lengthWritable⟩)) ⟨newLength, lengthWritable⟩ = true := by
     unfold arraySlotsValid
     simp only [Bool.and_eq_true]
@@ -5228,7 +5247,7 @@ private theorem unblockedArrayShrinkReplacement_preserves_wellFormed
           omega
   apply replaceArrayPropertiesAndSlots_preserves_wellFormed heap next target object.properties
     properties object.prototype object.extensible oldSlots ⟨newLength, lengthWritable⟩ valid
-  · have objectEq : ObjectRecord.mk object.properties object.prototype object.extensible
+  · have objectEq : ObjectRecord.fromFields object.properties object.prototype object.extensible
         (.array oldSlots) = object := by
       cases object
       simp_all
@@ -5379,7 +5398,7 @@ private theorem arrayPropertyReplacement_preserves_wellFormed
     (prototype : Option RefId) (extensible : Bool) (oldSlots newSlots : ArraySlots)
     (key : PropertyKey) (update : DescriptorUpdate) (kind : DescriptorKind)
     (descriptor : PropertyDescriptor) (valid : heap.WellFormed)
-    (found : heap.get? ref = .ok (.mk properties prototype extensible (.array oldSlots)))
+    (found : heap.get? ref = .ok (ObjectRecord.fromFields properties prototype extensible (.array oldSlots)))
     (referencesValid : validateDescriptorReferences heap update = .ok ())
     (applied : update.applyValidatedDescriptor (properties.lookup key) extensible kind =
       .ok descriptor)
@@ -5389,10 +5408,10 @@ private theorem arrayPropertyReplacement_preserves_wellFormed
     (lengthMono : oldSlots.length ≤ newSlots.length)
     (lengthValid : newSlots.length ≤ maxArrayLength)
     (replaced : heap.replace ref
-      (.mk (properties.insert key descriptor) prototype extensible (.array newSlots)) = .ok next) :
+      (ObjectRecord.fromFields (properties.insert key descriptor) prototype extensible (.array newSlots)) = .ok next) :
     next.WellFormed := by
   have sourceValid := wellFormed_object heap ref
-    (.mk properties prototype extensible (.array oldSlots)) valid found
+    (ObjectRecord.fromFields properties prototype extensible (.array oldSlots)) valid found
   unfold objectReferencesValid at sourceValid
   simp only [Bool.and_eq_true] at sourceValid
   have oldSlotsValid := sourceValid.2
@@ -5436,13 +5455,13 @@ private theorem arrayLengthReplacement_preserves_wellFormed
     (heap next : Heap) (ref : RefId) (properties : OrderedProps)
     (prototype : Option RefId) (extensible : Bool) (oldSlots newSlots : ArraySlots)
     (valid : heap.WellFormed)
-    (found : heap.get? ref = .ok (.mk properties prototype extensible (.array oldSlots)))
+    (found : heap.get? ref = .ok (ObjectRecord.fromFields properties prototype extensible (.array oldSlots)))
     (lengthMono : oldSlots.length ≤ newSlots.length)
     (lengthValid : newSlots.length ≤ maxArrayLength)
-    (replaced : heap.replace ref (.mk properties prototype extensible (.array newSlots)) =
+    (replaced : heap.replace ref (ObjectRecord.fromFields properties prototype extensible (.array newSlots)) =
       .ok next) : next.WellFormed := by
   have sourceValid := wellFormed_object heap ref
-    (.mk properties prototype extensible (.array oldSlots)) valid found
+    (ObjectRecord.fromFields properties prototype extensible (.array oldSlots)) valid found
   unfold objectReferencesValid arraySlotsValid at sourceValid
   simp only [Bool.and_eq_true] at sourceValid
   apply replaceArray_preserves_wellFormed heap next ref properties prototype extensible
@@ -5466,9 +5485,9 @@ private theorem defineArrayLength_preserves_wellFormed
     (prototype : Option RefId) (extensible : Bool) (slots : ArraySlots)
     (update : DescriptorUpdate) (kind : DescriptorKind) (success : Bool)
     (valid : heap.WellFormed)
-    (found : heap.get? ref = .ok (.mk properties prototype extensible (.array slots)))
+    (found : heap.get? ref = .ok (ObjectRecord.fromFields properties prototype extensible (.array slots)))
     (defined : defineArrayLength heap ref
-      (.mk properties prototype extensible (.array slots)) slots update kind = .ok (success, next)) :
+      (ObjectRecord.fromFields properties prototype extensible (.array slots)) slots update kind = .ok (success, next)) :
     next.WellFormed := by
   unfold defineArrayLength at defined
   let requestedLength : Except DefinePropertyFault (Nat × DescriptorUpdate) :=
@@ -5489,11 +5508,11 @@ private theorem defineArrayLength_preserves_wellFormed
         | Except.ok (.accessor _) => Except.ok (false, heap)
         | Except.ok (.data descriptor) =>
             if slots.length < newLength then
-              (heap.replace ref (.mk properties prototype extensible
+              (heap.replace ref (ObjectRecord.fromFields properties prototype extensible
                 (.array ⟨newLength, descriptor.writable⟩))).mapError DefinePropertyFault.heap
                 |>.map fun next => (true, next)
             else if slots.length = newLength then
-              (heap.replace ref (.mk properties prototype extensible
+              (heap.replace ref (ObjectRecord.fromFields properties prototype extensible
                 (.array ⟨newLength, descriptor.writable⟩))).mapError DefinePropertyFault.heap
                 |>.map fun next => (true, next)
             else if !slots.lengthWritable then .ok (false, heap)
@@ -5501,11 +5520,11 @@ private theorem defineArrayLength_preserves_wellFormed
               let deleted := deleteArrayIndicesFrom properties newLength
               match deleted.1 with
               | none =>
-                  (heap.replace ref (.mk deleted.2 prototype extensible
+                  (heap.replace ref (ObjectRecord.fromFields deleted.2 prototype extensible
                     (.array ⟨newLength, descriptor.writable⟩))).mapError DefinePropertyFault.heap
                     |>.map fun next => (true, next)
               | some blocked =>
-                  (heap.replace ref (.mk deleted.2 prototype extensible
+                  (heap.replace ref (ObjectRecord.fromFields deleted.2 prototype extensible
                     (.array ⟨blocked + 1, descriptor.writable⟩))).mapError DefinePropertyFault.heap
                     |>.map fun next => (false, next)) = .ok (success, next) at defined
   cases requested : requestedLength with
@@ -5531,7 +5550,7 @@ private theorem defineArrayLength_preserves_wellFormed
               by_cases grow : slots.length < newLength
               · simp [grow] at defined
                 cases replaced : heap.replace ref
-                    (.mk properties prototype extensible
+                    (ObjectRecord.fromFields properties prototype extensible
                       (.array ⟨newLength, descriptor.writable⟩)) with
                 | error fault =>
                     rw [replaced] at defined
@@ -5547,7 +5566,7 @@ private theorem defineArrayLength_preserves_wellFormed
                           newLength
                           (by
                             have source := wellFormed_object heap ref
-                              (.mk properties prototype extensible (.array slots)) valid found
+                              (ObjectRecord.fromFields properties prototype extensible (.array slots)) valid found
                             unfold objectReferencesValid arraySlotsValid at source
                             simp only [Bool.and_eq_true] at source
                             simpa using source.2.1)
@@ -5555,7 +5574,7 @@ private theorem defineArrayLength_preserves_wellFormed
               · by_cases equal : slots.length = newLength
                 · simp [grow, equal] at defined
                   cases replaced : heap.replace ref
-                      (.mk properties prototype extensible
+                      (ObjectRecord.fromFields properties prototype extensible
                         (.array ⟨newLength, descriptor.writable⟩)) with
                   | error fault =>
                       rw [replaced] at defined
@@ -5565,7 +5584,7 @@ private theorem defineArrayLength_preserves_wellFormed
                       obtain ⟨rfl, rfl⟩ := defined
                       have oldBound : slots.length ≤ maxArrayLength := by
                         have source := wellFormed_object heap ref
-                          (.mk properties prototype extensible (.array slots)) valid found
+                          (ObjectRecord.fromFields properties prototype extensible (.array slots)) valid found
                         unfold objectReferencesValid arraySlotsValid at source
                         simp only [Bool.and_eq_true] at source
                         simpa using source.2.1
@@ -5585,7 +5604,7 @@ private theorem defineArrayLength_preserves_wellFormed
                           | none =>
                               simp only [swept] at defined
                               cases replaced : heap.replace ref
-                                  (.mk finalProperties prototype extensible
+                                  (ObjectRecord.fromFields finalProperties prototype extensible
                                     (.array ⟨newLength, descriptor.writable⟩)) with
                               | error fault =>
                                   rw [replaced] at defined
@@ -5594,13 +5613,13 @@ private theorem defineArrayLength_preserves_wellFormed
                                   simp [replaced] at defined
                                   obtain ⟨rfl, rfl⟩ := defined
                                   exact unblockedArrayShrinkReplacement_preserves_wellFormed
-                                    heap next ref (.mk properties prototype extensible (.array slots))
+                                    heap next ref (ObjectRecord.fromFields properties prototype extensible (.array slots))
                                     slots newLength finalProperties descriptor.writable valid found rfl
                                     (by omega) swept replaced
                           | some blocked =>
                               simp only [swept] at defined
                               cases replaced : heap.replace ref
-                                  (.mk finalProperties prototype extensible
+                                  (ObjectRecord.fromFields finalProperties prototype extensible
                                     (.array ⟨blocked + 1, descriptor.writable⟩)) with
                               | error fault =>
                                   rw [replaced] at defined
@@ -5609,7 +5628,7 @@ private theorem defineArrayLength_preserves_wellFormed
                                   simp [replaced] at defined
                                   obtain ⟨rfl, rfl⟩ := defined
                                   exact blockedArrayShrinkReplacement_preserves_wellFormed
-                                    heap next ref (.mk properties prototype extensible (.array slots))
+                                    heap next ref (ObjectRecord.fromFields properties prototype extensible (.array slots))
                                     slots newLength blocked finalProperties descriptor.writable valid
                                     found rfl swept replaced
 
@@ -5637,15 +5656,15 @@ theorem defineOwnProperty_preserves_wellFormed (heap next : Heap) (ref : RefId)
               cases objectKind with
               | ordinary =>
                   exact ordinaryDefineValidated_preserves_wellFormed heap next ref
-                    (.mk properties prototype extensible .ordinary) key update kind success valid
+                    (ObjectRecord.fromFields properties prototype extensible .ordinary) key update kind success valid
                     found references rfl defined
               | function slots =>
                   exact ordinaryDefineValidated_preserves_wellFormed heap next ref
-                    (.mk properties prototype extensible (.function slots)) key update kind success
+                    (ObjectRecord.fromFields properties prototype extensible (.function slots)) key update kind success
                     valid found references rfl defined
               | arrayIterator slots =>
                   exact ordinaryDefineValidated_preserves_wellFormed heap next ref
-                    (.mk properties prototype extensible (.arrayIterator slots)) key update kind
+                    (ObjectRecord.fromFields properties prototype extensible (.arrayIterator slots)) key update kind
                     success valid found references rfl defined
               | primitiveWrapper slots =>
                   unfold defineWrapperProperty at defined
@@ -5662,7 +5681,7 @@ theorem defineOwnProperty_preserves_wellFormed (heap next : Heap) (ref : RefId)
                           exact valid
                   | none =>
                       apply ordinaryDefineValidated_preserves_wellFormed heap next ref
-                        (.mk properties prototype extensible (.primitiveWrapper slots)) key update
+                        (ObjectRecord.fromFields properties prototype extensible (.primitiveWrapper slots)) key update
                         kind success valid found references
                       · simpa [synthetic]
                       · simpa [synthetic] using defined
@@ -5676,7 +5695,7 @@ theorem defineOwnProperty_preserves_wellFormed (heap next : Heap) (ref : RefId)
                     cases parsed : arrayIndexOfKey? key with
                     | none =>
                         apply ordinaryDefineValidated_preserves_wellFormed heap next ref
-                          (.mk properties prototype extensible (.array slots)) key update kind success
+                          (ObjectRecord.fromFields properties prototype extensible (.array slots)) key update kind success
                           valid found references
                         · simp [parsed]
                           intro equal
@@ -5692,7 +5711,7 @@ theorem defineOwnProperty_preserves_wellFormed (heap next : Heap) (ref : RefId)
                           exact valid
                         · rw [if_neg blocked] at defined
                           cases ordinary : ordinaryDefineValidated heap ref
-                              (.mk properties prototype extensible (.array slots)) key update kind with
+                              (ObjectRecord.fromFields properties prototype extensible (.array slots)) key update kind with
                           | error fault => simp [ordinary] at defined
                           | ok result =>
                               rcases result with ⟨ordinarySuccess, middle⟩
@@ -5710,12 +5729,12 @@ theorem defineOwnProperty_preserves_wellFormed (heap next : Heap) (ref : RefId)
                                       simp [applied] at ordinary
                                   | ok descriptor =>
                                       have firstReplaced : heap.replace ref
-                                          (.mk (properties.insert key descriptor) prototype extensible
+                                          (ObjectRecord.fromFields (properties.insert key descriptor) prototype extensible
                                             (.array slots)) = .ok middle := by
                                         unfold ordinaryDefineValidated at ordinary
                                         simp only [applied] at ordinary
                                         cases replaced : heap.replace ref
-                                            (.mk (properties.insert key descriptor) prototype extensible
+                                            (ObjectRecord.fromFields (properties.insert key descriptor) prototype extensible
                                               (.array slots)) with
                                         | error fault =>
                                             rw [replaced] at ordinary
@@ -5730,12 +5749,12 @@ theorem defineOwnProperty_preserves_wellFormed (heap next : Heap) (ref : RefId)
                                       · simp [inBounds] at defined
                                         obtain ⟨rfl, rfl⟩ := defined
                                         exact ordinaryDefineValidated_preserves_wellFormed heap middle ref
-                                          (.mk properties prototype extensible (.array slots)) key
+                                          (ObjectRecord.fromFields properties prototype extensible (.array slots)) key
                                           update kind true valid found references
                                           (by simp [parsed, inBounds]) ordinary
                                       · simp only [inBounds, ↓reduceIte] at defined
                                         have middleFound := get?_replace_same heap middle ref
-                                          (.mk (properties.insert key descriptor) prototype extensible
+                                          (ObjectRecord.fromFields (properties.insert key descriptor) prototype extensible
                                             (.array slots)) firstReplaced
                                         cases observed : middle.get? ref with
                                         | error fault => simp [observed] at defined
@@ -5743,13 +5762,13 @@ theorem defineOwnProperty_preserves_wellFormed (heap next : Heap) (ref : RefId)
                                             rw [observed] at defined
                                             simp only at defined
                                             have nextObjectEq : nextObject =
-                                                .mk (properties.insert key descriptor) prototype extensible
+                                                ObjectRecord.fromFields (properties.insert key descriptor) prototype extensible
                                                   (.array slots) := by
                                               rw [observed] at middleFound
                                               exact Except.ok.inj middleFound
                                             subst nextObject
                                             cases finalReplaced : middle.replace ref
-                                                (.mk (properties.insert key descriptor) prototype extensible
+                                                (ObjectRecord.fromFields (properties.insert key descriptor) prototype extensible
                                                   (.array ⟨index + 1, slots.lengthWritable⟩)) with
                                             | error fault =>
                                                 rw [finalReplaced] at defined
@@ -5759,9 +5778,9 @@ theorem defineOwnProperty_preserves_wellFormed (heap next : Heap) (ref : RefId)
                                                 obtain ⟨rfl, rfl⟩ := defined
                                                 have directReplaced := replace_same_ref_twice heap middle
                                                   next ref
-                                                  (.mk (properties.insert key descriptor) prototype
+                                                  (ObjectRecord.fromFields (properties.insert key descriptor) prototype
                                                     extensible (.array slots))
-                                                  (.mk (properties.insert key descriptor) prototype
+                                                  (ObjectRecord.fromFields (properties.insert key descriptor) prototype
                                                     extensible
                                                     (.array ⟨index + 1, slots.lengthWritable⟩))
                                                   firstReplaced finalReplaced
@@ -5808,22 +5827,22 @@ theorem defineOwnProperty_preserves_machineReferences (heap next : Heap) (ref : 
               cases objectKind with
               | ordinary =>
                   exact ordinaryDefineValidated_preserves_machineReferences heap next ref
-                    (.mk properties prototype extensible .ordinary) key update descriptorKind
+                    (ObjectRecord.fromFields properties prototype extensible .ordinary) key update descriptorKind
                     success found defined
               | function slots =>
                   exact ordinaryDefineValidated_preserves_machineReferences heap next ref
-                    (.mk properties prototype extensible (.function slots)) key update descriptorKind
+                    (ObjectRecord.fromFields properties prototype extensible (.function slots)) key update descriptorKind
                     success found defined
               | arrayIterator slots =>
                   exact ordinaryDefineValidated_preserves_machineReferences heap next ref
-                    (.mk properties prototype extensible (.arrayIterator slots)) key update
+                    (ObjectRecord.fromFields properties prototype extensible (.arrayIterator slots)) key update
                     descriptorKind success found defined
               | primitiveWrapper slots =>
                   unfold defineWrapperProperty at defined
                   cases synthetic : syntheticWrapperDescriptor? slots key with
                   | none =>
                       exact ordinaryDefineValidated_preserves_machineReferences heap next ref
-                        (.mk properties prototype extensible (.primitiveWrapper slots)) key update
+                        (ObjectRecord.fromFields properties prototype extensible (.primitiveWrapper slots)) key update
                         descriptorKind success found (by simpa [synthetic] using defined)
                   | some current =>
                       cases applied : update.applyValidatedDescriptor (some current) true
@@ -5841,11 +5860,11 @@ theorem defineOwnProperty_preserves_machineReferences (heap next : Heap) (ref : 
                     cases parsed : arrayIndexOfKey? key with
                     | none =>
                         exact ordinaryDefineValidated_preserves_machineReferences heap next ref
-                          (.mk properties prototype extensible (.array slots)) key update descriptorKind
+                          (ObjectRecord.fromFields properties prototype extensible (.array slots)) key update descriptorKind
                           success found (by simpa [parsed] using defined)
                     | some index =>
                         exact defineArrayIndex_preserves_machineReferences heap next ref
-                          (.mk properties prototype extensible (.array slots)) slots index key update
+                          (ObjectRecord.fromFields properties prototype extensible (.array slots)) slots index key update
                           descriptorKind success found rfl
                           (by simpa [parsed] using defined)
 
@@ -6029,7 +6048,7 @@ theorem allocate_preserves_wellFormed (heap next : Heap) (prototype : Option Ref
   split at allocated
   · rcases allocated with ⟨rfl, rfl⟩
     apply appendObject_preserves_wellFormed heap
-      (.mk OrderedProps.empty prototype extensible .ordinary) heap.nextFunctionId valid
+      (ObjectRecord.fromFields OrderedProps.empty prototype extensible .ordinary) heap.nextFunctionId valid
       (by omega)
     · cases prototype <;> simp_all [validPrototype, size]
     · unfold objectReferencesValid
@@ -6056,7 +6075,7 @@ theorem allocate_continuesFrom (heap next : Heap) (prototype : Option RefId)
   split at allocated
   · rcases allocated with ⟨rfl, rfl⟩
     exact pushObject_continuesFrom heap
-      (.mk OrderedProps.empty prototype extensible .ordinary) heap.nextFunctionId
+      (ObjectRecord.fromFields OrderedProps.empty prototype extensible .ordinary) heap.nextFunctionId
   · cases prototype <;> simp_all
 
 /-- Ordinary allocation preserves machine-owned references and allocates its returned identity. -/
@@ -6093,7 +6112,7 @@ theorem allocatePrimitiveWrapper_preserves_wellFormed (heap next : Heap) (value 
   split at allocated
   · rcases allocated with ⟨rfl, rfl⟩
     apply appendObject_preserves_wellFormed heap
-      (.mk OrderedProps.empty prototype true (.primitiveWrapper ⟨value⟩))
+      (ObjectRecord.fromFields OrderedProps.empty prototype true (.primitiveWrapper ⟨value⟩))
       heap.nextFunctionId valid (by omega)
     · cases prototype <;> simp_all [validPrototype, size]
     · unfold objectReferencesValid primitiveWrapperSlotsValid
@@ -6121,7 +6140,7 @@ theorem allocatePrimitiveWrapper_continuesFrom (heap next : Heap) (value : Primi
   split at allocated
   · rcases allocated with ⟨rfl, rfl⟩
     exact pushObject_continuesFrom heap
-      (.mk OrderedProps.empty prototype true (.primitiveWrapper ⟨value⟩)) heap.nextFunctionId
+      (ObjectRecord.fromFields OrderedProps.empty prototype true (.primitiveWrapper ⟨value⟩)) heap.nextFunctionId
   · cases prototype <;> simp_all
 
 /-- Primitive-wrapper allocation preserves machine-owned references and its returned identity. -/
@@ -6203,7 +6222,7 @@ private theorem arrayElementFold_preserves_validity (heap : Heap)
 private theorem mergeSort_cons_range (index : Nat) :
     (index :: List.range index).mergeSort (fun left right => decide (left ≤ right)) =
       List.range (index + 1) := by
-  refine List.Perm.eq_of_pairwise
+  refine List.Perm.eq_of_sorted
     (le := fun left right => decide (left ≤ right) = true)
     (fun left right _ _ leftLe rightLe =>
       Nat.le_antisymm (of_decide_eq_true leftLe) (of_decide_eq_true rightLe))
@@ -6396,10 +6415,10 @@ private theorem appendArray_preserves_wellFormed (heap : Heap)
   have folded := arrayElementFold_preserves_validity heap elements.toList 0 elements.size
     OrderedProps.empty OrderedProps.empty_wellFormed (by simp) (by simp) valuesValid
     lengthBound (by simp)
-  change WellFormed (.mk (heap.objects.push (.mk properties prototype true
+  change WellFormed (Heap.fromObjects (heap.objects.push (ObjectRecord.fromFields properties prototype true
     (.array ⟨elements.size, true⟩))) heap.nextFunctionId)
   apply appendObject_preserves_wellFormed heap
-    (.mk properties prototype true (.array ⟨elements.size, true⟩)) heap.nextFunctionId
+    (ObjectRecord.fromFields properties prototype true (.array ⟨elements.size, true⟩)) heap.nextFunctionId
     valid (by omega) prototypeValid
   · unfold objectReferencesValid arraySlotsValid
     simp only [Bool.and_eq_true]
@@ -6408,7 +6427,7 @@ private theorem appendArray_preserves_wellFormed (heap : Heap)
       rw [List.all_eq_true] at oldDescriptors ⊢
       intro descriptor member
       exact descriptorReferencesValid_push heap
-        (.mk properties prototype true (.array ⟨elements.size, true⟩))
+        (ObjectRecord.fromFields properties prototype true (.array ⟨elements.size, true⟩))
         heap.nextFunctionId descriptor (oldDescriptors descriptor member)
     · cases prototype with
       | none => rfl
@@ -6599,7 +6618,7 @@ private theorem pushArray_observations (heap : Heap) (properties : OrderedProps)
       properties.lookup (.string (PropertyKey.arrayIndexString index)) =
         some (.data ⟨values[index], true, true, true⟩))
     (bound : values.size ≤ maxArrayLength) :
-    let next : Heap := .mk (heap.objects.push (.mk properties prototype true
+    let next : Heap := Heap.fromObjects (heap.objects.push (ObjectRecord.fromFields properties prototype true
       (.array ⟨values.size, true⟩))) heap.nextFunctionId
     (∃ object, next.get? ⟨heap.objects.size⟩ = .ok object ∧
         object.prototype = prototype ∧ object.extensible = true ∧
@@ -6615,9 +6634,9 @@ private theorem pushArray_observations (heap : Heap) (properties : OrderedProps)
     unfold maxArrayLength at bound
     unfold PropertyKey.maxArrayIndex
     omega
-  have found : (Heap.mk (heap.objects.push (.mk properties prototype true
+  have found : (Heap.fromObjects (heap.objects.push (ObjectRecord.fromFields properties prototype true
       (.array ⟨values.size, true⟩))) heap.nextFunctionId).get? ⟨heap.objects.size⟩ =
-      .ok (.mk properties prototype true (.array ⟨values.size, true⟩)) := by
+      .ok (ObjectRecord.fromFields properties prototype true (.array ⟨values.size, true⟩)) := by
     simp [get?]
   refine ⟨⟨_, found, rfl, rfl, rfl⟩, ?_, ?_⟩
   · unfold ownPropertyKeys
@@ -6794,7 +6813,7 @@ private theorem dataPropertyUpdate_references (heap : Heap) (value : Value)
 theorem allocate_null_prototype_ok (heap : Heap) (extensible : Bool) :
     ∃ ref next, heap.allocate none extensible = .ok (ref, next) :=
   ⟨⟨heap.objects.size⟩,
-    .mk (heap.objects.push (.mk OrderedProps.empty none extensible .ordinary))
+    Heap.fromObjects (heap.objects.push (ObjectRecord.fromFields OrderedProps.empty none extensible .ordinary))
       heap.nextFunctionId, by simp [allocate, validPrototype]⟩
 
 /-- A freshly allocated null-prototype ordinary object answers no own property at all: its own-key
@@ -6810,9 +6829,9 @@ theorem allocate_ordinary_observations (heap next : Heap) (extensible : Bool) (r
   unfold allocate at allocated
   split at allocated
   · rcases allocated with ⟨rfl, rfl⟩
-    have found : (Heap.mk (heap.objects.push (.mk OrderedProps.empty none extensible .ordinary))
+    have found : (Heap.fromObjects (heap.objects.push (ObjectRecord.fromFields OrderedProps.empty none extensible .ordinary))
         heap.nextFunctionId).get? ⟨heap.objects.size⟩ =
-        .ok (.mk OrderedProps.empty none extensible .ordinary) := by
+        .ok (ObjectRecord.fromFields OrderedProps.empty none extensible .ordinary) := by
       simp [get?]
     refine ⟨⟨_, found, rfl, rfl, rfl⟩, ?_, fun key => ?_⟩
     · rw [ordinary_ownKeys _ _ _ found rfl]
@@ -6938,8 +6957,11 @@ theorem allocateFunction_preserves_wellFormed (heap next : Heap) (environment : 
       all_goals (split at allocated <;> try simp_all)
       split at allocated <;> try contradiction
       rcases allocated with ⟨rfl, rfl⟩
+      have constructibleFalse : constructible = false := by
+        simpa only [Bool.not_eq_true] using ‹¬ constructible = true›
+      subst constructible
       apply appendObject_preserves_wellFormed heap
-        (.mk OrderedProps.empty prototype true
+        (ObjectRecord.fromFields OrderedProps.empty prototype true
           (.function ⟨⟨heap.nextFunctionId⟩, environment, .arrow, false,
             constructorMode, homeObject, some lexicalValue⟩))
         (heap.nextFunctionId + 1) valid (by omega)
@@ -6956,7 +6978,7 @@ theorem allocateFunction_preserves_wellFormed (heap next : Heap) (environment : 
           cases homeObject <;> simp_all [size] <;> omega
         have lexicalOld : heap.valueValid lexicalValue = true := by assumption
         have lexicalNext := valueValid_push heap
-          (.mk OrderedProps.empty prototype true
+          (ObjectRecord.fromFields OrderedProps.empty prototype true
             (.function ⟨⟨heap.nextFunctionId⟩, environment, .arrow, false,
               constructorMode, homeObject, some lexicalValue⟩))
           (heap.nextFunctionId + 1) lexicalValue lexicalOld
@@ -6982,7 +7004,7 @@ theorem allocateFunction_preserves_wellFormed (heap next : Heap) (environment : 
       split at allocated <;> try contradiction
       rcases allocated with ⟨rfl, rfl⟩
       apply appendObject_preserves_wellFormed heap
-        (.mk OrderedProps.empty prototype true
+        (ObjectRecord.fromFields OrderedProps.empty prototype true
           (.function ⟨⟨heap.nextFunctionId⟩, environment, kind, constructible,
             constructorMode, homeObject, none⟩))
         (heap.nextFunctionId + 1) valid (by omega)
@@ -7093,9 +7115,9 @@ theorem allocateConstructorPair_preserves_wellFormed (heap next : Heap) (environ
   let slots : FunctionSlots :=
     ⟨⟨heap.nextFunctionId⟩, environment, kind, true, constructorMode, none, none⟩
   let constructorObject : ObjectRecord :=
-    .mk constructorProperties functionPrototype true (.function slots)
+    ObjectRecord.fromFields constructorProperties functionPrototype true (.function slots)
   let prototypeObject : ObjectRecord :=
-    .mk prototypeProperties objectPrototype true .ordinary
+    ObjectRecord.fromFields prototypeProperties objectPrototype true .ordinary
   apply appendTwoObjects_preserves_wellFormed heap constructorObject prototypeObject
     (heap.nextFunctionId + 1) valid (by omega)
   · exact validateOptionalRef_valid heap functionPrototype _ (by assumption)
@@ -7194,7 +7216,7 @@ theorem allocateArrayIterator_preserves_wellFormed (heap next : Heap) (target : 
               simp [targetFound, targetKind] at allocated
               rcases allocated with ⟨rfl, rfl⟩
               apply appendObject_preserves_wellFormed heap
-                (.mk OrderedProps.empty none true (.arrayIterator ⟨target, 0, false⟩))
+                (ObjectRecord.fromFields OrderedProps.empty none true (.arrayIterator ⟨target, 0, false⟩))
                 heap.nextFunctionId valid (by omega) (by rfl)
               · unfold objectReferencesValid arrayIteratorSlotsValid
                 unfold get? at targetFound
@@ -7227,7 +7249,7 @@ theorem allocateArrayIterator_preserves_wellFormed (heap next : Heap) (target : 
                   have prototypeValid := validateOptionalRef_valid heap (some prototype) () (by
                     simp [validateOptionalRef, validateRef, prototypeFound])
                   apply appendObject_preserves_wellFormed heap
-                    (.mk OrderedProps.empty (some prototype) true
+                    (ObjectRecord.fromFields OrderedProps.empty (some prototype) true
                       (.arrayIterator ⟨target, 0, false⟩))
                     heap.nextFunctionId valid (by omega) prototypeValid
                   · unfold objectReferencesValid arrayIteratorSlotsValid
@@ -7273,7 +7295,7 @@ theorem allocateArrayIterator_preserves_machineReferences (heap next : Heap) (ta
           simp [targetFound, targetKind] at allocated
           rcases allocated with ⟨rfl, rfl⟩
           have continued := pushObject_continuesFrom heap
-            (.mk OrderedProps.empty none true (.arrayIterator ⟨target, 0, false⟩))
+            (ObjectRecord.fromFields OrderedProps.empty none true (.arrayIterator ⟨target, 0, false⟩))
             heap.nextFunctionId
           exact ⟨continued.1, by simp [functionEnvironments, functionSlotList], continued.2⟩
       | some prototype =>
@@ -7285,7 +7307,7 @@ theorem allocateArrayIterator_preserves_machineReferences (heap next : Heap) (ta
               simp [targetFound, targetKind, prototypeFound] at allocated
               rcases allocated with ⟨rfl, rfl⟩
               have continued := pushObject_continuesFrom heap
-                (.mk OrderedProps.empty (some prototype) true
+                (ObjectRecord.fromFields OrderedProps.empty (some prototype) true
                   (.arrayIterator ⟨target, 0, false⟩)) heap.nextFunctionId
               exact ⟨continued.1, by simp [functionEnvironments, functionSlotList], continued.2⟩
 
@@ -7357,12 +7379,12 @@ theorem replaceArrayIterator_preserves_wellFormed (heap next : Heap) (target : R
     (properties : OrderedProps) (prototype : Option RefId) (extensible : Bool)
     (oldSlots newSlots : ArrayIteratorSlots) (valid : heap.WellFormed)
     (found : heap.get? target = .ok
-      (.mk properties prototype extensible (.arrayIterator oldSlots)))
+      (ObjectRecord.fromFields properties prototype extensible (.arrayIterator oldSlots)))
     (replaced : heap.replace target
-      (.mk properties prototype extensible (.arrayIterator newSlots)) = .ok next)
+      (ObjectRecord.fromFields properties prototype extensible (.arrayIterator newSlots)) = .ok next)
     (newSlotsValid : ArrayIteratorSlotsValid next newSlots) : next.WellFormed := by
-  let current : ObjectRecord := .mk properties prototype extensible (.arrayIterator oldSlots)
-  let replacement : ObjectRecord := .mk properties prototype extensible (.arrayIterator newSlots)
+  let current : ObjectRecord := ObjectRecord.fromFields properties prototype extensible (.arrayIterator oldSlots)
+  let replacement : ObjectRecord := ObjectRecord.fromFields properties prototype extensible (.arrayIterator newSlots)
   have sourceValid := wellFormed_object heap target current valid found
   have callablePreserved : ∀ ref,
       callableReferenceValid next ref = callableReferenceValid heap ref := by
@@ -7484,12 +7506,12 @@ theorem replaceArrayIterator_preserves_machineReferences (heap next : Heap) (tar
     (properties : OrderedProps) (prototype : Option RefId) (extensible : Bool)
     (oldSlots newSlots : ArrayIteratorSlots) (sameTarget : oldSlots.target = newSlots.target)
     (found : heap.get? target = .ok
-      (.mk properties prototype extensible (.arrayIterator oldSlots)))
+      (ObjectRecord.fromFields properties prototype extensible (.arrayIterator oldSlots)))
     (replaced : heap.replace target
-      (.mk properties prototype extensible (.arrayIterator newSlots)) = .ok next) :
+      (ObjectRecord.fromFields properties prototype extensible (.arrayIterator newSlots)) = .ok next) :
     MachineReferencesPreserved heap next := by
-  let current : ObjectRecord := .mk properties prototype extensible (.arrayIterator oldSlots)
-  let replacement : ObjectRecord := .mk properties prototype extensible (.arrayIterator newSlots)
+  let current : ObjectRecord := ObjectRecord.fromFields properties prototype extensible (.arrayIterator oldSlots)
+  let replacement : ObjectRecord := ObjectRecord.fromFields properties prototype extensible (.arrayIterator newSlots)
   refine ⟨by simpa [replace_size heap next target replacement replaced], ?_, ?_⟩
   · unfold functionEnvironments
     have slotsEqual : next.functionSlotList = heap.functionSlotList := by
@@ -7571,7 +7593,7 @@ theorem advanceArrayIterator_preserves_wellFormed (heap next : Heap) (iterator :
                       have targetDifferent : slots.target ≠ iterator := by
                         intro same
                         have sameFound : heap.get? slots.target = .ok
-                            (.mk properties prototype extensible (.arrayIterator slots)) := by
+                            (ObjectRecord.fromFields properties prototype extensible (.arrayIterator slots)) := by
                           simpa [same] using found
                         have impossible : heap.arrayLength slots.target =
                             .error (.wrongObjectKind slots.target .array .arrayIterator) := by
@@ -7582,7 +7604,7 @@ theorem advanceArrayIterator_preserves_wellFormed (heap next : Heap) (iterator :
                         contradiction
                       have slotsValid : ∀ nextSlots replacedHeap,
                           heap.replace iterator
-                            (.mk properties prototype extensible (.arrayIterator nextSlots)) =
+                            (ObjectRecord.fromFields properties prototype extensible (.arrayIterator nextSlots)) =
                               .ok replacedHeap →
                           nextSlots.target = slots.target →
                           ArrayIteratorSlotsValid replacedHeap nextSlots := by
@@ -7593,7 +7615,7 @@ theorem advanceArrayIterator_preserves_wellFormed (heap next : Heap) (iterator :
                           subst nextTarget
                           unfold ArrayIteratorSlotsValid arrayIteratorSlotsValid
                           have nextFound := get?_replace_ne heap replacedHeap iterator slots.target
-                            (.mk properties prototype extensible
+                            (ObjectRecord.fromFields properties prototype extensible
                               (.arrayIterator ⟨slots.target, nextIndex, nextDone⟩))
                             targetDifferent replaced
                           unfold arrayLength at lengthRun
@@ -7613,7 +7635,7 @@ theorem advanceArrayIterator_preserves_wellFormed (heap next : Heap) (iterator :
                                   simp [targetKind]
                       by_cases beforeEnd : slots.nextIndex < length
                       · cases replaced : heap.replace iterator
-                            (.mk properties prototype extensible
+                            (ObjectRecord.fromFields properties prototype extensible
                               (.arrayIterator ⟨slots.target, slots.nextIndex + 1, false⟩)) with
                         | error fault =>
                             simp [found, doneEq, lengthRun, beforeEnd, replaced] at advanced
@@ -7625,7 +7647,7 @@ theorem advanceArrayIterator_preserves_wellFormed (heap next : Heap) (iterator :
                               ⟨slots.target, slots.nextIndex + 1, false⟩ valid found replaced
                             exact slotsValid _ _ replaced rfl
                       · cases replaced : heap.replace iterator
-                            (.mk properties prototype extensible
+                            (ObjectRecord.fromFields properties prototype extensible
                               (.arrayIterator { slots with done := true })) with
                         | error fault =>
                             simp [found, doneEq, lengthRun, beforeEnd, replaced] at advanced
@@ -7666,7 +7688,7 @@ theorem advanceArrayIterator_preserves_machineReferences (heap next : Heap) (ite
               | ok length =>
                   by_cases beforeEnd : slots.nextIndex < length
                   · cases replaced : heap.replace iterator
-                        (.mk properties prototype extensible
+                        (ObjectRecord.fromFields properties prototype extensible
                           (.arrayIterator ⟨slots.target, slots.nextIndex + 1, false⟩)) with
                     | error fault =>
                         simp [found, doneEq, lengthRun, beforeEnd, replaced] at advanced
@@ -7677,7 +7699,7 @@ theorem advanceArrayIterator_preserves_machineReferences (heap next : Heap) (ite
                           properties prototype extensible slots
                           ⟨slots.target, slots.nextIndex + 1, false⟩ rfl found replaced
                   · cases replaced : heap.replace iterator
-                        (.mk properties prototype extensible
+                        (ObjectRecord.fromFields properties prototype extensible
                           (.arrayIterator { slots with done := true })) with
                     | error fault =>
                         simp [found, doneEq, lengthRun, beforeEnd, replaced] at advanced
@@ -7694,10 +7716,10 @@ theorem advanceArrayIterator_some_result (heap next : Heap) (iterator target : R
     (advanced : heap.advanceArrayIterator iterator = .ok (some (target, index), next)) :
     ∃ properties prototype extensible slots length,
       heap.get? iterator = .ok
-        (.mk properties prototype extensible (.arrayIterator slots)) ∧
+        (ObjectRecord.fromFields properties prototype extensible (.arrayIterator slots)) ∧
       slots.done = false ∧ target = slots.target ∧ index = slots.nextIndex ∧
       heap.arrayLength target = .ok length ∧ index < length ∧
-      next.get? iterator = .ok (.mk properties prototype extensible
+      next.get? iterator = .ok (ObjectRecord.fromFields properties prototype extensible
         (.arrayIterator ⟨target, index + 1, false⟩)) := by
   unfold advanceArrayIterator at advanced
   simp only [Bind.bind, Except.instMonad, Monad.toBind, Except.bind] at advanced
@@ -7724,7 +7746,7 @@ theorem advanceArrayIterator_some_result (heap next : Heap) (iterator target : R
               | ok length =>
                   by_cases beforeEnd : slots.nextIndex < length
                   · cases replaced : heap.replace iterator
-                        (.mk properties prototype extensible
+                        (ObjectRecord.fromFields properties prototype extensible
                           (.arrayIterator ⟨slots.target, slots.nextIndex + 1, false⟩)) with
                     | error fault =>
                         simp [found, doneEq, lengthRun, beforeEnd, replaced] at advanced
@@ -7735,10 +7757,10 @@ theorem advanceArrayIterator_some_result (heap next : Heap) (iterator target : R
                           rfl, rfl, ?_, beforeEnd, ?_⟩
                         · simpa using lengthRun
                         · exact get?_replace_same heap next iterator
-                            (.mk properties prototype extensible
+                            (ObjectRecord.fromFields properties prototype extensible
                               (.arrayIterator ⟨slots.target, slots.nextIndex + 1, false⟩)) replaced
                   · cases replaced : heap.replace iterator
-                        (.mk properties prototype extensible
+                        (ObjectRecord.fromFields properties prototype extensible
                           (.arrayIterator { slots with done := true })) with
                     | error fault =>
                         simp [found, doneEq, lengthRun, beforeEnd, replaced] at advanced
@@ -7828,7 +7850,7 @@ theorem defineOwnProperty_blocked_array_shrink
           | some blocked =>
               simp only [swept] at defined
               cases replaced : heap.replace target
-                (.mk properties object.prototype object.extensible
+                (ObjectRecord.fromFields properties object.prototype object.extensible
                   (.array ⟨blocked + 1, lengthDescriptor.writable⟩)) with
               | error fault =>
                   rw [replaced] at defined
@@ -7852,7 +7874,7 @@ theorem defineOwnProperty_blocked_array_shrink
                     oldPropertiesValid.1.1.1
                   have targetFound := get?_replace_same heap next target _ replaced
                   refine ⟨blocked, properties,
-                    (.mk properties object.prototype object.extensible
+                    (ObjectRecord.fromFields properties object.prototype object.extensible
                       (.array ⟨blocked + 1, lengthDescriptor.writable⟩)),
                     blockedSpec.1, blockedSpec.2.2,
                     ?_, ?_, ?_, ?_, ?_, ?_, targetFound, rfl, rfl, rfl, rfl, ?_, ?_,
@@ -7958,7 +7980,7 @@ theorem defineOwnProperty_unblocked_array_shrink
               exact False.elim (mappedFalse_ne_true _ next (by simpa [swept] using defined))
           | none =>
               cases replaced : heap.replace target
-                (.mk properties object.prototype object.extensible
+                (ObjectRecord.fromFields properties object.prototype object.extensible
                   (.array ⟨newLength, lengthDescriptor.writable⟩)) with
               | error fault =>
                   rw [swept, replaced] at defined
@@ -7979,7 +8001,7 @@ theorem defineOwnProperty_unblocked_array_shrink
                     oldPropertiesValid.1.1.1
                   have targetFound := get?_replace_same heap next target _ replaced
                   refine ⟨properties,
-                    (.mk properties object.prototype object.extensible
+                    (ObjectRecord.fromFields properties object.prototype object.extensible
                       (.array ⟨newLength, lengthDescriptor.writable⟩)),
                     ?_, ?_, ?_, ?_, ?_, ?_, targetFound, rfl, rfl, rfl, rfl, ?_, ?_,
                     writableResult, ?_, ?_⟩
@@ -8033,13 +8055,13 @@ private def unblockedShrinkFixtureProperties : OrderedProps :=
     |>.insert (.string (PropertyKey.arrayIndexString 2)) (shrinkFixtureDescriptor 2 true)
 
 private def blockedShrinkFixtureObject : ObjectRecord :=
-  .mk blockedShrinkFixtureProperties none true (.array ⟨4, true⟩)
+  ObjectRecord.fromFields blockedShrinkFixtureProperties none true (.array ⟨4, true⟩)
 
 private def unblockedShrinkFixtureObject : ObjectRecord :=
-  .mk unblockedShrinkFixtureProperties none true (.array ⟨3, true⟩)
+  ObjectRecord.fromFields unblockedShrinkFixtureProperties none true (.array ⟨3, true⟩)
 
-private def blockedShrinkFixtureHeap : Heap := .mk #[blockedShrinkFixtureObject] 0
-private def unblockedShrinkFixtureHeap : Heap := .mk #[unblockedShrinkFixtureObject] 0
+private def blockedShrinkFixtureHeap : Heap := Heap.fromObjects #[blockedShrinkFixtureObject] 0
+private def unblockedShrinkFixtureHeap : Heap := Heap.fromObjects #[unblockedShrinkFixtureObject] 0
 
 private def shrinkFixtureUpdate : DescriptorUpdate := {
   value := .present (.primitive (.number (arrayLengthNumber 1)))
@@ -8136,18 +8158,18 @@ private def publicMutationFixtureUpdate : DescriptorUpdate := {
 }
 
 private def ordinaryMutationFixtureHeap : Heap :=
-  .mk #[.mk OrderedProps.empty none true .ordinary] 0
+  Heap.fromObjects #[ObjectRecord.fromFields OrderedProps.empty none true .ordinary] 0
 
 private def arrayExtensionFixtureHeap : Heap :=
-  .mk #[.mk OrderedProps.empty none true (.array ⟨0, true⟩)] 0
+  Heap.fromObjects #[ObjectRecord.fromFields OrderedProps.empty none true (.array ⟨0, true⟩)] 0
 
 private def wrapperMutationFixtureHeap : Heap :=
-  .mk #[.mk OrderedProps.empty none true
+  Heap.fromObjects #[ObjectRecord.fromFields OrderedProps.empty none true
     (.primitiveWrapper ⟨.string (JSString.ofLeanString "a")⟩)] 0
 
 private def objectValueFixtureHeap : Heap :=
-  .mk #[.mk OrderedProps.empty none true .ordinary,
-    .mk OrderedProps.empty none true .ordinary] 0
+  Heap.fromObjects #[ObjectRecord.fromFields OrderedProps.empty none true .ordinary,
+    ObjectRecord.fromFields OrderedProps.empty none true .ordinary] 0
 
 private def operationReturns (expected : Bool)
     (operation : Except DefinePropertyFault (Bool × Heap)) : Bool :=
@@ -8261,19 +8283,19 @@ private theorem defineOwnProperty_blocked_false_preservation_nonvacuous :
              (by unfold WellFormed; native_decide) run⟩
 
 private def prototypeFixtureObject (prototype : Option RefId) (extensible : Bool := true) :
-    ObjectRecord := .mk OrderedProps.empty prototype extensible .ordinary
+    ObjectRecord := ObjectRecord.fromFields OrderedProps.empty prototype extensible .ordinary
 
 private def prototypeFixtureHeap : Heap :=
-  .mk #[prototypeFixtureObject none, prototypeFixtureObject none] 0
+  Heap.fromObjects #[prototypeFixtureObject none, prototypeFixtureObject none] 0
 
 private def prototypeLinkedFixtureHeap : Heap :=
-  .mk #[prototypeFixtureObject none, prototypeFixtureObject (some ⟨0⟩)] 0
+  Heap.fromObjects #[prototypeFixtureObject none, prototypeFixtureObject (some ⟨0⟩)] 0
 
 private def prototypeSetFixtureHeap : Heap :=
-  .mk #[prototypeFixtureObject (some ⟨1⟩), prototypeFixtureObject none] 0
+  Heap.fromObjects #[prototypeFixtureObject (some ⟨1⟩), prototypeFixtureObject none] 0
 
 private def prototypeFixedFixtureHeap : Heap :=
-  .mk #[prototypeFixtureObject none false, prototypeFixtureObject none] 0
+  Heap.fromObjects #[prototypeFixtureObject none false, prototypeFixtureObject none] 0
 
 /-- Concrete witnesses cover successful parent and null assignment. -/
 private theorem setPrototypeOf_success_nonvacuous :
