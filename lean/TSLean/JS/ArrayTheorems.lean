@@ -597,18 +597,18 @@ private def parentSource : Machine proofPlatform :=
   | .error _ => machine
 
 private def parentReset : Machine proofPlatform :=
-  match parentSource.setEnvironment ⟨1⟩ ⟨none, Std.HashMap.emptyWithCapacity⟩ with
+  match parentSource.setEnvironment ⟨1⟩ ⟨none, Std.HashMap.empty⟩ with
   | .ok next => next
   | .error _ => parentSource
 
 private theorem parent_reset_rejected : ¬parentSource.ContinuesFrom parentReset := by
   intro continued
   have oldFound : parentSource.environments[1]? =
-      some ⟨some ⟨0⟩, Std.HashMap.emptyWithCapacity⟩ := by rfl
+      some ⟨some ⟨0⟩, Std.HashMap.empty⟩ := by rfl
   obtain ⟨nextEnvironment, nextFound, parentEq, bindings⟩ :=
-    continued.2.2.2.2.2.2 1 ⟨some ⟨0⟩, Std.HashMap.emptyWithCapacity⟩ oldFound
+    continued.2.2.2.2.2.2 1 ⟨some ⟨0⟩, Std.HashMap.empty⟩ oldFound
   have newFound : parentReset.environments[1]? =
-      some ⟨none, Std.HashMap.emptyWithCapacity⟩ := by rfl
+      some ⟨none, Std.HashMap.empty⟩ := by rfl
   rw [newFound] at nextFound
   simp at nextFound
   subst nextEnvironment
@@ -621,7 +621,7 @@ private def bindingSource : Machine proofPlatform :=
   | _ => machine
 
 private def bindingReset : Machine proofPlatform :=
-  match bindingSource.setEnvironment ⟨0⟩ ⟨none, Std.HashMap.emptyWithCapacity⟩ with
+  match bindingSource.setEnvironment ⟨0⟩ ⟨none, Std.HashMap.empty⟩ with
   | .ok next => next
   | .error _ => bindingSource
 
@@ -634,14 +634,14 @@ private theorem binding_removal_rejected : ¬bindingSource.ContinuesFrom binding
   obtain ⟨nextEnvironment, nextFound, parentEq, bindings⟩ :=
     continued.2.2.2.2.2.2 0 record environmentFound
   have newFound : bindingReset.environments[0]? =
-      some ⟨none, Std.HashMap.emptyWithCapacity⟩ := by
+      some ⟨none, Std.HashMap.empty⟩ := by
     have inBounds : 0 < bindingSource.environments.size :=
       (Array.getElem?_eq_some_iff.mp environmentFound).choose
     have resetBy : bindingSource.setEnvironment ⟨0⟩
-        ⟨none, Std.HashMap.emptyWithCapacity⟩ = .ok bindingReset := by
+        ⟨none, Std.HashMap.empty⟩ = .ok bindingReset := by
       unfold bindingReset
       cases updated : bindingSource.setEnvironment ⟨0⟩
-          ⟨none, Std.HashMap.emptyWithCapacity⟩ with
+          ⟨none, Std.HashMap.empty⟩ with
       | error fault =>
           unfold Machine.setEnvironment at updated
           simp [inBounds] at updated

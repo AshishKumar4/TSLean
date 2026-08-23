@@ -797,7 +797,8 @@ private theorem defineFields_ok (old : Heap) (root : RefId) (rootFresh : old.siz
       have keyDeclared : field.1 ∈ (defined ++ field :: rest).map (·.1) := by simp
       have keyFresh : field.1 ∉ defined.map (·.1) := by
         intro member
-        rw [List.map_append, List.map_cons, List.nodup_append] at nodup
+        change List.Pairwise (· ≠ ·) ((defined ++ field :: rest).map (·.1)) at nodup
+        rw [List.map_append, List.map_cons, List.pairwise_append] at nodup
         exact nodup.2.2 field.1 member field.1 (by simp) rfl
       obtain ⟨next, created, sizeEq, frame, validity, ⟨nextObject, nextFound, nextKind,
         nextPrototype, nextExtensible⟩, nextKeys, nextDescriptor, otherDescriptors⟩ :=
