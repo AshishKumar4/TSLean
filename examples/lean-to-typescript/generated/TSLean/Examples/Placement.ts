@@ -4,14 +4,14 @@
  * Lean module: TSLean.Examples.Placement
  * Generated module: TSLean/Examples/Placement.ts
  * Package entry module: TSLean.Examples.Placement
- * Semantic identity: sha256:6ad6ed4369ed5e9a9f1838655e752b57348088742d1eb605f4f5771f9051c9d4
- * Input closure: sha256:69b9ed0f993df14c27dae0e74db9c74b38a02b250f78e27c9f6f219682430a4e
+ * Semantic identity: sha256:6c95ce0bdb1426584c66c9a212ff6b5cbc2ce620745d459fcaa99e4fa0ea396c
+ * Input closure: sha256:8d725216c1158055d063b7e0a6ba69674b013f86fceb78a846976bf40a85aff9
  * Semantic IR: sha256:196adc6b4440a5ce67221c5a98c217dafb7a1bc6e565b90120e838233954667b
  * Generated module body: sha256:cae734266b3c3d3ddbd10e528bc6f85ef290baca088cc1907064d0073314618f
  * Generated package body: sha256:63e29b246e204156ea0e15f5b07f3cc7522d7730f435bba47f66f490842988e4
- * Lean toolchain: leanprover/lean4:v4.29.0
- * Lean: Lean (version 4.29.0, x86_64-unknown-linux-gnu, commit 98dc76e3c0a9b856c9b98726b713fb04fab16740, Release)
- * Lake: Lake version 5.0.0-src+98dc76e (Lean version 4.29.0)
+ * Lean toolchain: leanprover/lean4:v4.16.0
+ * Lean: Lean (version 4.16.0, x86_64-unknown-linux-gnu, commit 128a1e6b0a82, Release)
+ * Lake: Lake version 5.0.0-128a1e6 (Lean version 4.16.0)
  * Environment attestation: recorded in the manifest sidecar; it does not affect these bytes.
  * Evidence boundary: generation is checked and differential tests are empirical; no refinement theorem is claimed.
  */

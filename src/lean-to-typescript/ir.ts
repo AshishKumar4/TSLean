@@ -23,7 +23,7 @@ export function isLeanModuleName(value: string): boolean {
  * component, no whitespace, no control character.
  */
 export function isLeanDeclarationName(value: string): boolean {
-  return /^[^\s.\u0000-\u001f]+(?:\.[^\s.\u0000-\u001f]+)*$/u.test(value);
+  return /^[^\s.\p{Cc}]+(?:\.[^\s.\p{Cc}]+)*$/u.test(value);
 }
 
 export type LeanType =

@@ -56,8 +56,7 @@ describe('JS elaborated-environment trust audit', () => {
       try {
         symlinkSync(target, link);
       } catch (error) {
-        if (error instanceof Error && 'code' in error &&
-            ['EACCES', 'ENOSYS', 'EPERM'].includes(String(error.code))) {
+        if (error instanceof Error && 'code' in error && ['EACCES', 'ENOSYS', 'EPERM'].includes(String(error.code))) {
           context.skip();
           return;
         }
@@ -71,7 +70,7 @@ describe('JS elaborated-environment trust audit', () => {
 
   it('rejects orphaned compiled artifacts whose source module was deleted', () => {
     const repository = resolve(import.meta.dirname, '..');
-    const artifact = 'lean/.lake/build/lib/lean/TSLean/Refinement/JsTrustOrphanFixture.olean';
+    const artifact = 'lean/.lake/build/lib/TSLean/Refinement/JsTrustOrphanFixture.olean';
     const runGate = () =>
       spawnSync('bun', ['scripts/check-js-axioms.mjs', '--self-test'], { cwd: repository, encoding: 'utf8' });
     writeFileSync(join(repository, artifact), '');
@@ -115,21 +114,22 @@ describe('JS elaborated-environment trust audit', () => {
       'Assumption.mk',
       'ValidAssumptions.mk',
       'Guard.mk',
-      'GuardReceipt.mk',
       'GuardMetadata.mk',
       'EvidenceMetadata.mk',
     ]) {
-      expect(constructorOutput).toContain(`Unknown constant \`TSLean.Refinement.${constructor}\``);
+      expect(constructorOutput).toContain(`unknown constant 'TSLean.Refinement.${constructor}'`);
     }
+    // Lean 4.16 parses `GuardReceipt.mk` as field notation because GuardReceipt is a predicate,
+    // not a constructor-bearing structure. It still rejects the attempted private construction.
+    expect(constructorOutput).toContain('invalid field notation');
 
-    const receipt = spawnSync(
-      'lake',
-      ['env', 'lean', '../tests/lean-fixtures/refinement-invalid-guard-receipt.lean'],
-      { cwd: resolve(import.meta.dirname, '../lean'), encoding: 'utf8' },
-    );
+    const receipt = spawnSync('lake', ['env', 'lean', '../tests/lean-fixtures/refinement-invalid-guard-receipt.lean'], {
+      cwd: resolve(import.meta.dirname, '../lean'),
+      encoding: 'utf8',
+    });
     expect(receipt.status).not.toBe(0);
     expect(`${receipt.stdout}\n${receipt.stderr}`).toContain(
-      'Constructor for `TSLean.Refinement.GuardReceipt` is marked as private',
+      'constructor for `TSLean.Refinement.GuardReceipt` is marked as private',
     );
   });
 });

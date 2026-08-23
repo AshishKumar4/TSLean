@@ -9,9 +9,9 @@
       "AgentCore.Facets.enforcementFloor"
     ],
     "leanToolchain": {
-      "identity": "leanprover/lean4:v4.29.0",
-      "leanVersion": "Lean (version 4.29.0, x86_64-unknown-linux-gnu, commit 98dc76e3c0a9b856c9b98726b713fb04fab16740, Release)",
-      "lakeVersion": "Lake version 5.0.0-src+98dc76e (Lean version 4.29.0)"
+      "identity": "leanprover/lean4:v4.16.0",
+      "leanVersion": "Lean (version 4.16.0, x86_64-unknown-linux-gnu, commit 128a1e6b0a82, Release)",
+      "lakeVersion": "Lake version 5.0.0-128a1e6 (Lean version 4.16.0)"
     },
     "modules": [
       {
@@ -194,12 +194,6 @@
         "reason": ""
       },
       {
-        "declaration": "AgentCore.Facets.instReprImpact.repr.match_1",
-        "module": "AgentCore.Facets.Enforcement",
-        "role": "erased",
-        "reason": "match auxiliary inlined at its application sites"
-      },
-      {
         "declaration": "Bool",
         "module": "Init.Prelude",
         "role": "runtime-boundary",
@@ -374,6 +368,12 @@
         "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
       },
       {
+        "declaration": "_private.AgentCore.Facets.Enforcement.0.AgentCore.Facets.reprImpact.match_1._@.AgentCore.Facets.Enforcement._hyg.297",
+        "module": "AgentCore.Facets.Enforcement",
+        "role": "erased",
+        "reason": "match auxiliary inlined at its application sites"
+      },
+      {
         "declaration": "cond.match_1",
         "module": "Init.Prelude",
         "role": "runtime-boundary",
@@ -407,12 +407,12 @@
       {
         "kind": "lean-project",
         "identity": "compiler-project:lakefile.toml",
-        "sha256": "sha256:21297fc520d5d01b4dcd536b91708284af43dc8502648719b42d7326288ec065"
+        "sha256": "sha256:4975c2419e00114a29ae85997b844d5f426067f2d0328d45af8fc72529cfd5d7"
       },
       {
         "kind": "lean-project",
         "identity": "compiler-project:lean-toolchain",
-        "sha256": "sha256:651c8accb402b0c071cd336e9d3dc0a55516b1bfb434ddc4801f14936785b1d2"
+        "sha256": "sha256:b3f7d43e005c36e7980721171c8809899ec3c0bc338f35568f54606beb7149a8"
       },
       {
         "kind": "compiler-source",
@@ -432,7 +432,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:compiler",
-        "sha256": "sha256:375f3cb05f5adfb170a28a09de99ab87810da84cfb39724ac4dd67f2e5aa72e6"
+        "sha256": "sha256:049d95ddbcac5184b88b27416a886e6ef4c6f9509be40176c216b3e53ebdce0c"
       },
       {
         "kind": "compiler-source",
@@ -452,12 +452,12 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:ir",
-        "sha256": "sha256:387472025190c34fc5bb6f3ab2bc77d9ed3a352d359dd2c7c8ca99482bcbaca6"
+        "sha256": "sha256:b2d6668979f2e9d90bab7aad5e16a6c2e31b6d83a6bf1af1e6c34bc48ec8466c"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-exporter",
-        "sha256": "sha256:f6ac1a115cdc16e0aa8835891d3f2e254c3f43add87fd6816858f030473c455f"
+        "sha256": "sha256:d8db90dad92e7209d0ce9d1c570225c9de70faa76411388cabb0a7348f8cdd0a"
       },
       {
         "kind": "compiler-source",
@@ -512,7 +512,7 @@
       {
         "kind": "lean-source",
         "identity": "source:TSLean.LeanToTypeScript.Export",
-        "sha256": "sha256:f6ac1a115cdc16e0aa8835891d3f2e254c3f43add87fd6816858f030473c455f"
+        "sha256": "sha256:d8db90dad92e7209d0ce9d1c570225c9de70faa76411388cabb0a7348f8cdd0a"
       },
       {
         "kind": "lean-project",
@@ -522,16 +522,16 @@
       {
         "kind": "lean-project",
         "identity": "target-project:lakefile.toml",
-        "sha256": "sha256:21297fc520d5d01b4dcd536b91708284af43dc8502648719b42d7326288ec065"
+        "sha256": "sha256:4975c2419e00114a29ae85997b844d5f426067f2d0328d45af8fc72529cfd5d7"
       },
       {
         "kind": "lean-project",
         "identity": "target-project:lean-toolchain",
-        "sha256": "sha256:651c8accb402b0c071cd336e9d3dc0a55516b1bfb434ddc4801f14936785b1d2"
+        "sha256": "sha256:b3f7d43e005c36e7980721171c8809899ec3c0bc338f35568f54606beb7149a8"
       }
     ],
-    "inputClosureSha256": "sha256:9e2211d2478bd7ee8b336d5acd761502bb1d4fbb0586167c143ffe3813bf4322",
-    "semanticIrSha256": "sha256:4f2bf513f7e5dbbaf2454df7dff787650b6d2bd56d3df85b03b0461798d5978a",
+    "inputClosureSha256": "sha256:4e132c411bc0b4fc0c607230a05a3cfc469d4d54153f4336224caf9b19e8f11c",
+    "semanticIrSha256": "sha256:bd274094fa65ac881715b6b618d63a0e9cffc987f958490bec2790390f19b788",
     "generatedBodySha256": "sha256:d34f6d0a21e454c5ceae3d2b7ddf917f1debc81f71d0b6db6d4eaee2d6f7134f"
   },
   "environment": {
@@ -542,12 +542,12 @@
       {
         "kind": "lean-toolchain",
         "identity": "compiler-toolchain:lake-executable",
-        "sha256": "sha256:a608ff084d7e2af228b92a29d7c2fd083ba0580e46889175ec74a81678c98359"
+        "sha256": "sha256:4ef16213215e1308861eb54e36b5c5cc76273c0c725f9cad21dab04ebab73062"
       },
       {
         "kind": "lean-toolchain",
         "identity": "compiler-toolchain:lean-executable",
-        "sha256": "sha256:3e0d0d3d801675359f2d4cf9815bfdb417b20b92fdd9d48b3b14c95bbae28bbf"
+        "sha256": "sha256:c1156e9f4acc159b36e18edf02b9dd8b1b6babdef6461c9c81851378ac854929"
       },
       {
         "kind": "compiler-runtime",
@@ -557,32 +557,32 @@
       {
         "kind": "lean-module",
         "identity": "module:AgentCore.Facets.Enforcement",
-        "sha256": "sha256:c0d0907ee949bdf810d9d8f0f7dea55643e07369b38ef4d4766fad0b20e9b318"
+        "sha256": "sha256:46b8d1a53e180e6214f4bdaf7010ef862006df43a708506b751b7c708546472c"
       },
       {
         "kind": "lean-module",
         "identity": "module:Init",
-        "sha256": "sha256:7ccac48ef26289852ecb686826d9e0ce42f3ceb33ba7bdff960c38fb3d9a00c5"
+        "sha256": "sha256:eac45f28af238625661e277b9e5dfb42094626837abe837645238335d852a000"
       },
       {
         "kind": "lean-module",
         "identity": "module:Lean",
-        "sha256": "sha256:d6e35ad9eb0cf5a1b88fb9e26e131ddd84069baf67dc2f6f0d0ba7045e287e93"
+        "sha256": "sha256:24627fb6fdd7baa02c2518cbea800e6645aa67069fddb2071b6ea9ebc0303837"
       },
       {
         "kind": "lean-module",
         "identity": "module:TSLean.LeanToTypeScript.Export",
-        "sha256": "sha256:7b0412e6c74e0378a9597a901d89c7b6eb74a18ce683a557ea61d218e1745e62"
+        "sha256": "sha256:539db02e1a6247285a4bce601dd124cad09a0a957f29235736641d344878f80d"
       },
       {
         "kind": "lean-toolchain",
         "identity": "target-toolchain:lake-executable",
-        "sha256": "sha256:a608ff084d7e2af228b92a29d7c2fd083ba0580e46889175ec74a81678c98359"
+        "sha256": "sha256:4ef16213215e1308861eb54e36b5c5cc76273c0c725f9cad21dab04ebab73062"
       },
       {
         "kind": "lean-toolchain",
         "identity": "target-toolchain:lean-executable",
-        "sha256": "sha256:3e0d0d3d801675359f2d4cf9815bfdb417b20b92fdd9d48b3b14c95bbae28bbf"
+        "sha256": "sha256:c1156e9f4acc159b36e18edf02b9dd8b1b6babdef6461c9c81851378ac854929"
       },
       {
         "kind": "lean-toolchain",
@@ -592,56 +592,51 @@
       {
         "kind": "lean-toolchain",
         "identity": "toolchain-runtime:00:libInit_shared.so",
-        "sha256": "sha256:6ce912e300ad305bb38a362404544602e2229d072b78d75b1dd71c637e453c2c"
+        "sha256": "sha256:d99647d27cc5f73e579af37e9e0c750ea07a1a27dafd1cc12c35042aecd6dcbf"
       },
       {
         "kind": "lean-toolchain",
         "identity": "toolchain-runtime:01:libLake_shared.so",
-        "sha256": "sha256:284d1a03de75db0d513ad624ce5bfdd03e7064ec397c35768d2cc0d16c242ab5"
+        "sha256": "sha256:93d7543625b772fb9d1f0bda7da6020c90fccb2014f252f3caac651a939dd963"
       },
       {
         "kind": "lean-toolchain",
         "identity": "toolchain-runtime:02:libleanshared.so",
-        "sha256": "sha256:05624e0f914c8cabef97c1947632ee7e4cdaeea937558646eca7332bdc87b0ff"
+        "sha256": "sha256:fad7352c9b83bfee67423e3fecf1dfba039ecb3984cf1aa202ef1e659aca9a40"
       },
       {
         "kind": "lean-toolchain",
         "identity": "toolchain-runtime:03:libleanshared_1.so",
-        "sha256": "sha256:6ce912e300ad305bb38a362404544602e2229d072b78d75b1dd71c637e453c2c"
+        "sha256": "sha256:d99647d27cc5f73e579af37e9e0c750ea07a1a27dafd1cc12c35042aecd6dcbf"
       },
       {
         "kind": "lean-toolchain",
-        "identity": "toolchain-runtime:04:libleanshared_2.so",
-        "sha256": "sha256:6ce912e300ad305bb38a362404544602e2229d072b78d75b1dd71c637e453c2c"
-      },
-      {
-        "kind": "lean-toolchain",
-        "identity": "toolchain-runtime:05:ld-linux-x86-64.so.2",
+        "identity": "toolchain-runtime:04:ld-linux-x86-64.so.2",
         "sha256": "sha256:c5e80a563850d6ab5c2f2482e4202d9c1b71fbf44854b8c399e63527202c64e1"
       },
       {
         "kind": "lean-toolchain",
-        "identity": "toolchain-runtime:06:libc.so.6",
+        "identity": "toolchain-runtime:05:libc.so.6",
         "sha256": "sha256:a3947513a02831ec692ebf13053c07614882ab54a2101fb91a1b15724062ed0c"
       },
       {
         "kind": "lean-toolchain",
-        "identity": "toolchain-runtime:07:libdl.so.2",
+        "identity": "toolchain-runtime:06:libdl.so.2",
         "sha256": "sha256:7d293f8361fcead4f9691561adc0413f724f3607b959abe0d4fb243072956079"
       },
       {
         "kind": "lean-toolchain",
-        "identity": "toolchain-runtime:08:libm.so.6",
+        "identity": "toolchain-runtime:07:libm.so.6",
         "sha256": "sha256:beea4eeacfcfa2cd96011b959a826c97cf4a774017e214f6a34d7eea3d49cd88"
       },
       {
         "kind": "lean-toolchain",
-        "identity": "toolchain-runtime:09:libpthread.so.0",
+        "identity": "toolchain-runtime:08:libpthread.so.0",
         "sha256": "sha256:f93acb6e78dcf0213c8a85f922d21916249148e24de426079c40b6304c42085d"
       },
       {
         "kind": "lean-toolchain",
-        "identity": "toolchain-runtime:10:librt.so.1",
+        "identity": "toolchain-runtime:09:librt.so.1",
         "sha256": "sha256:5df2508a1ef33bd8024d77271e2a4a2607cb63e59dd753dd46f8e7a2ed44962d"
       },
       {
@@ -1195,6 +1190,6 @@
         "sha256": "sha256:bb6ee7e709ae60426e30b8d393df4d939ee61407794b4f053ce6338d6eaa8c63"
       }
     ],
-    "inputClosureSha256": "sha256:2e5bece74294a3ec098721056aeaf616d5afc47d0e3d6cbc35451b33e6b08121"
+    "inputClosureSha256": "sha256:31b5359f4300fe3ac09bc7cc4aeb568d26669f9785e015d327fc40e62dc0b269"
   }
 }

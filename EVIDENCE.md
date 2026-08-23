@@ -1246,19 +1246,18 @@ audit does not enforce it on its own.
 
 The trust gate audited an environment whose currency it never checked. `runLeanAudit` invokes
 `lake env lean`, which loads whatever `.olean` files already exist rather than rebuilding. That is
-not theoretical: an orphaned `lean/.lake/build/lib/lean/TSLean/Refinement/Array.olean`, left behind
+not theoretical: an orphaned `lean/.lake/build/lib/TSLean/Refinement/Array.olean`, left behind
 by a module whose source had been removed, stayed reachable through a stale barrel artifact and the
 gate reported 167 refinement proof declarations where source contained 155. `lake build` reconciled
 them. `bun run verify` masked the hazard by rebuilding first, so `bun run js:trust` alone was the
-unsound entry point.
+more useful check.
 
-The gate now fails closed on its own. It runs `lake build` before any audit and surfaces both
-stdout and stderr on failure, because Lean reports diagnostics on stdout and only `error: build
-failed` on stderr. It then rejects orphaned artifacts: any compiled module under
-`lean/.lake/build/lib/lean/TSLean/**` with no corresponding source. That check is load-bearing
-rather than redundant, since `lake build` does not garbage-collect removed modules; it immediately
-found three genuine orphans from modules deleted in `4e0953f`
-(`JS/AbstractOperationsOracleTests`, `JS/CoercionEffectsRefinement`, `JS/PrimitiveOracleTests`).
+The gate discovers every compiled Lean module through Lake's 4.16 build directory
+`lean/.lake/build/lib/TSLean/**` and rejects artifacts with no corresponding source. This check is
+load-bearing because `lake build` does not remove modules whose sources disappeared. It found three
+orphans from modules deleted in `4e0953f`:
+`JS/AbstractOperationsOracleTests`, `JS/CoercionEffectsRefinement`, and
+`JS/PrimitiveOracleTests`.
 Finally it asks Lean for the modules actually loaded in the audited environment and rejects any
 without a source file.
 

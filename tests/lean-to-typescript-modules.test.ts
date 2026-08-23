@@ -797,6 +797,14 @@ function grants(): readonly Grant[] {
 
 /** The same 144 rows, computed by Lean itself against the real toolchain. */
 function evaluateLeanAccess(): readonly string[] {
+  // Lake 4.16 does not build examples outside its default targets. The oracle imports this real
+  // three-module fixture, so build its entry module first instead of relying on a stale .olean.
+  const build = spawnSync('lake', ['build', 'TSLean.Examples.Package.Decision'], {
+    cwd: leanRoot,
+    encoding: 'utf8',
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  if (build.status !== 0) throw new TypeError(`Lean package fixture build failed: ${build.stderr}${build.stdout}`);
   const directory = mkdtempSync(join(tmpdir(), 'tslean-package-oracle-'));
   const driver = join(directory, 'Oracle.lean');
   try {

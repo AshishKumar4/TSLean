@@ -705,6 +705,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       expect(emitted.manifest.semantic.modules.map((module) => module.path)).toEqual([
         'Fixture.ts',
         'Fixture/Dependency.ts',
+        'tslean-runtime.ts',
       ]);
       expect(entryCode(emitted)).toContain('export function decide(');
     } finally {
@@ -822,21 +823,17 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     });
   });
 
-  test(
-    'rejects a enum declared in Prop',
-    () => {
-      const source = [
-        'inductive EnumProp : Prop where',
-        '  | value',
-        'def rejected (_value : EnumProp) : Bool := true',
-      ].join('\n');
-      expect(unsupportedSourceError(source, 'Fixture.rejected')).toMatchObject({
-        code: 'UNSUPPORTED_LEAN_FRAGMENT',
-        declaration: 'Fixture.EnumProp',
-      });
-    },
-    30_000,
-  );
+  test('rejects a enum declared in Prop', () => {
+    const source = [
+      'inductive EnumProp : Prop where',
+      '  | value',
+      'def rejected (_value : EnumProp) : Bool := true',
+    ].join('\n');
+    expect(unsupportedSourceError(source, 'Fixture.rejected')).toMatchObject({
+      code: 'UNSUPPORTED_LEAN_FRAGMENT',
+      declaration: 'Fixture.EnumProp',
+    });
+  }, 30_000);
 
   test.each([
     ['structure', 'Prop', ['structure StructProp : Prop where'], 'StructProp'],
