@@ -348,7 +348,7 @@ private theorem foldAssumption_valid (source accumulator : List Assumption)
       · intro entry member
         exact sourceValid entry (List.mem_cons_of_mem current member)
       · apply insertAssumption_valid accumulator current accumulatorValid
-        exact sourceValid current (List.mem_cons_self _ _)
+        exact sourceValid current List.mem_cons_self
 
 private theorem foldAssumption_nodup (source accumulator : List Assumption)
     (unique : (accumulator.map (·.id)).Nodup) :
@@ -413,7 +413,7 @@ private theorem foldGuard_valid (source accumulator : List GuardMetadata)
       · intro entry member
         exact sourceValid entry (List.mem_cons_of_mem current member)
       · apply insertGuard_valid accumulator current accumulatorValid
-        exact sourceValid current (List.mem_cons_self _ _)
+        exact sourceValid current List.mem_cons_self
 
 private theorem foldGuard_nodup (source accumulator : List GuardMetadata)
     (unique : (accumulator.map (·.id)).Nodup) :

@@ -74,7 +74,7 @@ def insert (m : AssocMap α β) (k : α) (v : β) : AssocMap α β :=
 
 def erase (m : AssocMap α β) (k : α) : AssocMap α β :=
   { entries := m.entries.filter fun (k', _) => !(k' == k),
-    nodup   := by apply List.Nodup.sublist _ m.nodup; apply List.Sublist.map; exact List.filter_sublist _ }
+    nodup   := by apply List.Nodup.sublist _ m.nodup; apply List.Sublist.map; exact List.filter_sublist }
 
 def size (m : AssocMap α β) : Nat := m.entries.length
 def keys (m : AssocMap α β) : List α := m.entries.map Prod.fst
@@ -98,7 +98,7 @@ private theorem filterMap_fst_sublist (f : α → β → Option β) (l : List (�
     simp only [List.filterMap_cons]
     cases (f hd.1 hd.2) with
     | none => simp only [Option.map_none, List.map_cons]; exact List.Sublist.cons _ ih
-    | some v => simp only [Option.map_some, List.map_cons]; exact List.Sublist.cons₂ hd.1 ih
+    | some v => simp only [Option.map_some, List.map_cons]; exact List.Sublist.cons_cons hd.1 ih
 
 def filterMap (m : AssocMap α β) (f : α → β → Option β) : AssocMap α β :=
   { entries := m.entries.filterMap fun (k, v) => (f k v).map (k, ·),

@@ -23,7 +23,7 @@ def dirname (p : String) : String :=
 def basename (p : String) (ext : String := "") : String :=
   let b := (p.splitOn "/").getLast?.getD p
   if ext.length > 0 && b.endsWith ext then
-    String.mk (b.toList.take (b.length - ext.length))
+    String.ofList (b.toList.take (b.length - ext.length))
   else b
 
 /-- Get the file extension (including the dot). -/

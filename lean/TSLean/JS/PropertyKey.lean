@@ -153,51 +153,13 @@ private theorem parseDecimal_append_digit (acc value digit : Nat) (units : List 
       | some headDigit =>
           by_cases prefixBound : acc * 10 + headDigit ≤ maxArrayIndex
           · simp [decoded, prefixBound] at parsed ⊢
+            have castEq : [48 + UInt16.ofNat digit] = [UInt16.ofNat (48 + digit)] := by
+              rw [UInt16.ofNat_add]
+              rfl
+            rw [castEq]
             exact ih (acc * 10 + headDigit) parsed
           · simp [decoded, prefixBound] at parsed
 
--- 4.16 core proves nothing about `Nat.toDigits`; the lemmas below are what 4.29 added in
--- `Init/Data/Nat/ToString.lean`, cut down to the decimal case this file needs.
-private theorem toDigitsCore_append (base fuel value : Nat) (digits extra : List Char) :
-    Nat.toDigitsCore base fuel value digits ++ extra =
-      Nat.toDigitsCore base fuel value (digits ++ extra) := by
-  induction fuel generalizing value digits with
-  | zero => rfl
-  | succ fuel ih =>
-      simp only [Nat.toDigitsCore]
-      split
-      · rfl
-      · exact ih (value / base) _
-
-private theorem toDigitsCore_fuel (value fuelLeft fuelRight : Nat) (digits : List Char)
-    (leftBound : value < fuelLeft) (rightBound : value < fuelRight) :
-    Nat.toDigitsCore 10 fuelLeft value digits = Nat.toDigitsCore 10 fuelRight value digits := by
-  cases fuelLeft with
-  | zero => omega
-  | succ fuelLeft =>
-      cases fuelRight with
-      | zero => omega
-      | succ fuelRight =>
-          simp only [Nat.toDigitsCore]
-          split
-          · rfl
-          · rename_i quotient
-            have positive : 0 < value :=
-              Nat.pos_of_ne_zero fun isZero => quotient (by simp [isZero])
-            have smaller : value / 10 < value := Nat.div_lt_self positive (by omega)
-            exact toDigitsCore_fuel (value / 10) fuelLeft fuelRight _ (by omega) (by omega)
-
-/-- The decimal spelling of a two-or-more-digit number is its leading part then its last digit. -/
-private theorem repr_of_ten_le {value : Nat} (bound : 10 ≤ value) :
-    value.repr = (value / 10).repr ++ String.singleton (Nat.digitChar (value % 10)) := by
-  apply String.ext
-  show Nat.toDigitsCore 10 (value + 1) value [] = _
-  have quotient : value / 10 ≠ 0 := fun isZero =>
-    absurd ((Nat.div_eq_zero_iff_lt (by omega)).mp isZero) (by omega)
-  rw [Nat.toDigitsCore, if_neg quotient,
-    toDigitsCore_fuel (value / 10) value (value / 10 + 1) _
-      (Nat.div_lt_self (by omega) (by omega)) (by omega)]
-  exact (toDigitsCore_append 10 (value / 10 + 1) (value / 10) [] _).symm
 
 private theorem arrayIndexCandidate?_arrayIndexString {index : Nat}
     (bound : index ≤ maxArrayIndex) :
@@ -219,7 +181,7 @@ private theorem arrayIndexCandidate?_arrayIndexString {index : Nat}
           dsimp [leading, digit]
           omega
         have reprEq : index.repr = leading.repr ++ String.singleton (Nat.digitChar digit) :=
-          repr_of_ten_le tenLe
+          Nat.repr_of_ge tenLe
         have codeUnitsEq : (arrayIndexString index).codeUnits =
             (arrayIndexString leading).codeUnits ++ [UInt16.ofNat (48 + digit)] := by
           unfold arrayIndexString

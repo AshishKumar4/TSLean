@@ -450,7 +450,7 @@ private def normalizeDecimal (significand : Nat) (power : Int) : Nat × Int :=
         else (value, exponent)
   loop significand power 17
 
-private def zeros (count : Nat) : String := String.mk (List.replicate count '0')
+private def zeros (count : Nat) : String := String.ofList (List.replicate count '0')
 
 private def renderFinite (value : JSNumber) : String :=
   let (rawSignificand, rawDecimalPower) := shortestDecimal value
@@ -461,13 +461,13 @@ private def renderFinite (value : JSNumber) : String :=
     if exponent ≥ 0 && exponent ≤ 20 then
       let integerDigits := exponent.natAbs + 1
       if digits.length ≤ integerDigits then digits ++ zeros (integerDigits - digits.length)
-      else (digits.take integerDigits) ++ "." ++ digits.drop integerDigits
+      else (digits.take integerDigits).toString ++ "." ++ (digits.drop integerDigits).toString
     else if exponent < 0 && exponent ≥ -6 then
       "0." ++ zeros (exponent.natAbs - 1) ++ digits
     else
-      let fraction := if digits.length = 1 then "" else "." ++ digits.drop 1
+      let fraction := if digits.length = 1 then "" else "." ++ (digits.drop 1).toString
       let exponentSign := if exponent < 0 then "-" else "+"
-      (digits.take 1) ++ fraction ++ "e" ++ exponentSign ++ exponent.natAbs.repr
+      (digits.take 1).toString ++ fraction ++ "e" ++ exponentSign ++ exponent.natAbs.repr
   if value.sign then "-" ++ body else body
 
 /-- ECMAScript Number::toString in radix 10. Signed zero is rendered as `0`. -/

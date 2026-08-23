@@ -1,11 +1,6 @@
 -- TSLean.Runtime.Basic
 -- Core type definitions for the TypeScript → Lean 4 runtime
 
--- Stands in for 4.29 core's `instBEqByteArray` (Init/Data/ByteArray/Basic.lean); redundant once off 4.16.
--- Written out rather than derived: the 4.16 derivation compiles through `lcProof`, which would put an
--- unallowed axiom into the emitted trusted base this module sits at the top of. Equality goes through
--- `toList` for the same reason — `Array` equality lowers to a proof-carrying loop here.
-instance : BEq ByteArray := ⟨fun a b => a.toList == b.toList⟩
 
 namespace TSLean
 
@@ -136,7 +131,7 @@ def String.includes (s sub : String) : Bool := (s.splitOn sub).length > 1
 
 /-- Get a character by index, returning a default if out of bounds. -/
 def String.getD' (s : String) (i : Nat) (default : Char := '\x00') : Char :=
-  if i < s.length then String.get s ⟨i⟩ else default
+  if i < s.length then String.Pos.Raw.get s ⟨i⟩ else default
 
 /-- Get a character by index, panicking if out of bounds. -/
 def String.get!' (s : String) (i : Nat) : Char :=
@@ -146,8 +141,8 @@ def String.get!' (s : String) (i : Nat) : Char :=
 def String.set!' (s : String) (i : Nat) (c : Char) : String :=
   if i >= s.length then s
   else
-    let before := String.extract s ⟨0⟩ ⟨i⟩
-    let after := String.extract s ⟨i + 1⟩ ⟨s.length⟩
+    let before := (s.toRawSubstring.extract ⟨0⟩ ⟨i⟩).toString
+    let after := (s.toRawSubstring.extract ⟨i + 1⟩ ⟨s.length⟩).toString
     before ++ String.singleton c ++ after
 
 /-! ## TSValue — dynamic type for any/unknown ─────────────────────────────── -/

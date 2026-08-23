@@ -48,10 +48,10 @@ private def compilerDerivedName (name : Name) : CommandElabM Bool := do
   | .str _ suffix =>
     let shaped :=
       suffix == "_unsafe_rec"
-      || (suffix.startsWith "_cstage" && (suffix.drop "_cstage".length).all Char.isDigit
-          && (suffix.drop "_cstage".length).length > 0)
-      || (suffix.startsWith "_spec_" && (suffix.drop "_spec_".length).all Char.isDigit
-          && (suffix.drop "_spec_".length).length > 0)
+      || (suffix.startsWith "_cstage" && "_cstage".length < suffix.length
+          && (suffix.drop "_cstage".length).all Char.isDigit)
+      || (suffix.startsWith "_spec_" && "_spec_".length < suffix.length
+          && (suffix.drop "_spec_".length).all Char.isDigit)
     pure (shaped && (← findDeclarationRangesCore? name).isNone)
   | _ => pure false
 

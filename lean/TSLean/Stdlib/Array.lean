@@ -22,7 +22,7 @@ def unique   [DecidableEq α] (a : Array α)      : Array α    :=
 def intersection [DecidableEq α] (a b : Array α) : Array α := a.filter (b.contains ·)
 def difference   [DecidableEq α] (a b : Array α) : Array α := a.filter (fun x => !b.contains x)
 abbrev zip (a : Array α) (b : Array β) : Array (α × β) := _root_.Array.zip a b
-abbrev zipWith (a : Array α) (b : Array β) (f : α → β → γ) : Array γ := _root_.Array.zipWith a b f
+abbrev zipWith (a : Array α) (b : Array β) (f : α → β → γ) : Array γ := _root_.Array.zipWith f a b
 def sumNat   (a : Array Nat)   : Nat   := a.foldl (· + ·) 0
 def sumFloat (a : Array Float) : Float := a.foldl (· + ·) 0.0
 def rotateLeft (a : Array α) (n : Nat) : Array α :=
@@ -43,44 +43,7 @@ def findLast (a : Array α) (p : α → Bool) : Option α := a.toList.reverse.fi
 abbrev WeakMap := @AssocMap
 abbrev WeakSet := @AssocSet
 
-/-! ## Core lemmas absent from Lean 4.16
-
-Each mirrors the `Array` lemma of the same name that core gained in 4.29, with the same statement,
-so a newer toolchain retires this section by deletion. -/
-
-private theorem foldl_push {f : β → α → β} {init : β} {xs : Array α} {a : α} :
-    (xs.push a).foldl f init = f (xs.foldl f init) a := by
-  rw [← Array.foldl_toList, ← Array.foldl_toList, Array.push_toList, List.foldl_append]
-  rfl
-
--- 4.16 `Array.foldl` carries explicit `start`/`stop`, so a goal whose `(xs.push a).size` has already
--- been simplified to `xs.size + 1` needs this variant rather than `foldl_push`.
-private theorem foldl_push' {f : β → α → β} {init : β} {xs : Array α} {a : α} {stop : Nat}
-    (h : stop = xs.size + 1) :
-    (xs.push a).foldl f init 0 stop = f (xs.foldl f init) a := by
-  subst h
-  rw [← Array.size_push xs a]
-  exact foldl_push
-
-private theorem foldl_empty {f : β → α → β} {init : β} : (#[] : Array α).foldl f init = init := rfl
-
-private theorem size_filter_le {p : α → Bool} {xs : Array α} : (xs.filter p).size ≤ xs.size := by
-  rw [← Array.length_toList, ← Array.length_toList, Array.toList_filter]
-  exact List.length_filter_le p xs.toList
-
-private theorem contains_iff_mem [BEq α] [LawfulBEq α] {a : α} {xs : Array α} :
-    xs.contains a = true ↔ a ∈ xs := by
-  show xs.any (a == ·) = true ↔ a ∈ xs
-  rw [Array.any_eq_true']
-  simp
-
-private theorem contains_filter [BEq α] {xs : Array α} {x : α} {p : α → Bool} :
-    (xs.filter p).contains x = xs.any (fun a => x == a && p a) := by
-  show (xs.filter p).any (x == ·) = xs.any (fun a => x == a && p a)
-  rw [← Array.any_toList, ← Array.any_toList, Array.toList_filter, List.any_filter]
-  simp only [Bool.and_comm]
-
-theorem push_size (a : Array α) (x : α) : (a.push x).size = a.size + 1 := Array.size_push a x
+theorem push_size (a : Array α) (x : α) : (a.push x).size = a.size + 1 := Array.size_push x
 
 theorem getOpt_isSome_iff (a : Array α) (i : Nat) : (getOpt a i).isSome = true ↔ i < a.size := by
   simp only [getOpt]
@@ -98,21 +61,22 @@ theorem unshift_size (a : Array α) (x : α) : (unshift a x).size = a.size + 1 :
   simp [unshift, Array.size_append]; omega
 
 theorem flatten_empty : flatten (α := α) #[] = #[] := by simp [flatten]
-theorem flatten_singleton (a : Array α) : flatten #[a] = a := by simp [flatten, foldl_push', foldl_empty]
+theorem flatten_singleton (a : Array α) : flatten #[a] = a := by
+  simp [flatten, Array.foldl_push', Array.foldl_empty]
 theorem sumNat_empty : sumNat #[] = 0 := by simp [sumNat]
 theorem sumNat_push (a : Array Nat) (n : Nat) : sumNat (a.push n) = sumNat a + n := by
-  simp [sumNat, foldl_push']
+  simp [sumNat, Array.foldl_push']
 theorem zip_size (a : Array α) (b : Array β) : (zip a b).size = min a.size b.size := by
   simp [zip, Array.zip, Array.size_zipWith]
 theorem flatMap_empty (f : α → Array β) : flatMap #[] f = #[] := by simp [flatMap, flatten]
 theorem intersection_size [DecidableEq α] (a b : Array α) :
     (intersection a b).size ≤ a.size := by
-  simp [intersection, size_filter_le]
+  simp [intersection, Array.size_filter_le]
 theorem difference_size [DecidableEq α] (a b : Array α) :
     (difference a b).size ≤ a.size := by
-  simp [difference, size_filter_le]
+  simp [difference, Array.size_filter_le]
 theorem sumFloat_push (a : Array Float) (x : Float) : sumFloat (a.push x) = sumFloat a + x := by
-  simp [sumFloat, foldl_push']
+  simp [sumFloat, Array.foldl_push']
 theorem unique_subset [DecidableEq α] (a : Array α) (x : α) :
     (unique a).contains x → a.contains x := by
   simp only [unique]
@@ -126,7 +90,7 @@ theorem unique_subset [DecidableEq α] (a : Array α) (x : α) :
       rwa [Array.foldl_toList]
     rcases h a.toList #[] hc2 with h1 | h2
     · simp at h1
-    · rwa [contains_iff_mem, Array.mem_def]
+    · rwa [Array.contains_iff_mem, Array.mem_def]
   intro l; induction l with
   | nil => intro acc h; exact Or.inl h
   | cons hd tl ih =>
@@ -188,13 +152,13 @@ theorem getOpt_some_implies_in_bounds (a : Array α) (i : Nat) (v : α) :
 
 theorem intersection_subset [DecidableEq α] (a b : Array α) (x : α) :
     (intersection a b).contains x → a.contains x := by
-  simp [intersection, contains_filter]
+  simp [intersection, Array.contains_filter]
   intro h _; exact h
 
 -- difference excludes elements in b
 theorem difference_spec [DecidableEq α] (a b : Array α) (x : α) :
     (difference a b).contains x = (a.contains x && !b.contains x) := by
-  simp [difference, contains_filter]
+  simp [difference, Array.contains_filter]
 
 theorem rotateLeft_size (a : Array α) (n : Nat) :
     (rotateLeft a n).size = a.size := by
@@ -211,15 +175,15 @@ theorem splice_size (a : Array α) (i n : Nat) (ins : Array α) :
 
 -- filter preserves subset
 theorem filter_size_le (a : Array α) (p : α → Bool) :
-    (a.filter p).size ≤ a.size := size_filter_le
+    (a.filter p).size ≤ a.size := Array.size_filter_le
 
 -- map preserves size
 theorem map_size (a : Array α) (f : α → β) :
-    (a.map f).size = a.size := Array.size_map f a
+    (a.map f).size = a.size := Array.size_map
 
 -- append size
 theorem append_size (a b : Array α) :
-    (a ++ b).size = a.size + b.size := Array.size_append a b
+    (a ++ b).size = a.size + b.size := Array.size_append
 
 -- foldl on empty
 theorem foldl_empty_eq (f : β → α → β) (init : β) :
@@ -236,14 +200,14 @@ theorem contains_push_eq [BEq α] (a : Array α) (x y : α) :
 
 -- pop size
 theorem pop_size_pred (a : Array α) :
-    a.pop.size = a.size - 1 := Array.size_pop a
+    a.pop.size = a.size - 1 := Array.size_pop
 
 -- any/all basics
 theorem any_empty_false (p : α → Bool) : (#[] : Array α).any p = false := by simp
 theorem all_empty_true (p : α → Bool) : (#[] : Array α).all p = true := by simp
 
 -- reverse preserves size
-theorem reverse_size_eq (a : Array α) : a.reverse.size = a.size := Array.size_reverse a
+theorem reverse_size_eq (a : Array α) : a.reverse.size = a.size := Array.size_reverse
 
 -- getOpt is the same as Array.get?
 theorem getOpt_eq_get? (a : Array α) (i : Nat) : getOpt a i = a[i]? := rfl

@@ -45,7 +45,7 @@ private def decodeCodeUnits : List UInt16 → Option (List Char)
 
 /-- Decodes valid UTF-16, returning `none` rather than replacing an unpaired surrogate. -/
 def toLeanString? (value : JSString) : Option String :=
-  Option.map String.mk (decodeCodeUnits value.codeUnits)
+  Option.map String.ofList (decodeCodeUnits value.codeUnits)
 
 /-- Concatenates UTF-16 code units without decoding them. -/
 def append (left right : JSString) : JSString :=
@@ -169,8 +169,7 @@ theorem equal_symm (left right : JSString) : equal left right = equal right left
 private theorem decodeCodeUnits_encodeScalar (character : Char) (units : List UInt16)
     (decoded : decodeCodeUnits units = some characters) :
     decodeCodeUnits (encodeScalar character ++ units) = some (character :: characters) := by
-  have valid : character.toNat.isValidChar := by
-    simpa [Char.toNat, UInt32.isValidChar] using character.valid
+  have valid : character.toNat.isValidChar := character.valid
   by_cases bmp : character.toNat ≤ 0xffff
   · have scalarLt : character.toNat < 0x10000 := by omega
     have notHigh : ¬(0xd800 ≤ character.toNat ∧ character.toNat ≤ 0xdbff) := by
@@ -228,7 +227,6 @@ private theorem decodeCodeUnits_encodeScalar (character : Char) (units : List UI
     rw [decodeCodeUnits.eq_def]
     simp only [highToNat, lowToNat]
     simp [highRange, lowRange, decoded]
-    simp only [Nat.add_sub_cancel_left]
     rw [recombineSimple, Char.ofNat_toNat]
 
 private theorem decodeCodeUnits_encodeList (characters : List Char) :
@@ -266,10 +264,11 @@ private theorem flatMap_encodeScalar_of_bmp (characters : List Char)
   | nil => rfl
   | cons character rest ih =>
       rw [List.flatMap_cons, List.map_cons]
-      simp only [encodeScalar, bmp character (List.mem_cons_self character rest), if_pos,
-        List.singleton_append, Function.comp_apply]
-      congr
-      exact ih fun current member => bmp current (List.mem_cons_of_mem character member)
+      have charEq : encodeScalar character = [UInt16.ofNat character.toNat] := by
+        simp [encodeScalar, bmp character List.mem_cons_self]
+      rw [charEq, List.singleton_append,
+        ih fun current member => bmp current (List.mem_cons_of_mem character member),
+        Function.comp_apply]
 
 /-- BMP-only encoding emits exactly one code unit for each Lean character. -/
 theorem ofLeanString_codeUnits_of_bmp (value : String)
@@ -341,7 +340,7 @@ private theorem encodeList_decodeCodeUnits (units : List UInt16) (characters : L
             · rw [decodeCodeUnits.eq_def] at decoded
               simp only [high, decide_true, Bool.true_and, if_pos, low] at decoded
               obtain ⟨tailCharacters, tailDecoded, rfl⟩ :=
-                Option.map_eq_some'.mp decoded
+                Option.map_eq_some_iff.mp decoded
               rw [List.flatMap_cons, encodeScalar_of_surrogates unit second high low,
                 List.cons_append, List.cons_append, List.nil_append]
               congr
@@ -363,7 +362,7 @@ theorem ofLeanString_toLeanString? {value : JSString} {native : String}
     (decoded : value.toLeanString? = some native) : ofLeanString native = value := by
   cases value with
   | mk units =>
-      simp only [toLeanString?, Option.map_eq_some'] at decoded
+      simp only [toLeanString?, Option.map_eq_some_iff] at decoded
       obtain ⟨characters, charactersDecoded, rfl⟩ := decoded
       congr
       simpa [ofLeanString] using encodeList_decodeCodeUnits units characters charactersDecoded
