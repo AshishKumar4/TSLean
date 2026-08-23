@@ -677,7 +677,7 @@ private theorem binding_removal_rejected : ¬bindingSource.ContinuesFrom binding
   -- declaration's own definition with the collection's rewriting lemmas.
   have oldFound : ∃ record, bindingSource.environments[0]? = some record ∧
       record.bindings[JSString.ofLeanString "kept"]? = some ⟨0⟩ := by
-    refine ⟨⟨none, Std.HashMap.emptyWithCapacity.insert (JSString.ofLeanString "kept") ⟨0⟩⟩,
+    refine ⟨⟨none, Std.HashMap.empty.insert (JSString.ofLeanString "kept") ⟨0⟩⟩,
       ?_, by simp⟩
     simp [bindingSource, Environment.declare, Machine.getEnvironment, Machine.allocateCell,
       Machine.setEnvironment, Machine.initial]

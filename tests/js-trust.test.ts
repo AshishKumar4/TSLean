@@ -136,7 +136,6 @@ describe('JS elaborated-environment trust audit', () => {
 
   it('rejects orphaned compiled artifacts whose source module was deleted', () => {
     const runGate = () =>
-    const runGate = () =>
       spawnSync('bun', ['scripts/check-js-axioms.mjs', '--self-test'], { cwd: REPOSITORY, encoding: 'utf8' });
     writeFileSync(join(REPOSITORY, ORPHAN_ARTIFACT), '');
     try {
@@ -214,8 +213,11 @@ describe('JS elaborated-environment trust audit', () => {
         'JsTrustPrivateFixture',
         'private theorem jsTrustPrivateFixture : (2 : Nat) + 2 = 4 := by native_decide\n',
       );
+      // Lean 4.16 lowers `native_decide` through a cached `_auxLemma` carrying
+      // `Lean.ofReduceBool`, which the audit reports alongside the private theorem itself;
+      // either record tainting the module is a refusal.
       expect(() => checkModuleConstants(['JsTrustPrivateFixture'], 'JsTrustPrivateFixture', directory)).toThrow(
-        /_private\.JsTrustPrivateFixture\.0\.jsTrustPrivateFixture depends on disallowed axiom .*native_decide/,
+        /JsTrustPrivateFixture.* depends on disallowed axiom Lean\.ofReduceBool/u,
       );
       compileModule(directory, 'JsTrustCleanFixture', 'theorem jsTrustCleanFixture : (2 : Nat) + 2 = 4 := rfl\n');
       expect(
