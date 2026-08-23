@@ -346,7 +346,7 @@
       {
         "kind": "lean-project",
         "identity": "compiler-project:lakefile.toml",
-        "sha256": "sha256:4975c2419e00114a29ae85997b844d5f426067f2d0328d45af8fc72529cfd5d7"
+        "sha256": "sha256:4915dbe492a0f3143f402a4590cdfff4965f6f81f2c356aa9d96ea32c5a64178"
       },
       {
         "kind": "lean-project",
@@ -461,7 +461,7 @@
       {
         "kind": "lean-project",
         "identity": "target-project:lakefile.toml",
-        "sha256": "sha256:4975c2419e00114a29ae85997b844d5f426067f2d0328d45af8fc72529cfd5d7"
+        "sha256": "sha256:4915dbe492a0f3143f402a4590cdfff4965f6f81f2c356aa9d96ea32c5a64178"
       },
       {
         "kind": "lean-project",
@@ -469,7 +469,7 @@
         "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       }
     ],
-    "inputClosureSha256": "sha256:9ec73147a75cce580428c90a2a98034ec5db783c1abdab3dd6e54ed319afe1bf",
+    "inputClosureSha256": "sha256:72f105bd649878f5533708bf74b89dd308ab168901d2267d403cf2ed321a5828",
     "semanticIrSha256": "sha256:196adc6b4440a5ce67221c5a98c217dafb7a1bc6e565b90120e838233954667b",
     "generatedBodySha256": "sha256:63e29b246e204156ea0e15f5b07f3cc7522d7730f435bba47f66f490842988e4"
   },
