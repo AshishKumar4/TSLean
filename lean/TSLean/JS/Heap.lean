@@ -3522,7 +3522,7 @@ private theorem objectReferencesValid_push (heap : Heap) (newObject object : Obj
     | none => rfl
     | some prototype =>
         simp only [prototypeEq] at valid ⊢
-        simp only [size] at valid ⊢
+        simp only [size, Array.size_push, Option.all_some, Bool.and_eq_true, id_eq] at valid ⊢
         omega
   · cases kindEq : object.kind with
     | ordinary => simpa [kindEq] using valid.2
@@ -3540,7 +3540,7 @@ private theorem objectReferencesValid_push (heap : Heap) (newObject object : Obj
           | none => rfl
           | some home =>
               simp only [homeEq] at valid ⊢
-              simp only [size] at valid ⊢
+              simp only [size, Array.size_push, Option.all_some, Bool.and_eq_true, id_eq] at valid ⊢
               omega
         · cases lexicalEq : slots.lexicalThis with
           | none => rfl
@@ -3592,7 +3592,7 @@ private theorem prototypeGraphAcyclic_push_two (heap : Heap) (first second : Obj
       | none => rfl
       | some prototype =>
           simp only [prototypeEq] at firstPrototypeValid ⊢
-          simp only [size] at firstPrototypeValid ⊢
+          simp only [size, Array.size_push, Option.all_some, Bool.and_eq_true, id_eq] at firstPrototypeValid ⊢
           omega
     · rename_i notLast
       have oldValid := referencesValid index object found
@@ -3600,7 +3600,7 @@ private theorem prototypeGraphAcyclic_push_two (heap : Heap) (first second : Obj
       | none => rfl
       | some prototype =>
           simp only [prototypeEq] at oldValid ⊢
-          simp only [size] at oldValid ⊢
+          simp only [size, Array.size_push, Option.all_some, Bool.and_eq_true, id_eq] at oldValid ⊢
           omega
   · cases prototypeEq : second.prototype with
     | none => rfl
@@ -6437,7 +6437,7 @@ private theorem appendArray_preserves_wellFormed (heap : Heap)
     · cases prototype with
       | none => rfl
       | some ref =>
-          simp only [size] at prototypeValid ⊢
+          simp only [size, Array.size_push, Option.all_some, Bool.and_eq_true, id_eq] at prototypeValid ⊢
           omega
   · unfold functionSlotList
     simp
