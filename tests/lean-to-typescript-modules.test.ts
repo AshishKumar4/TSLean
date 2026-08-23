@@ -95,7 +95,7 @@ describe('Lean package to TypeScript module tree', () => {
     ]);
     expect(importBlock('TSLean/Examples/Package/Decision.ts')).toEqual([
       'import { type Capability } from "./Capability.js";',
-      'import { Policy } from "./Policy.js";',
+      'import { type Policy } from "./Policy.js";',
     ]);
     expect(importBlock(LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH)).toEqual([]);
   });
@@ -487,14 +487,21 @@ describe('Lean package to TypeScript module tree', () => {
           outputDirectory: join(fixture.projectRoot, 'out'),
         });
         verifyLeanToTypeScriptPackage(emitted);
-        expect(emitted.modules.map((module) => module.path)).toEqual(['Fixture/Data.ts', 'Fixture/Entry.ts']);
+        expect(emitted.modules.map((module) => module.path)).toEqual([
+          'Fixture/Data.ts',
+          'Fixture/Entry.ts',
+          LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH,
+        ]);
         const entry = emitted.modules.find((module) => module.path === 'Fixture/Entry.ts');
         expect(entry?.code).toContain('import { type Colour } from "./Data.js";');
         expect(entry?.code).toContain('export function isRed(colour: Colour): boolean');
         const data = emitted.modules.find((module) => module.path === 'Fixture/Data.ts');
+        expect(data?.code).toContain('import { type GeneratedData } from "../tslean-runtime.js";');
         expect(data?.code).toContain('export type Colour = "red" | "blue";');
-        // No codec is reached, so no shared runtime module is invented for it.
-        expect(emitted.modules.some((module) => module.path === LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH)).toBe(false);
+        expect(data?.code).toContain('export const Colour = Object.freeze({');
+        // A root parameter is an external input even when no record field reaches it, so the
+        // type's module carries its boundary and the package gets the shared data union runtime.
+        expect(emitted.modules.some((module) => module.path === LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH)).toBe(true);
       } finally {
         fixture.dispose();
       }
