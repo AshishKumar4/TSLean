@@ -59,9 +59,9 @@ const KNOWN_BAD: ReadonlyArray<{ fixture: string; corpusId: string; diagnostic: 
   {
     fixture: 'advanced/anonymous-object.ts',
     corpusId: 'objects-anonymous-shorthand-default',
-    // Lean 4.16 omits 4.29's "instance of type class" words. The missing HMul instance is the
-    // same pinned miscompilation, so this still fails if it changes or becomes green.
-    diagnostic: /failed to synthesize HMul TSAny TSAny/u,
+    // Lean 4.33 includes "instance of type class" in this diagnostic. The missing HMul instance is
+    // the same pinned miscompilation, so this still fails if it changes or becomes green.
+    diagnostic: /failed to synthesize instance of type class HMul TSAny TSAny/u,
   },
 ];
 

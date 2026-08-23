@@ -213,11 +213,10 @@ describe('JS elaborated-environment trust audit', () => {
         'JsTrustPrivateFixture',
         'private theorem jsTrustPrivateFixture : (2 : Nat) + 2 = 4 := by native_decide\n',
       );
-      // Lean 4.16 lowers `native_decide` through a cached `_auxLemma` carrying
-      // `Lean.ofReduceBool`, which the audit reports alongside the private theorem itself;
-      // either record tainting the module is a refusal.
+      // Lean 4.33 lowers `native_decide` to a private native axiom. The audit must retain the
+      // private theorem's attribution and reject that generated axiom.
       expect(() => checkModuleConstants(['JsTrustPrivateFixture'], 'JsTrustPrivateFixture', directory)).toThrow(
-        /JsTrustPrivateFixture.* depends on disallowed axiom Lean\.ofReduceBool/u,
+        /JsTrustPrivateFixture.* depends on disallowed axiom .*native_decide\.ax_1_1/u,
       );
       compileModule(directory, 'JsTrustCleanFixture', 'theorem jsTrustCleanFixture : (2 : Nat) + 2 = 4 := rfl\n');
       expect(
@@ -316,14 +315,12 @@ describe('JS elaborated-environment trust audit', () => {
       'Assumption.mk',
       'ValidAssumptions.mk',
       'Guard.mk',
+      'GuardReceipt.mk',
       'GuardMetadata.mk',
       'EvidenceMetadata.mk',
     ]) {
-      expect(constructorOutput).toContain(`unknown constant 'TSLean.Refinement.${constructor}'`);
+      expect(constructorOutput).toContain(`Unknown constant \`TSLean.Refinement.${constructor}\``);
     }
-    // Lean 4.16 parses `GuardReceipt.mk` as field notation because GuardReceipt is a predicate,
-    // not a constructor-bearing structure. It still rejects the attempted private construction.
-    expect(constructorOutput).toContain('invalid field notation');
 
     const receipt = spawnSync('lake', ['env', 'lean', '../tests/lean-fixtures/refinement-invalid-guard-receipt.lean'], {
       cwd: resolve(import.meta.dirname, '../lean'),
@@ -331,7 +328,7 @@ describe('JS elaborated-environment trust audit', () => {
     });
     expect(receipt.status).not.toBe(0);
     expect(`${receipt.stdout}\n${receipt.stderr}`).toContain(
-      'constructor for `TSLean.Refinement.GuardReceipt` is marked as private',
+      'Constructor for `TSLean.Refinement.GuardReceipt` is marked as private',
     );
   });
 });

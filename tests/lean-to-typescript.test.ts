@@ -807,7 +807,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     ['Nat', 'def rejected (value : Nat) : Nat := value', 'Fixture.rejected'],
     // `String`'s own closure carries an `extern` implementation, so the metadata audit refuses it
     // before the type rule is reached; both refusals are fail-closed and attributable.
-    ['String', 'def rejected (value : String) : String := value', 'String.mk'],
+    ['String', 'def rejected (value : String) : String := value', 'String.ofByteArray'],
   ])('rejects unsupported built-in data type %s in the Lean exporter', (_type, declarationSource, declaration) => {
     expect(unsupportedSourceError(declarationSource, 'Fixture.rejected')).toMatchObject({
       code: 'UNSUPPORTED_LEAN_FRAGMENT',
@@ -859,7 +859,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       'Unicode declaration dependency',
       ['def «café» (value : Bool) : Bool := value', 'def rejected (value : Bool) : Bool := «café» value'].join('\n'),
       'Fixture.rejected',
-      'Fixture.«café»',
+      'Fixture.café',
     ],
     [
       'Unicode structure field',
