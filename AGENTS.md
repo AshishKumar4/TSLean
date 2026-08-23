@@ -41,21 +41,20 @@ lean/
     DurableObjects/   — DO model (Storage, Http, WebSocket, RPC, etc.)
     Verification/     — ProofObligation, Invariants, Tactics
     Generated/        — Transpiler output stubs
-  lakefile.toml       — Lake build config (pure Lean 4.29, no Mathlib)
+  lakefile.toml       — Lake build config (pure Lean 4.16, no Mathlib)
 ```
 
 ## Lean 4 Setup
 
-Lean 4.29.0 via elan: `export PATH="$HOME/.elan/bin:$PATH"`
+Lean 4.16.0 via elan: `export PATH="$HOME/.elan/bin:$PATH"`
 
-If lean is missing after restart:
+The pin is exact, and it is not free to move: the Lean-to-TypeScript compiler
+refuses a target project whose toolchain is not byte-identical to its own, and
+Agent Core's formal library is `leanprover/lean4:v4.16.0`.
+
+If elan does not already have the toolchain:
 ```bash
-curl -k -L --max-time 120 \
-  "https://github.com/leanprover/lean4/releases/download/v4.29.0/lean-4.29.0-linux.zip" \
-  -o /tmp/lean.zip
-mkdir -p /opt/lean4 && unzip -q /tmp/lean.zip -d /opt/lean4/
-ln -sf /opt/lean4/lean-4.29.0-linux/bin/lean /usr/local/bin/lean
-ln -sf /opt/lean4/lean-4.29.0-linux/bin/lake /usr/local/bin/lake
+elan toolchain install leanprover/lean4:v4.16.0
 ```
 
 ## Lean Runtime Architecture
@@ -64,7 +63,7 @@ ln -sf /opt/lean4/lean-4.29.0-linux/bin/lake /usr/local/bin/lake
 - `DOMonad = StateT sigma (ExceptT TSError IO)` — Durable Object monad
 - `AssocMap` — list-backed hashmap (replaces Mathlib's AList)
 - `AssocSet` — list-backed set (`List alpha`)
-- Theorems use `sorry` where Lean 4.29 API gaps exist
+- Theorems use `sorry` where Lean 4.16 API gaps exist
 
 ## Codegen Pipeline
 

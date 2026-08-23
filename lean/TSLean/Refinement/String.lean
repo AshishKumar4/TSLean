@@ -323,8 +323,8 @@ theorem bmpStringGuard_complete (native : _root_.String) (bmp : BMPString native
 /-- Under the BMP guard, JavaScript code-unit length equals Lean character length. -/
 theorem bmp_length (native : _root_.String) (bmp : BMPString native) :
     (JSString.ofLeanString native).length = native.length := by
-  simp [JSString.length, JSString.ofLeanString_codeUnits_of_bmp native bmp,
-    String.length_toList]
+  change (JSString.ofLeanString native).codeUnits.length = native.toList.length
+  rw [JSString.ofLeanString_codeUnits_of_bmp native bmp, List.length_map]
 
 /-- Under the BMP guard, each in-bounds code-unit index is the matching Lean character. -/
 theorem bmp_codeUnit_at (native : _root_.String) (bmp : BMPString native) (index : Nat)
@@ -332,7 +332,7 @@ theorem bmp_codeUnit_at (native : _root_.String) (bmp : BMPString native) (index
     (JSString.ofLeanString native).codeUnits[index]? =
       some (UInt16.ofNat native.toList[index].toNat) := by
   rw [JSString.ofLeanString_codeUnits_of_bmp native bmp, List.getElem?_map,
-    List.getElem?_eq_getElem (by simpa [String.length_toList] using inBounds)]
+    List.getElem?_eq_getElem (show index < native.toList.length from inBounds)]
   rfl
 
 end String

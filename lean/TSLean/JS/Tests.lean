@@ -155,17 +155,17 @@ private def testNumbers : IO Unit := do
     0x4000000000000000
 
 private def testUTF16 : IO Unit := do
-  let nul := JSString.ofLeanString (String.ofList [Char.ofNat 0x0000])
-  let bmpBeforeSurrogates := JSString.ofLeanString (String.ofList [Char.ofNat 0xd7ff])
-  let bmpAfterSurrogates := JSString.ofLeanString (String.ofList [Char.ofNat 0xe000])
-  let bmpMax := JSString.ofLeanString (String.ofList [Char.ofNat 0xffff])
+  let nul := JSString.ofLeanString (String.mk [Char.ofNat 0x0000])
+  let bmpBeforeSurrogates := JSString.ofLeanString (String.mk [Char.ofNat 0xd7ff])
+  let bmpAfterSurrogates := JSString.ofLeanString (String.mk [Char.ofNat 0xe000])
+  let bmpMax := JSString.ofLeanString (String.mk [Char.ofNat 0xffff])
   assert! nul.equal ⟨[UInt16.ofNat 0x0000]⟩
   assert! bmpBeforeSurrogates.equal ⟨[UInt16.ofNat 0xd7ff]⟩
   assert! bmpAfterSurrogates.equal ⟨[UInt16.ofNat 0xe000]⟩
   assert! bmpMax.equal ⟨[UInt16.ofNat 0xffff]⟩
 
-  let astralMinLean := String.ofList [Char.ofNat 0x10000]
-  let astralMaxLean := String.ofList [Char.ofNat 0x10ffff]
+  let astralMinLean := String.mk [Char.ofNat 0x10000]
+  let astralMaxLean := String.mk [Char.ofNat 0x10ffff]
   let astralMin := JSString.ofLeanString astralMinLean
   let astralMax := JSString.ofLeanString astralMaxLean
   assert! astralMin.equal ⟨[UInt16.ofNat 0xd800, UInt16.ofNat 0xdc00]⟩
@@ -175,7 +175,7 @@ private def testUTF16 : IO Unit := do
 
   let scalars := [0x0000, 0x007f, 0x0080, 0xd7ff, 0xe000, 0xffff,
     0x10000, 0x1f600, 0x10ffff]
-  let valid := String.ofList (scalars.map Char.ofNat)
+  let valid := String.mk (scalars.map Char.ofNat)
   assert! (JSString.ofLeanString valid).toLeanString? == some valid
 
   let malformed : List JSString :=

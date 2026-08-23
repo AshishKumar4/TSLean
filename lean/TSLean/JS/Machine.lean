@@ -174,11 +174,89 @@ structure Machine (P : Platform) where
   reverseTrace : List TraceEvent
   fuel : Nat
 
+/-- Constructs a machine without exposing its private representation. -/
+private abbrev Machine.fromFields (P : Platform) (heap : Heap) (cells : Array Cell)
+    (environments : Array EnvironmentRecord) (currentEnv : EnvId)
+    (intrinsics : Option RealmIntrinsics) (platform : P.State)
+    (reverseTrace : List TraceEvent) (fuel : Nat) : Machine P :=
+  ⟨heap, cells, environments, currentEnv, intrinsics, platform, reverseTrace, fuel⟩
+
+
 namespace Machine
+private def zipIdxFrom (xs : List α) (start : Nat) : List (α × Nat) :=
+  (xs.enumFrom start).map fun p => (p.2, p.1)
+
+@[simp] private theorem zipIdxFrom_length (xs : List α) (start : Nat) :
+    (zipIdxFrom xs start).length = xs.length := by
+  simp [zipIdxFrom]
+
+@[simp] private theorem zipIdxFrom_nil (start : Nat) :
+    zipIdxFrom ([] : List α) start = [] := rfl
+
+@[simp] private theorem zipIdxFrom_cons (x : α) (xs : List α) (start : Nat) :
+    zipIdxFrom (x :: xs) start = (x, start) :: zipIdxFrom xs (start + 1) := by
+  rfl
+
+private theorem getElem_zipIdxFrom (xs : List α) (start index : Nat)
+    (bound : index < (zipIdxFrom xs start).length) :
+    (zipIdxFrom xs start)[index] =
+      (xs[index]'(by simpa using bound), start + index) := by
+  unfold zipIdxFrom
+  rw [List.getElem_map]
+  rw [List.getElem_enumFrom]
+
+private theorem zipIdxFrom_append (xs ys : List α) (start : Nat) :
+    zipIdxFrom (xs ++ ys) start =
+      zipIdxFrom xs start ++ zipIdxFrom ys (start + xs.length) := by
+  induction xs generalizing start with
+  | nil => simp [zipIdxFrom]
+  | cons x xs ih =>
+      simp only [List.cons_append, zipIdxFrom_cons, ih, List.length_cons, List.append_assoc]
+      simp only [Nat.add_assoc, Nat.add_left_comm 1 xs.length, Nat.add_comm 1 xs.length]
+
+private theorem hashMap_mem_toList_iff_getElem?_eq_some
+    {α : Type u} {β : Type v} [BEq α] [Hashable α] [LawfulBEq α]
+    (map : Std.HashMap α β) (key : α) (value : β) :
+    (key, value) ∈ map.toList ↔ map[key]? = some value := by
+  have valid : Std.DHashMap.Internal.Raw.WFImp map.inner.1 :=
+    Std.DHashMap.Internal.Raw.WF.out map.inner.2
+  rw [show map.toList = (Std.DHashMap.Internal.toListModel map.inner.1.buckets).map
+      (fun p => (p.1, p.2)) by
+    unfold Std.HashMap.toList Std.DHashMap.Const.toList Std.DHashMap.Raw.Const.toList
+    simpa using (Std.DHashMap.Internal.Raw.foldRev_cons_apply
+      (l := map.inner.1) (acc := []) (fun key value => (key, value)))]
+  simp only [List.mem_map, Prod.mk.injEq]
+  change (∃ p ∈ Std.DHashMap.Internal.toListModel map.inner.1.buckets,
+    p.1 = key ∧ p.2 = value) ↔
+    Std.DHashMap.Internal.Raw₀.Const.get? ⟨map.inner.1, map.inner.2.size_buckets_pos⟩ key =
+      some value
+  rw [Std.DHashMap.Internal.Raw₀.Const.get?_eq_getValue? valid]
+  constructor
+  · rintro ⟨p, member, keyEq, valueEq⟩
+    have entry := (Std.DHashMap.Internal.List.mem_iff_getEntry?_eq_some valid.distinct).mp member
+    rw [← keyEq, ← valueEq]
+    rw [Std.DHashMap.Internal.List.getValue?_eq_getEntry?, entry]
+    rfl
+  · intro found
+    cases entry : Std.DHashMap.Internal.List.getEntry? key
+      (Std.DHashMap.Internal.toListModel map.inner.1.buckets) with
+    | none => simp [Std.DHashMap.Internal.List.getValue?_eq_getEntry?, entry] at found
+    | some pair =>
+      cases pair with
+      | mk foundKey foundValue =>
+        have keyEq : foundKey = key :=
+          LawfulBEq.eq_of_beq (Std.DHashMap.Internal.List.getEntry?_eq_some entry)
+        have valueEq : foundValue = value := by
+          rw [Std.DHashMap.Internal.List.getValue?_eq_getEntry?, entry] at found
+          exact Option.some.inj found
+        subst foundKey
+        subst foundValue
+        exact ⟨⟨key, value⟩,
+          (Std.DHashMap.Internal.List.mem_iff_getEntry?_eq_some valid.distinct).mpr entry, rfl, rfl⟩
 
 /-- Creates a machine containing one valid global lexical environment at identity zero. -/
 def initial (P : Platform) (fuel : Nat) : Machine P :=
-  .mk Heap.empty #[] #[⟨none, Std.HashMap.emptyWithCapacity⟩] ⟨0⟩ none P.initialState [] fuel
+  Machine.fromFields P Heap.empty #[] #[⟨none, Std.HashMap.empty⟩] ⟨0⟩ none P.initialState [] fuel
 
 /-- Returns the root global environment identity. -/
 def globalEnv (_machine : Machine P) : EnvId := ⟨0⟩
@@ -258,11 +336,11 @@ def allocateEnvironment (machine : Machine P) (parent : Option EnvId) :
       | .ok _ =>
           let id := ⟨machine.environments.size⟩
           .ok (id, { machine with environments :=
-            machine.environments.push ⟨parent, Std.HashMap.emptyWithCapacity⟩ })
+            machine.environments.push ⟨parent, Std.HashMap.empty⟩ })
   | none =>
       let id := ⟨machine.environments.size⟩
       .ok (id, { machine with environments :=
-        machine.environments.push ⟨none, Std.HashMap.emptyWithCapacity⟩ })
+        machine.environments.push ⟨none, Std.HashMap.empty⟩ })
 
 /-- Changes the dynamic environment only when the target identity is valid. -/
 def switchEnvironment (machine : Machine P) (id : EnvId) : Except RuntimeFault (Machine P) :=
@@ -299,7 +377,7 @@ def isWellFormed (machine : Machine P) : Bool :=
   machine.heap.isWellFormed &&
   machine.currentEnv.value < machine.environments.size &&
   machine.cells.toList.all (cellValid machine) &&
-  machine.environments.toList.zipIdx.all (environmentValidAt machine) &&
+  (zipIdxFrom machine.environments.toList 0).all (environmentValidAt machine) &&
   realmValid machine &&
   machine.heap.functionEnvironments.all fun environment =>
     environment.value < machine.environments.size
@@ -351,7 +429,8 @@ theorem wellFormed_getCell_valueValid (machine : Machine P) (id : CellId) (value
       simp [lookup] at found
       subst cell
       have member : Cell.mk (.initialized value) mutable ∈ machine.cells.toList :=
-        Array.mem_toList_iff.mpr (Array.mem_of_getElem? lookup)
+        (Array.mem_toList_iff (Cell.mk (.initialized value) mutable) machine.cells).mpr
+          (Array.mem_of_getElem? lookup)
       simpa [cellValid] using valid.1.1.1.2 _ member
 
 /-- A successfully read environment identity is allocated. -/
@@ -392,13 +471,13 @@ private theorem wellFormed_environmentValidAt (machine : Machine P) (id : EnvId)
       have listAt : machine.environments.toList[id.value] = record := by
         rw [Array.getElem_toList]
         exact arrayAt
-      have zipBound : id.value < machine.environments.toList.zipIdx.length := by
+      have zipBound : id.value < (zipIdxFrom machine.environments.toList 0).length := by
         simpa [ValidEnvId] using idValid
-      have zippedAt : machine.environments.toList.zipIdx[id.value] = (record, id.value) := by
-        rw [List.getElem_zipIdx]
+      have zippedAt : (zipIdxFrom machine.environments.toList 0)[id.value] = (record, id.value) := by
+        rw [getElem_zipIdxFrom]
         simp only [Nat.zero_add]
         exact congrArg (fun value => (value, id.value)) listAt
-      have member : (record, id.value) ∈ machine.environments.toList.zipIdx := by
+      have member : (record, id.value) ∈ zipIdxFrom machine.environments.toList 0 := by
         rw [← zippedAt]
         exact List.getElem_mem zipBound
       unfold WellFormed isWellFormed at valid
@@ -414,7 +493,7 @@ theorem wellFormed_binding_valid (machine : Machine P) (environment : EnvId)
   unfold environmentValidAt at invariant
   simp only [Bool.and_eq_true] at invariant
   rw [List.all_eq_true] at invariant
-  have member := Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr foundBinding
+  have member := (hashMap_mem_toList_iff_getElem?_eq_some record.bindings name cell).mpr foundBinding
   simpa [ValidCellId] using invariant.1.2 (name, cell) member
 
 private theorem environmentTerminates_succ_of_true (machine : Machine P) (fuel : Nat)
@@ -472,7 +551,7 @@ private theorem pushEnvironment_preserves_wellFormed (machine : Machine P)
   · apply decide_eq_true
     have oldBound := of_decide_eq_true valid.1.1.1.1.2
     simpa using Nat.lt_succ_of_lt oldBound
-  · rw [Array.toList_push, List.zipIdx_append, List.all_append, Bool.and_eq_true]
+  · rw [Array.push_toList, zipIdxFrom_append, List.all_append, Bool.and_eq_true]
     constructor
     · rw [List.all_eq_true]
       have environmentsValid := List.all_eq_true.mp valid.1.1.2
@@ -504,8 +583,10 @@ private theorem pushEnvironment_preserves_wellFormed (machine : Machine P)
       · simpa using parentValid
       · rw [List.all_eq_true]
         intro binding bindingMember
-        exact decide_eq_true (bindingsValid binding.1 binding.2
-          (Std.HashMap.mem_toList_iff_getElem?_eq_some.mp bindingMember))
+        have bindingFound :=
+          (hashMap_mem_toList_iff_getElem?_eq_some record.bindings binding.1 binding.2).mp
+            bindingMember
+        exact decide_eq_true (bindingsValid binding.1 binding.2 bindingFound)
       · simpa using newTerminates
   · rw [List.all_eq_true]
     have functionsValid := List.all_eq_true.mp valid.2
@@ -523,7 +604,7 @@ theorem allocateEnvironment_preserves_wellFormed (machine next : Machine P)
       simp [allocateEnvironment] at allocated
       obtain ⟨rfl, rfl⟩ := allocated
       apply pushEnvironment_preserves_wellFormed machine
-        ⟨none, Std.HashMap.emptyWithCapacity⟩ valid
+        ⟨none, Std.HashMap.empty⟩ valid
       · simp
       · intro name cell found
         simp at found
@@ -538,7 +619,7 @@ theorem allocateEnvironment_preserves_wellFormed (machine next : Machine P)
           unfold environmentValidAt at parentInvariant
           simp only [Bool.and_eq_true] at parentInvariant
           apply pushEnvironment_preserves_wellFormed machine
-            ⟨some parent, Std.HashMap.emptyWithCapacity⟩ valid
+            ⟨some parent, Std.HashMap.empty⟩ valid
           · simp only [Option.all_some]
             apply decide_eq_true
             have oldBound := getEnvironment_valid machine parent parentRecord found
@@ -546,7 +627,7 @@ theorem allocateEnvironment_preserves_wellFormed (machine next : Machine P)
           · intro name cell found
             simp at found
           · have pushed := environmentTerminates_push_of_true machine
-              ⟨some parent, Std.HashMap.emptyWithCapacity⟩
+              ⟨some parent, Std.HashMap.empty⟩
               (machine.environments.size + 1) parent parentInvariant.2
             simpa [environmentTerminates, Array.getElem?_push] using pushed
 
@@ -595,7 +676,7 @@ theorem allocateEnvironment_getEnvironment (machine next : Machine P)
   | none =>
       simp [allocateEnvironment] at allocated
       obtain ⟨rfl, rfl⟩ := allocated
-      exact ⟨⟨none, Std.HashMap.emptyWithCapacity⟩,
+      exact ⟨⟨none, Std.HashMap.empty⟩,
         by simp [getEnvironment]⟩
   | some parent =>
       cases found : machine.getEnvironment parent with
@@ -603,7 +684,7 @@ theorem allocateEnvironment_getEnvironment (machine next : Machine P)
       | ok record =>
           simp [allocateEnvironment, found] at allocated
           obtain ⟨rfl, rfl⟩ := allocated
-          exact ⟨⟨some parent, Std.HashMap.emptyWithCapacity⟩,
+          exact ⟨⟨some parent, Std.HashMap.empty⟩,
             by simp [getEnvironment]⟩
 
 private theorem environmentTerminates_setCell (machine : Machine P) (cells : Array Cell)
@@ -651,17 +732,19 @@ theorem setCell_preserves_wellFormed (machine next : Machine P) (id : CellId) (c
         subst candidate
         simpa [cellValid] using cellIsValid
       · have oldIndexValid : index < machine.cells.size := by simpa using indexValid
-        rw [Array.getElem_set_ne inBounds oldIndexValid (Ne.symm same)] at candidateEq
+        rw [Array.getElem_set_ne machine.cells id.value inBounds cell indexValid (Ne.symm same)]
+          at candidateEq
         have oldLookup : machine.cells[index]? = some candidate := by
           rw [Array.getElem?_eq_getElem oldIndexValid]
           exact congrArg some candidateEq
         have oldMember : candidate ∈ machine.cells.toList := by
-          exact Array.mem_toList_iff.mpr (Array.mem_of_getElem? oldLookup)
+          exact (Array.mem_toList_iff candidate machine.cells).mpr (Array.mem_of_getElem? oldLookup)
         exact valid.1.1.1.2 candidate oldMember
     · rw [List.all_eq_true]
       have environmentsValid := List.all_eq_true.mp valid.1.1.2
       intro entry member
-      rw [environmentValidAt_setCell machine _ (Array.size_set inBounds)]
+      rw [environmentValidAt_setCell machine (machine.cells.set id.value cell inBounds)
+        (Array.size_set machine.cells id.value cell inBounds)]
       exact environmentsValid entry (by simpa using member)
   next outOfBounds => contradiction
 
@@ -822,11 +905,11 @@ theorem setEnvironment_bindings_preserves_wellFormed (machine next : Machine P)
     have oldAll := List.all_eq_true.mp valid.1.1.2
     intro entry member
     obtain ⟨index, indexBound, entryAt⟩ := List.mem_iff_getElem.mp member
-    have oldIndexBound : index < machine.environments.toList.zipIdx.length := by
+    have oldIndexBound : index < (zipIdxFrom machine.environments.toList 0).length := by
       simpa using indexBound
     by_cases same : index = environment.value
     · subst index
-      rw [List.getElem_zipIdx] at entryAt
+      rw [getElem_zipIdxFrom] at entryAt
       have recordAt : machine.environments.toList[environment.value] = record := by
         rw [Array.getElem_toList]
         have getEq := Array.getElem?_eq_getElem inBounds
@@ -842,19 +925,21 @@ theorem setEnvironment_bindings_preserves_wellFormed (machine next : Machine P)
       refine ⟨⟨oldInvariant.1.1, ?_⟩, ?_⟩
       · rw [List.all_eq_true]
         intro binding bindingMember
-        have bindingFound := Std.HashMap.mem_toList_iff_getElem?_eq_some.mp bindingMember
+        have bindingFound :=
+          (hashMap_mem_toList_iff_getElem?_eq_some bindings binding.1 binding.2).mp bindingMember
         exact decide_eq_true (bindingsValid binding.1 binding.2 bindingFound)
       · rw [environmentTerminates_setParent machine environment record
           { record with bindings } inBounds arrayFound rfl]
         simpa using oldInvariant.2
-    · rw [List.getElem_zipIdx] at entryAt
+    · rw [getElem_zipIdxFrom] at entryAt
       have arrayIndexBound : index < machine.environments.size := by simpa using indexBound
       rw [Array.getElem_toList] at entryAt
-      rw [Array.getElem_set_ne inBounds arrayIndexBound (Ne.symm same)] at entryAt
-      have oldEntryAt : machine.environments.toList.zipIdx[index] = entry := by
-        rw [List.getElem_zipIdx, Array.getElem_toList]
+      rw [Array.getElem_set_ne machine.environments environment.value inBounds
+        { record with bindings } (by simpa using arrayIndexBound) (Ne.symm same)] at entryAt
+      have oldEntryAt : (zipIdxFrom machine.environments.toList 0)[index] = entry := by
+        rw [getElem_zipIdxFrom, Array.getElem_toList]
         simpa using entryAt
-      have oldMember : entry ∈ machine.environments.toList.zipIdx := by
+      have oldMember : entry ∈ zipIdxFrom machine.environments.toList 0 := by
         rw [← oldEntryAt]
         exact List.getElem_mem oldIndexBound
       rw [environmentValidAt_setParent machine environment record { record with bindings }
@@ -1041,7 +1126,7 @@ theorem allocateEnvironment_continuesFrom (machine next : Machine P)
       obtain ⟨rfl, rfl⟩ := allocated
       exact ⟨Heap.continuesFrom_refl _, Nat.le_refl _, by simp, rfl, rfl,
         cellsContinue_refl machine,
-        environmentsContinue_push machine ⟨none, Std.HashMap.emptyWithCapacity⟩⟩
+        environmentsContinue_push machine ⟨none, Std.HashMap.empty⟩⟩
   | some parent =>
       cases found : machine.getEnvironment parent with
       | error fault => simp [allocateEnvironment, found] at allocated
@@ -1050,7 +1135,7 @@ theorem allocateEnvironment_continuesFrom (machine next : Machine P)
           obtain ⟨rfl, rfl⟩ := allocated
           exact ⟨Heap.continuesFrom_refl _, Nat.le_refl _, by simp, rfl, rfl,
             cellsContinue_refl machine,
-            environmentsContinue_push machine ⟨some parent, Std.HashMap.emptyWithCapacity⟩⟩
+            environmentsContinue_push machine ⟨some parent, Std.HashMap.empty⟩⟩
 
 /-- Successful environment append returns an allocated environment identity. -/
 theorem allocateEnvironment_valid (machine next : Machine P) (parent : Option EnvId)
@@ -1329,6 +1414,11 @@ theorem initial_wellFormed (P : Platform) (fuel : Nat) :
   rw [heapValid]
   simp [environmentValidAt, environmentTerminates, Heap.functionEnvironments,
     Heap.functionSlotList, Heap.empty, realmValid]
+  intro name cell member
+  have found :=
+    (hashMap_mem_toList_iff_getElem?_eq_some (Std.HashMap.empty : Std.HashMap JSString CellId)
+      name cell).mp member
+  simp at found
 
 end Machine
 end TSLean.JS

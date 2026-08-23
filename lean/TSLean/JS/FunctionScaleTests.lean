@@ -9,14 +9,19 @@ private def platform : Platform := ScriptedPlatform.make {
 
 private def call : BodyHook platform := fun _ _ _ => pure ()
 
+private def allocateFunctionScale : Nat → Heap → Except HeapFault Heap
+  | 0, heap => .ok heap
+  | .succ remaining, heap =>
+      match heap.allocateFunction ⟨0⟩ .arrow false none none .base
+          (some (.primitive .undefined)) with
+      | .ok (_, next) => allocateFunctionScale remaining next
+      | .error fault => .error fault
+
 private def run : IO Unit := do
   let functionStart ← IO.monoMsNow
-  let mut functionHeap := Heap.empty
-  for _ in [0:100000] do
-    functionHeap ← match functionHeap.allocateFunction ⟨0⟩ .arrow false none none .base
-        (some (.primitive .undefined)) with
-      | .ok (_, next) => pure next
-      | .error _ => throw (IO.userError "function scale allocation failed")
+  let functionHeap ← match allocateFunctionScale 100000 Heap.empty with
+    | .ok heap => pure heap
+    | .error _ => throw (IO.userError "function scale allocation failed")
   let functionMs := (← IO.monoMsNow) - functionStart
   assert! functionHeap.size = 100000
   assert! functionHeap.functionCount = 100000

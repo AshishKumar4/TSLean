@@ -6,7 +6,7 @@
 
 - **Node.js** >= 18
 - **Bun** (package manager) — install from [bun.sh](https://bun.sh)
-- **Lean 4.29.0** — the exact version the project is pinned to
+- **Lean 4.16.0** — the exact version the project is pinned to
 
 ### Clone and Install
 
@@ -16,30 +16,23 @@ cd TSLean
 bun install
 ```
 
-### Install Lean 4.29.0
+### Install Lean 4.16.0
 
-If Lean is not already installed:
+The pin is exact. The Lean-to-TypeScript compiler refuses a target project
+whose toolchain does not match its own, and Agent Core's formal library is
+`leanprover/lean4:v4.16.0`.
+
+Install through elan, which reads `lean/lean-toolchain` and selects the right
+version for you:
 
 ```bash
-# Download and extract
-curl -L "https://github.com/leanprover/lean4/releases/download/v4.29.0/lean-4.29.0-linux.zip" \
-  -o /tmp/lean.zip
-mkdir -p /opt/lean4
-unzip -q /tmp/lean.zip -d /opt/lean4/
-
-# Add to PATH (add to your shell profile for persistence)
-export PATH="/opt/lean4/lean-4.29.0-linux/bin:$PATH"
+curl -sSf https://elan.lean-lang.org | sh
+elan toolchain install leanprover/lean4:v4.16.0
 
 # Verify
-lean --version  # Should print: Lean (version 4.29.0, ...)
-lake --version  # Should print: Lake ...
-```
-
-Alternatively, symlink the binaries:
-
-```bash
-ln -sf /opt/lean4/lean-4.29.0-linux/bin/lean /usr/local/bin/lean
-ln -sf /opt/lean4/lean-4.29.0-linux/bin/lake /usr/local/bin/lake
+cd lean
+lean --version  # Should print: Lean (version 4.16.0, ...)
+lake --version  # Should print: Lake version 5.0.0-128a1e6 (Lean version 4.16.0)
 ```
 
 ### Verify Setup
@@ -49,7 +42,7 @@ ln -sf /opt/lean4/lean-4.29.0-linux/bin/lake /usr/local/bin/lake
 bun run test
 
 # Build the Lean library
-export PATH="/opt/lean4/lean-4.29.0-linux/bin:$PATH"
+export PATH="$HOME/.elan/bin:$PATH"
 cd lean && lake build
 ```
 
@@ -86,8 +79,8 @@ TSLean/
 │   ├── timing.ts             Pipeline timing (59 lines)
 │   └── utils.ts              Shared utilities (12 lines)
 ├── lean/                   Lean 4 runtime library
-│   ├── lakefile.toml         Lake build config (pure Lean 4.29.0, no deps)
-│   ├── lean-toolchain        leanprover/lean4:v4.29.0
+│   ├── lakefile.toml         Lake build config (pure Lean 4.16.0, no deps)
+│   ├── lean-toolchain        leanprover/lean4:v4.16.0
 │   └── TSLean/               Library root
 │       ├── Runtime/            Core types, DOMonad, BrandedTypes, Coercions
 │       ├── Stdlib/             String, Array, HashMap, HashSet, Numeric, Async, JSON
@@ -352,7 +345,7 @@ it('transpiles via CLI', () => {
 ### Lean Library Testing
 
 ```bash
-export PATH="/opt/lean4/lean-4.29.0-linux/bin:$PATH"
+export PATH="$HOME/.elan/bin:$PATH"
 cd lean
 
 # Full build (all modules)
@@ -416,4 +409,4 @@ When filing a bug report, include:
 2. **Expected Lean output** — what you expected TSLean to produce
 3. **Actual Lean output** — what TSLean actually produced (or the error message)
 4. **TSLean version** — `bun run tslean --version`
-5. **Lean version** — `lean --version` (should be 4.29.0)
+5. **Lean version** — `lean --version` (should be 4.16.0)

@@ -280,8 +280,9 @@ theorem lessThanOrEqual_commutes (left right : Int) :
   unfold JS.Primitive.lessThanOrEqual
   rw [compared]
   by_cases ordered : right < left
-  · simp [ordered, Bind.bind, Except.bind, Pure.pure, Except.pure]
-  · have nativeOrder : left ≤ right := Int.le_of_not_gt ordered
+  · have nativeOrder : ¬left ≤ right := Int.not_le_of_gt ordered
+    simp [ordered, nativeOrder, Bind.bind, Except.bind, Pure.pure, Except.pure]
+  · have nativeOrder : left ≤ right := Int.not_lt.mp ordered
     simp [ordered, nativeOrder, Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 /-- JavaScript BigInt `>=` is exact Lean integer ordering. -/
@@ -292,8 +293,9 @@ theorem greaterThanOrEqual_commutes (left right : Int) :
   unfold JS.Primitive.greaterThanOrEqual
   rw [compared]
   by_cases ordered : left < right
-  · simp [ordered, Bind.bind, Except.bind, Pure.pure, Except.pure]
-  · have nativeOrder : right ≤ left := Int.le_of_not_gt ordered
+  · have nativeOrder : ¬right ≤ left := Int.not_le_of_gt ordered
+    simp [ordered, nativeOrder, Bind.bind, Except.bind, Pure.pure, Except.pure]
+  · have nativeOrder : right ≤ left := Int.not_lt.mp ordered
     simp [ordered, nativeOrder, Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 /-- Nonzero JavaScript BigInt division is exactly Lean truncating division. -/

@@ -84,12 +84,12 @@ private theorem mem_insertEff_self (e : EffectKind) (acc : List EffectKind) : e 
   simp only [insertEff]
   split
   · exact List.contains_iff_mem.mp ‹_›
-  · exact List.mem_cons_self
+  · exact List.mem_cons_self _ _
 
 private theorem mem_unionElems_of_mem_left (e : EffectKind) :
     ∀ (l acc : List EffectKind), e ∈ l → e ∈ unionElems l acc := by
   intro l; induction l with
-  | nil => intro acc ha; exact absurd ha List.not_mem_nil
+  | nil => intro acc ha; exact absurd ha (List.not_mem_nil _)
   | cons hd tl ih =>
     intro acc ha
     simp only [List.mem_cons] at ha
@@ -119,7 +119,7 @@ theorem mem_universal (e : EffectKind) : mem e universal = true := by
 
 theorem handle_reduces (s : EffectSet) (e : EffectKind) :
     (s.handle e).elems.length ≤ s.elems.length := by
-  simp [handle]; exact List.length_erase_le
+  simp [handle]; exact List.length_erase_le e s.elems
 
 theorem combine_comm_subset (s t : EffectSet) : subset s (combine t s) = true := by
   simp only [subset, combine, List.all_eq_true]

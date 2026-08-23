@@ -5,7 +5,7 @@ namespace TSLean.Stdlib.String
 
 def isPrefixOf (pfx s : String) : Bool := s.startsWith pfx
 def isSuffixOf (sfx s : String) : Bool := s.endsWith sfx
-def reverse    (s : String)     : String := String.ofList s.toList.reverse
+def reverse    (s : String)     : String := String.mk s.toList.reverse
 def countChar  (s : String) (c : Char) : Nat := s.toList.countP (· == c)
 def allChars   (s : String) (p : Char → Bool) : Bool := s.toList.all p
 def anyChar    (s : String) (p : Char → Bool) : Bool := s.toList.any p
@@ -16,7 +16,7 @@ def replaceFirst (s old new_ : String) : String :=
 def replaceAll (s old new_ : String) : String := String.intercalate new_ (s.splitOn old)
 def charAt     (s : String) (i : Nat) : Option Char := s.toList[i]?
 def toCharList (s : String) : List Char := s.toList
-def truncate   (s : String) (n : Nat) : String := String.ofList (s.toList.take n)
+def truncate   (s : String) (n : Nat) : String := String.mk (s.toList.take n)
 
 -- ─── JS String methods not in Lean core ──────────────────────────────────────
 
@@ -40,7 +40,7 @@ def slice (s : String) (start stop : Int) : String :=
   let len := s.length
   let start' := if start < 0 then Int.toNat (len + start) else Int.toNat start
   let stop'  := if stop  < 0 then Int.toNat (len + stop)  else Int.toNat stop
-  String.ofList (s.toList.drop start' |>.take (stop' - start'))
+  String.mk (s.toList.drop start' |>.take (stop' - start'))
 
 /-- `s.repeat(n)` → s repeated n times -/
 def repeat_ (s : String) (n : Nat) : String :=
@@ -87,12 +87,12 @@ def RegExp.test (_ : RegExp) (_ : String) : Bool := false
 def RegExp.replace (_ : RegExp) (s _ : String) : String := s
 
 theorem reverse_involutive (s : String) : reverse (reverse s) = s := by
-  simp [reverse, String.ofList_toList]
+  simp [reverse]
 theorem reverse_length (s : String) : (reverse s).length = s.length := by
-  simp [reverse, String.length_ofList, List.length_reverse]
+  simp [reverse, String.length, List.length_reverse]
 theorem countChar_empty (c : Char) : countChar "" c = 0 := by simp [countChar]
 theorem countChar_le_length (s : String) (c : Char) : countChar s c ≤ s.length := by
-  simp only [countChar, String.length]; exact List.countP_le_length
+  simp only [countChar, String.length]; exact List.countP_le_length _
 theorem allChars_iff_not_anyChar_not (s : String) (p : Char → Bool) :
     allChars s p = true ↔ anyChar s (fun c => !p c) = false := by
   simp only [allChars, anyChar, List.all_eq_true, List.any_eq_false]
@@ -104,12 +104,12 @@ theorem allChars_iff_not_anyChar_not (s : String) (p : Char → Bool) :
     · simp [hpc] at this
     · rfl
 theorem truncate_length_le (s : String) (n : Nat) : (truncate s n).length ≤ n := by
-  simp [truncate, String.length_ofList]; exact Nat.min_le_left _ _
+  simp [truncate]; exact Nat.min_le_left _ _
 theorem truncate_ge_length (s : String) (n : Nat) (h : s.length ≤ n) : truncate s n = s := by
-  simp only [truncate, String.length] at *
-  rw [List.take_of_length_le h, String.ofList_toList]
+  simp only [truncate, String.length, String.toList] at *
+  rw [List.take_of_length_le h]
 theorem charAt_isSome_iff (s : String) (i : Nat) : (charAt s i).isSome ↔ i < s.length := by
-  simp only [charAt, String.length_toList, Option.isSome_iff_ne_none]
+  simp only [charAt, String.length, String.toList, Option.isSome_iff_ne_none]
   constructor
   · intro h; exact Nat.lt_of_not_le (fun hge => h (List.getElem?_eq_none hge))
   · intro h hcontra
@@ -117,7 +117,7 @@ theorem charAt_isSome_iff (s : String) (i : Nat) : (charAt s i).isSome ↔ i < s
     exact absurd hcontra (by simp)
 theorem countChar_append (s t : String) (c : Char) :
     countChar (s ++ t) c = countChar s c + countChar t c := by
-  simp [countChar, String.toList_append, List.countP_append]
+  simp [countChar, String.data_append, List.countP_append]
 -- isPrefixOf_empty: "" is a prefix of any string.
 -- This is true by definition of startsWith, but the Lean 4 String.Slice
 -- internals make it hard to prove structurally. We state an equivalent
@@ -129,8 +129,7 @@ theorem isPrefixOf_empty_concrete : isPrefixOf "" "hello" = true := by native_de
 theorem isPrefixOf_empty_self : isPrefixOf "" "" = true := by native_decide
 theorem isPrefixOf_hello_self : isPrefixOf "hello" "hello" = true := by native_decide
 theorem reverse_empty : reverse "" = "" := by simp [reverse]
-theorem toCharList_length (s : String) : (toCharList s).length = s.length := by
-  simp [toCharList, String.length_toList]
+theorem toCharList_length (s : String) : (toCharList s).length = s.length := rfl
 theorem allChars_empty (p : Char → Bool) : allChars "" p = true := by simp [allChars]
 theorem anyChar_empty  (p : Char → Bool) : anyChar "" p = false := by simp [anyChar]
 theorem mem_reverse_iff (s : String) (c : Char) : c ∈ (reverse s).toList ↔ c ∈ s.toList := by

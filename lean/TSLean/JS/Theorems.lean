@@ -114,11 +114,11 @@ theorem jsString_toLeanString_empty : (JSString.mk []).toLeanString? = some "" :
 
 theorem jsString_bmp_decode :
     (JSString.mk [UInt16.ofNat 0x41]).toLeanString? =
-      some (String.ofList [Char.ofNat 0x41]) := rfl
+      some (String.mk [Char.ofNat 0x41]) := rfl
 
 theorem jsString_astralMin_decode :
     (JSString.mk [UInt16.ofNat 0xd800, UInt16.ofNat 0xdc00]).toLeanString? =
-      some (String.ofList [Char.ofNat 0x10000]) := rfl
+      some (String.mk [Char.ofNat 0x10000]) := rfl
 
 theorem propertyKey_equal_refl (key : PropertyKey) : PropertyKey.equal key key = true := by
   cases key with

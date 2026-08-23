@@ -390,7 +390,7 @@ theorem except_err_bind {α β ε : Type} (e : ε) (f : α → Except ε β) :
 
 -- Array push increases size by 1
 theorem push_size_eq {α : Type} (arr : Array α) (x : α) :
-    (arr.push x).size = arr.size + 1 := Array.size_push x
+    (arr.push x).size = arr.size + 1 := Array.size_push arr x
 
 -- Pure function composition is associative (module resolution determinism basis)
 theorem compose_assoc {α β γ δ : Type} (f : γ → δ) (g : β → γ) (h : α → β) (x : α) :

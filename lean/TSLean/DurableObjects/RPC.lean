@@ -42,7 +42,7 @@ private axiom option_serializer_roundtrip {α : Type} [Serializer α] (o : Optio
     let des : String → Option (Option α) := fun s =>
       if s == "null" then some none
       else if s.startsWith "some:" then
-        (Serializer.deserialize (s.toRawSubstring.drop 5 |>.toString)).map some
+        (Serializer.deserialize (s.toSubstring.drop 5 |>.toString)).map some
       else none
     des (ser o) = some o
 
@@ -51,7 +51,7 @@ instance [Serializer α] : Serializer (Option α) where
   deserialize s :=
     if s == "null" then some none
     else if s.startsWith "some:" then
-      (Serializer.deserialize (s.toRawSubstring.drop 5 |>.toString)).map some
+      (Serializer.deserialize (s.toSubstring.drop 5 |>.toString)).map some
     else none
   roundtrip o := option_serializer_roundtrip o
 

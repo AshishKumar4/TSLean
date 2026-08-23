@@ -53,8 +53,13 @@ private theorem firstInvalidArgument?_none_iff (heap : Heap) (values : List Valu
   induction values with
   | nil => simp [firstInvalidArgument?]
   | cons value rest ih =>
-      cases value <;>
-        simp [firstInvalidArgument?, invalidValueRef?, Heap.valueValid, ih]
+      cases value with
+      | primitive value =>
+          simp [firstInvalidArgument?, invalidValueRef?, Heap.valueValid, ih]
+      | object ref =>
+          by_cases inBounds : ref.value < heap.size
+          · simp [firstInvalidArgument?, invalidValueRef?, Heap.valueValid, inBounds, ih]
+          · simp [firstInvalidArgument?, invalidValueRef?, Heap.valueValid, inBounds]
 
 private theorem firstInvalidCallValue?_none (heap : Heap) (receiver : Value)
     (arguments : Array Value) (valid : firstInvalidCallValue? heap receiver arguments = none) :

@@ -32,7 +32,7 @@ def SessionStore.getFresh (store : SessionStore) (tok : SessionToken) (now : Nat
 
 def SessionStore.prune (store : SessionStore) (now : Nat) : SessionStore :=
   { entries := store.entries.filter (fun (_, s) => s.isFresh now),
-    nodup   := by apply List.Nodup.sublist _ store.nodup; apply List.Sublist.map; exact List.filter_sublist }
+    nodup   := by apply List.Nodup.sublist _ store.nodup; apply List.Sublist.map; exact List.filter_sublist _ }
 
 theorem no_stale_reads (store : SessionStore) (tok : SessionToken) (now : Nat)
     (s : Session) (h : store.getFresh tok now = some s) : s.isFresh now = true := by
@@ -59,7 +59,7 @@ private theorem findSome_mem (l : List (SessionToken × Session)) (tok : Session
     simp only [List.findSome?] at h
     by_cases hcidk : (hd.1 == tok)
     · simp only [hcidk, ite_true] at h
-      exact ⟨hd, List.mem_cons_self, Option.some_inj.mp h⟩
+      exact ⟨hd, List.mem_cons_self _ _, Option.some_inj.mp h⟩
     · simp only [hcidk, Bool.not_true, ↓reduceIte, ite_false] at h
       obtain ⟨p, hp, heq⟩ := ih h
       exact ⟨p, List.mem_cons_of_mem _ hp, heq⟩

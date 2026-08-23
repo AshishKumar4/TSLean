@@ -113,8 +113,8 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     expect(first.manifest.schemaVersion).toBe(3);
     expect(first.manifest.semantic.entryModule).toBe('TSLean.Examples.Placement');
     expect(first.manifest.semantic.modules.map((module) => module.path)).toEqual(['TSLean/Examples/Placement.ts']);
-    expect(first.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.29.0');
-    expect(first.manifest.semantic.leanToolchain.leanVersion).toContain('Lean (version 4.29.0');
+    expect(first.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.16.0');
+    expect(first.manifest.semantic.leanToolchain.leanVersion).toContain('Lean (version 4.16.0');
     expect(first.manifest.semantic.leanToolchain.lakeVersion).toContain('Lake version 5.0.0');
     expect(first.manifest.semantic.semanticIrSha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
     expect(first.manifest.semantic.inputClosureSha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
@@ -641,14 +641,92 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.decide'],
       });
-      expect(emitted.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.29.0');
-      expect(emitted.manifest.semantic.leanToolchain.leanVersion).toContain('Lean (version 4.29.0');
+      expect(emitted.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.16.0');
+      expect(emitted.manifest.semantic.leanToolchain.leanVersion).toContain('Lean (version 4.16.0');
     } finally {
       if (originalToolchain === undefined) {
         delete process.env['ELAN_TOOLCHAIN'];
       } else {
         process.env['ELAN_TOOLCHAIN'] = originalToolchain;
       }
+      fixture.dispose();
+    }
+  });
+
+  test('compiles a Lean 4.16 Lake DSL project with a transitive source closure', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'tslean-lake-dsl-project-'));
+    const dependencyDirectory = join(projectRoot, 'Fixture');
+    const fixtureSourcePath = join(projectRoot, 'Fixture.lean');
+    try {
+      mkdirSync(dependencyDirectory);
+      writeFileSync(join(projectRoot, 'lean-toolchain'), 'leanprover/lean4:v4.16.0\n');
+      writeFileSync(join(projectRoot, 'lake-manifest.json'), '{"version":"1.1.0","name":"fixture","packages":[]}\n');
+      writeFileSync(
+        join(projectRoot, 'lakefile.lean'),
+        [
+          'import Lake',
+          'open Lake DSL',
+          '',
+          'package fixture where',
+          '',
+          'lean_lib Fixture where',
+          '  roots := #[`Fixture]',
+          '',
+        ].join('\n'),
+      );
+      writeFileSync(
+        join(dependencyDirectory, 'Dependency.lean'),
+        [
+          'namespace Fixture.Dependency',
+          'def invert (value : Bool) : Bool := !value',
+          'end Fixture.Dependency',
+          '',
+        ].join('\n'),
+      );
+      writeFileSync(
+        fixtureSourcePath,
+        [
+          'import Fixture.Dependency',
+          'namespace Fixture',
+          'def decide (value : Bool) : Bool := Fixture.Dependency.invert value',
+          'end Fixture',
+          '',
+        ].join('\n'),
+      );
+
+      const emitted = compileLeanToTypeScript({
+        projectRoot,
+        moduleName: 'Fixture',
+        sourcePath: fixtureSourcePath,
+        declarations: ['Fixture.decide'],
+      });
+
+      expect(emitted.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.16.0');
+      expect(emitted.manifest.semantic.modules.map((module) => module.path)).toEqual([
+        'Fixture.ts',
+        'Fixture/Dependency.ts',
+      ]);
+      expect(entryCode(emitted)).toContain('export function decide(');
+    } finally {
+      rmSync(projectRoot, { force: true, recursive: true });
+    }
+  });
+
+  test('refuses a target that is pinned to a different exact Lean toolchain', () => {
+    const fixture = createLeanProjectFixture(
+      ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
+    );
+    try {
+      writeFileSync(join(fixture.projectRoot, 'lean-toolchain'), 'leanprover/lean4:v4.29.0\n');
+      expect(() =>
+        compileLeanToTypeScript({
+          projectRoot: fixture.projectRoot,
+          moduleName: 'Fixture',
+          sourcePath: fixture.sourcePath,
+          declarations: ['Fixture.decide'],
+        }),
+      ).toThrow('target and compiler Lean toolchains do not match exactly');
+    } finally {
       fixture.dispose();
     }
   });
@@ -695,6 +773,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     const emitted = compileLeanToTypeScript(request);
     const committed = committedPackage(generatedRoot, manifestPath, emitted);
     expect(() => verifyLeanToTypeScriptPackage(committed)).not.toThrow();
+    expect(committed.manifest.semantic.semanticIrSha256).toBe(emitted.manifest.semantic.semanticIrSha256);
     expect(committed.modules.map((module) => generatedBody(module.code))).toEqual(
       emitted.modules.map((module) => generatedBody(module.code)),
     );
@@ -727,7 +806,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     ['Nat', 'def rejected (value : Nat) : Nat := value', 'Fixture.rejected'],
     // `String`'s own closure carries an `extern` implementation, so the metadata audit refuses it
     // before the type rule is reached; both refusals are fail-closed and attributable.
-    ['String', 'def rejected (value : String) : String := value', 'String.ofByteArray'],
+    ['String', 'def rejected (value : String) : String := value', 'String.mk'],
   ])('rejects unsupported built-in data type %s in the Lean exporter', (_type, declarationSource, declaration) => {
     expect(unsupportedSourceError(declarationSource, 'Fixture.rejected')).toMatchObject({
       code: 'UNSUPPORTED_LEAN_FRAGMENT',
@@ -743,8 +822,23 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     });
   });
 
+  test(
+    'rejects a enum declared in Prop',
+    () => {
+      const source = [
+        'inductive EnumProp : Prop where',
+        '  | value',
+        'def rejected (_value : EnumProp) : Bool := true',
+      ].join('\n');
+      expect(unsupportedSourceError(source, 'Fixture.rejected')).toMatchObject({
+        code: 'UNSUPPORTED_LEAN_FRAGMENT',
+        declaration: 'Fixture.EnumProp',
+      });
+    },
+    30_000,
+  );
+
   test.each([
-    ['enum', 'Prop', ['inductive EnumProp : Prop where', '  | value'], 'EnumProp'],
     ['structure', 'Prop', ['structure StructProp : Prop where'], 'StructProp'],
     ['enum', 'Type 1', ['inductive EnumType1 : Type 1 where', '  | value'], 'EnumType1'],
     ['structure', 'Type 1', ['structure StructType1 : Type 1 where'], 'StructType1'],
@@ -766,24 +860,24 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     ['reserved declaration', 'def «default» (value : Bool) : Bool := value', 'Fixture.default', 'Fixture.default'],
     [
       'Unicode declaration dependency',
-      ['def café (value : Bool) : Bool := value', 'def rejected (value : Bool) : Bool := café value'].join('\n'),
+      ['def «café» (value : Bool) : Bool := value', 'def rejected (value : Bool) : Bool := «café» value'].join('\n'),
       'Fixture.rejected',
-      'Fixture.café',
+      'Fixture.«café»',
     ],
     [
       'Unicode structure field',
       [
         'structure UnicodeField where',
-        '  café : Bool',
-        'def rejected (value : UnicodeField) : Bool := value.café',
+        '  «café» : Bool',
+        'def rejected (value : UnicodeField) : Bool := value.«café»',
       ].join('\n'),
       'Fixture.rejected',
       'Fixture.UnicodeField',
     ],
-    ['Unicode parameter', 'def rejected (café : Bool) : Bool := café', 'Fixture.rejected', 'Fixture.rejected'],
+    ['Unicode parameter', 'def rejected («café» : Bool) : Bool := «café»', 'Fixture.rejected', 'Fixture.rejected'],
     [
       'Unicode let binder',
-      'def rejected (value : Bool) : Bool := let café := value; café',
+      'def rejected (value : Bool) : Bool := let «café» := value; «café»',
       'Fixture.rejected',
       'Fixture.rejected',
     ],

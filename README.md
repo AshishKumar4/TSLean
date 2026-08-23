@@ -398,7 +398,7 @@ Use `--strict` to reject any output that carries a `sorry` or `default` placehol
 
 ## Building
 
-**Requirements:** Linux with procfs and util-linux `flock`, Node.js ≥ 18, Bun, Lean 4.29.0
+**Requirements:** Linux with procfs and util-linux `flock`, Node.js ≥ 18, Bun, Lean 4.16.0
 
 ```bash
 bun install              # Install dependencies

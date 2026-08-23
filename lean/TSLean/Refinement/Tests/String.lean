@@ -9,7 +9,8 @@ namespace StringContracts
 theorem string_contract_inventory :
     (∀ value : _root_.String,
       (JSString.ofLeanString value).toLeanString? = some value) ∧
-    Function.Injective JSString.ofLeanString ∧
+    (∀ ⦃left right : _root_.String⦄,
+      JSString.ofLeanString left = JSString.ofLeanString right → left = right) ∧
     (∀ (value : JSString) (native : _root_.String), value.toLeanString? = some native →
       JSString.ofLeanString native = value) ∧
     String.refinement.UniqueDecode ∧
@@ -21,8 +22,8 @@ theorem string_contract_inventory :
     ∀ (native : _root_.String) (_bmp : String.BMPString native) (index : Nat)
       (inBounds : index < native.length),
       (JSString.ofLeanString native).codeUnits[index]? =
-        some (UInt16.ofNat (native.toList.get ⟨index, by
-          simpa [String.length_toList] using inBounds⟩).toNat) := by
+        some (UInt16.ofNat (native.toList.get ⟨index,
+          show index < native.toList.length from inBounds⟩).toNat) := by
   exact ⟨JSString.toLeanString?_ofLeanString, JSString.ofLeanString_injective,
     fun _ _ => JSString.ofLeanString_toLeanString?, String.refinement_uniqueDecode,
     String.codec_lawful, String.validUTF16Guard_sound, String.bmp_length,
@@ -32,7 +33,8 @@ example (value : _root_.String) :
     (JSString.ofLeanString value).toLeanString? = some value :=
   JSString.toLeanString?_ofLeanString value
 
-example : Function.Injective JSString.ofLeanString :=
+example : ∀ ⦃left right : _root_.String⦄,
+    JSString.ofLeanString left = JSString.ofLeanString right → left = right :=
   JSString.ofLeanString_injective
 
 example {value : JSString} {native : _root_.String}
@@ -186,15 +188,15 @@ private def stringDecodeIs (value : Value)
 
 private def testStringBoundaries : IO Unit := do
   let samples := [
-    String.ofList [Char.ofNat 0x00],
-    String.ofList [Char.ofNat 0x7f],
-    String.ofList [Char.ofNat 0x80],
-    String.ofList [Char.ofNat 0xd7ff],
-    String.ofList [Char.ofNat 0xe000],
-    String.ofList [Char.ofNat 0xffff],
-    String.ofList [Char.ofNat 0x10000],
-    String.ofList [Char.ofNat 0x10ffff],
-    String.ofList [Char.ofNat 0x65, Char.ofNat 0x301]]
+    String.mk [Char.ofNat 0x00],
+    String.mk [Char.ofNat 0x7f],
+    String.mk [Char.ofNat 0x80],
+    String.mk [Char.ofNat 0xd7ff],
+    String.mk [Char.ofNat 0xe000],
+    String.mk [Char.ofNat 0xffff],
+    String.mk [Char.ofNat 0x10000],
+    String.mk [Char.ofNat 0x10ffff],
+    String.mk [Char.ofNat 0x65, Char.ofNat 0x301]]
   for native in samples do
     let encoded := JSString.ofLeanString native
     assert! encoded.toLeanString? == some native
@@ -207,7 +209,7 @@ private def testStringBoundaries : IO Unit := do
         assert! next.size == Heap.empty.size
 
 private def testMalformedUTF16 : IO Unit := do
-  let astralMax := String.ofList [Char.ofNat 0x10ffff]
+  let astralMax := String.mk [Char.ofNat 0x10ffff]
   let maxPair : JSString := ⟨[UInt16.ofNat 0xdbff, UInt16.ofNat 0xdfff]⟩
   assert! maxPair.toLeanString? == some astralMax
   assert! String.validUTF16Guard.check maxPair
@@ -228,7 +230,7 @@ private def testMalformedUTF16 : IO Unit := do
 
 private def testStringLaws : IO Unit := do
   let left := "A"
-  let right := String.ofList [Char.ofNat 0x10000]
+  let right := String.mk [Char.ofNat 0x10000]
   let leftEncoded := JSString.ofLeanString left
   let rightEncoded := JSString.ofLeanString right
   assert! leftEncoded.append rightEncoded == JSString.ofLeanString (left ++ right)
@@ -250,8 +252,8 @@ private def testStringLaws : IO Unit := do
   assert! provedEvidence.kind == .proved
 
 private def testBMPBoundary : IO Unit := do
-  let bmp := String.ofList [Char.ofNat 0x00, Char.ofNat 0xffff]
-  let astral := String.ofList [Char.ofNat 0x10000]
+  let bmp := String.mk [Char.ofNat 0x00, Char.ofNat 0xffff]
+  let astral := String.mk [Char.ofNat 0x10000]
   let bmpEncoded := JSString.ofLeanString bmp
   let astralEncoded := JSString.ofLeanString astral
   let emptyEncoded := JSString.ofLeanString ""

@@ -21,10 +21,10 @@ theorem gcd'_dvd_left (a b : Nat) : gcd' a b ∣ a := Nat.gcd_dvd_left a b
 theorem gcd'_dvd_right (a b : Nat) : gcd' a b ∣ b := Nat.gcd_dvd_right a b
 theorem gcd'_comm (a b : Nat) : gcd' a b = gcd' b a := Nat.gcd_comm a b
 theorem lcm'_comm (a b : Nat) : lcm' a b = lcm' b a := Nat.lcm_comm a b
-theorem abs'_nonneg (x : Int) : (abs' x : Int) ≥ 0 := by simp [abs']
+theorem abs'_nonneg (x : Int) : (abs' x : Int) ≥ 0 := by
+  simpa only [abs'] using Int.ofNat_nonneg x.natAbs
 theorem abs'_neg (x : Int) (h : x ≤ 0) : (abs' x : Int) = -x := by
-  simp only [abs']; rw [show x.natAbs = (-x).natAbs from (Int.natAbs_neg x).symm]
-  exact Int.natAbs_of_nonneg (Int.neg_nonneg.mpr h)
+  simpa only [abs'] using Int.ofNat_natAbs_of_nonpos h
 theorem abs'_pos (x : Int) (h : 0 ≤ x) : (abs' x : Int) = x := by
   simp [abs', Int.natAbs_of_nonneg h]
 theorem sign_pos (x : Int) (h : x > 0) : sign x = 1 := by simp [sign, h]
@@ -38,7 +38,7 @@ theorem isPow2_zero : isPow2 0 = false := by native_decide
 theorem ilog2_mono {a b : Nat} (h : a ≤ b) : ilog2 a ≤ ilog2 b := by
   simp only [ilog2]
   rcases Nat.eq_zero_or_pos a with rfl | ha
-  · exact Nat.zero_le _
+  · simpa only [Nat.log2_zero] using Nat.zero_le (Nat.log2 b)
   · -- a > 0; use log2_lt and log2_self_le
     apply Nat.le_of_not_lt
     intro hlt
@@ -67,7 +67,7 @@ theorem not_isPow2_three : isPow2 3 = false := by native_decide
 theorem ilog2_one : ilog2 1 = 0 := by native_decide
 theorem ilog2_two : ilog2 2 = 1 := by native_decide
 theorem gcd_le_left (a b : Nat) (h : 0 < a) : gcd' a b ≤ a := Nat.gcd_le_left b h
-theorem gcd_le_right (a b : Nat) (h : 0 < b) : gcd' a b ≤ b := Nat.gcd_le_right a h
+theorem gcd_le_right (a b : Nat) (h : 0 < b) : gcd' a b ≤ b := Nat.gcd_le_right b h
 theorem lcm_dvd_mul_left (a b : Nat) : a ∣ lcm' a b := Nat.dvd_lcm_left a b
 theorem lcm_dvd_mul_right (a b : Nat) : b ∣ lcm' a b := Nat.dvd_lcm_right a b
 

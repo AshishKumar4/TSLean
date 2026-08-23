@@ -13,7 +13,7 @@ structure ProtocolError where
   message : String
 
 def objectSize : Lean.Json → Option Nat
-  | .obj fields => some (fields.foldl (init := 0) fun count _ _ => count + 1)
+  | .obj fields => some (fields.fold (init := 0) fun count _ _ => count + 1)
   | _ => none
 
 def exactObject (value : Lean.Json) (size : Nat) : Except String Unit :=

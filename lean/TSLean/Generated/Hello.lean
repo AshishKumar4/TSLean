@@ -62,6 +62,9 @@ theorem greet_length_eq_iff (a b : String) :
 theorem hello_eq : hello = "Hello from TypeScript transpiled to Lean 4!" := rfl
 
 theorem greet_nonempty2 (name : String) : greet name ≠ "" := by
-  simp [greet]
+  intro h
+  have hlen := greet_nonempty name
+  rw [h] at hlen
+  exact Nat.lt_irrefl 0 hlen
 
 end TSLean.Generated.Hello

@@ -45,7 +45,7 @@ private def decodeCodeUnits : List UInt16 → Option (List Char)
 
 /-- Decodes valid UTF-16, returning `none` rather than replacing an unpaired surrogate. -/
 def toLeanString? (value : JSString) : Option String :=
-  Option.map String.ofList (decodeCodeUnits value.codeUnits)
+  Option.map String.mk (decodeCodeUnits value.codeUnits)
 
 /-- Concatenates UTF-16 code units without decoding them. -/
 def append (left right : JSString) : JSString :=
@@ -228,6 +228,7 @@ private theorem decodeCodeUnits_encodeScalar (character : Char) (units : List UI
     rw [decodeCodeUnits.eq_def]
     simp only [highToNat, lowToNat]
     simp [highRange, lowRange, decoded]
+    simp only [Nat.add_sub_cancel_left]
     rw [recombineSimple, Char.ofNat_toNat]
 
 private theorem decodeCodeUnits_encodeList (characters : List Char) :
@@ -244,7 +245,10 @@ theorem toLeanString?_ofLeanString (value : String) :
   simp [ofLeanString, toLeanString?, decodeCodeUnits_encodeList]
 
 /-- UTF-16 encoding of Lean scalar strings is injective. -/
-theorem ofLeanString_injective : Function.Injective ofLeanString := by
+-- Stated as the unfolding of `Function.Injective`, which 4.16 core does not provide. The
+-- strict-implicit binders are load-bearing: call sites apply this to the equality alone.
+theorem ofLeanString_injective :
+    ∀ ⦃left right : String⦄, ofLeanString left = ofLeanString right → left = right := by
   intro left right equal
   have decoded := congrArg toLeanString? equal
   simpa [toLeanString?_ofLeanString] using decoded
@@ -262,7 +266,7 @@ private theorem flatMap_encodeScalar_of_bmp (characters : List Char)
   | nil => rfl
   | cons character rest ih =>
       rw [List.flatMap_cons, List.map_cons]
-      simp only [encodeScalar, bmp character List.mem_cons_self, if_pos,
+      simp only [encodeScalar, bmp character (List.mem_cons_self character rest), if_pos,
         List.singleton_append, Function.comp_apply]
       congr
       exact ih fun current member => bmp current (List.mem_cons_of_mem character member)
@@ -277,7 +281,7 @@ private theorem encodeScalar_of_bmpUnit (unit : UInt16)
     (notHigh : ¬(0xd800 ≤ unit.toNat ∧ unit.toNat ≤ 0xdbff))
     (notLow : ¬(0xdc00 ≤ unit.toNat ∧ unit.toNat ≤ 0xdfff)) :
     encodeScalar (Char.ofNat unit.toNat) = [unit] := by
-  have scalarLt : unit.toNat < 0x10000 := UInt16.toNat_lt unit
+  have scalarLt : unit.toNat < 0x10000 := UInt16.toNat_lt_size unit
   have valid : unit.toNat.isValidChar := by
     simp only [Nat.isValidChar]
     omega
@@ -337,7 +341,7 @@ private theorem encodeList_decodeCodeUnits (units : List UInt16) (characters : L
             · rw [decodeCodeUnits.eq_def] at decoded
               simp only [high, decide_true, Bool.true_and, if_pos, low] at decoded
               obtain ⟨tailCharacters, tailDecoded, rfl⟩ :=
-                Option.map_eq_some_iff.mp decoded
+                Option.map_eq_some'.mp decoded
               rw [List.flatMap_cons, encodeScalar_of_surrogates unit second high low,
                 List.cons_append, List.cons_append, List.nil_append]
               congr
@@ -359,7 +363,7 @@ theorem ofLeanString_toLeanString? {value : JSString} {native : String}
     (decoded : value.toLeanString? = some native) : ofLeanString native = value := by
   cases value with
   | mk units =>
-      simp only [toLeanString?, Option.map_eq_some_iff] at decoded
+      simp only [toLeanString?, Option.map_eq_some'] at decoded
       obtain ⟨characters, charactersDecoded, rfl⟩ := decoded
       congr
       simpa [ofLeanString] using encodeList_decodeCodeUnits units characters charactersDecoded

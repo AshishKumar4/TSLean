@@ -132,7 +132,98 @@ inductive SyntaxKind where
   | SatisfiesExpression
   -- Catch-all for codes we don't enumerate
   | Other (code : Nat)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, Inhabited
+
+/--
+Constructor index, in declaration order.
+
+`Other` carries a field, so `SyntaxKind` is not a field-free enumeration and
+`deriving BEq` cannot use its constructor-index fast path.  The fallback builds
+a 194-alternative match on two discriminants, which exhausts the Lean 4.16
+heartbeat budget.  This table restores the linear comparison.
+-/
+def SyntaxKind.tag : SyntaxKind → Nat
+  | .Unknown => 0 | .EndOfFileToken => 1
+  -- Literals and identifiers
+  | .NumericLiteral => 2 | .BigIntLiteral => 3 | .StringLiteral => 4
+  | .RegularExpressionLiteral => 5 | .NoSubstitutionTemplateLiteral => 6 | .TemplateHead => 7
+  | .TemplateMiddle => 8 | .TemplateTail => 9 | .Identifier => 10
+  -- Punctuation tokens
+  | .OpenBraceToken => 11 | .CloseBraceToken => 12 | .OpenParenToken => 13
+  | .CloseParenToken => 14 | .OpenBracketToken => 15 | .CloseBracketToken => 16
+  | .DotToken => 17 | .DotDotDotToken => 18 | .SemicolonToken => 19 | .CommaToken => 20
+  | .QuestionToken => 21 | .QuestionDotToken => 22 | .ExclamationToken => 23
+  | .EqualsToken => 24 | .EqualsEqualsToken => 25 | .EqualsEqualsEqualsToken => 26
+  | .ExclamationEqualsToken => 27 | .ExclamationEqualsEqualsToken => 28 | .PlusToken => 29
+  | .MinusToken => 30 | .AsteriskToken => 31 | .SlashToken => 32 | .PercentToken => 33
+  | .PlusPlusToken => 34 | .MinusMinusToken => 35 | .LessThanToken => 36
+  | .GreaterThanToken => 37 | .LessThanEqualsToken => 38 | .GreaterThanEqualsToken => 39
+  | .AmpersandToken => 40 | .BarToken => 41 | .CaretToken => 42 | .TildeToken => 43
+  | .AmpersandAmpersandToken => 44 | .BarBarToken => 45 | .PlusEqualsToken => 46
+  | .MinusEqualsToken => 47 | .AsteriskEqualsToken => 48 | .SlashEqualsToken => 49
+  | .PercentEqualsToken => 50 | .EqualsGreaterThanToken => 51
+  -- Keywords
+  | .BreakKeyword => 52 | .CaseKeyword => 53 | .CatchKeyword => 54 | .ClassKeyword => 55
+  | .ConstKeyword => 56 | .ContinueKeyword => 57 | .DefaultKeyword => 58 | .DeleteKeyword => 59
+  | .DoKeyword => 60 | .ElseKeyword => 61 | .ExportKeyword => 62 | .ExtendsKeyword => 63
+  | .FalseKeyword => 64 | .FinallyKeyword => 65 | .ForKeyword => 66 | .FunctionKeyword => 67
+  | .IfKeyword => 68 | .ImportKeyword => 69 | .InKeyword => 70 | .InstanceOfKeyword => 71
+  | .NewKeyword => 72 | .NullKeyword => 73 | .ReturnKeyword => 74 | .SuperKeyword => 75
+  | .SwitchKeyword => 76 | .ThisKeyword => 77 | .ThrowKeyword => 78 | .TrueKeyword => 79
+  | .TryKeyword => 80 | .TypeOfKeyword => 81 | .VarKeyword => 82 | .VoidKeyword => 83
+  | .WhileKeyword => 84 | .WithKeyword => 85 | .YieldKeyword => 86 | .LetKeyword => 87
+  | .AsyncKeyword => 88 | .AwaitKeyword => 89 | .AsKeyword => 90 | .ImplementsKeyword => 91
+  | .InterfaceKeyword => 92 | .PrivateKeyword => 93 | .ProtectedKeyword => 94
+  | .PublicKeyword => 95 | .StaticKeyword => 96 | .AbstractKeyword => 97 | .DeclareKeyword => 98
+  | .ReadonlyKeyword => 99 | .OverrideKeyword => 100
+  -- Type keywords
+  | .AnyKeyword => 101 | .BooleanKeyword => 102 | .NeverKeyword => 103 | .NumberKeyword => 104
+  | .StringKeyword => 105 | .SymbolKeyword => 106 | .UndefinedKeyword => 107
+  | .UnknownKeyword => 108 | .VoidKeyword2 => 109
+  -- Declarations
+  | .TypeReference => 110 | .PropertySignature => 111 | .MethodSignature => 112
+  | .InterfaceDeclaration => 113 | .ClassDeclaration => 114 | .FunctionDeclaration => 115
+  | .VariableDeclaration => 116 | .VariableDeclarationList => 117 | .VariableStatement => 118
+  | .ExpressionStatement => 119 | .ReturnStatement => 120 | .IfStatement => 121
+  | .WhileStatement => 122 | .DoStatement => 123 | .ForStatement => 124 | .ForInStatement => 125
+  | .ForOfStatement => 126 | .SwitchStatement => 127 | .CaseClause => 128
+  | .DefaultClause => 129 | .CaseBlock => 130 | .Block => 131 | .SourceFile => 132
+  | .ModuleDeclaration => 133 | .ImportDeclaration => 134 | .ExportDeclaration => 135
+  | .TypeAliasDeclaration => 136 | .EnumDeclaration => 137 | .EnumMember => 138
+  | .Parameter => 139 | .PropertyDeclaration => 140 | .MethodDeclaration => 141
+  | .GetAccessor => 142 | .SetAccessor => 143 | .Constructor => 144 | .ArrowFunction => 145
+  | .FunctionExpression => 146
+  -- Expressions
+  | .CallExpression => 147 | .NewExpression => 148 | .TaggedTemplateExpression => 149
+  | .PropertyAccessExpression => 150 | .ElementAccessExpression => 151
+  | .BinaryExpression => 152 | .PrefixUnaryExpression => 153 | .PostfixUnaryExpression => 154
+  | .ConditionalExpression => 155 | .TemplateExpression => 156 | .ArrayLiteralExpression => 157
+  | .ObjectLiteralExpression => 158 | .SpreadElement => 159 | .AsExpression => 160
+  | .TypeAssertionExpression => 161 | .NonNullExpression => 162
+  | .ParenthesizedExpression => 163 | .AwaitExpression => 164 | .YieldExpression => 165
+  | .DeleteExpression => 166 | .VoidExpression => 167 | .TypeOfExpression => 168
+  -- Statements
+  | .ThrowStatement => 169 | .TryStatement => 170 | .CatchClause => 171
+  | .LabeledStatement => 172
+  -- Patterns
+  | .TypeParameter => 173 | .HeritageClause => 174 | .Decorator => 175
+  | .ComputedPropertyName => 176 | .ShorthandPropertyAssignment => 177
+  | .SpreadAssignment => 178 | .PropertyAssignment => 179 | .BindingElement => 180
+  | .ArrayBindingPattern => 181 | .ObjectBindingPattern => 182
+  -- Module specifiers
+  | .ImportSpecifier => 183 | .ExportSpecifier => 184 | .NamedImports => 185
+  | .NamedExports => 186 | .ImportClause => 187 | .ExportAssignment => 188
+  -- Misc
+  | .JsxElement => 189 | .JsxSelfClosingElement => 190 | .JsxOpeningElement => 191
+  | .SatisfiesExpression => 192
+  -- Catch-all for codes we don't enumerate
+  | .Other _ => 193
+
+/-- Structural equality: the same constructor, and equal codes for `Other`. -/
+instance : BEq SyntaxKind where
+  beq a b := match a, b with
+    | .Other m, .Other n => m == n
+    | _, _ => a.tag == b.tag
 
 -- ─── ts.Symbol ─────────────────────────────────────────────────────────────────
 
@@ -399,7 +490,7 @@ end ModuleResolutionKind
 
 -- ─── Theorems ──────────────────────────────────────────────────────────────────
 
--- SyntaxKind uses derived BEq (not LawfulBEq), so beq_iff_eq doesn't apply.
+-- SyntaxKind's BEq is not registered as LawfulBEq, so beq_iff_eq doesn't apply.
 axiom isIdentifier_kind (n : Node) : isIdentifier n = true ↔ n.kind = .Identifier
 axiom isBlock_kind (n : Node) : isBlock n = true ↔ n.kind = .Block
 

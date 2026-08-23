@@ -1,6 +1,9 @@
 -- TSLean.Runtime.Basic
 -- Core type definitions for the TypeScript → Lean 4 runtime
 
+-- Stands in for 4.29 core's `deriving instance BEq for ByteArray` (Init/Data/ByteArray/Basic.lean); redundant once off 4.16.
+deriving instance BEq for ByteArray
+
 namespace TSLean
 
 inductive TSValue where
@@ -68,8 +71,8 @@ theorem TSError.name_nonempty_builtin (e : TSError) (h : ∀ n m, e ≠ TSError.
   | timeoutError _ => simp only [TSError.name]; native_decide
   | customError n m => exact absurd rfl (h n m)
 
-theorem TSValue.tsStr_injective : Function.Injective TSValue.tsStr :=
-  fun a b h => TSValue.tsStr.inj h
+theorem TSValue.tsStr_injective : ∀ a b, TSValue.tsStr a = TSValue.tsStr b → a = b :=
+  fun _ _ h => TSValue.tsStr.inj h
 
 theorem TSValue.null_ne_undef : TSValue.tsNull ≠ TSValue.tsUndef := by intro h; cases h
 
@@ -130,7 +133,7 @@ def String.includes (s sub : String) : Bool := (s.splitOn sub).length > 1
 
 /-- Get a character by index, returning a default if out of bounds. -/
 def String.getD' (s : String) (i : Nat) (default : Char := '\x00') : Char :=
-  if i < s.length then String.Pos.Raw.get s ⟨i⟩ else default
+  if i < s.length then String.get s ⟨i⟩ else default
 
 /-- Get a character by index, panicking if out of bounds. -/
 def String.get!' (s : String) (i : Nat) : Char :=
@@ -140,8 +143,8 @@ def String.get!' (s : String) (i : Nat) : Char :=
 def String.set!' (s : String) (i : Nat) (c : Char) : String :=
   if i >= s.length then s
   else
-    let before := String.Pos.Raw.extract s ⟨0⟩ ⟨i⟩
-    let after := String.Pos.Raw.extract s ⟨i + 1⟩ ⟨s.length⟩
+    let before := String.extract s ⟨0⟩ ⟨i⟩
+    let after := String.extract s ⟨i + 1⟩ ⟨s.length⟩
     before ++ String.singleton c ++ after
 
 /-! ## TSValue — dynamic type for any/unknown ─────────────────────────────── -/

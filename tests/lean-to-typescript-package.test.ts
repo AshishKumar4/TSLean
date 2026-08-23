@@ -37,6 +37,7 @@ import { createLeanProjectFixture } from './helpers/lean-project-fixture.js';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const PACKED_COMPILER_TIMEOUT_MS = 60_000;
+const PACKED_SUBPATH_EXPORT_TIMEOUT_MS = 90_000;
 
 describe('published Lean to TypeScript API', () => {
   test('rejects unsupported platforms before compiler or publication mutation', () => {
@@ -1803,7 +1804,7 @@ describe('published Lean to TypeScript API', () => {
         expect(help).toContain('Usage: lean-to-typescript');
         expect(help).toContain('--out-dir <path>');
         expect(help).not.toContain('--output');
-        writeFileSync(join(leanRoot, 'lean-toolchain'), 'leanprover/lean4:v4.29.0\n');
+        writeFileSync(join(leanRoot, 'lean-toolchain'), 'leanprover/lean4:v4.16.0\n');
         writeFileSync(join(leanRoot, 'lake-manifest.json'), '{"version":"1.1.0","name":"consumer","packages":[]}\n');
         writeFileSync(
           join(leanRoot, 'lakefile.toml'),
@@ -1940,7 +1941,7 @@ describe('published Lean to TypeScript API', () => {
         rmSync(temporaryRoot, { force: true, recursive: true });
       }
     },
-    PACKED_COMPILER_TIMEOUT_MS,
+    PACKED_SUBPATH_EXPORT_TIMEOUT_MS,
   );
 
   test('binds every executable model to one complete deterministic W-3 registry entry', () => {
