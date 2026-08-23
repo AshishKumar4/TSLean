@@ -8,17 +8,21 @@ import { beforeAll, describe, expect, test } from 'vitest';
 import {
   compileLeanToTypeScript,
   environmentAttestationDrift,
+  generatedModulePath,
   semanticIdentityDigest,
   UnsupportedLeanFragmentError,
-  verifyLeanToTypeScriptArtifact,
+  verifyLeanToTypeScriptPackage,
+  type LeanToTypeScriptModuleArtifact,
+  type LeanToTypeScriptPackage,
   type LeanToTypeScriptRequest,
 } from '../src/lean-to-typescript/index.js';
+import { generatedPackageDigest } from '../src/lean-to-typescript/manifest.js';
 import { createLeanProjectFixture } from './helpers/lean-project-fixture.js';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const leanRoot = join(repositoryRoot, 'lean');
 const sourcePath = join(leanRoot, 'TSLean', 'Examples', 'Placement.lean');
-const generatedPath = join(repositoryRoot, 'examples', 'lean-to-typescript', 'placement.generated.ts');
+const generatedRoot = join(repositoryRoot, 'examples', 'lean-to-typescript', 'generated');
 const manifestPath = join(repositoryRoot, 'examples', 'lean-to-typescript', 'placement.generated.manifest.json');
 const request = {
   projectRoot: leanRoot,
@@ -26,7 +30,7 @@ const request = {
   sourcePath,
   declarations: ['TSLean.Examples.Placement.choosePlacement'],
 } satisfies LeanToTypeScriptRequest;
-const enforcementGeneratedPath = join(repositoryRoot, 'examples', 'agent-core', 'facets', 'enforcement.generated.ts');
+const enforcementGeneratedRoot = join(repositoryRoot, 'examples', 'agent-core', 'facets', 'generated');
 const enforcementManifestPath = join(
   repositoryRoot,
   'examples',
@@ -99,18 +103,28 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
   test('emits deterministic ergonomic TypeScript with content-bound provenance', () => {
     const first = compileLeanToTypeScript(request);
     const second = compileLeanToTypeScript(request);
+    const code = entryCode(first);
 
     expect(second).toEqual(first);
-    expect(first.code).toContain('export type Placement = "bundled" | "provider" | "dynamic";');
-    expect(first.code).toContain('export class PlacementSet {');
-    expect(first.code).toContain('export function choosePlacement(');
-    expect(first.manifest.schemaVersion).toBe(2);
+    expect(code).toContain('export type Placement = "bundled" | "provider" | "dynamic";');
+    expect(code).toContain('export class PlacementSet {');
+    expect(code).toContain('export function choosePlacement(');
+    expect(first.manifest.schemaVersion).toBe(3);
+    expect(first.manifest.semantic.entryModule).toBe('TSLean.Examples.Placement');
+    expect(first.manifest.semantic.modules.map((module) => module.path)).toEqual(['TSLean/Examples/Placement.ts']);
     expect(first.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.29.0');
     expect(first.manifest.semantic.leanToolchain.leanVersion).toContain('Lean (version 4.29.0');
     expect(first.manifest.semantic.leanToolchain.lakeVersion).toContain('Lake version 5.0.0');
     expect(first.manifest.semantic.semanticIrSha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
     expect(first.manifest.semantic.inputClosureSha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
-    expect(first.manifest.semantic.generatedBodySha256).toBe(sha256(generatedBody(first.code)));
+    expect(first.manifest.semantic.modules.map((module) => module.bodySha256)).toEqual(
+      first.modules.map((module) => sha256(generatedBody(module.code))),
+    );
+    expect(first.manifest.semantic.generatedBodySha256).toBe(
+      generatedPackageDigest(
+        first.modules.map((module) => ({ path: module.path, bodySha256: sha256(generatedBody(module.code)) })),
+      ),
+    );
     expect(first.manifest.environment.typescriptVersion).toBe(ts.version);
     expect(first.manifest.environment.runtime).toMatch(/^(?:bun|node):/u);
     expect(first.manifest.environment.platform).toBe(`${process.platform}-${process.arch}`);
@@ -142,7 +156,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       ).toBe(true);
       expect(new Set(identities).size).toBe(identities.length);
     }
-    expect(() => verifyLeanToTypeScriptArtifact(first)).not.toThrow();
+    expect(() => verifyLeanToTypeScriptPackage(first)).not.toThrow();
     const compilerModules = readdirSync(join(repositoryRoot, 'src', 'lean-to-typescript'), { withFileTypes: true })
       .filter((entry) => entry.isFile() && extname(entry.name) === '.ts')
       .map((entry) => `compiler:${basename(entry.name, '.ts')}`)
@@ -152,41 +166,40 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
   });
 
   test('keeps the generating environment out of the artifact bytes', () => {
-    const artifact = compileLeanToTypeScript(request);
-    const header = artifact.code.slice(0, artifact.code.indexOf(' */'));
-    expect(header).not.toContain(artifact.manifest.environment.runtime);
-    expect(header).not.toContain(artifact.manifest.environment.typescriptVersion);
-    expect(header).not.toContain(artifact.manifest.environment.inputClosureSha256);
-    expect(header).toContain(` * Semantic identity: ${semanticIdentityDigest(artifact.manifest.semantic)}`);
+    const emitted = compileLeanToTypeScript(request);
+    const code = entryCode(emitted);
+    const header = code.slice(0, code.indexOf(' */'));
+    expect(header).not.toContain(emitted.manifest.environment.runtime);
+    expect(header).not.toContain(emitted.manifest.environment.typescriptVersion);
+    expect(header).not.toContain(emitted.manifest.environment.inputClosureSha256);
+    expect(header).toContain(` * Semantic identity: ${semanticIdentityDigest(emitted.manifest.semantic)}`);
     // Re-attesting a different environment leaves the code and the semantic identity intact.
+    const reattestedEnvironment = { ...emitted.manifest.environment, runtime: 'node:v0.0.0-attestation-probe' };
     const reattested = {
-      code: artifact.code,
-      manifest: {
-        ...artifact.manifest,
-        environment: { ...artifact.manifest.environment, runtime: 'node:v0.0.0-attestation-probe' },
-      },
+      modules: emitted.modules,
+      manifest: { ...emitted.manifest, environment: reattestedEnvironment },
     };
-    expect(() => verifyLeanToTypeScriptArtifact(reattested)).not.toThrow();
-    expect(environmentAttestationDrift(artifact.manifest.environment, reattested.manifest.environment)).toEqual([
-      `runtime ${artifact.manifest.environment.runtime} -> node:v0.0.0-attestation-probe`,
+    expect(() => verifyLeanToTypeScriptPackage(reattested)).not.toThrow();
+    expect(environmentAttestationDrift(emitted.manifest.environment, reattestedEnvironment)).toEqual([
+      `runtime ${emitted.manifest.environment.runtime} -> node:v0.0.0-attestation-probe`,
     ]);
   });
 
   test('rejects a manifest whose input is filed under the other identity plane', () => {
-    const artifact = compileLeanToTypeScript(request);
-    const [semanticInput] = artifact.manifest.semantic.inputs;
+    const emitted = compileLeanToTypeScript(request);
+    const [semanticInput] = emitted.manifest.semantic.inputs;
     if (semanticInput === undefined) throw new TypeError('semantic input closure is empty');
     const misfiled = {
-      code: artifact.code,
+      modules: emitted.modules,
       manifest: {
-        ...artifact.manifest,
+        ...emitted.manifest,
         environment: {
-          ...artifact.manifest.environment,
-          inputs: [semanticInput, ...artifact.manifest.environment.inputs],
+          ...emitted.manifest.environment,
+          inputs: [semanticInput, ...emitted.manifest.environment.inputs],
         },
       },
     };
-    expect(() => verifyLeanToTypeScriptArtifact(misfiled)).toThrowError(
+    expect(() => verifyLeanToTypeScriptPackage(misfiled)).toThrowError(
       /input .* belongs to the other identity plane/u,
     );
   });
@@ -196,9 +209,9 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     const bun = compileInChild('C', 'bun');
     const nodeArtifact: unknown = JSON.parse(node);
     const bunArtifact: unknown = JSON.parse(bun);
-    verifyLeanToTypeScriptArtifact(nodeArtifact);
-    verifyLeanToTypeScriptArtifact(bunArtifact);
-    expect(bunArtifact.code).toBe(nodeArtifact.code);
+    verifyLeanToTypeScriptPackage(nodeArtifact);
+    verifyLeanToTypeScriptPackage(bunArtifact);
+    expect(bunArtifact.modules).toEqual(nodeArtifact.modules);
     expect(semanticIdentityDigest(bunArtifact.manifest.semantic)).toBe(
       semanticIdentityDigest(nodeArtifact.manifest.semantic),
     );
@@ -217,7 +230,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     ).toThrowError(/Lean source path does not define module TSLean\.Examples\.Placement/u);
   });
 
-  test('rejects a root re-exported from a different Lean module', () => {
+  test('emits a root declared by an imported module into that module\'s own generated file', () => {
     const fixture = createLeanProjectFixture('import Policy.Extra\n', 'Policy');
     const dependencyDirectory = join(fixture.sourceRoot, 'Policy');
     mkdirSync(dependencyDirectory, { recursive: true });
@@ -226,14 +239,43 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       ['namespace Policy', 'def fromExtra (value : Bool) : Bool := value', 'end Policy', ''].join('\n'),
     );
     try {
-      expect(() =>
-        compileLeanToTypeScript({
-          projectRoot: fixture.projectRoot,
-          moduleName: 'Policy',
-          sourcePath: fixture.sourcePath,
-          declarations: ['Policy.fromExtra'],
-        }),
-      ).toThrowError(/Policy\.fromExtra is not defined by source module Policy/u);
+      const emitted = compileLeanToTypeScript({
+        projectRoot: fixture.projectRoot,
+        moduleName: 'Policy',
+        sourcePath: fixture.sourcePath,
+        declarations: ['Policy.fromExtra'],
+      });
+      expect(emitted.manifest.semantic.entryModule).toBe('Policy');
+      expect(emitted.manifest.semantic.modules.map((module) => [module.path, module.leanModule])).toEqual([
+        ['Policy/Extra.ts', 'Policy.Extra'],
+      ]);
+      expect(moduleCode(emitted, 'Policy/Extra.ts')).toContain('export function fromExtra(value: boolean): boolean');
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  test('rejects a root declared outside the frozen target module closure', () => {
+    const fixture = createLeanProjectFixture('import Policy.Extra\n', 'Policy');
+    const dependencyDirectory = join(fixture.sourceRoot, 'Policy');
+    mkdirSync(dependencyDirectory, { recursive: true });
+    writeFileSync(
+      join(dependencyDirectory, 'Extra.lean'),
+      ['namespace Policy', 'def fromExtra (value : Bool) : Bool := value', 'end Policy', ''].join('\n'),
+    );
+    try {
+      for (const declaration of ['Bool.not', 'Policy.missing']) {
+        expect(() =>
+          compileLeanToTypeScript({
+            projectRoot: fixture.projectRoot,
+            moduleName: 'Policy',
+            sourcePath: fixture.sourcePath,
+            declarations: [declaration],
+          }),
+        ).toThrowError(
+          new RegExp(`exported declaration ${declaration.replace('.', '\\.')} is outside the frozen target module closure`, 'u'),
+        );
+      }
     } finally {
       fixture.dispose();
     }
@@ -245,13 +287,14 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       'Policy',
     );
     try {
-      const artifact = compileLeanToTypeScript({
+      const emitted = compileLeanToTypeScript({
         projectRoot: fixture.projectRoot,
         moduleName: 'Policy',
         sourcePath: fixture.sourcePath,
         declarations: ['Domain.decide'],
       });
-      expect(artifact.code).toContain('export function decide(value: boolean): boolean');
+      const code = entryCode(emitted);
+      expect(code).toContain('export function decide(value: boolean): boolean');
     } finally {
       fixture.dispose();
     }
@@ -263,13 +306,14 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       'policy',
     );
     try {
-      const artifact = compileLeanToTypeScript({
+      const emitted = compileLeanToTypeScript({
         projectRoot: fixture.projectRoot,
         moduleName: 'policy',
         sourcePath: fixture.sourcePath,
         declarations: ['policy.decide'],
       });
-      expect(artifact.code).toContain('export function decide(value: boolean): boolean');
+      const code = entryCode(emitted);
+      expect(code).toContain('export function decide(value: boolean): boolean');
     } finally {
       fixture.dispose();
     }
@@ -287,19 +331,20 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       moduleName,
     );
     try {
-      const artifact = compileLeanToTypeScript({
+      const emitted = compileLeanToTypeScript({
         projectRoot: fixture.projectRoot,
         moduleName,
         sourcePath: fixture.sourcePath,
         declarations: ['TSLean.Examples.Placement.choosePlacement'],
       });
-      expect(artifact.code).toContain('export function choosePlacement(value: boolean): boolean');
-      const choosePlacement = evaluateGeneratedModuleExports(artifact.code)['choosePlacement'];
+      const code = entryCode(emitted);
+      expect(code).toContain('export function choosePlacement(value: boolean): boolean');
+      const choosePlacement = evaluateGeneratedModuleExports(code)['choosePlacement'];
       expect(typeof choosePlacement).toBe('function');
       if (typeof choosePlacement !== 'function') throw new TypeError('generated choosePlacement is not callable');
       expect(choosePlacement(false)).toBe(false);
       expect(choosePlacement(true)).toBe(true);
-      expect(artifact.manifest.semantic.inputs).toContainEqual({
+      expect(emitted.manifest.semantic.inputs).toContainEqual({
         kind: 'lean-source',
         identity: `source:${moduleName}`,
         sha256: sha256(readFileSync(fixture.sourcePath)),
@@ -355,8 +400,9 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
   });
 
   test('generated decision agrees with Lean on the complete finite input domain', () => {
-    const artifact = compileLeanToTypeScript(request);
-    const generated = evaluateGeneratedModule(artifact.code);
+    const emitted = compileLeanToTypeScript(request);
+    const code = entryCode(emitted);
+    const generated = evaluateGeneratedModule(code);
     const lean = evaluateLeanPlacement();
 
     expect(generated).toEqual(lean);
@@ -403,15 +449,16 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       ].join('\n'),
     );
     try {
-      const artifact = compileLeanToTypeScript({
+      const emitted = compileLeanToTypeScript({
         projectRoot: fixture.projectRoot,
         moduleName: 'Fixture',
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.identity'],
       });
-      expect(artifact.code).toContain('export type Choice = "first" | "second";');
-      expect(artifact.code).toContain('readonly choice: Choice | undefined;');
-      const identity = evaluateGeneratedModuleExports(artifact.code)['identity'];
+      const code = entryCode(emitted);
+      expect(code).toContain('export type Choice = "first" | "second";');
+      expect(code).toContain('readonly choice: Choice | undefined;');
+      const identity = evaluateGeneratedModuleExports(code)['identity'];
       if (typeof identity !== 'function') throw new TypeError('generated identity is not callable');
       expect(identity({ choice: 'first' })).toEqual({ choice: 'first' });
     } finally {
@@ -437,18 +484,18 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       ['namespace Fixture', 'def dependency (value : Bool) : Bool := !value', 'end Fixture', ''].join('\n'),
     );
     try {
-      const artifact = compileLeanToTypeScript({
+      const emitted = compileLeanToTypeScript({
         projectRoot: fixture.projectRoot,
         moduleName: 'Fixture',
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.root'],
       });
-      expect(artifact.manifest.semantic.inputs).toContainEqual({
+      expect(emitted.manifest.semantic.inputs).toContainEqual({
         kind: 'lean-source',
         identity: 'source:Fixture.Dependency',
         sha256: sha256(readFileSync(dependencyPath)),
       });
-      expect(artifact.manifest.environment.inputs).toContainEqual(
+      expect(emitted.manifest.environment.inputs).toContainEqual(
         expect.objectContaining({ kind: 'lean-module', identity: 'module:Fixture.Dependency' }),
       );
     } finally {
@@ -485,17 +532,18 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     chmodSync(wrapperPath, 0o755);
     try {
       process.env['PATH'] = `${wrapperRoot}:${originalPath ?? ''}`;
-      const artifact = compileLeanToTypeScript({
+      const emitted = compileLeanToTypeScript({
         projectRoot: fixture.projectRoot,
         moduleName: 'Fixture',
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.decide'],
       });
-      const decide = evaluateGeneratedModuleExports(artifact.code)['decide'];
+      const code = entryCode(emitted);
+      const decide = evaluateGeneratedModuleExports(code)['decide'];
       if (typeof decide !== 'function') throw new TypeError('generated decide is not callable');
       expect(decide(false)).toBe(false);
       expect(decide(true)).toBe(true);
-      expect(artifact.manifest.environment.inputs).toContainEqual(
+      expect(emitted.manifest.environment.inputs).toContainEqual(
         expect.objectContaining({
           kind: 'lean-toolchain',
           identity: 'toolchain-launcher:lake',
@@ -503,18 +551,18 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
         }),
       );
       expect(
-        artifact.manifest.environment.inputs.some((input) => input.identity.startsWith('toolchain-runtime:')),
+        emitted.manifest.environment.inputs.some((input) => input.identity.startsWith('toolchain-runtime:')),
       ).toBe(true);
       const canonicalLake = spawnSync(launcherPath, ['env', 'which', 'lake'], {
         cwd: fixture.projectRoot,
         encoding: 'utf8',
       }).stdout.trim();
-      expect(artifact.manifest.environment.inputs).toContainEqual({
+      expect(emitted.manifest.environment.inputs).toContainEqual({
         kind: 'lean-toolchain',
         identity: 'target-toolchain:lake-executable',
         sha256: sha256(readFileSync(canonicalLake)),
       });
-      expect(artifact.manifest.semantic.inputs).toContainEqual({
+      expect(emitted.manifest.semantic.inputs).toContainEqual({
         kind: 'lean-source',
         identity: 'source:Fixture',
         sha256: sha256(readFileSync(fixture.sourcePath)),
@@ -585,14 +633,14 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     const originalToolchain = process.env['ELAN_TOOLCHAIN'];
     try {
       process.env['ELAN_TOOLCHAIN'] = 'tslean-deliberately-unavailable-toolchain';
-      const artifact = compileLeanToTypeScript({
+      const emitted = compileLeanToTypeScript({
         projectRoot: fixture.projectRoot,
         moduleName: 'Fixture',
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.decide'],
       });
-      expect(artifact.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.29.0');
-      expect(artifact.manifest.semantic.leanToolchain.leanVersion).toContain('Lean (version 4.29.0');
+      expect(emitted.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.29.0');
+      expect(emitted.manifest.semantic.leanToolchain.leanVersion).toContain('Lean (version 4.29.0');
     } finally {
       if (originalToolchain === undefined) {
         delete process.env['ELAN_TOOLCHAIN'];
@@ -608,43 +656,46 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
   });
 
   test('the exhaustive oracle detects a generated-code semantic mutation', () => {
-    const artifact = compileLeanToTypeScript(request);
-    const mutation = mutateFirstConjunction(artifact.code);
+    const emitted = compileLeanToTypeScript(request);
+    const code = entryCode(emitted);
+    const mutation = mutateFirstConjunction(code);
     expect(evaluateGeneratedModule(mutation)).not.toEqual(evaluateLeanPlacement());
   });
 
   test('rejects generated-body, manifest, and provenance-header substitution', () => {
-    const artifact = compileLeanToTypeScript(request);
-    const bodyMutation = artifact.code.replace('this.bundled && right.bundled', 'this.bundled || right.bundled');
-    if (bodyMutation === artifact.code) throw new TypeError('generated body mutation did not apply');
-    expect(() => verifyLeanToTypeScriptArtifact({ ...artifact, code: bodyMutation })).toThrowError(
-      /generated TypeScript body does not match its manifest/u,
+    const emitted = compileLeanToTypeScript(request);
+    const code = entryCode(emitted);
+    const bodyMutation = code.replace('this.bundled && right.bundled', 'this.bundled || right.bundled');
+    if (bodyMutation === code) throw new TypeError('generated body mutation did not apply');
+    expect(() => verifyLeanToTypeScriptPackage(withEntryCode(emitted, bodyMutation))).toThrowError(
+      /generated module body does not match its manifest: TSLean\/Examples\/Placement\.ts/u,
     );
 
     const manifestSubstitution = {
-      ...artifact.manifest,
-      semantic: { ...artifact.manifest.semantic, sourceModule: 'Substituted.Module' },
+      ...emitted.manifest,
+      semantic: { ...emitted.manifest.semantic, entryModule: 'Substituted.Module' },
     };
-    expect(() => verifyLeanToTypeScriptArtifact({ code: artifact.code, manifest: manifestSubstitution })).toThrowError(
-      /generated TypeScript provenance header does not match its manifest/u,
-    );
+    expect(() =>
+      verifyLeanToTypeScriptPackage({ modules: emitted.modules, manifest: manifestSubstitution }),
+    ).toThrowError(/generated provenance header does not match its manifest: TSLean\/Examples\/Placement\.ts/u);
 
-    const headerSubstitution = artifact.code.replace(
+    const headerSubstitution = code.replace(
       / \* Semantic identity: sha256:[0-9a-f]{64}/u,
       ` * Semantic identity: ${'sha256:'.padEnd(71, '0')}`,
     );
-    if (headerSubstitution === artifact.code) throw new TypeError('provenance header mutation did not apply');
-    expect(() => verifyLeanToTypeScriptArtifact({ ...artifact, code: headerSubstitution })).toThrowError(
-      /generated TypeScript provenance header does not match its manifest/u,
+    if (headerSubstitution === code) throw new TypeError('provenance header mutation did not apply');
+    expect(() => verifyLeanToTypeScriptPackage(withEntryCode(emitted, headerSubstitution))).toThrowError(
+      /generated provenance header does not match its manifest: TSLean\/Examples\/Placement\.ts/u,
     );
   });
 
   test('the source compiler and checked-in release artifact have identical semantic output', () => {
-    const artifact = compileLeanToTypeScript(request);
-    const checkedCode = readFileSync(generatedPath, 'utf8');
-    const checkedManifest: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    expect(() => verifyLeanToTypeScriptArtifact({ code: checkedCode, manifest: checkedManifest })).not.toThrow();
-    expect(generatedBody(checkedCode)).toBe(generatedBody(artifact.code));
+    const emitted = compileLeanToTypeScript(request);
+    const committed = committedPackage(generatedRoot, manifestPath, emitted);
+    expect(() => verifyLeanToTypeScriptPackage(committed)).not.toThrow();
+    expect(committed.modules.map((module) => generatedBody(module.code))).toEqual(
+      emitted.modules.map((module) => generatedBody(module.code)),
+    );
   });
 
   test.each([
@@ -779,23 +830,24 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       ].join('\n'),
     );
     try {
-      const artifact = compileLeanToTypeScript({
+      const emitted = compileLeanToTypeScript({
         projectRoot: fixture.projectRoot,
         moduleName: 'Fixture',
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.decide'],
       });
-      expect(artifact.code).toContain('export abstract class Lease');
-      expect(artifact.code).toContain('public static get unheld(): Lease');
-      expect(artifact.code).toContain('public static held(exclusive: boolean, expired: boolean): Lease');
-      expect(artifact.code).toContain('public abstract admitsWrite(durable: boolean): boolean;');
-      expect(artifact.code).toContain('return this.exclusive && !this.expired && durable;');
+      const code = entryCode(emitted);
+      expect(code).toContain('export abstract class Lease');
+      expect(code).toContain('public static get unheld(): Lease');
+      expect(code).toContain('public static held(exclusive: boolean, expired: boolean): Lease');
+      expect(code).toContain('public abstract admitsWrite(durable: boolean): boolean;');
+      expect(code).toContain('return this.exclusive && !this.expired && durable;');
       // A payload constructor has more than one inhabitant, so reference equality is not Lean
       // equality and `from` cannot be total on the tag; neither is emitted.
-      expect(artifact.code).not.toContain('public static from(');
-      expect(artifact.code).toContain('public abstract equals(other: Lease): boolean;');
+      expect(code).not.toContain('public static from(');
+      expect(code).toContain('public abstract equals(other: Lease): boolean;');
 
-      const generated = evaluateGeneratedModuleExports(artifact.code);
+      const generated = evaluateGeneratedModuleExports(code);
       const lease = requireConstructor(generated, 'Lease');
       const held = requireStatic(lease, 'held');
       const unheld = requireProperty(lease, 'unheld');
@@ -846,14 +898,15 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       ].join('\n'),
     );
     try {
-      const artifact = compileLeanToTypeScript({
+      const emitted = compileLeanToTypeScript({
         projectRoot: fixture.projectRoot,
         moduleName: 'Fixture',
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.decide'],
       });
-      expect(artifact.code).toContain('return !this.rest.evenDepth();');
-      const generated = evaluateGeneratedModuleExports(artifact.code);
+      const code = entryCode(emitted);
+      expect(code).toContain('return !this.rest.evenDepth();');
+      const generated = evaluateGeneratedModuleExports(code);
       const path = requireConstructor(generated, 'Path');
       const step = requireStatic(path, 'step');
       const decide = requireFunction(generated, 'decide');
@@ -930,16 +983,17 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       ].join('\n'),
     );
     try {
-      const artifact = compileLeanToTypeScript({
+      const emitted = compileLeanToTypeScript({
         projectRoot: fixture.projectRoot,
         moduleName: 'Fixture',
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.calleeOrigin', 'Fixture.hostOrigin'],
       });
-      expect(artifact.code).toContain('readonly kind: "callee";');
-      expect(artifact.code).toContain('readonly trusted: boolean;');
-      expect(artifact.code).not.toContain('class Origin');
-      const generated = evaluateGeneratedModuleExports(artifact.code);
+      const code = entryCode(emitted);
+      expect(code).toContain('readonly kind: "callee";');
+      expect(code).toContain('readonly trusted: boolean;');
+      expect(code).not.toContain('class Origin');
+      const generated = evaluateGeneratedModuleExports(code);
       expect(requireFunction(generated, 'calleeOrigin')(true)).toEqual({ kind: 'callee', trusted: true });
       expect(requireFunction(generated, 'hostOrigin')()).toEqual({ kind: 'host' });
     } finally {
@@ -967,22 +1021,23 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       ].join('\n'),
     );
     try {
-      const artifact = compileLeanToTypeScript({
+      const emitted = compileLeanToTypeScript({
         projectRoot: fixture.projectRoot,
         moduleName: 'Fixture',
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.decide'],
       });
-      expect(artifact.code).toContain('export interface SeamInit');
-      expect(artifact.code).toContain('export class Seam');
-      expect(artifact.code).toContain('public constructor(init: SeamInit)');
-      expect(artifact.code).toContain('Object.freeze(this);');
-      expect(artifact.code).toContain('public withTurnOwned(turnOwned: boolean): Seam');
-      expect(artifact.code).toContain('return new Seam({');
+      const code = entryCode(emitted);
+      expect(code).toContain('export interface SeamInit');
+      expect(code).toContain('export class Seam');
+      expect(code).toContain('public constructor(init: SeamInit)');
+      expect(code).toContain('Object.freeze(this);');
+      expect(code).toContain('public withTurnOwned(turnOwned: boolean): Seam');
+      expect(code).toContain('return new Seam({');
       // No behaviour lives on `Tier`, so it stays the string union agent-core codecs read.
-      expect(artifact.code).toContain('export type Tier = "direct" | "mediated";');
+      expect(code).toContain('export type Tier = "direct" | "mediated";');
 
-      const generated = evaluateGeneratedModuleExports(artifact.code);
+      const generated = evaluateGeneratedModuleExports(code);
       const seam = requireConstructor(generated, 'Seam');
       const original = new seam({ turnOwned: false, ownFilesystem: true });
       expect(Object.isFrozen(original)).toBe(true);
@@ -1135,8 +1190,9 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
   });
 
   test('generated enforcement floor agrees with Lean on the complete finite input domain', () => {
-    const artifact = compileLeanToTypeScript(enforcementRequest);
-    const generated = evaluateGeneratedModuleExports(artifact.code);
+    const emitted = compileLeanToTypeScript(enforcementRequest);
+    const code = entryCode(emitted);
+    const generated = evaluateGeneratedModuleExports(code);
     const floor = requireFunction(generated, 'enforcementFloor');
     const honors = requireFunction(generated, 'claimHonorsEnforcementFloor');
     const rows: string[] = [];
@@ -1158,14 +1214,14 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     expect(rows).toEqual(evaluateLeanEnforcement());
     // The whole surface is substitutable for the handwritten module: a closed tag vocabulary and
     // free functions over it, so no value object stands between a consumer and the decision.
-    expect(artifact.code).toContain(
+    expect(code).toContain(
       'export type Impact = "observe" | "mutate" | "externalSend" | "execute" | "delegate" | "administer";',
     );
-    expect(artifact.code).toContain('export type EnforcementTier = "direct" | "mediated";');
-    expect(artifact.code).toContain(
+    expect(code).toContain('export type EnforcementTier = "direct" | "mediated";');
+    expect(code).toContain(
       'export function enforcementFloor(impact: Impact, turnOwnedSession: boolean, sessionFilesystemTarget: boolean): EnforcementTier {',
     );
-    expect(artifact.code).not.toContain('class');
+    expect(code).not.toContain('class');
   });
 
   test('lowers a behaviour-carrying nullary inductive to singletons with a total tag codec', () => {
@@ -1185,20 +1241,21 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       ].join('\n'),
     );
     try {
-      const artifact = compileLeanToTypeScript({
+      const emitted = compileLeanToTypeScript({
         projectRoot: fixture.projectRoot,
         moduleName: 'Fixture',
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.decide'],
       });
+      const code = entryCode(emitted);
       // A nullary constructor has exactly one inhabitant, so `from` is total on the tag and
       // reference equality is Lean equality; the codec reads its boundary union, never `unknown`.
-      expect(artifact.code).toContain('public static from(kind: Tier["kind"]): Tier');
-      expect(artifact.code).toContain('public static fromData(value: GeneratedData): Tier');
-      expect(artifact.code).not.toMatch(/:\s*unknown\b/u);
-      expect(artifact.code).not.toContain('typeof');
+      expect(code).toContain('public static from(kind: Tier["kind"]): Tier');
+      expect(code).toContain('public static fromData(value: GeneratedData): Tier');
+      expect(code).not.toMatch(/:\s*unknown\b/u);
+      expect(code).not.toContain('typeof');
 
-      const generated = evaluateGeneratedModuleExports(artifact.code);
+      const generated = evaluateGeneratedModuleExports(code);
       const tier = requireConstructor(generated, 'Tier');
       const from = requireStatic(tier, 'from');
       const fromData = requireStatic(tier, 'fromData');
@@ -1238,18 +1295,19 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       ].join('\n'),
     );
     try {
-      const artifact = compileLeanToTypeScript({
+      const emitted = compileLeanToTypeScript({
         projectRoot: fixture.projectRoot,
         moduleName: 'Fixture',
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.admits'],
       });
-      expect(artifact.code).toContain('export type Seam = "inSession" | "crossSession" | "external";');
-      expect(artifact.code).toContain(
+      const code = entryCode(emitted);
+      expect(code).toContain('export type Seam = "inSession" | "crossSession" | "external";');
+      expect(code).toContain(
         'return seam === "inSession" ? true : seam === "crossSession" ? trusted : false;',
       );
-      expect(artifact.code).not.toContain('class');
-      const admits = requireFunction(evaluateGeneratedModuleExports(artifact.code), 'admits');
+      expect(code).not.toContain('class');
+      const admits = requireFunction(evaluateGeneratedModuleExports(code), 'admits');
       expect([
         admits('inSession', false),
         admits('crossSession', true),
@@ -1279,11 +1337,12 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
   });
 
   test('the checked-in enforcement artifact matches the source compiler', () => {
-    const artifact = compileLeanToTypeScript(enforcementRequest);
-    const checkedCode = readFileSync(enforcementGeneratedPath, 'utf8');
-    const checkedManifest: unknown = JSON.parse(readFileSync(enforcementManifestPath, 'utf8'));
-    expect(() => verifyLeanToTypeScriptArtifact({ code: checkedCode, manifest: checkedManifest })).not.toThrow();
-    expect(generatedBody(checkedCode)).toBe(generatedBody(artifact.code));
+    const emitted = compileLeanToTypeScript(enforcementRequest);
+    const committed = committedPackage(enforcementGeneratedRoot, enforcementManifestPath, emitted);
+    expect(() => verifyLeanToTypeScriptPackage(committed)).not.toThrow();
+    expect(committed.modules.map((module) => generatedBody(module.code))).toEqual(
+      emitted.modules.map((module) => generatedBody(module.code)),
+    );
   });
 
   test('compiles an isolated Lean project without a local TSLean exporter', () => {
@@ -1303,13 +1362,14 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       ].join('\n'),
     );
     try {
-      const artifact = compileLeanToTypeScript({
+      const emitted = compileLeanToTypeScript({
         projectRoot: fixture.projectRoot,
         moduleName: 'Fixture',
         sourcePath: fixture.sourcePath,
         declarations: ['Fixture.optional', 'Fixture.compileMe'],
       });
-      const generated = evaluateGeneratedModuleExports(artifact.code);
+      const code = entryCode(emitted);
+      const generated = evaluateGeneratedModuleExports(code);
       const compileMe = generated['compileMe'];
       expect(typeof compileMe).toBe('function');
       if (typeof compileMe !== 'function') throw new TypeError('generated compileMe is not callable');
@@ -1484,6 +1544,48 @@ function generatedBody(code: string): string {
   const boundary = code.indexOf(marker);
   if (boundary < 0) throw new TypeError('generated module has no provenance header');
   return code.slice(boundary + marker.length);
+}
+
+function moduleCode(emitted: LeanToTypeScriptPackage, path: string): string {
+  const module = emitted.modules.find((candidate) => candidate.path === path);
+  if (module === undefined) throw new TypeError(`generated package has no module ${path}`);
+  return module.code;
+}
+
+/** The generated module that carries the requested entry Lean module's own declarations. */
+function entryCode(emitted: LeanToTypeScriptPackage): string {
+  return moduleCode(emitted, generatedModulePath(emitted.manifest.semantic.entryModule));
+}
+
+function withEntryCode(emitted: LeanToTypeScriptPackage, code: string): LeanToTypeScriptPackage {
+  const path = generatedModulePath(emitted.manifest.semantic.entryModule);
+  return {
+    ...emitted,
+    modules: emitted.modules.map((module) => (module.path === path ? { ...module, code } : module)),
+  };
+}
+
+/**
+ * The committed generated tree, read back from disk under the paths the fresh compilation names.
+ * The manifest stays undecoded so verification is what decodes it.
+ */
+function committedPackage(
+  root: string,
+  committedManifestPath: string,
+  emitted: LeanToTypeScriptPackage,
+): { readonly modules: readonly LeanToTypeScriptModuleArtifact[]; readonly manifest: unknown } {
+  const manifest: unknown = JSON.parse(readFileSync(committedManifestPath, 'utf8'));
+  return {
+    modules: emitted.modules.map((module) => ({
+      path: module.path,
+      code: readFileSync(join(root, module.path), 'utf8'),
+      sourceMap:
+        module.sourceMap === undefined
+          ? undefined
+          : { path: module.sourceMap.path, contents: readFileSync(join(root, module.sourceMap.path), 'utf8') },
+    })),
+    manifest,
+  };
 }
 
 function placementSets(): readonly {
