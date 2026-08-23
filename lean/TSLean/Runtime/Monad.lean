@@ -30,33 +30,18 @@ instance : MonadLift IO (DOMonad σ) where monadLift io := liftIO_DO io
 instance : MonadLift (Except TSError) (DOMonad σ) where
   monadLift e := match e with | .ok a => pure a | .error err => throwDO err
 
-/-! ## IO Monad Laws (axioms)
+/-! ## Monad laws
 
-IO does not have a `LawfulMonad` instance in Lean 4 core.
-These laws hold semantically (the Lean runtime implements them correctly)
-but cannot be proved within the type theory.  We declare them as `axiom`
-rather than using `sorry` — this is honest: the kernel trusts them, and
-any downstream proof that depends on them is sound assuming the IO runtime
-is correct. -/
+Deliberately absent. An earlier version asserted thirteen `axiom`s here -- the `DOMonad` and `TaskM`
+monad, state and catch laws -- on the grounds that the runtime implements them correctly and the type
+theory cannot see it. Two things were wrong with that. `REBUILD_PLAN.md` §6 rule 6 requires platform
+behaviour to be a capability parameter, never an axiom, and rule 7 allows exactly three axioms. And
+every generated module that is not pure imports this file, so those thirteen sat in the trusted base
+of every artifact the compiler produced, where the audit could not see them.
 
-axiom pureDO_bind {σ α β} (a : α) (f : α → DOMonad σ β) : (pureDO a >>= f) = f a
-axiom bind_pureDO {σ α} (m : DOMonad σ α) : (m >>= pureDO) = m
-axiom doMonad_bind_assoc {σ α β γ} (m : DOMonad σ α) (f : α → DOMonad σ β) (g : β → DOMonad σ γ) :
-    ((m >>= f) >>= g) = (m >>= fun x => f x >>= g)
-axiom throwDO_catchDO {σ α} (e : TSError) (h : TSError → DOMonad σ α) :
-    catchDO (throwDO e) h = h e
-axiom pureDO_catchDO {σ α} (a : α) (h : TSError → DOMonad σ α) :
-    catchDO (pureDO a) h = pureDO a
-axiom getDO_setDO_id {σ} : (getDO >>= setDO : DOMonad σ Unit) = pure ()
-axiom setDO_getDO {σ} (s : σ) :
-    (setDO s >>= fun _ => getDO : DOMonad σ σ) = (setDO s >>= fun _ => pure s)
-axiom setDO_setDO {σ} (s t : σ) :
-    (setDO s >>= fun _ => setDO t : DOMonad σ Unit) = setDO t
-axiom modifyDO_eq_get_set {σ} (f : σ → σ) :
-    (modifyDO f : DOMonad σ Unit) = (getDO >>= fun s => setDO (f s))
-axiom taskM_pure_bind {α β} (a : α) (f : α → TaskM β) : (pure a >>= f : TaskM β) = f a
-axiom taskM_bind_pure {α} (m : TaskM α) : (m >>= pure : TaskM α) = m
-axiom taskM_bind_assoc {α β γ} (m : TaskM α) (f : α → TaskM β) (g : β → TaskM γ) :
-    ((m >>= f) >>= g) = (m >>= fun x => f x >>= g)
+Measured before removal: nothing anywhere consumed any of the thirteen. They were decoration. If a
+law is genuinely needed later, the honest form is the one `TSLean.Refinement.Float` already uses -- a
+`Prop`-valued definition taken as a hypothesis, with `Assumption` metadata that appears in the
+artifact's ledger. -/
 
 end TSLean

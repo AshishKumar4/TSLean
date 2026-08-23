@@ -30,9 +30,9 @@ theorem abs'_pos (x : Int) (h : 0 ≤ x) : (abs' x : Int) = x := by
 theorem sign_pos (x : Int) (h : x > 0) : sign x = 1 := by simp [sign, h]
 theorem sign_neg (x : Int) (h : x < 0) : sign x = -1 := by simp [sign, Int.not_lt.mpr (Int.le_of_lt h), h]
 theorem sign_zero : sign 0 = 0 := by simp [sign]
-theorem isPow2_one : isPow2 1 = true := by native_decide
-theorem isPow2_two : isPow2 2 = true := by native_decide
-theorem isPow2_zero : isPow2 0 = false := by native_decide
+theorem isPow2_one : isPow2 1 = true := by decide
+theorem isPow2_two : isPow2 2 = true := by decide
+theorem isPow2_zero : isPow2 0 = false := by decide
 -- ilog2 is monotone. For a = 0 it's trivial; for a ≠ 0 we use:
 -- if log2 b < log2 a then b < 2^(log2 a) ≤ a ≤ b, contradiction.
 theorem ilog2_mono {a b : Nat} (h : a ≤ b) : ilog2 a ≤ ilog2 b := by
@@ -61,11 +61,11 @@ theorem abs_triangle (a b : Int) : abs' (a + b) ≤ abs' a + abs' b := by
   simp only [abs']; exact Int.natAbs_add_le a b
 theorem clamp_in_range (x lo hi : Int) (h : lo ≤ hi) : lo ≤ clamp x lo hi ∧ clamp x lo hi ≤ hi :=
   ⟨clamp_ge_lo x lo hi, clamp_le_hi x lo hi h⟩
-theorem isPow2_four : isPow2 4 = true := by native_decide
-theorem isPow2_eight : isPow2 8 = true := by native_decide
-theorem not_isPow2_three : isPow2 3 = false := by native_decide
-theorem ilog2_one : ilog2 1 = 0 := by native_decide
-theorem ilog2_two : ilog2 2 = 1 := by native_decide
+theorem isPow2_four : isPow2 4 = true := by decide
+theorem isPow2_eight : isPow2 8 = true := by decide
+theorem not_isPow2_three : isPow2 3 = false := by decide
+theorem ilog2_one : ilog2 1 = 0 := by decide
+theorem ilog2_two : ilog2 2 = 1 := by decide
 theorem gcd_le_left (a b : Nat) (h : 0 < a) : gcd' a b ≤ a := Nat.gcd_le_left b h
 theorem gcd_le_right (a b : Nat) (h : 0 < b) : gcd' a b ≤ b := Nat.gcd_le_right b h
 theorem lcm_dvd_mul_left (a b : Nat) : a ∣ lcm' a b := Nat.dvd_lcm_left a b
@@ -136,16 +136,14 @@ end FloatExt
 -- parseInt: parse a string to a natural number (returns 0 on failure)
 def parseInt (s : String) : Float := Float.ofNat (s.toNat?.getD 0)
 
--- Concrete tests via native_decide
-theorem FloatExt.pi_positive : FloatExt.pi > 0.0 := by native_decide
-theorem FloatExt.e_positive  : FloatExt.e > 0.0 := by native_decide
-theorem FloatExt.abs_nonneg_concrete : FloatExt.abs (-3.0) == 3.0 := by native_decide
-theorem FloatExt.max_comm_concrete : FloatExt.max 1.0 2.0 == FloatExt.max 2.0 1.0 := by native_decide
-theorem FloatExt.min_le_max_concrete : FloatExt.min 1.0 2.0 ≤ FloatExt.max 1.0 2.0 := by native_decide
-theorem FloatExt.floor_le_concrete : FloatExt.floor 3.7 ≤ 3.7 := by native_decide
-theorem FloatExt.ceil_ge_concrete  : FloatExt.ceil 3.2 ≥ 3.2 := by native_decide
-theorem FloatExt.round_half_concrete : FloatExt.round 2.5 == 3.0 := by native_decide
-theorem FloatExt.safeDiv_zero : FloatExt.safeDiv 1.0 0.0 == 0.0 := by native_decide
+-- Nine `FloatExt` "concrete" theorems were removed here. Each asserted one Float value by
+-- `native_decide`, which injects `Lean.ofReduceBool`, and this module is imported by generated code,
+-- so those axioms sat in the trusted base of the compiler's output. None was consumed by anything.
+-- Two were actively misleading: `max_comm_concrete` inferred commutativity from a single ordered pair
+-- while `max` is not commutative for NaN, and `round_half_concrete` passed at `2.5` while
+-- `round (-0.5)` was wrong. Float primitives are `@[extern]` and the kernel cannot reduce them, so a
+-- real statement belongs in `TSLean.JS.Number`, where the operations are defined on binary64 bits and
+-- proved, and in the Node differential that measures them.
 
 /-! ## ECMAScript `Math`
 

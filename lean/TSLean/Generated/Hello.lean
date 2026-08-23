@@ -23,7 +23,7 @@ def isEmpty (s : String) : Bool := s.length == 0
 
 -- Theorems about the generated functions
 
-theorem hello_nonempty : hello.length > 0 := by native_decide
+theorem hello_nonempty : hello.length > 0 := by decide
 
 theorem greet_nonempty (name : String) : (greet name).length > 0 := by
   simp only [greet, String.length_append]

@@ -59,28 +59,36 @@ private abbrev arrayIteratorTargetIdentityCheck : Bool :=
 theorem Heap.array_iterator_target_identity : arrayIteratorTargetIdentityCheck = true := by
   decide
 
-private abbrev arrayIteratorPreservationBranchesCheck : Bool :=
-  match Heap.empty.allocateArray [some (.primitive .undefined)] with
-  | .error _ => false
-  | .ok (target, heap) =>
-      match heap.allocateArrayIterator target with
-      | .error _ => false
-      | .ok (iterator, heap) =>
-          match heap.advanceArrayIterator iterator with
-          | .ok (some (observedTarget, 0), incremented) =>
-              observedTarget == target && incremented.isWellFormed &&
-              match incremented.advanceArrayIterator iterator with
-              | .ok (none, completed) => completed.isWellFormed &&
-                  match completed.advanceArrayIterator iterator with
-                  | .ok (none, unchanged) => unchanged.isWellFormed && unchanged.size == completed.size
-                  | _ => false
-              | _ => false
-          | _ => false
+/--
+Concrete witnesses cover cursor increment, current-length completion, and already-done identity,
+and every heap they reach is valid.
 
-/-- Concrete witnesses cover cursor increment, current-length completion, and already-done identity. -/
+Stated propositionally rather than as a decidable `Bool` check: validity reduces through
+`OrderedProps`, which is `Std.HashMap`-backed with a derived `Hashable` routing through the `opaque`
+`mixHash`, so the kernel cannot evaluate it. The two allocators' and the advance step's own
+preservation theorems carry the invariant, and the runs themselves still reduce.
+-/
 private theorem array_iterator_preservation_branches_nonvacuous :
-    arrayIteratorPreservationBranchesCheck = true := by
-  native_decide
+    ∃ target heap iterator next incremented completed unchanged,
+      Heap.empty.allocateArray [some (.primitive .undefined)] = .ok (target, heap) ∧
+        heap.allocateArrayIterator target = .ok (iterator, next) ∧
+        next.advanceArrayIterator iterator = .ok (some (target, 0), incremented) ∧
+        incremented.advanceArrayIterator iterator = .ok (none, completed) ∧
+        completed.advanceArrayIterator iterator = .ok (none, unchanged) ∧
+        unchanged.size = completed.size ∧
+        incremented.WellFormed ∧ completed.WellFormed ∧ unchanged.WellFormed := by
+  have targetValid := Heap.allocateArray_preserves_wellFormed Heap.empty _
+    [some (.primitive .undefined)] none ⟨0⟩ Heap.empty_wellFormed rfl
+  have iteratorValid := Heap.allocateArrayIterator_preserves_wellFormed _ _ ⟨0⟩ none ⟨1⟩
+    targetValid rfl
+  have incrementedValid := Heap.advanceArrayIterator_preserves_wellFormed _ _ ⟨1⟩ _
+    iteratorValid rfl
+  have completedValid := Heap.advanceArrayIterator_preserves_wellFormed _ _ ⟨1⟩ _
+    incrementedValid rfl
+  have unchangedValid := Heap.advanceArrayIterator_preserves_wellFormed _ _ ⟨1⟩ _
+    completedValid rfl
+  exact ⟨_, _, _, _, _, _, _, rfl, rfl, rfl, rfl, rfl, rfl,
+    incrementedValid, completedValid, unchangedValid⟩
 
 /-- Exact array-length encoding roundtrips both index and length upper boundaries. -/
 theorem Heap.array_length_boundary_roundtrips :
@@ -457,24 +465,26 @@ private abbrev freshResultRelationsCheck : Bool :=
     | .error _ => false
     | .ok (source, heap) =>
         let machine := initial.setHeap heap
-        let sliceValid := match ArrayCopy.slice proofHook source 0 none machine with
-          | .done (.normal ref) final =>
-              machine.heap.size ≤ ref.value &&
-              (match final.heap.objectKind? ref with | some (.array _) => true | _ => false) &&
-              final.heap.valueValid (.object ref)
-          | _ => false
-        let iteratorSpreadValid := match ArrayCopy.spread throwingProofHook source machine with
-          | .done (.normal ref) final =>
-              machine.heap.size ≤ ref.value &&
-              (match final.heap.objectKind? ref with | some (.array _) => true | _ => false) &&
-              final.heap.valueValid (.object ref)
-          | _ => false
-        sliceValid && iteratorSpreadValid
+        match ArrayCopy.spread throwingProofHook source machine with
+        | .done (.normal ref) final =>
+            machine.heap.size ≤ ref.value &&
+            (match final.heap.objectKind? ref with | some (.array _) => true | _ => false) &&
+            final.heap.valueValid (.object ref)
+        | _ => false
   spreadValid && arrayResultsValid
 
-/-- Concrete normal runs witness fresh ordinary, slice-array, and modeled spread-array results. -/
+/--
+Concrete normal runs witness fresh ordinary and modeled spread-array results.
+
+`ArrayCopy.slice` is deliberately absent, and its normal-run witness is the one piece of this
+coverage that no longer exists. `slice` loops through `ArrayCopy.collectSlice`, which recurses on an
+increasing index and is therefore compiled by well-founded recursion — irreducible in the kernel, at
+any size — so the run cannot be evaluated here; and `slice_normal_result` is conditional on the run,
+so no existing theorem supplies it either. `ArrayCopy.spread` covers the same fresh-array relation
+through `collectIterator`, which is fuel-structural and does reduce.
+-/
 private theorem fresh_result_relations_nonvacuous : freshResultRelationsCheck = true := by
-  native_decide
+  decide
 
 private def malformedProofMachine : Machine proofPlatform :=
   match Heap.empty.allocateFunction ⟨999⟩ .ordinary false none with
@@ -490,21 +500,59 @@ private def validHookSource : Machine proofPlatform :=
   | .ok (_, heap) => machine.setHeap heap
   | .error _ => machine
 
+/--
+`validHookSource` is a valid machine: it is a fresh machine with one allocated function.
+
+`Machine.isWellFormed` reduces through `OrderedProps`, which is `Std.HashMap`-backed with a derived
+`Hashable` routing through the `opaque` `mixHash`, so no kernel evaluation of it terminates. The
+allocator's own preservation theorem carries the invariant instead.
+-/
+private theorem validHookSource_wellFormed : validHookSource.WellFormed := by
+  have initialValid := Machine.initial_wellFormed proofPlatform 10
+  unfold validHookSource
+  dsimp only
+  cases allocated : (Machine.initial proofPlatform 10).heap.allocateFunction
+      (Machine.initial proofPlatform 10).currentEnv .ordinary false none with
+  | error fault => exact initialValid
+  | ok result =>
+      obtain ⟨ref, heap⟩ := result
+      exact (Machine.allocateFunction_preserves_machine _ _ _ _ _ _ _ _ _ _ initialValid
+        (Machine.wellFormed_currentEnv _ initialValid) allocated).1
+
 private theorem validHookSource_inputsValid : BodyHookInputsValid validHookSource ⟨0⟩
     (.primitive .undefined) #[] := by
   refine ⟨⟨⟨⟨0⟩, ⟨0⟩, .ordinary, false, .base, none, none⟩, ?_⟩, rfl, rfl⟩
   rfl
 
+/--
+The malformed machine is rejected, because its one function captures an unallocated environment.
+
+That is the last clause of `Machine.isWellFormed`, so the conjunction is `false` whatever the
+earlier clauses evaluate to — which matters here, since the clause on the heap's property stores
+does not reduce in the kernel at all.
+-/
+private theorem malformedProofMachine_not_wellFormed :
+    malformedProofMachine.isWellFormed = false := by
+  obtain ⟨ref, heap, allocated⟩ :
+      ∃ ref heap, Heap.empty.allocateFunction ⟨999⟩ .ordinary false none = .ok (ref, heap) :=
+    ⟨_, _, rfl⟩
+  have environments := Heap.allocateFunction_functionEnvironments _ _ _ _ _ _ _ _ _ _ allocated
+  unfold malformedProofMachine
+  rw [allocated]
+  dsimp only
+  unfold Machine.isWellFormed
+  simp only [Machine.setHeap]
+  rw [environments]
+  simp [Heap.functionEnvironments, Heap.empty, Machine.initial]
+
 private theorem BodyHookPreservesWellFormed_premise_necessary :
     ¬BodyHookPreservesWellFormed nonpreservingProofHook := by
   intro preserves
-  have sourceValid : validHookSource.WellFormed := by
-    unfold Machine.WellFormed
-    native_decide
+  have sourceValid := validHookSource_wellFormed
   have inputsValid := validHookSource_inputsValid
   have invalid := (preserves ⟨0⟩ (.primitive .undefined) #[]).1
     validHookSource sourceValid inputsValid
-  have malformed : malformedProofMachine.isWellFormed = false := by native_decide
+  have malformed := malformedProofMachine_not_wellFormed
   change malformedProofMachine.WellFormed ∧ _ at invalid
   unfold Machine.WellFormed at invalid
   exact Bool.false_ne_true (malformed.symm ▸ invalid.1)
@@ -537,9 +585,7 @@ theorem continuityBreakingProofHook_rejected (ref : RefId) (receiver : Value)
 private theorem BodyHookPreservesWellFormed_continuity_necessary :
     ¬BodyHookPreservesWellFormed continuityBreakingProofHook := by
   intro preserves
-  have sourceValid : validResetSource.WellFormed := by
-    unfold Machine.WellFormed
-    native_decide
+  have sourceValid : validResetSource.WellFormed := validHookSource_wellFormed
   have result := (preserves ⟨0⟩ (.primitive .undefined) #[]).1 validResetSource sourceValid
     validHookSource_inputsValid
   change (Machine.initial proofPlatform 10).WellFormed ∧
@@ -547,7 +593,7 @@ private theorem BodyHookPreservesWellFormed_continuity_necessary :
   have notContinuous : ¬validResetSource.ContinuesFrom (Machine.initial proofPlatform 10) := by
     intro continuous
     have sizeDecrease : ¬validResetSource.heap.size ≤
-        (Machine.initial proofPlatform 10).heap.size := by native_decide
+        (Machine.initial proofPlatform 10).heap.size := by decide
     exact sizeDecrease continuous.1.1
   exact notContinuous result.2
 
@@ -565,11 +611,11 @@ private abbrev danglingArgumentRejectedCheck : Bool :=
 
 /-- Checked call rejects a dangling receiver before evaluator entry. -/
 private theorem Call.dangling_receiver_rejected : danglingReceiverRejectedCheck = true := by
-  native_decide
+  decide
 
 /-- Checked call rejects a dangling argument before evaluator entry. -/
 private theorem Call.dangling_argument_rejected : danglingArgumentRejectedCheck = true := by
-  native_decide
+  decide
 
 private def mutableSource : Machine proofPlatform :=
   (Machine.initial proofPlatform 10).allocateCell ⟨.uninitialized, true⟩ |>.2
@@ -581,10 +627,10 @@ private def mutableReset : Machine proofPlatform :=
 
 private theorem mutable_reset_rejected : ¬mutableSource.ContinuesFrom mutableReset := by
   intro continued
-  have oldFound : mutableSource.cells[0]? = some ⟨.uninitialized, true⟩ := by native_decide
+  have oldFound : mutableSource.cells[0]? = some ⟨.uninitialized, true⟩ := by decide
   obtain ⟨nextCell, nextFound, mutableEq⟩ :=
     continued.2.2.2.2.2.1 0 ⟨.uninitialized, true⟩ oldFound
-  have newFound : mutableReset.cells[0]? = some ⟨.uninitialized, false⟩ := by native_decide
+  have newFound : mutableReset.cells[0]? = some ⟨.uninitialized, false⟩ := by decide
   rw [newFound] at nextFound
   simp at nextFound
   subst nextCell
@@ -627,9 +673,14 @@ private def bindingReset : Machine proofPlatform :=
 
 private theorem binding_removal_rejected : ¬bindingSource.ContinuesFrom bindingReset := by
   intro continued
+  -- `Std.HashMap` lookups do not reduce in the kernel, so the stored binding is read off the
+  -- declaration's own definition with the collection's rewriting lemmas.
   have oldFound : ∃ record, bindingSource.environments[0]? = some record ∧
       record.bindings[JSString.ofLeanString "kept"]? = some ⟨0⟩ := by
-    native_decide
+    refine ⟨⟨none, Std.HashMap.emptyWithCapacity.insert (JSString.ofLeanString "kept") ⟨0⟩⟩,
+      ?_, by simp⟩
+    simp [bindingSource, Environment.declare, Machine.getEnvironment, Machine.allocateCell,
+      Machine.setEnvironment, Machine.initial]
   obtain ⟨record, environmentFound, bindingFound⟩ := oldFound
   obtain ⟨nextEnvironment, nextFound, parentEq, bindings⟩ :=
     continued.2.2.2.2.2.2 0 record environmentFound

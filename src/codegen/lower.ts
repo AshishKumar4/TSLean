@@ -96,6 +96,62 @@ const LEAN_BUILTIN_TYPES = new Set([
   'Observability', 'ChannelEventMap',
 ]);
 
+// Which emitted carriers have no inhabitant? `TSLean/Stubs/WebAPIs.lean` declares
+// each of these `opaque X : Type`, so `X` may be empty, `Inhabited X` is not
+// provable, and the stubs carry no such instance — a Durable Object handle only
+// ever arrives from the runtime. Asked for a value (`defaultForType`) and for a
+// derive clause (`mentionsUninhabitedCarrier`, which also follows a field's struct
+// references, since a structure over one of these is no more inhabited than it is).
+//
+// They are the four members of typemap's `LEAN_CARRIER_TYPES` that are opaque
+// rather than structures, which is what makes a name test sound here: typemap
+// keeps those names precisely so the carrier is the stub, so no transpiled
+// structure can be mistaken for one. `SqlStorage` and `R2Bucket` are equally
+// uninhabited but deliberately absent — they reach the artifact only because
+// provenance abstains on a name the Durable Object ambient declarations reopen,
+// so a program's own type of that name would be indistinguishable here.
+const NO_INHABITANT_CARRIERS = new Set([
+  'DurableObjectNamespace', 'DurableObjectStub', 'DurableObjectId', 'DurableObjectStorage',
+]);
+
+/**
+ * Every runtime-library module `resolveImports` can put at the top of an emitted file on its own.
+ *
+ * Emitted imports have two origins and only this one is the lowerer's own: these are the modules it
+ * requests because of what the code *does* (a `Map` needs AssocMap, an effectful function needs the
+ * monad, a `KV.` call needs the KV binding). The other origin is the program's own imports, mapped
+ * by the parser, which are whatever the program wrote.
+ *
+ * The set is exported, and the scan below is typed by it, so the two cannot disagree: adding an
+ * import target without adding it here does not compile. The trust gate audits this set — every
+ * declaration of these modules is in the trusted base of every artifact that reaches them — and
+ * measures the emitted imports of the fixture corpus separately, so no fixture has to exist for a
+ * target to be audited.
+ */
+export const STATIC_LEAN_IMPORTS = [
+  'TSLean.DurableObjects.Alarm',
+  'TSLean.DurableObjects.Model',
+  'TSLean.DurableObjects.State',
+  'TSLean.DurableObjects.Storage',
+  'TSLean.DurableObjects.Transaction',
+  'TSLean.DurableObjects.WebSocket',
+  'TSLean.Runtime.Basic',
+  'TSLean.Runtime.Coercions',
+  'TSLean.Runtime.Monad',
+  'TSLean.Runtime.WebAPI',
+  'TSLean.Stdlib.Array',
+  'TSLean.Stdlib.Async',
+  'TSLean.Stdlib.HashMap',
+  'TSLean.Stdlib.Numeric',
+  'TSLean.Stubs.WebAPIs',
+  'TSLean.Workers.D1',
+  'TSLean.Workers.KV',
+  'TSLean.Workers.R2',
+] as const;
+
+/** A module the lowerer itself can request; see {@link STATIC_LEAN_IMPORTS}. */
+type StaticLeanImport = (typeof STATIC_LEAN_IMPORTS)[number];
+
 // ─── Public API ─────────────────────────────────────────────────────────────────
 
 /** Lower an IR module to a LeanAST file. */
@@ -193,16 +249,15 @@ function containsArrowType(ty: LeanTy): boolean {
   }
 }
 
-/** Compute safe deriving clauses — exclude Repr/BEq if any field has arrow type
- *  or references a struct that can't derive Repr/BEq. */
-function safeDeriving(fields: LeanField[], isBranded: boolean, structFields?: Map<string, {name: string, type?: IRType}[]>): string[] {
-  if (fields.some(f => containsArrowType(f.ty))) return ['Inhabited'];
-  // Check if any field type references a struct that itself has arrow-type fields
-  if (structFields) {
-    const hasNonDerivableRef = fields.some(f => fieldRefHasArrow(f.ty, structFields));
-    if (hasNonDerivableRef) return ['Inhabited'];
-  }
-  return isBranded ? [...DEFAULT_DERIVING, 'DecidableEq'] : DEFAULT_DERIVING;
+/**
+ * The `deriving` clauses to emit, given what the declaration can actually derive.
+ *
+ * Two questions, because they have two answers: `Repr`/`BEq`/`DecidableEq` fail on an arrow type,
+ * `Inhabited` fails on a type that may be empty, and a declaration can fail either one alone.
+ */
+function derivingClauses(isBranded: boolean, equality: boolean, inhabited: boolean): string[] {
+  const wanted = isBranded ? [...DEFAULT_DERIVING, 'DecidableEq'] : DEFAULT_DERIVING;
+  return wanted.filter(cls => (cls === 'Inhabited' ? inhabited : equality));
 }
 
 /** Check if a type references a struct whose fields contain arrow types. */
@@ -300,20 +355,96 @@ class LowerCtx {
     }
   }
 
+  // ─── Inhabitants ────────────────────────────────────────────────────────────
+
+  /**
+   * Does this type mention a carrier with no inhabitant, following struct references?
+   *
+   * The question cannot be answered from one type expression: `Outer { holder : Holder }` is as
+   * uninhabited as `Holder` is, so a referenced struct's own fields have to be lowered and asked
+   * the same question, transitively. `seen` carries the structs on the current path, so a struct
+   * that refers to itself terminates instead of recursing — reporting no carrier there is the safe
+   * direction, since Lean does derive `Inhabited` for a recursive structure with a base case.
+   *
+   * Deliberately conservative: any mention counts, including positions that are inhabited whatever
+   * they contain (`Option Carrier` has `none`). Dropping a clause Lean would have accepted costs an
+   * instance; keeping one Lean rejects costs an artifact that does not elaborate at all, and no
+   * degradation marker records it — which is exactly what the shallow version of this walk did.
+   */
+  private mentionsUninhabitedCarrier(ty: LeanTy, seen: ReadonlySet<string> = new Set()): boolean {
+    switch (ty.tag) {
+      case 'TyName': {
+        if (NO_INHABITANT_CARRIERS.has(ty.name)) return true;
+        if (seen.has(ty.name)) return false;
+        const fields = this.structFields.get(ty.name) ?? this.structFields.get(ty.name + 'State');
+        if (!fields) return false;
+        const path = new Set(seen).add(ty.name);
+        return fields.some(f => this.mentionsUninhabitedCarrier(this.lowerType(f.type), path));
+      }
+      case 'TyApp':
+        return this.mentionsUninhabitedCarrier(ty.fn, seen) ||
+          ty.args.some(a => this.mentionsUninhabitedCarrier(a, seen));
+      case 'TyArrow':
+        return ty.params.some(p => this.mentionsUninhabitedCarrier(p, seen)) ||
+          this.mentionsUninhabitedCarrier(ty.ret, seen);
+      case 'TyTuple': return ty.elems.some(e => this.mentionsUninhabitedCarrier(e, seen));
+      case 'TyParen': return this.mentionsUninhabitedCarrier(ty.inner, seen);
+    }
+  }
+
+  /** The clauses a structure with these fields can derive. */
+  private structDeriving(fields: LeanField[], isBranded: boolean): string[] {
+    // A field type referencing a struct that itself has arrow-type fields is just as
+    // non-derivable for equality and rendering as an arrow field here.
+    const equality = !fields.some(f => containsArrowType(f.ty) || fieldRefHasArrow(f.ty, this.structFields));
+    // A structure over a type that may be empty may be empty too.
+    return derivingClauses(isBranded, equality, !fields.some(f => this.mentionsUninhabitedCarrier(f.ty)));
+  }
+
+  /** The value to stand in for one this lowering cannot produce. */
+  private defaultForType(t: IRType): LeanExpr {
+    switch (t.tag) {
+      case 'Nat': return { tag: 'Lit', value: '0' };
+      case 'Int': return { tag: 'Lit', value: '0' };
+      case 'Float': return { tag: 'TypeAnnot', expr: { tag: 'Lit', value: '0' }, ty: { tag: 'TyName', name: 'Float' } };
+      case 'String': return { tag: 'Lit', value: '""' };
+      case 'Bool': return { tag: 'Lit', value: 'false' };
+      case 'Unit': return { tag: 'Lit', value: '()' };
+      case 'Array': return { tag: 'ArrayLit', elems: [] };
+      case 'Option': return { tag: 'None' };
+      case 'TypeRef': {
+        // Emit type-annotated default: (default : TypeName)
+        // This helps Lean's elaborator resolve Inhabited instances
+        const ty: LeanTy = t.args.length > 0
+          ? { tag: 'TyApp', fn: { tag: 'TyName', name: t.name }, args: t.args.map(a => ({ tag: 'TyName' as const, name: a.tag === 'TypeRef' ? a.name : 'String' })) }
+          : { tag: 'TyName', name: t.name };
+        // No inhabitant to stand in: the placeholder has to be the stronger marker, so the scan
+        // reports a `sorry` axiom and `--strict` rejects the artifact. The same question the derive
+        // clause asks, so the same answer: a structure that reaches a carrier has no `Inhabited`
+        // instance either, and `default` there would be Lean that does not elaborate at all,
+        // recorded as the weaker marker.
+        if (this.mentionsUninhabitedCarrier(ty)) {
+          return { tag: 'Sorry', ty, reason: `${t.name} reaches a carrier that may be empty: no Inhabited instance to default to` };
+        }
+        return { tag: 'TypeAnnot', expr: { tag: 'Default' }, ty };
+      }
+      default: return { tag: 'Default' };
+    }
+  }
+
   // ─── Import resolution ──────────────────────────────────────────────────────
 
   resolveImports(mod: IRModule): string[] {
-    const needed = new Set<string>();
-    needed.add('TSLean.Runtime.Basic');
-    needed.add('TSLean.Runtime.Coercions');
+    const needed = new Set<StaticLeanImport>(['TSLean.Runtime.Basic', 'TSLean.Runtime.Coercions']);
     for (const d of mod.decls) this.scanImportNeeds(d, needed);
+    const emitted = new Set<string>(needed);
     const isSelfHost = mod.sourceFile?.includes('/src/') ?? false;
     for (const imp of mod.imports) {
       if (imp.module.startsWith('TSLean.External.')) continue;
       if (isSelfHost && imp.module.startsWith('TSLean.Generated.')) continue;
-      if (imp.module.startsWith('TSLean.')) needed.add(imp.module);
+      if (imp.module.startsWith('TSLean.')) emitted.add(imp.module);
     }
-    return [...needed].sort();
+    return [...emitted].sort();
   }
 
   resolveOpens(_mod: IRModule, imports: string[]): string[] {
@@ -325,7 +456,7 @@ class LowerCtx {
     return opens;
   }
 
-  private scanImportNeeds(d: IRDecl, needs: Set<string>): void {
+  private scanImportNeeds(d: IRDecl, needs: Set<StaticLeanImport>): void {
     if (d.tag === 'FuncDef') {
       if (!isPure(d.effect)) needs.add('TSLean.Runtime.Monad');
       for (const p of d.params) this.scanTypeImports(p.type, needs);
@@ -350,7 +481,7 @@ class LowerCtx {
     }
   }
 
-  private scanTypeImports(t: IRType, needs: Set<string>): void {
+  private scanTypeImports(t: IRType, needs: Set<StaticLeanImport>): void {
     switch (t.tag) {
       // `Map` needs AssocMap. `Set` does not: its carrier is `Array` and the
       // operations it lowers to are Array ones, so no name from this module is
@@ -378,7 +509,7 @@ class LowerCtx {
     }
   }
 
-  private scanExprImports(e: IRExpr, needs: Set<string>): void {
+  private scanExprImports(e: IRExpr, needs: Set<StaticLeanImport>): void {
     if (!e) return;
     // Any expression with Map type will lower to AssocMap operations
     if (e.type?.tag === 'Map') needs.add('TSLean.Stdlib.HashMap');
@@ -508,7 +639,7 @@ class LowerCtx {
         name,
         tyParams: [],
         fields,
-        deriving: safeDeriving(fields, false, this.structFields),
+        deriving: this.structDeriving(fields, false),
       });
       result.push({ tag: 'Blank' });
     }
@@ -770,7 +901,7 @@ class LowerCtx {
       return { name: rawName, ty: this.lowerType(f.type) };
     });
     const isBranded = allFields.length === 1 && allFields[0].name === 'val';
-    const deriving = inMutual ? [] : safeDeriving(fields, isBranded, this.structFields);
+    const deriving = inMutual ? [] : this.structDeriving(fields, isBranded);
     // Only emit `extends` when the parent is a known local struct with all its fields merged.
     // If parent isn't found in structFields, its type won't exist in Lean — suppress extends.
     const parentKnown = d.extends_ && (this.structFields.has(d.extends_) ||
@@ -805,8 +936,14 @@ class LowerCtx {
       name: d.name,
       tyParams: d.typeParams.map(p => ({ name: p.name, explicit: true })),
       ctors,
-      deriving: inMutual ? [] :
-        (ctors.some(c => c.fields.some(f => containsArrowType(f.ty))) ? ['Inhabited'] : DEFAULT_DERIVING),
+      deriving: inMutual ? [] : derivingClauses(
+        false,
+        !ctors.some(c => c.fields.some(f => containsArrowType(f.ty))),
+        // Lean builds the instance out of one constructor, so `Inhabited` survives as long as some
+        // constructor carries no possibly-empty field. An inductive with no constructors at all is
+        // empty, which `every` reports.
+        !ctors.every(c => c.fields.some(f => this.mentionsUninhabitedCarrier(f.ty))),
+      ),
       comment: d.comment,
     };
   }
@@ -1642,7 +1779,7 @@ class LowerCtx {
         // null/undefined → none for Option types or when return type is Option
         if (e.type?.tag === 'Option' || this.retTypeIsOption()) return { tag: 'None' };
         return { tag: 'Default' };
-      case 'Hole': return defaultForType(e.type);
+      case 'Hole': return this.defaultForType(e.type);
 
       case 'Var': {
         if (e.name.startsWith('"') && e.name.endsWith('"')) return { tag: 'Lit', value: e.name };
@@ -2143,7 +2280,7 @@ class LowerCtx {
       'accept', 'respond', 'respondWith', 'waitUntil', 'passThroughOnException',
       'write', 'read', 'pipe', 'pipeThrough', 'pipeTo', 'getReader', 'getWriter',
       'cancel', 'tee', 'lock', 'releaseLock'].includes(mappedField))
-      return defaultForType(e.type ?? { tag: 'String' });
+      return this.defaultForType(e.type ?? { tag: 'String' });
 
     // Strip leading underscore from private fields
     if (mappedField.startsWith('_') && mappedField.length > 1 && /[a-zA-Z]/.test(mappedField[1]))
@@ -2153,12 +2290,12 @@ class LowerCtx {
     // (anonymous TS object types collapsed to String can't have .field access)
     const stringMethods = ['length', 'size', 'includes', 'trim', 'toLower', 'toUpper', 'startsWith', 'endsWith', 'splitOn', 'replace', 'append', 'intercalate', 'get', 'get?', 'back?', 'push', 'map', 'filter', 'find?', 'any', 'all', 'reverse', 'join', 'flatMap', 'foldl', 'extract', 'indexOf?', 'contains', 'toList'];
     if (isString && !stringMethods.includes(mappedField)) {
-      return defaultForType(e.type ?? { tag: 'String' });
+      return this.defaultForType(e.type ?? { tag: 'String' });
     }
 
     // TS API types → default for non-string methods (type-checks via Inhabited)
     const isAnyType = e.obj?.type?.tag === 'TypeRef' && TS_API_TYPES.has(e.obj?.type?.name ?? '');
-    if (isAnyType && !stringMethods.includes(mappedField)) return defaultForType(e.type ?? { tag: 'String' });
+    if (isAnyType && !stringMethods.includes(mappedField)) return this.defaultForType(e.type ?? { tag: 'String' });
 
     // Map-typed objects (anonymous TS objects) → field access via AssocMap.find?
     const isMapType = e.obj?.type?.tag === 'Map' ||
@@ -2166,7 +2303,7 @@ class LowerCtx {
     if (isMapType && !['size', 'toList', 'keys', 'values'].includes(mappedField)) {
       // If the underlying value is actually TSAny/String, AssocMap.getD won't work
       if (obj.tag === 'Default' || this.varIsTSAny(e.obj)) {
-        return defaultForType(e.type ?? { tag: 'String' });
+        return this.defaultForType(e.type ?? { tag: 'String' });
       }
       // If the result type is Option, use get? (returns Option) instead of getD
       if (e.type?.tag === 'Option') {
@@ -2184,10 +2321,10 @@ class LowerCtx {
       const rawName = e.obj.type.name;
       const stateName = this.classToState.get(rawName) ?? rawName;
       const knownFields = this.structFields.get(stateName) ?? this.structFields.get(rawName) ?? this.structFields.get(rawName + 'State');
-      if (knownFields && !knownFields.some(f => f.name === mappedField)) return defaultForType(e.type ?? { tag: 'String' });
+      if (knownFields && !knownFields.some(f => f.name === mappedField)) return this.defaultForType(e.type ?? { tag: 'String' });
       // Unknown external types (no struct definition, not locally defined) → graceful default
       if (!knownFields && !LEAN_BUILTIN_TYPES.has(rawName) && !this.definedNames.has(rawName))
-        return defaultForType(e.type ?? { tag: 'String' });
+        return this.defaultForType(e.type ?? { tag: 'String' });
     }
 
     return { tag: 'FieldAccess', obj, field: mappedField };
@@ -2241,7 +2378,7 @@ class LowerCtx {
       if (recvType?.tag === 'TypeRef' && !LEAN_BUILTIN_TYPES.has(recvType.name) &&
           !this.structFields.has(recvType.name) && !this.structFields.has(recvType.name + 'State') &&
           !this.classToState.has(recvType.name) && !this.definedNames.has(recvType.name)) {
-        return defaultForType(e.type);
+        return this.defaultForType(e.type);
       }
     }
 
@@ -2276,13 +2413,13 @@ class LowerCtx {
       const isMapArg = firstArgType?.tag === 'Map' ||
         (firstArgType?.tag === 'TypeRef' && (firstArgType.name === 'AssocMap' || firstArgType.name === 'Map'));
       if (!isMapArg) {
-        return defaultForType(e.type);
+        return this.defaultForType(e.type);
       }
     }
 
     const fn = this.lowerExpr(e.fn, ctx);
     // Unresolved functions → default (uses Inhabited, type-checks in Lean)
-    if (fn.tag === 'Sorry' || fn.tag === 'Default') return defaultForType(e.type);
+    if (fn.tag === 'Sorry' || fn.tag === 'Default') return this.defaultForType(e.type);
     // Node.js module calls → dispatch to stubs
     if (fn.tag === 'Var') {
       const stubMap: Record<string, string> = {
@@ -3099,28 +3236,6 @@ function sorryForType(t?: IRType): LeanExpr {
     case 'Array': return { tag: 'ArrayLit', elems: [] };
     case 'TypeRef': return { tag: 'Sorry', ty: { tag: 'TyName', name: t.name } };
     default: return { tag: 'Sorry' };
-  }
-}
-
-function defaultForType(t: IRType): LeanExpr {
-  switch (t.tag) {
-    case 'Nat': return { tag: 'Lit', value: '0' };
-    case 'Int': return { tag: 'Lit', value: '0' };
-    case 'Float': return { tag: 'TypeAnnot', expr: { tag: 'Lit', value: '0' }, ty: { tag: 'TyName', name: 'Float' } };
-    case 'String': return { tag: 'Lit', value: '""' };
-    case 'Bool': return { tag: 'Lit', value: 'false' };
-    case 'Unit': return { tag: 'Lit', value: '()' };
-    case 'Array': return { tag: 'ArrayLit', elems: [] };
-    case 'Option': return { tag: 'None' };
-    case 'TypeRef': {
-      // Emit type-annotated default: (default : TypeName)
-      // This helps Lean's elaborator resolve Inhabited instances
-      const ty: LeanTy = t.args.length > 0
-        ? { tag: 'TyApp', fn: { tag: 'TyName', name: t.name }, args: t.args.map(a => ({ tag: 'TyName' as const, name: a.tag === 'TypeRef' ? a.name : 'String' })) }
-        : { tag: 'TyName', name: t.name };
-      return { tag: 'TypeAnnot', expr: { tag: 'Default' }, ty };
-    }
-    default: return { tag: 'Default' };
   }
 }
 

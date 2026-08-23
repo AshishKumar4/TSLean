@@ -36,6 +36,10 @@ const FIXTURES: readonly string[] = [
   'generics/branded-types.ts', // type aliases and generics
   'effects/exceptions.ts', // throw / try-catch in a monadic context
   'projects/calculator/types.ts', // enums and unions
+  // A carrier with no `Inhabited` instance one struct deep. Elaboration is the only check that
+  // catches this class of defect: a wrongly emitted `deriving Inhabited` is well-formed Lean, and
+  // the degradation scan reports nothing because the artifact carries no placeholder at all.
+  'do-workers/nested-carrier.ts',
 ];
 
 /**

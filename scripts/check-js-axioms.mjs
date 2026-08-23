@@ -12,15 +12,42 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { argv, stdout } from 'node:process';
+import { argv, env, stdout } from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { STATIC_LEAN_IMPORTS } from '../src/codegen/lower.js';
+import { buildLeanFile } from '../src/codegen/v2.js';
+import { DO_LEAN_IMPORTS, WORKERS_LEAN_IMPORTS } from '../src/do-model/ambient.js';
+import { parseFile } from '../src/parser/index.js';
+import { rewriteModule } from '../src/rewrite/index.js';
 import { refinementProofRegistry } from './refinement-proof-registry.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const leanDirectory = join(root, 'lean');
 const compiledLibraryDirectory = join(leanDirectory, '.lake/build/lib');
+const fixtureDirectory = join(root, 'tests/fixtures');
 const allowedAxioms = new Set(['propext', 'Classical.choice', 'Quot.sound']);
 const usage = 'Usage: check-js-axioms.mjs --evidence <input.json> | --self-test';
+
+/**
+ * Modules whose source is deliberately outside the default `lake build` target.
+ *
+ * `TSLean.Veil` is an aggregate of `TSLean.Veil.*` that nothing imports — `TSLean.lean` names the
+ * children directly — so Lake never compiles the barrel itself. Every entry is re-checked below:
+ * it must name a source module that really has no artifact, so the list cannot outlive its reason.
+ */
+const unbuiltSourceAllowlist = new Set(['TSLean.Veil']);
+
+/**
+ * What the emitted trusted base is measured by, and pinned to the evidence input under
+ * `counts.emittedTrustedBase`: the library modules generated code can import, the modules an
+ * environment importing them loads, and the declarations audited across those modules.
+ *
+ * Pinned because printing a number proves nothing: the closure is derived, so a compiler change that
+ * stops reaching a module shrinks it silently, and the audit of a module nothing reaches passes for
+ * the wrong reason. The key is optional in the input, and every count present is compared exactly,
+ * the way `counts.auditedTheorems` is.
+ */
+const EMITTED_TRUSTED_BASE_KEYS = ['imports', 'modules', 'declarations'];
 
 function fail(message) {
   throw new Error(`JS trust gate failed: ${message}`);
@@ -130,6 +157,7 @@ function readExpectedAuditCount(path) {
   const countKeys = ['tests', 'lean', 'corpus', 'auditedTheorems', 'lint', 'build'];
   if (counts.differentialScenarios !== undefined) countKeys.push('differentialScenarios');
   if (counts.differential !== undefined) countKeys.push('differential');
+  if (counts.emittedTrustedBase !== undefined) countKeys.push('emittedTrustedBase');
   exactKeys(counts, countKeys, 'counts');
   exactKeys(counts.tests, ['files', 'passed', 'failed', 'todo'], 'counts.tests');
   for (const key of ['files', 'passed', 'failed', 'todo']) nonNegativeInteger(counts.tests[key], `counts.tests.${key}`);
@@ -148,7 +176,20 @@ function readExpectedAuditCount(path) {
   if (counts.differential !== undefined) countObject(counts.differential, 'counts.differential');
   if (counts.lint !== 'passed') fail('counts.lint must be passed');
   if (counts.build !== 'passed') fail('counts.build must be passed');
-  return { js: counts.auditedTheorems, refinement: refinementProofs };
+  let emittedTrustedBase;
+  if (counts.emittedTrustedBase !== undefined) {
+    emittedTrustedBase = object(counts.emittedTrustedBase, 'counts.emittedTrustedBase');
+    exactKeys(emittedTrustedBase, EMITTED_TRUSTED_BASE_KEYS, 'counts.emittedTrustedBase');
+    for (const key of EMITTED_TRUSTED_BASE_KEYS) {
+      nonNegativeInteger(emittedTrustedBase[key], `counts.emittedTrustedBase.${key}`);
+      if (emittedTrustedBase[key] === 0) fail(`counts.emittedTrustedBase.${key} must be positive`);
+    }
+    // Every emitted import is a loaded module, so the environment cannot hold fewer.
+    if (emittedTrustedBase.modules < emittedTrustedBase.imports) {
+      fail('counts.emittedTrustedBase.modules must not be below counts.emittedTrustedBase.imports');
+    }
+  }
+  return { js: counts.auditedTheorems, refinement: refinementProofs, emittedTrustedBase };
 }
 
 function refinementRegistryHash() {
@@ -225,39 +266,59 @@ function sourceImports(source) {
   return [...stripLeanComments(source).matchAll(/^\s*import\s+([^\s]+)/gm)].map((match) => match[1]);
 }
 
-function validateSemanticSource(file, source) {
-  const forbidden = /\b(sorry|admit|axiom|opaque|partial|unsafe|noncomputable)\b/;
-  const stripped = stripLeanComments(source);
-  const violation = stripped.split('\n').find((line) => forbidden.test(line));
-  if (violation) fail(`${file} contains forbidden declaration token: ${violation.trim()}`);
+/**
+ * Every line of an audited module that names a construct able to introduce an axiom the allowlist
+ * does not carry.
+ *
+ * `native_decide` is on the list because it discharges a goal by trusting the compiler's evaluation
+ * of it, which the elaborator records as a `Lean.ofReduceBool` application — an axiom, and one the
+ * proof audit never saw while it filtered private names.
+ *
+ * Every violation is returned rather than thrown so one run names every offending file.
+ */
+function forbiddenTokenViolations(file, source) {
+  const forbidden = /\b(sorry|admit|axiom|opaque|partial|unsafe|noncomputable|native_decide)\b/;
+  return stripLeanComments(source)
+    .split('\n')
+    .filter((line) => forbidden.test(line))
+    .map((line) => `${file} contains forbidden declaration token: ${line.trim()}`);
+}
+
+/**
+ * Every import an audited JS module may not have.
+ *
+ * Returned rather than thrown, like the token violations, so one run reports both classes at once
+ * instead of stopping at whichever it happened to check first.
+ */
+function semanticImportViolations(file, source) {
+  const violations = [];
   for (const imported of sourceImports(source)) {
     if (imported.startsWith('TSLean.JS.') && moduleRole(imported) !== 'semantic') {
-      fail(`${file} imports non-semantic JS module ${imported}`);
+      violations.push(`${file} imports non-semantic JS module ${imported}`);
     }
     if (!imported.startsWith('TSLean.JS.') && !imported.startsWith('Init') && !imported.startsWith('Std')) {
-      fail(`${file} imports non-isolated module ${imported}`);
+      violations.push(`${file} imports non-isolated module ${imported}`);
     }
   }
+  return violations;
 }
 
-function validateProductionBarrel(source) {
-  validateSemanticSource('JS.lean', source);
+function productionBarrelViolations(source) {
+  return semanticImportViolations('JS.lean', source);
 }
 
-function validateRefinementSource(file, source, semantic = true) {
-  const forbidden = /\b(sorry|admit|axiom|opaque|partial|unsafe|noncomputable)\b/;
-  const stripped = stripLeanComments(source);
-  const violation = stripped.split('\n').find((line) => forbidden.test(line));
-  if (violation) fail(`${file} contains forbidden declaration token: ${violation.trim()}`);
+/** Every import an audited refinement module may not have; see {@link semanticImportViolations}. */
+function refinementImportViolations(file, source, semantic = true) {
+  const violations = [];
   for (const imported of sourceImports(source)) {
     if (inNamespace(imported, 'TSLean.Runtime')) {
-      fail(`${file} imports legacy runtime module ${imported}`);
+      violations.push(`${file} imports legacy runtime module ${imported}`);
     }
     if (semantic && inNamespace(imported, 'TSLean.Refinement') && moduleRole(imported) !== 'semantic') {
-      fail(`${file} imports non-semantic refinement module ${imported}`);
+      violations.push(`${file} imports non-semantic refinement module ${imported}`);
     }
     if (semantic && inNamespace(imported, 'TSLean.JS') && moduleRole(imported) !== 'semantic') {
-      fail(`${file} imports non-semantic JS module ${imported}`);
+      violations.push(`${file} imports non-semantic JS module ${imported}`);
     }
     if (
       !inNamespace(imported, 'TSLean.Refinement') &&
@@ -265,9 +326,10 @@ function validateRefinementSource(file, source, semantic = true) {
       !inNamespace(imported, 'Init') &&
       !inNamespace(imported, 'Std')
     ) {
-      fail(`${file} imports non-isolated module ${imported}`);
+      violations.push(`${file} imports non-isolated module ${imported}`);
     }
   }
+  return violations;
 }
 
 function filesRecursively(directory, extension, symlinkFailure) {
@@ -285,18 +347,42 @@ export function leanFilesRecursively(directory) {
   return filesRecursively(directory, '.lean', 'refinement source tree contains symlink');
 }
 
-function checkSources() {
+/** The module an audited tree compiled a file as, from the file's path relative to that tree. */
+function sourceModuleName(namespace, relative) {
+  return `${namespace}.${relative.slice(0, -'.lean'.length).split(sep).join('.')}`;
+}
+
+export function checkSources() {
+  const violations = [];
   const jsDirectory = join(root, 'lean/TSLean/JS');
-  const files = readdirSync(jsDirectory).filter((name) => name.endsWith('.lean') && moduleRole(name) === 'semantic');
-  for (const name of files) validateSemanticSource(name, readFileSync(join(jsDirectory, name), 'utf8'));
-  validateProductionBarrel(readFileSync(join(root, 'lean/TSLean/JS.lean'), 'utf8'));
+  // Recursive, and filtered per file: a module under `JS/<subdir>/` is as importable by a semantic
+  // module as one beside it, so reading only the top level left every nested module — the `Oracle`
+  // tree today, anything a subdirectory holds tomorrow — with no token scrutiny at all.
+  for (const file of leanFilesRecursively(jsDirectory)) {
+    const relative = file.slice(jsDirectory.length + 1);
+    const module = sourceModuleName('TSLean.JS', relative);
+    if (moduleRole(module) !== 'semantic') continue;
+    const source = readFileSync(file, 'utf8');
+    violations.push(...forbiddenTokenViolations(relative, source));
+    violations.push(...semanticImportViolations(relative, source));
+  }
+  const jsBarrel = readFileSync(join(root, 'lean/TSLean/JS.lean'), 'utf8');
+  violations.push(...forbiddenTokenViolations('JS.lean', jsBarrel));
+  violations.push(...productionBarrelViolations(jsBarrel));
   const refinementDirectory = join(root, 'lean/TSLean/Refinement');
   for (const file of leanFilesRecursively(refinementDirectory)) {
     const relative = file.slice(refinementDirectory.length + 1);
-    const module = `TSLean.Refinement.${relative.slice(0, -'.lean'.length).split(sep).join('.')}`;
-    validateRefinementSource(relative, readFileSync(file, 'utf8'), moduleRole(module) === 'semantic');
+    const module = sourceModuleName('TSLean.Refinement', relative);
+    const source = readFileSync(file, 'utf8');
+    violations.push(...forbiddenTokenViolations(relative, source));
+    violations.push(...refinementImportViolations(relative, source, moduleRole(module) === 'semantic'));
   }
-  validateRefinementSource('Refinement.lean', readFileSync(join(root, 'lean/TSLean/Refinement.lean'), 'utf8'));
+  const refinementBarrel = readFileSync(join(root, 'lean/TSLean/Refinement.lean'), 'utf8');
+  violations.push(...forbiddenTokenViolations('Refinement.lean', refinementBarrel));
+  violations.push(...refinementImportViolations('Refinement.lean', refinementBarrel));
+  if (violations.length > 0) {
+    fail(`audited sources carry ${violations.length} violation(s):\n  ${violations.sort().join('\n  ')}`);
+  }
   const heap = readFileSync(join(jsDirectory, 'Heap.lean'), 'utf8');
   const orderedProps = readFileSync(join(jsDirectory, 'OrderedProps.lean'), 'utf8');
   if (!/structure OrderedProps where\s+private mk ::/.test(orderedProps)) fail('OrderedProps constructor is public');
@@ -364,6 +450,35 @@ function compiledModuleName(artifact) {
     .join('.');
 }
 
+function compiledArtifactFile(name) {
+  return join(compiledLibraryDirectory, `${name.split('.').join(sep)}.olean`);
+}
+
+/** Every module of the `TSLean` Lean library, taken from the source tree Lake compiles. */
+function libraryModules() {
+  const sources = [
+    join(leanDirectory, 'TSLean.lean'),
+    ...filesRecursively(join(leanDirectory, 'TSLean'), '.lean', 'Lean source tree contains symlink'),
+  ];
+  return new Set(
+    sources.map((file) =>
+      file
+        .slice(leanDirectory.length + 1, -'.lean'.length)
+        .split(sep)
+        .join('.'),
+    ),
+  );
+}
+
+/**
+ * Require the compiled library and its source tree to name the same modules.
+ *
+ * Both directions matter and neither implies the other. An artifact with no source is a proof that
+ * survived the deletion of what proved it; a source with no artifact is a module that no build ever
+ * elaborated, which is how thousands of lines of unverified Lean can sit in the tree looking
+ * verified. Only `unbuiltSourceAllowlist` may be missing an artifact, and only while it stays
+ * missing.
+ */
 function checkCompiledArtifacts() {
   const directory = join(compiledLibraryDirectory, 'TSLean');
   const orphans = filesRecursively(directory, '.olean', 'Lean build tree contains symlink')
@@ -371,6 +486,15 @@ function checkCompiledArtifacts() {
     .map((artifact) => artifact.slice(root.length + 1))
     .sort();
   if (orphans.length > 0) fail(`orphaned Lean build artifacts have no source module: ${orphans.join(', ')}`);
+  const modules = libraryModules();
+  const unbuilt = [...modules]
+    .filter((name) => !unbuiltSourceAllowlist.has(name) && !existsSync(compiledArtifactFile(name)))
+    .sort();
+  if (unbuilt.length > 0) fail(`Lean source modules have no compiled artifact: ${unbuilt.join(', ')}`);
+  for (const name of [...unbuiltSourceAllowlist].sort()) {
+    if (!modules.has(name)) fail(`unbuilt-source allowlist names a module with no source: ${name}`);
+    if (existsSync(compiledArtifactFile(name))) fail(`unbuilt-source allowlist names a compiled module: ${name}`);
+  }
 }
 
 function withTemporaryLeanFile(source, use) {
@@ -410,17 +534,92 @@ function auditedModules(imports) {
 }
 
 function checkAuditedEnvironment(imports) {
-  const unsourced = [...auditedModules(imports)]
+  const modules = auditedModules(imports);
+  const unsourced = [...modules]
     .filter((name) => inNamespace(name, 'TSLean') && !existsSync(moduleSourceFile(name)))
     .sort();
   if (unsourced.length > 0) fail(`audited Lean environment loaded modules with no source: ${unsourced.join(', ')}`);
+  return modules.size;
 }
 
-function runLean(file) {
+/** The Lean modules the compiler puts at the top of the file it emits for `file`. */
+function emittedImports(file) {
+  const emitted = buildLeanFile(rewriteModule(parseFile({ fileName: file })));
+  return emitted.decls.flatMap((declaration) => (declaration.tag === 'Import' ? [declaration.module] : []));
+}
+
+/**
+ * The library modules generated code can import, taken from the compiler rather than listed here.
+ *
+ * Two sources, because an emitted import has two origins and neither one covers the other.
+ *
+ * The compiler's own: `STATIC_LEAN_IMPORTS` is every module `LowerCtx.resolveImports` can request
+ * (and the lowerer's scan is typed by it, so adding a target without declaring it does not compile),
+ * `DO_LEAN_IMPORTS` is what the parser injects into a Durable Object file, and
+ * `WORKERS_LEAN_IMPORTS` is the declared set for Workers bindings. Declared, so a module is audited
+ * whether or not a fixture happens to reach it — the defect this closed was that no fixture used a
+ * `KV.`/`R2.`/`D1.` expression, so five Workers modules sat in the emitted trusted base of every
+ * Workers artifact while the gate never looked at them.
+ *
+ * The program's own: whatever the source imported, mapped to a Lean module by the parser. That
+ * cannot be declared, so it is measured, by lowering every fixture and reading the imports off the
+ * emitted file. `TSLean.Generated.*` names the compiler's output for a *sibling* source file, not a
+ * library module, so it is only audited when the repository does commit that module; everything else
+ * an emitted file imports has to exist in `lean/`, or the compiler emits Lean that cannot elaborate.
+ */
+export function emittedImportClosure(directory = fixtureDirectory) {
+  const audited = new Set();
+  const unsourced = new Set();
+  const consider = (module, origin) => {
+    if (existsSync(moduleSourceFile(module))) audited.add(module);
+    else if (!inNamespace(module, 'TSLean.Generated')) unsourced.add(`${module} (${origin})`);
+  };
+  for (const module of [...STATIC_LEAN_IMPORTS, ...DO_LEAN_IMPORTS, ...WORKERS_LEAN_IMPORTS]) {
+    consider(module, 'declared');
+  }
+  for (const file of filesRecursively(directory, '.ts', 'fixture source tree contains symlink')) {
+    for (const module of emittedImports(file)) consider(module, file.slice(directory.length + 1));
+  }
+  if (unsourced.size > 0) {
+    fail(`emitted imports name Lean modules with no source: ${[...unsourced].sort().join(', ')}`);
+  }
+  if (audited.size === 0) fail('no emitted library imports were derived from the fixture corpus');
+  return [...audited].sort();
+}
+
+/**
+ * Audit every declaration of every loaded module under `modulePrefix`, allowlist included.
+ *
+ * `#audit_proofs` reports public proposition-valued declarations of a *namespace*, which leaves two
+ * ways to hold a `sorry`: be private, or not be a `Prop` — `instance : Inhabited Server := ⟨sorry⟩`
+ * is neither private nor visible to it. `#audit_constants` selects by compiled module and filters
+ * nothing, so both are reported.
+ *
+ * `leanPath` is added to the module search path, which is how a test can put a module with a
+ * fabricated axiom dependency into the audited environment without touching the repository.
+ */
+export function checkModuleConstants(imports, modulePrefix, leanPath) {
+  const result = withTemporaryLeanFile(
+    [
+      'import TSLean.JS.AxiomAuditMeta',
+      ...imports.map((name) => `import ${name}`),
+      `#audit_constants ${modulePrefix}`,
+      '',
+    ].join('\n'),
+    (file) => runLean(file, leanPath),
+  );
+  if (result.stderr.trim().length > 0) fail(`unexpected Lean constant audit stderr: ${result.stderr.trim()}`);
+  const records = parseEnvironmentAudit(result.stdout);
+  enforceAllowlist(records);
+  return records;
+}
+
+function runLean(file, leanPath) {
   const result = spawnSync('lake', ['env', 'lean', file], {
     cwd: leanDirectory,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: leanPath === undefined ? env : { ...env, LEAN_PATH: leanPath },
   });
   if (result.status !== 0) fail(`Lean audit exited with status ${result.status}: ${result.stderr.trim()}`);
   return result;
@@ -442,7 +641,7 @@ function refinementAuditImports() {
   const discovered = leanFilesRecursively(refinementDirectory)
     .map((file) => file.slice(refinementDirectory.length + 1))
     .filter((relative) => relative !== 'AxiomAudit.lean')
-    .map((relative) => `TSLean.Refinement.${relative.slice(0, -'.lean'.length).split(sep).join('.')}`);
+    .map((relative) => sourceModuleName('TSLean.Refinement', relative));
   return [
     'TSLean.JS.AxiomAuditMeta',
     'TSLean.Refinement',
@@ -508,69 +707,87 @@ function selfTest() {
     () => enforceRefinementRegistry(substitutedProofRecords),
     `required refinement proof declaration is missing: ${requiredProofs[0]}`,
   );
-  expectSourceFailure(
+  // The import checks report rather than throw, so a rejection is a violation in the returned list
+  // and an acceptance is an empty one. Both directions are asserted: a check that silently stopped
+  // reporting would otherwise look exactly like a tree with nothing wrong in it.
+  const expectViolation = (label, violations, expected) => {
+    if (!violations.some((violation) => violation.includes(expected))) fail(`synthetic ${label} was accepted`);
+  };
+  const expectNoViolation = (label, violations) => {
+    if (violations.length > 0) fail(`legitimate ${label} was rejected: ${violations.join(', ')}`);
+  };
+  expectViolation(
     'production test import',
-    () => validateProductionBarrel('import TSLean.JS.ExecutionTests\n'),
+    productionBarrelViolations('import TSLean.JS.ExecutionTests\n'),
     'imports non-semantic JS module TSLean.JS.ExecutionTests',
   );
-  expectSourceFailure(
+  expectViolation(
     'refinement prefix bypass',
-    () => validateRefinementSource('Core.lean', 'import TSLean.RefinementBackdoor.Core\n'),
+    refinementImportViolations('Core.lean', 'import TSLean.RefinementBackdoor.Core\n'),
     'imports non-isolated module TSLean.RefinementBackdoor.Core',
   );
-  expectSourceFailure(
+  expectViolation(
     'JS prefix bypass',
-    () => validateRefinementSource('Core.lean', 'import TSLean.JSBackdoor.Value\n'),
+    refinementImportViolations('Core.lean', 'import TSLean.JSBackdoor.Value\n'),
     'imports non-isolated module TSLean.JSBackdoor.Value',
   );
-  expectSourceFailure(
+  expectViolation(
     'indented production test import',
-    () => validateProductionBarrel('  import TSLean.JS.ExecutionTests\n'),
+    productionBarrelViolations('  import TSLean.JS.ExecutionTests\n'),
     'imports non-semantic JS module TSLean.JS.ExecutionTests',
   );
-  expectSourceFailure(
+  expectViolation(
     'production audit-meta import',
-    () => validateProductionBarrel('import TSLean.JS.AxiomAuditMeta\n'),
+    productionBarrelViolations('import TSLean.JS.AxiomAuditMeta\n'),
     'imports non-semantic JS module TSLean.JS.AxiomAuditMeta',
   );
-  expectSourceFailure(
+  expectViolation(
     'semantic test import',
-    () => validateSemanticSource('Value.lean', 'import TSLean.JS.FutureTests\n'),
+    semanticImportViolations('Value.lean', 'import TSLean.JS.FutureTests\n'),
     'imports non-semantic JS module TSLean.JS.FutureTests',
   );
-  expectSourceFailure(
+  expectViolation(
     'production oracle import',
-    () => validateProductionBarrel('import TSLean.JS.Oracle.Primitive\n'),
+    productionBarrelViolations('import TSLean.JS.Oracle.Primitive\n'),
     'imports non-semantic JS module TSLean.JS.Oracle.Primitive',
   );
-  expectSourceFailure(
+  expectViolation(
     'semantic oracle import',
-    () => validateSemanticSource('Value.lean', 'import TSLean.JS.Oracle.Protocol\n'),
+    semanticImportViolations('Value.lean', 'import TSLean.JS.Oracle.Protocol\n'),
     'imports non-semantic JS module TSLean.JS.Oracle.Protocol',
   );
-  validateProductionBarrel('  import TSLean.JS.Value\n');
-  expectSourceFailure(
+  expectNoViolation('indented production import', productionBarrelViolations('  import TSLean.JS.Value\n'));
+  expectViolation(
     'refinement legacy runtime import',
-    () => validateRefinementSource('Core.lean', 'import TSLean.Runtime.Basic\n'),
+    refinementImportViolations('Core.lean', 'import TSLean.Runtime.Basic\n'),
     'imports legacy runtime module TSLean.Runtime.Basic',
   );
-  expectSourceFailure(
+  expectViolation(
     'refinement test import',
-    () => validateRefinementSource('Refinement.lean', 'import TSLean.Refinement.Tests.Core\n'),
+    refinementImportViolations('Refinement.lean', 'import TSLean.Refinement.Tests.Core\n'),
     'imports non-semantic refinement module TSLean.Refinement.Tests.Core',
   );
-  expectSourceFailure(
+  expectViolation(
     'nested refinement test import',
-    () => validateRefinementSource('Refinement.lean', 'import TSLean.Refinement.Nested.Tests.Core\n'),
+    refinementImportViolations('Refinement.lean', 'import TSLean.Refinement.Nested.Tests.Core\n'),
     'imports non-semantic refinement module TSLean.Refinement.Nested.Tests.Core',
   );
-  validateRefinementSource('Refinement.lean', 'import TSLean.Refinement.Core\n');
-  validateRefinementSource('Support.lean', 'import TSLean.Refinement.Tests.Core\n', false);
-  validateProductionBarrel(`
+  expectNoViolation(
+    'refinement production import',
+    refinementImportViolations('Refinement.lean', 'import TSLean.Refinement.Core\n'),
+  );
+  expectNoViolation(
+    'support test import',
+    refinementImportViolations('Support.lean', 'import TSLean.Refinement.Tests.Core\n', false),
+  );
+  expectNoViolation(
+    'commented barrel import',
+    productionBarrelViolations(`
     -- import TSLean.JS.ExecutionTests
     /- import TSLean.JS.AxiomAuditMeta -/
     import TSLean.JS.Value
-  `);
+  `),
+  );
   try {
     parseEnvironmentAudit('not a record');
   } catch (error) {
@@ -588,6 +805,23 @@ function main() {
   if (args.selfTest) return selfTest();
   const expected = readExpectedAuditCount(args.evidence);
   checkSources();
+  const closure = emittedImportClosure();
+  const measured = {
+    imports: closure.length,
+    modules: checkAuditedEnvironment(closure),
+    declarations: checkModuleConstants(closure, 'TSLean').size,
+  };
+  stdout.write(
+    `Emitted trusted base passed: ${measured.imports} emitted library imports, ` +
+      `${measured.modules} loaded modules, ${measured.declarations} audited declarations\n`,
+  );
+  if (expected.emittedTrustedBase !== undefined) {
+    for (const key of EMITTED_TRUSTED_BASE_KEYS) {
+      if (measured[key] !== expected.emittedTrustedBase[key]) {
+        fail(`expected ${expected.emittedTrustedBase[key]} emitted trusted base ${key}, found ${measured[key]}`);
+      }
+    }
+  }
   checkAuditedEnvironment(['TSLean.JS.AxiomAudit']);
   const { records, stderr } = runLeanAudit('TSLean/JS/AxiomAudit.lean');
   if (stderr.trim().length > 0) fail(`unexpected Lean audit stderr: ${stderr.trim()}`);

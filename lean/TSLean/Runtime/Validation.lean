@@ -164,8 +164,11 @@ theorem isEmailLike_nonempty (s : String) (h : isEmailLike s = true) :
         exact Nat.pos_of_ne_zero (fun hz => by
           have hs_empty := Iff.mp (string_length_eq_zero_iff s) hz
           rw [hs_empty] at hsp
-          -- "".splitOn "@" = [""] ≠ ["hd", "hd2"]
-          have : ("" : String).splitOn "@" = [""] := by native_decide
+          -- "".splitOn "@" = [""] ≠ ["hd", "hd2"]. `splitOn` is defined by well-founded
+          -- recursion, so it does not reduce definitionally; rewriting with its equation
+          -- lemmas leaves a goal `decide` closes in the kernel.
+          have : ("" : String).splitOn "@" = [""] := by
+            rw [String.splitOn, String.splitOnAux]; decide
           rw [this] at hsp
           exact absurd hsp (by simp))
       | cons _ _ => rw [hsp] at h; simp at h

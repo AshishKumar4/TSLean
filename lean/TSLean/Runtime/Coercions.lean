@@ -59,12 +59,12 @@ theorem intToNat_natToInt (n : Nat) : intToNat (natToInt n) = n := rfl
 theorem strLength_empty : strLength "" = 0 := by simp [strLength]
 theorem strRepeat_zero (s : String) : strRepeat s 0 = "" := by simp [strRepeat]
 theorem strSlice_empty (s : String) (i : Nat) : strSlice s i i = "" := by simp [strSlice]
--- String.startsWith "" depends on internal Slice/memcmpSlice representation.
--- The general theorem strStartsWith s "" = true is axiomatically true but requires
--- opening up the internal Slice API. We prove specific instances by native_decide.
-theorem strStartsWith_empty_literal : strStartsWith "hello" "" = true := by native_decide
--- strStartsWith_same: s.startsWith s = true (provable for concrete strings)
-theorem strStartsWith_same_concrete : strStartsWith "hello" "hello" = true := by native_decide
+-- Two concrete `strStartsWith` facts were removed here. They were proved `by native_decide`, which
+-- injects `Lean.ofReduceBool` into the axiom set, and every non-pure generated module imports this
+-- file, so that axiom sat in the trusted base of the compiler's own output. `decide` cannot replace
+-- it because `String.startsWith` reduces through an internal slice representation. Nothing consumed
+-- either theorem, so they are gone rather than weakened; a general statement belongs in the JS model
+-- over `JSString`, where string equality is code-unit equality the kernel can see.
 theorem natToInt_add (m n : Nat) : natToInt (m + n) = natToInt m + natToInt n := by simp [natToInt, Int.natCast_add]
 theorem natToInt_mul (m n : Nat) : natToInt (m * n) = natToInt m * natToInt n := by simp [natToInt, Int.natCast_mul]
 

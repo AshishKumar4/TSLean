@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "outputPath": "evidence/phase5-remove-false-claims-manifest.json",
-  "baseRevision": "48c59ed8ee6ca579fb925ad158448de443067949",
+  "outputPath": "evidence/phase5-emitted-tcb-manifest.json",
+  "baseRevision": "110c1296e1dce0f67601c13e5863e13ee9252eac",
   "branch": "rebuild/semantic-core",
   "counts": {
     "tests": {
-      "files": 49,
-      "passed": 1875,
+      "files": 45,
+      "passed": 1690,
       "failed": 0,
       "todo": 10
     },
     "lean": {
-      "jobs": 184,
+      "jobs": 180,
       "status": "passed"
     },
     "corpus": {
@@ -38,7 +38,12 @@
       "aggregateFixtureBudget": 65536
     },
     "lint": "passed",
-    "build": "passed"
+    "build": "passed",
+    "emittedTrustedBase": {
+      "imports": 22,
+      "modules": 2088,
+      "declarations": 6166
+    }
   },
   "refinementProofs": {
     "audited": 263,
@@ -279,34 +284,14 @@
         "countPath": "differential.aggregateFixtureBudget",
         "measure": "value"
       }
-    ],
-    "revision": "110c1296e1dce0f67601c13e5863e13ee9252eac"
+    ]
   },
   "hashGroups": {
     "source": {
-      "paths": ["src"],
-      "revision": "110c1296e1dce0f67601c13e5863e13ee9252eac"
-    },
-    "leanToTypeScriptCompiler": {
-      "paths": [
-        "README.md",
-        "docs/LEAN_TO_TS_PLAN.md",
-        "examples/lean-to-typescript",
-        "lean/TSLean/Examples/Placement.lean",
-        "lean/TSLean/LeanToTypeScript/Export.lean",
-        "package-lock.json",
-        "package.json",
-        "src/lean-to-typescript",
-        "tests/helpers/lean-project-fixture.ts",
-        "tests/lean-to-typescript-ir.test.ts",
-        "tests/lean-to-typescript-package.test.ts",
-        "tests/lean-to-typescript.test.ts",
-        "tests/package.test.ts"
-      ]
+      "paths": ["src"]
     },
     "jsRuntime": {
-      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"],
-      "revision": "110c1296e1dce0f67601c13e5863e13ee9252eac"
+      "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]
     },
     "refinementRuntimeAndBarrel": {
       "paths": [
@@ -321,8 +306,7 @@
         "lean/TSLean/Refinement/Primitive.lean",
         "lean/TSLean/Refinement/Record.lean",
         "lean/TSLean/Refinement/String.lean"
-      ],
-      "revision": "110c1296e1dce0f67601c13e5863e13ee9252eac"
+      ]
     },
     "refinementTestsAuditRegistry": {
       "paths": [
@@ -332,12 +316,10 @@
         "tests/js-trust.test.ts",
         "tests/lean-fixtures/refinement-invalid-guard-receipt.lean",
         "tests/lean-fixtures/refinement-private-constructors.lean"
-      ],
-      "revision": "110c1296e1dce0f67601c13e5863e13ee9252eac"
+      ]
     },
     "corpus": {
-      "paths": ["spec/corpus"],
-      "revision": "110c1296e1dce0f67601c13e5863e13ee9252eac"
+      "paths": ["spec/corpus"]
     },
     "differentialSpecHarness": {
       "paths": [
@@ -348,8 +330,7 @@
         "scripts/generate-differential-manifest.mjs",
         "tests/js-model-differential.test.ts",
         "tests/differential"
-      ],
-      "revision": "110c1296e1dce0f67601c13e5863e13ee9252eac"
+      ]
     },
     "trustEvidenceInfrastructure": {
       "paths": [
@@ -359,13 +340,11 @@
         "scripts/check-js-axioms.mjs",
         "tests/helpers/json-schema.ts",
         "tests/corpus-schema.test.ts",
-        "tests/heap-scale.test.ts",
         "tests/package.test.ts",
         "lean/TSLean.lean",
         "lean/TSLean/Tests.lean",
         "lean/lakefile.toml"
-      ],
-      "revision": "110c1296e1dce0f67601c13e5863e13ee9252eac"
+      ]
     }
   }
 }

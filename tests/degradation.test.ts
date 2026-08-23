@@ -174,6 +174,26 @@ describe('degradation scan: transpiler output', () => {
   it('reports nothing for output that carries no placeholder', () => {
     expect(markersFor('export function add(a: number, b: number): number { return a + b; }')).toEqual([]);
   });
+
+  it('degrades visibly for a carrier reached through a struct field', () => {
+    // `DurableObjectNamespace` is an opaque stub with no `Inhabited` instance, so neither `Rooms`
+    // nor the `Registry` that holds one has a value to stand in for. Both the derive clause and the
+    // placeholder used to look at the struct's own fields only: `Registry` got `deriving Inhabited`
+    // and `(default : Registry)`, which Lean rejects, and the scan reported the weaker marker for a
+    // file that did not elaborate at all.
+    const source = fs.readFileSync(path.join(FIX, 'do-workers/nested-carrier.ts'), 'utf8');
+    const generated = generateLeanTracked(rewriteModule(parseFile({ fileName: 'nested.ts', sourceText: source })));
+    expect(generated.degradations).toEqual([{ level: 'sorry', site: 'def chosen' }]);
+    expect(generated.code).toContain('(sorry : Registry)');
+    // The union asks the same question at the other `deriving` site, which never asked it: Lean
+    // builds `Inhabited` from one constructor, so only a union whose every constructor carries a
+    // carrier loses it.
+    for (const declaration of ['structure Rooms where', 'structure Registry where', 'inductive Binding where']) {
+      const body = generated.code.slice(generated.code.indexOf(declaration));
+      expect(body.slice(0, body.indexOf('\n\n'))).toContain('deriving Repr, BEq');
+      expect(body.slice(0, body.indexOf('\n\n'))).not.toContain('Inhabited');
+    }
+  });
 });
 
 // ─── --strict ─────────────────────────────────────────────────────────────────
@@ -210,6 +230,16 @@ describe('CLI --strict', () => {
     expect(run.status).toBe(1);
     expect(run.stderr).toContain('default placeholder(s) in generated Lean');
     expect(run.stderr).toContain('default at def area');
+  });
+
+  it('rejects the sorry a struct field carrying an uninhabited type leaves behind', () => {
+    const dir = tmpDir('tslean-strict-carrier-');
+    const run = spawnCli([
+      path.join(FIX, 'do-workers/nested-carrier.ts'), '-o', path.join(dir, 'out.lean'), '--strict',
+    ]);
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('--strict: 1 sorry axiom(s) in generated Lean');
+    expect(run.stderr).toContain('sorry at def chosen');
   });
 
   it('accepts output that carries no placeholder', () => {
