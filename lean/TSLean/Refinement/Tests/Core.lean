@@ -117,6 +117,8 @@ private def totalUnitCodec : Codec Unit Unit Unit unitRefinement where
     exact ⟨Refinement.Heap.ExactExtension.refl old valid, ⟨rfl, rfl⟩⟩
   decode_sound := by
     intro heap value native decoded
+    change (if value = .primitive .undefined then Except.ok () else Except.error ()) =
+      Except.ok native at decoded
     split at decoded
     · rename_i equal
       cases decoded

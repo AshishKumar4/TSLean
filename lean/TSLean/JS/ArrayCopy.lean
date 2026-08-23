@@ -74,20 +74,21 @@ private theorem allocateCollected_preservesFreshArrayResults (baseline : Nat)
         exact ⟨Nat.le_trans lower (Nat.le_of_eq facts.1.symm),
           ⟨⟨values.reverse.length, true⟩, facts.2⟩, valueValid⟩
 
-private def collectSlice (hook : BodyHook P) (source : RefId) (stop : Nat) :
-    Nat → List (Option Value) → JSM P (List (Option Value))
-  | index, values =>
-      if stop ≤ index then pure values
-      else do
-        let heap ← JSM.readHeap
-        let key := PropertyKey.string (PropertyKey.arrayIndexString index)
-        match Prototype.lookup heap source key with
-        | .error (.heap fault) => JSM.fail (heapFault fault)
-        | .error .cycleOrFuelExhausted => JSM.fail (heapFault .cycleOrFuelExhausted)
-        | .ok none => collectSlice hook source stop (index + 1) (none :: values)
-        | .ok (some _) =>
-            let value ← ObjectAccess.get hook source key (.object source)
-            collectSlice hook source stop (index + 1) (some value :: values)
+private def collectSlice (hook : BodyHook P) (source : RefId) (stop index : Nat)
+    (values : List (Option Value)) : JSM P (List (Option Value)) :=
+  if stop ≤ index then pure values
+  else do
+    let heap ← JSM.readHeap
+    let key := PropertyKey.string (PropertyKey.arrayIndexString index)
+    match Prototype.lookup heap source key with
+    | .error (.heap fault) => JSM.fail (heapFault fault)
+    | .error .cycleOrFuelExhausted => JSM.fail (heapFault .cycleOrFuelExhausted)
+    | .ok none => collectSlice hook source stop (index + 1) (none :: values)
+    | .ok (some _) =>
+        let value ← ObjectAccess.get hook source key (.object source)
+        collectSlice hook source stop (index + 1) (some value :: values)
+termination_by stop - index
+decreasing_by all_goals omega
 
 private theorem collectSlice_preservesResultsAux (hook : BodyHook P) (source : RefId) (stop : Nat)
     (index fuel : Nat) (values : List (Option Value)) (bound : stop - index ≤ fuel)
