@@ -64,7 +64,7 @@ private theorem nodup_of_map {α β : Type _} (f : α → β) :
   | head :: tail, nodup => by
       rw [List.map_cons, List.nodup_cons] at nodup
       exact List.nodup_cons.mpr
-        ⟨fun member => nodup.1 (List.mem_map_of_mem member), nodup_of_map f tail nodup.2⟩
+        ⟨fun member => nodup.1 (List.mem_map_of_mem (l := tail) f member), nodup_of_map f tail nodup.2⟩
 
 /-- Relabels a field codec's typed faults. Every field codec in one schema reports the same fault
 types while each carrier's committed codec has its own, so listing `Bool.codec` beside `String.codec`
@@ -81,23 +81,21 @@ def relabel {α : Type u} {FieldEncodeFault FieldEncodeLabel : Type v}
   encode_sound := by
     intro old native value next valid encoded
     refine codec.encode_sound valid ?_
+    change Except.mapError encodeLabel (codec.encode old native) = .ok (value, next) at encoded
     cases result : codec.encode old native with
     | error fault =>
-        rw [result] at encoded
-        exact absurd encoded (by simp [Except.mapError])
+        simp [result, Except.mapError] at encoded
     | ok produced =>
-        rw [result] at encoded
-        simpa [Except.mapError] using encoded
+        simpa [result, Except.mapError] using encoded
   decode_sound := by
     intro heap value native decoded
     refine codec.decode_sound ?_
+    change Except.mapError decodeLabel (codec.decode heap value) = .ok native at decoded
     cases result : codec.decode heap value with
     | error fault =>
-        rw [result] at decoded
-        exact absurd decoded (by simp [Except.mapError])
+        simp [result, Except.mapError] at decoded
     | ok produced =>
-        rw [result] at decoded
-        simpa [Except.mapError] using decoded
+        simpa [result, Except.mapError] using decoded
 
 /-- Relabelling faults preserves decode completeness. -/
 theorem relabel_complete {α : Type u} {FieldEncodeFault FieldEncodeLabel : Type v}
@@ -826,7 +824,8 @@ private theorem defineFields_ok (old : Heap) (root : RefId) (rootFresh : old.siz
         rcases List.mem_append.mp member with member | member
         · rw [otherDescriptors (.string entry.1) (by
             intro keyEq
-            exact keyFresh (PropertyKey.string.inj keyEq ▸ List.mem_map_of_mem member))]
+            exact keyFresh (PropertyKey.string.inj keyEq ▸
+              List.mem_map_of_mem (l := defined) (fun entry : JSString × Value => entry.1) member))]
           exact descriptors entry member
         · rw [show entry = field from by simpa using member]
           exact nextDescriptor
