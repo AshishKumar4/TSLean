@@ -4,7 +4,6 @@ import { describe, it, expect } from 'vitest';
 import { parseFile } from '../src/parser/index.js';
 import { rewriteModule } from '../src/rewrite/index.js';
 import { generateLean } from '../src/codegen/index.js';
-import { generateVeilStub } from '../src/verification/veil-gen.js';
 
 function transpile(fixture: string): string {
   const mod = parseFile({ fileName: `tests/fixtures/do-workers/${fixture}` });
@@ -151,41 +150,5 @@ describe('Multi-DO RPC', () => {
   it('generates Storage.get for order retrieval', () => {
     const lean = transpile('multi-do-rpc.ts');
     expect(lean).toContain('Storage.get');
-  });
-});
-
-// ─── Veil bridge ──────────────────────────────────────────────────────────────
-
-describe('Veil bridge', () => {
-  it('generates Veil stub for Counter DO', () => {
-    const mod = parseFile({ fileName: 'tests/fixtures/do-workers/counter-do.ts' });
-    const rw = rewriteModule(mod);
-    const result = generateVeilStub(rw, 'Counter', 'TSLean.Generated.CounterDo');
-    expect(result).not.toBeNull();
-    expect(result.actions).toContain('action_increment');
-    expect(result.actions).toContain('action_decrement');
-    expect(result.actions).toContain('action_getCount');
-    expect(result.actions).toContain('action_fetch');
-    expect(result.leanCode).toContain('TransitionSystem State');
-    expect(result.leanCode).toContain('veil_relation');
-    expect(result.leanCode).toContain('safety_holds');
-    expect(result.leanCode).toContain('invConsecution');
-  });
-
-  it('generates Veil stub for Rate Limiter DO', () => {
-    const mod = parseFile({ fileName: 'tests/fixtures/do-workers/rate-limiter-alarm.ts' });
-    const rw = rewriteModule(mod);
-    const result = generateVeilStub(rw, 'RateLimiter', 'TSLean.Generated.RateLimiter');
-    expect(result).not.toBeNull();
-    expect(result.actions).toContain('action_fetch');
-    expect(result.actions).toContain('action_alarm');
-    expect(result.leanCode).toContain('TransitionSystem');
-  });
-
-  it('returns null for non-DO module', () => {
-    const mod = parseFile({ fileName: 'tests/fixtures/basic/hello.ts' });
-    const rw = rewriteModule(mod);
-    const result = generateVeilStub(rw, 'NonExistent', 'TSLean.Generated.Hello');
-    expect(result).toBeNull();
   });
 });

@@ -7,10 +7,19 @@ import * as fs from 'fs';
 import { parseFile } from '../src/parser/index.js';
 import { rewriteModule } from '../src/rewrite/index.js';
 import { generateLean } from '../src/codegen/index.js';
-import { generateVerification } from '../src/verification/index.js';
 import {
-  IRModule, IRDecl, hasAsync, hasState, hasExcept, hasIO, isPure,
-  TyString, TyFloat, TyBool, TyNat, TyUnit,
+  IRModule,
+  IRDecl,
+  hasAsync,
+  hasState,
+  hasExcept,
+  hasIO,
+  isPure,
+  TyString,
+  TyFloat,
+  TyBool,
+  TyNat,
+  TyUnit,
 } from '../src/ir/types.js';
 
 const FIX = path.join(process.cwd(), 'tests/fixtures');
@@ -27,7 +36,10 @@ function findDecl(mod: IRModule, name: string): IRDecl | undefined {
   function search(ds: IRDecl[]): IRDecl | undefined {
     for (const d of ds) {
       if ('name' in d && d.name === name) return d;
-      if (d.tag === 'Namespace') { const f = search(d.decls); if (f) return f; }
+      if (d.tag === 'Namespace') {
+        const f = search(d.decls);
+        if (f) return f;
+      }
     }
   }
   return search(mod.decls);
@@ -38,23 +50,44 @@ function findDecl(mod: IRModule, name: string): IRDecl | undefined {
 describe('All fixtures: basic/hello.ts', () => {
   let mod: IRModule;
   let code: string;
-  beforeAll(() => { mod = parsed('basic/hello.ts'); code = pipeline('basic/hello.ts'); });
+  beforeAll(() => {
+    mod = parsed('basic/hello.ts');
+    code = pipeline('basic/hello.ts');
+  });
 
   it('has 6+ declarations', () => expect(mod.decls.length).toBeGreaterThanOrEqual(5));
-  it('greet is FuncDef',    () => expect(findDecl(mod, 'greet')?.tag).toBe('FuncDef'));
-  it('add is FuncDef',      () => expect(findDecl(mod, 'add')?.tag).toBe('FuncDef'));
+  it('greet is FuncDef', () => expect(findDecl(mod, 'greet')?.tag).toBe('FuncDef'));
+  it('add is FuncDef', () => expect(findDecl(mod, 'add')?.tag).toBe('FuncDef'));
   it('isPositive is FuncDef', () => expect(findDecl(mod, 'isPositive')?.tag).toBe('FuncDef'));
   it('factorial is FuncDef', () => expect(findDecl(mod, 'factorial')?.tag).toBe('FuncDef'));
-  it('PI is VarDecl',       () => { const d = findDecl(mod, 'PI'); expect(d?.tag).toBe('VarDecl'); });
+  it('PI is VarDecl', () => {
+    const d = findDecl(mod, 'PI');
+    expect(d?.tag).toBe('VarDecl');
+  });
   it('greeting is VarDecl', () => expect(findDecl(mod, 'greeting')).toBeDefined());
   it('output has s! interpolation', () => expect(code).toMatch(/s!"Hello, \{name\}!"/));
   it('output has partial def', () => expect(code).toContain('partial def factorial'));
-  it('output has if-then-else in factorial', () => { const fn = code.slice(code.indexOf('factorial')); expect(fn.slice(0, 200)).toContain('if'); });
-  it('output has no TS syntax', () => { expect(code).not.toContain('function '); expect(code).not.toContain('==='); });
+  it('output has if-then-else in factorial', () => {
+    const fn = code.slice(code.indexOf('factorial'));
+    expect(fn.slice(0, 200)).toContain('if');
+  });
+  it('output has no TS syntax', () => {
+    expect(code).not.toContain('function ');
+    expect(code).not.toContain('===');
+  });
   it('output has open TSLean', () => expect(code).toContain('open TSLean'));
-  it('greet return type is String', () => { const d = findDecl(mod, 'greet') as any; expect(d?.retType?.tag).toBe('String'); });
-  it('add has two Float params', () => { const d = findDecl(mod, 'add') as any; expect(d?.params?.length).toBe(2); });
-  it('isPositive returns Bool', () => { const d = findDecl(mod, 'isPositive') as any; expect(d?.retType?.tag).toBe('Bool'); });
+  it('greet return type is String', () => {
+    const d = findDecl(mod, 'greet') as any;
+    expect(d?.retType?.tag).toBe('String');
+  });
+  it('add has two Float params', () => {
+    const d = findDecl(mod, 'add') as any;
+    expect(d?.params?.length).toBe(2);
+  });
+  it('isPositive returns Bool', () => {
+    const d = findDecl(mod, 'isPositive') as any;
+    expect(d?.retType?.tag).toBe('Bool');
+  });
 });
 
 // ─── basic/interfaces.ts — comprehensive ────────────────────────────────────
@@ -62,7 +95,10 @@ describe('All fixtures: basic/hello.ts', () => {
 describe('All fixtures: basic/interfaces.ts', () => {
   let mod: IRModule;
   let code: string;
-  beforeAll(() => { mod = parsed('basic/interfaces.ts'); code = pipeline('basic/interfaces.ts'); });
+  beforeAll(() => {
+    mod = parsed('basic/interfaces.ts');
+    code = pipeline('basic/interfaces.ts');
+  });
 
   it('Point is StructDef', () => expect(findDecl(mod, 'Point')?.tag).toBe('StructDef'));
   it('Point has x and y fields', () => {
@@ -92,7 +128,10 @@ describe('All fixtures: basic/interfaces.ts', () => {
 describe('All fixtures: generics/discriminated-unions.ts', () => {
   let mod: IRModule;
   let code: string;
-  beforeAll(() => { mod = parsed('generics/discriminated-unions.ts'); code = pipeline('generics/discriminated-unions.ts'); });
+  beforeAll(() => {
+    mod = parsed('generics/discriminated-unions.ts');
+    code = pipeline('generics/discriminated-unions.ts');
+  });
 
   it('Shape is InductiveDef', () => expect(findDecl(mod, 'Shape')?.tag).toBe('InductiveDef'));
   it('Shape has 3 constructors', () => {
@@ -116,8 +155,14 @@ describe('All fixtures: generics/discriminated-unions.ts', () => {
   it('output: inductive Shape', () => expect(code).toContain('inductive Shape'));
   it('output: | Circle', () => expect(code).toContain('| Circle'));
   it('output: match s with', () => expect(code).toContain('match s with'));
-  it('output: no "circle" string in match', () => { const fn = code.slice(code.indexOf('areaShape')); expect(fn.slice(0, 500)).not.toContain('"circle"'); });
-  it('output: .Circle pattern', () => { const fn = code.slice(code.indexOf('areaShape')); expect(fn.slice(0, 500)).toMatch(/\.\s*Circle/); });
+  it('output: no "circle" string in match', () => {
+    const fn = code.slice(code.indexOf('areaShape'));
+    expect(fn.slice(0, 500)).not.toContain('"circle"');
+  });
+  it('output: .Circle pattern', () => {
+    const fn = code.slice(code.indexOf('areaShape'));
+    expect(fn.slice(0, 500)).toMatch(/\.\s*Circle/);
+  });
   it('output: pattern vars not s.field', () => {
     const fn = code.slice(code.indexOf('areaShape'));
     expect(fn.slice(0, 500)).not.toContain('s.radius');
@@ -130,7 +175,10 @@ describe('All fixtures: generics/discriminated-unions.ts', () => {
 describe('All fixtures: generics/branded-types.ts', () => {
   let mod: IRModule;
   let code: string;
-  beforeAll(() => { mod = parsed('generics/branded-types.ts'); code = pipeline('generics/branded-types.ts'); });
+  beforeAll(() => {
+    mod = parsed('generics/branded-types.ts');
+    code = pipeline('generics/branded-types.ts');
+  });
 
   it('UserId is StructDef', () => expect(findDecl(mod, 'UserId')?.tag).toBe('StructDef'));
   it('RoomId is StructDef', () => expect(findDecl(mod, 'RoomId')?.tag).toBe('StructDef'));
@@ -150,7 +198,10 @@ describe('All fixtures: generics/branded-types.ts', () => {
 describe('All fixtures: effects/async.ts', () => {
   let mod: IRModule;
   let code: string;
-  beforeAll(() => { mod = parsed('effects/async.ts'); code = pipeline('effects/async.ts'); });
+  beforeAll(() => {
+    mod = parsed('effects/async.ts');
+    code = pipeline('effects/async.ts');
+  });
 
   it('fetchUser is FuncDef', () => expect(findDecl(mod, 'fetchUser')?.tag).toBe('FuncDef'));
   it('fetchUser has Async effect', () => {
@@ -161,7 +212,10 @@ describe('All fixtures: effects/async.ts', () => {
     const d = findDecl(mod, 'withRetry') as any;
     expect(d?.typeParams?.length).toBeGreaterThanOrEqual(1);
   });
-  it('output: IO in return type', () => { const line = code.split('\n').find(l => /def fetchUser|partial def fetchUser/.test(l)); expect(line).toContain('IO'); });
+  it('output: IO in return type', () => {
+    const line = code.split('\n').find((l) => /def fetchUser|partial def fetchUser/.test(l));
+    expect(line).toContain('IO');
+  });
   it('output: {T : Type}', () => expect(code).toContain('{T : Type}'));
 });
 
@@ -170,7 +224,10 @@ describe('All fixtures: effects/async.ts', () => {
 describe('All fixtures: effects/exceptions.ts', () => {
   let mod: IRModule;
   let code: string;
-  beforeAll(() => { mod = parsed('effects/exceptions.ts'); code = pipeline('effects/exceptions.ts'); });
+  beforeAll(() => {
+    mod = parsed('effects/exceptions.ts');
+    code = pipeline('effects/exceptions.ts');
+  });
 
   it('parseAge is FuncDef', () => expect(findDecl(mod, 'parseAge')?.tag).toBe('FuncDef'));
   it('divide is FuncDef', () => expect(findDecl(mod, 'divide')?.tag).toBe('FuncDef'));
@@ -197,20 +254,24 @@ describe('All fixtures: durable-objects', () => {
     describe(file, () => {
       let mod: IRModule;
       let code: string;
-      beforeAll(() => { mod = parsed(file); code = pipeline(file); });
+      beforeAll(() => {
+        mod = parsed(file);
+        code = pipeline(file);
+      });
 
-      it('has DO imports', () => expect(mod.imports.some(i => i.module.includes('DurableObjects'))).toBe(true));
-      it('has Runtime.Monad import', () => expect(mod.imports.some(i => i.module.includes('Runtime.Monad'))).toBe(true));
-      it('has state struct', () => expect(mod.decls.some(d => d.tag === 'StructDef')).toBe(true));
+      it('has DO imports', () => expect(mod.imports.some((i) => i.module.includes('DurableObjects'))).toBe(true));
+      it('has Runtime.Monad import', () =>
+        expect(mod.imports.some((i) => i.module.includes('Runtime.Monad'))).toBe(true));
+      it('has state struct', () => expect(mod.decls.some((d) => d.tag === 'StructDef')).toBe(true));
 
       for (const method of methods) {
         it(`has ${method} method`, () => {
           const d = findDecl(mod, method);
           // Method may be in namespace
           if (!d) {
-            const ns = mod.decls.find(d => d.tag === 'Namespace');
+            const ns = mod.decls.find((d) => d.tag === 'Namespace');
             if (ns?.tag === 'Namespace') {
-              expect(ns.decls.some(d => 'name' in d && d.name.includes(method))).toBe(true);
+              expect(ns.decls.some((d) => 'name' in d && d.name.includes(method))).toBe(true);
             }
           } else {
             expect(d).toBeDefined();
@@ -218,17 +279,18 @@ describe('All fixtures: durable-objects', () => {
         });
       }
 
-      it('output: import TSLean.DurableObjects.Http', () => expect(code).toContain('import TSLean.DurableObjects.Http'));
+      it('output: import TSLean.DurableObjects.Http', () =>
+        expect(code).toContain('import TSLean.DurableObjects.Http'));
       it('output: open TSLean', () => expect(code).toContain('open TSLean'));
-      it(`output: ${className} state struct`, () => expect(code).toMatch(new RegExp(`structure ${className}State|namespace ${className}`)));
+      it(`output: ${className} state struct`, () =>
+        expect(code).toMatch(new RegExp(`structure ${className}State|namespace ${className}`)));
     });
   }
 });
 
 // ─── advanced fixtures ────────────────────────────────────────────────────────
 
-const advancedFixtures = fs.readdirSync(path.join(FIX, 'advanced'))
-  .filter(f => f.endsWith('.ts'));
+const advancedFixtures = fs.readdirSync(path.join(FIX, 'advanced')).filter((f) => f.endsWith('.ts'));
 
 describe('All fixtures: advanced/', () => {
   for (const fixture of advancedFixtures) {
@@ -276,39 +338,34 @@ describe('All fixtures: advanced/', () => {
 describe('All fixtures: generics/generics.ts', () => {
   let mod: IRModule;
   let code: string;
-  beforeAll(() => { mod = parsed('generics/generics.ts'); code = pipeline('generics/generics.ts'); });
+  beforeAll(() => {
+    mod = parsed('generics/generics.ts');
+    code = pipeline('generics/generics.ts');
+  });
 
   it('identity is FuncDef', () => expect(findDecl(mod, 'identity')?.tag).toBe('FuncDef'));
   it('compose is FuncDef', () => expect(findDecl(mod, 'compose')?.tag).toBe('FuncDef'));
   it('Pair is StructDef', () => expect(findDecl(mod, 'Pair')?.tag).toBe('StructDef'));
-  it('output: def identity with {T}', () => { expect(code).toContain('def identity'); expect(code).toContain('{T : Type}'); });
+  it('output: def identity with {T}', () => {
+    expect(code).toContain('def identity');
+    expect(code).toContain('{T : Type}');
+  });
   it('output: def compose', () => expect(code).toContain('def compose'));
   it('output: def mapOpt', () => expect(code).toContain('def mapOpt'));
   it('output: structure Pair', () => expect(code).toContain('structure Pair'));
-});
-
-// ─── Verification on complex fixtures ─────────────────────────────────────
-
-describe('All fixtures: verification obligations', () => {
-  it('hello.ts has 0 obligations (pure functions)', () => {
-    const mod = parsed('basic/hello.ts');
-    const { obligations } = generateVerification(rewriteModule(mod));
-    // hello.ts has no division or array access
-    expect(obligations.length).toBeLessThanOrEqual(2);
-  });
-
-  it('exceptions.ts has division obligations', () => {
-    const mod = parsed('effects/exceptions.ts');
-    const { obligations } = generateVerification(rewriteModule(mod));
-    expect(obligations.some(o => o.kind === 'DivisionSafe')).toBe(true);
-  });
 });
 
 // ─── Full project transpilation ────────────────────────────────────────────
 
 describe('All fixtures: full-project transpilation', () => {
   const fp = path.join(FIX, 'full-project');
-  const files = ['shared/types.ts', 'shared/validators.ts', 'backend/auth-do.ts', 'backend/chat-room-do.ts', 'backend/router.ts'];
+  const files = [
+    'shared/types.ts',
+    'shared/validators.ts',
+    'backend/auth-do.ts',
+    'backend/chat-room-do.ts',
+    'backend/router.ts',
+  ];
 
   for (const file of files) {
     const fullPath = path.join(fp, file);

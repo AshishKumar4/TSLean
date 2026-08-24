@@ -17,5 +17,3 @@ export {
   writeProjectOutputs as writeTypeScriptProjectOutputs,
 } from '../project/index.js';
 export type { ProjectOpts, ProjectResult } from '../project/index.js';
-export { generateVerification } from '../verification/index.js';
-export type { ObligationKind, ProofObligation, VerificationResult } from '../verification/index.js';

@@ -16,8 +16,6 @@ bun run src/cli.ts ts-to-lean examples/07-modules --output /tmp/output --no-lake
 # With timing
 bun run src/cli.ts ts-to-lean examples/01-hello-world/hello.ts --output output.lean --timing
 
-# With Veil transition declarations
-bun run src/cli.ts ts-to-lean examples/12-durable-objects/counter-do.ts --output output.lean --veil
 ```
 
 ## Example Index
@@ -35,7 +33,7 @@ bun run src/cli.ts ts-to-lean examples/12-durable-objects/counter-do.ts --output
 | [09](09-real-world/)           | Real-World Patterns    | Todo API, config parser, event system                         |
 | [10](10-advanced/)             | Advanced / Limitations | typeof → sorry, regex stubs, workarounds, --strict            |
 | [11](11-cloudflare-workers/)   | Cloudflare Workers     | `export default { fetch }`, KV bindings, scheduled events     |
-| [12](12-durable-objects/)      | Durable Objects        | Storage, WebSocket Hibernation, Alarms, RPC, `--veil`         |
+| [12](12-durable-objects/)      | Durable Objects        | Storage, WebSocket Hibernation, alarms, and RPC models        |
 
 ## Expected Output
 

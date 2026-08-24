@@ -29,7 +29,7 @@ differential agreement as proof or successful compilation as application correct
 
 Current local evidence includes:
 
-- 1,929 passing tests and 10 explicit todo tests
+- 1,904 passing tests and 10 explicit todo tests
 - 7,587 differential vectors
 - a complete 184-job Lean build
 - 604 JavaScript trusted-base checks
@@ -86,8 +86,6 @@ Compile a project directory:
 ```bash
 tslean ts-to-lean src --output lean/Generated --tsconfig tsconfig.json
 ```
-
-Use `--proof-obligations` to append generated proof-obligation declarations. This option does not prove the generated program.
 
 Use `--strict` to refuse degraded output. A strict refusal writes no output file or project tree.
 

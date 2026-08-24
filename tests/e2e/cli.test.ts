@@ -273,17 +273,3 @@ describe('CLI e2e: all DO fixtures have required imports', () => {
     });
   }
 });
-
-// ─── Proof-obligation output ─────────────────────────────────────────────────
-
-describe('CLI e2e: proof obligations', () => {
-  it('hello.ts + --proof-obligations produces valid output', () => {
-    const code = run('basic/hello.ts', ['--proof-obligations']);
-    expect(code).toContain('open TSLean');
-  });
-
-  it('exceptions.ts + --proof-obligations adds a declaration', () => {
-    const code = run('effects/exceptions.ts', ['--proof-obligations']);
-    expect(code).toContain('open TSLean');
-  });
-});

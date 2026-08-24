@@ -124,15 +124,3 @@ describe('Project output: balanced parentheses', () => {
     }
   });
 });
-
-describe('Project with proof obligations', () => {
-  it('produces valid output', () => {
-    const vdir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-e2e-verify-'));
-    runCli(['ts-to-lean', FP_DIR, '-o', vdir, '--proof-obligations']);
-    const leans = fs
-      .readdirSync(vdir, { recursive: true, withFileTypes: true })
-      .filter((e) => e.isFile() && (e.name as string).endsWith('.lean'));
-    expect(leans.length).toBeGreaterThan(0);
-    fs.rmSync(vdir, { recursive: true });
-  });
-});

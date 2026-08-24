@@ -89,17 +89,6 @@ describe('CLI: TypeScript to Lean single file', () => {
     expect(fs.existsSync(out)).toBe(true);
   });
 
-  it('emits proof obligations only when requested', () => {
-    const out = tmpFile();
-    cleanup.push(out);
-    const stdout = runCli(
-      ['ts-to-lean', path.join(FIX, 'effects/exceptions.ts'), '-o', out, '--proof-obligations'],
-      execOpts,
-    ).toString();
-    const code = fs.readFileSync(out, 'utf8');
-    expect(code).toContain('open TSLean');
-  });
-
   it('compile missing file exits with error', () => {
     expect(() => {
       runCli(['ts-to-lean', 'nonexistent.ts', '-o', '/tmp/nope.lean'], { ...execOpts, stdio: 'pipe' });
@@ -159,6 +148,12 @@ describe('CLI: removed command forms', () => {
     expect(() => {
       runCli(['--project', path.join(FIX, 'basic')], execOpts);
     }).toThrow();
+  });
+
+  it('rejects removed proof-stub generators', () => {
+    const source = path.join(FIX, 'basic/hello.ts');
+    expect(() => runCli(['ts-to-lean', source, '--proof-obligations'], execOpts)).toThrow();
+    expect(() => runCli(['ts-to-lean', source, '--veil'], execOpts)).toThrow();
   });
 });
 

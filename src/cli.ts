@@ -15,8 +15,6 @@ import { rewriteModule } from './rewrite/index.js';
 import { generateLeanTracked } from './codegen/index.js';
 import { countLevel, degradationSites, describeDegradation, type DegradationMarker } from './codegen/degradation.js';
 import { resetTimer } from './timing.js';
-import { generateVerification } from './verification/index.js';
-import { generateVeilStub } from './verification/veil-gen.js';
 import { transpileProject, writeProjectOutputs } from './project/index.js';
 import { runLeanToTypeScriptCli } from './lean-to-typescript/cli.js';
 
@@ -61,8 +59,6 @@ ${c.bold('TS-TO-LEAN OPTIONS')}
   -w, --watch               Watch for changes and recompile
   --lake                    Run Lake after each watch compilation
   --strict                  Refuse output containing sorry/default placeholders
-  --proof-obligations       Emit proof-obligation declarations
-  --veil                    Emit Veil transition declarations for DO classes
   --namespace <name>        Root namespace (default: TSLean.Generated)
   --lakefile                Emit lakefile.toml (default for a directory)
   --no-lakefile             Do not emit lakefile.toml
@@ -78,8 +74,6 @@ Global: -v, --version; -h, --help
 interface CompileOpts {
   input: string;
   output: string;
-  proofObligations: boolean;
-  veil: boolean;
   watch: boolean;
   lake: boolean;
   ns: string;
@@ -124,8 +118,6 @@ function parseArgs(args: readonly string[]): Command {
 
   let input = '';
   let output = '';
-  let proofObligations = false;
-  let veil = false;
   let watch = false;
   let lake = false;
   let strict = false;
@@ -157,12 +149,6 @@ function parseArgs(args: readonly string[]): Command {
     } else if (option === '--lake') {
       uniqueOption(seen, 'lake');
       lake = true;
-    } else if (option === '--proof-obligations') {
-      uniqueOption(seen, 'proof-obligations');
-      proofObligations = true;
-    } else if (option === '--veil') {
-      uniqueOption(seen, 'veil');
-      veil = true;
     } else if (option === '--strict') {
       uniqueOption(seen, 'strict');
       strict = true;
@@ -194,8 +180,6 @@ function parseArgs(args: readonly string[]): Command {
     opts: {
       input,
       output,
-      proofObligations,
-      veil,
       watch,
       lake,
       ns,
@@ -259,7 +243,7 @@ function reportDegradation(markers: readonly DegradationMarker[], strict: boolea
 // ─── Compile: single file ────────────────────────────────────────────────────
 
 function compileSingle(opts: CompileOpts): boolean {
-  const { input, output, proofObligations, veil, strict, timing } = opts;
+  const { input, output, strict, timing } = opts;
   if (!fs.existsSync(input)) {
     error(`File not found: ${input}`);
     return false;
@@ -275,42 +259,12 @@ function compileSingle(opts: CompileOpts): boolean {
     const rewritten = rewriteModule(parsed);
 
     timer.start('codegen');
-    const { code: generated, degradations } = generateLeanTracked(rewritten);
-    let code = generated;
-    if (proofObligations) {
-      timer.start('proof-obligations');
-      const result = generateVerification(rewritten);
-      if (result.leanCode !== '') code += `\n\n-- Proof obligations\n${result.leanCode}`;
-      if (result.obligations.length > 0) {
-        info(`Generated ${result.obligations.length} proof obligation(s)`);
-      }
-    }
-
-    const veilOutputs: { readonly path: string; readonly code: string; readonly actions: number }[] = [];
-    if (veil) {
-      timer.start('veil');
-      for (const declaration of rewritten.decls) {
-        if (declaration.tag !== 'Namespace') continue;
-        const moduleName = `TSLean.Generated.${path.basename(input, '.ts').replace(/[^a-zA-Z0-9]/g, '_')}`;
-        const result = generateVeilStub(rewritten, declaration.name, moduleName);
-        if (result !== null) {
-          veilOutputs.push({
-            path: output.replace(/\.lean$/u, '_veil.lean'),
-            code: result.leanCode,
-            actions: result.actions.length,
-          });
-        }
-      }
-    }
-
+    const { code, degradations } = generateLeanTracked(rewritten);
     if (!reportDegradation(degradations, strict)) return false;
+
     timer.start('write');
     fs.mkdirSync(path.dirname(path.resolve(output)), { recursive: true });
     fs.writeFileSync(output, code, 'utf-8');
-    for (const generatedVeil of veilOutputs) {
-      fs.writeFileSync(generatedVeil.path, generatedVeil.code, 'utf-8');
-      info(`Generated Veil declarations: ${generatedVeil.path} (${generatedVeil.actions} actions)`);
-    }
     timer.end();
 
     success(`${input} → ${output}`);
@@ -329,7 +283,7 @@ function compileSingle(opts: CompileOpts): boolean {
 // ─── Compile: project (directory) ────────────────────────────────────────────
 
 function compileProject(opts: CompileOpts): boolean {
-  const { input, output, proofObligations, ns, strict } = opts;
+  const { input, output, ns, strict } = opts;
   const projectDir = path.resolve(input);
   if (!fs.existsSync(projectDir)) {
     error(`Directory not found: ${projectDir}`);
@@ -341,7 +295,6 @@ function compileProject(opts: CompileOpts): boolean {
     projectDir,
     outputDir: path.resolve(output),
     tsconfigPath: opts.tsconfigPath === '' ? undefined : path.resolve(opts.tsconfigPath),
-    proofObligations,
     rootNS: ns,
     generateLakefile: opts.genLakefile,
     onProgress: (step, current, total) => {

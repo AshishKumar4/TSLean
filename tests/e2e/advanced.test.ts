@@ -6,12 +6,30 @@ import * as path from 'path';
 import { parseFile } from '../../src/parser/index.js';
 import { rewriteModule } from '../../src/rewrite/index.js';
 import { generateLean } from '../../src/codegen/index.js';
-import { generateVerification } from '../../src/verification/index.js';
 import {
-  IRModule, tp, IRDecl, IRExpr,
-  TyString, TyFloat, TyBool, TyNat, TyUnit, TyRef, TyArray, TyOption,
-  Pure, Async, IO, stateEffect, exceptEffect, combineEffects,
-  litNat, litStr, litBool, varExpr, holeExpr,
+  IRModule,
+  tp,
+  IRDecl,
+  IRExpr,
+  TyString,
+  TyFloat,
+  TyBool,
+  TyNat,
+  TyUnit,
+  TyRef,
+  TyArray,
+  TyOption,
+  Pure,
+  Async,
+  IO,
+  stateEffect,
+  exceptEffect,
+  combineEffects,
+  litNat,
+  litStr,
+  litBool,
+  varExpr,
+  holeExpr,
 } from '../../src/ir/types.js';
 import { monadString } from '../../src/effects/index.js';
 
@@ -293,21 +311,30 @@ describe('Advanced: partial def for recursive functions', () => {
 
 describe('Advanced: mutable variable handling', () => {
   it('mutable let emits IO.Ref comment', () => {
-    const mod = makeModule([{
-      tag: 'VarDecl', name: 'counter', type: TyNat,
-      value: litNat(0), mutable: true,
-    }]);
+    const mod = makeModule([
+      {
+        tag: 'VarDecl',
+        name: 'counter',
+        type: TyNat,
+        value: litNat(0),
+        mutable: true,
+      },
+    ]);
     const code = generateLean(mod);
     expect(code).toContain('IO.Ref');
     expect(code).toContain('counter');
   });
 
   it('immutable const emits plain def', () => {
-    const mod = makeModule([{
-      tag: 'VarDecl', name: 'PI', type: TyFloat,
-      value: { tag: 'LitFloat', value: 3.14159, type: TyFloat, effect: Pure },
-      mutable: false,
-    }]);
+    const mod = makeModule([
+      {
+        tag: 'VarDecl',
+        name: 'PI',
+        type: TyFloat,
+        value: { tag: 'LitFloat', value: 3.14159, type: TyFloat, effect: Pure },
+        mutable: false,
+      },
+    ]);
     const code = generateLean(mod);
     expect(code).toContain('def PI');
     expect(code).not.toContain('IO.Ref');
@@ -319,58 +346,33 @@ describe('Advanced: mutable variable handling', () => {
 describe('Advanced: s!"..." string interpolation', () => {
   it('simple var concat can use s!', () => {
     // Check that s!"..." is at least possible via codegen
-    const mod = makeModule([{
-      tag: 'FuncDef', name: 'greet', typeParams: [],
-      params: [{ name: 'name', type: TyString }],
-      retType: TyString, effect: Pure,
-      body: {
-        tag: 'BinOp', op: 'Concat',
-        left: { tag: 'BinOp', op: 'Concat',
-          left: litStr('Hello, '),
-          right: varExpr('name', TyString),
-          type: TyString, effect: Pure },
-        right: litStr('!'),
-        type: TyString, effect: Pure,
+    const mod = makeModule([
+      {
+        tag: 'FuncDef',
+        name: 'greet',
+        typeParams: [],
+        params: [{ name: 'name', type: TyString }],
+        retType: TyString,
+        effect: Pure,
+        body: {
+          tag: 'BinOp',
+          op: 'Concat',
+          left: {
+            tag: 'BinOp',
+            op: 'Concat',
+            left: litStr('Hello, '),
+            right: varExpr('name', TyString),
+            type: TyString,
+            effect: Pure,
+          },
+          right: litStr('!'),
+          type: TyString,
+          effect: Pure,
+        },
       },
-    }]);
+    ]);
     const code = generateLean(mod);
     // Either s!"..." or ++ chain is acceptable
     expect(code).toMatch(/s!"[^"]*"|"Hello.*\+\+/);
-  });
-});
-
-// ─── Verification ─────────────────────────────────────────────────────────────
-
-describe('Advanced: verification obligations', () => {
-  it('array access → ArrayBounds', () => {
-    const mod = makeModule([{
-      tag: 'FuncDef', name: 'head', typeParams: [tp('T')],
-      params: [{ name: 'arr', type: TyArray(TyRef('T')) }],
-      retType: TyRef('T'), effect: Pure,
-      body: { tag: 'IndexAccess', obj: varExpr('arr', TyArray(TyRef('T'))), index: litNat(0), type: TyRef('T'), effect: Pure },
-    }]);
-    const { obligations } = generateVerification(mod);
-    expect(obligations.some(o => o.kind === 'ArrayBounds')).toBe(true);
-  });
-
-  it('division → DivisionSafe', () => {
-    const mod = makeModule([{
-      tag: 'FuncDef', name: 'div', typeParams: [],
-      params: [{ name: 'a', type: TyFloat }, { name: 'b', type: TyFloat }],
-      retType: TyFloat, effect: Pure,
-      body: { tag: 'BinOp', op: 'Div', left: varExpr('a', TyFloat), right: varExpr('b', TyFloat), type: TyFloat, effect: Pure },
-    }]);
-    const { obligations } = generateVerification(mod);
-    expect(obligations.some(o => o.kind === 'DivisionSafe')).toBe(true);
-  });
-
-  it('pure trivial → zero obligations', () => {
-    const mod = makeModule([{
-      tag: 'FuncDef', name: 'trivial', typeParams: [],
-      params: [], retType: TyUnit, effect: Pure,
-      body: { tag: 'LitUnit', type: TyUnit, effect: Pure },
-    }]);
-    const { obligations } = generateVerification(mod);
-    expect(obligations).toHaveLength(0);
   });
 });

@@ -4,7 +4,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { transpileProject } from '../src/project/index.js';
+import { transpileProject, writeProjectOutputs } from '../src/project/index.js';
 
 const FP_DIR = path.join(process.cwd(), 'tests/fixtures/full-project');
 const BASIC = path.join(process.cwd(), 'tests/fixtures/basic');
@@ -64,19 +64,28 @@ describe('transpileProject – basic fixture', () => {
   });
 });
 
+describe('transpileProject planning boundary', () => {
+  it('writes no project artifact before explicit publication', () => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-plan-'));
+    const result = transpileProject({ projectDir: BASIC, outputDir: outDir });
+
+    expect(result.errors).toEqual([]);
+    expect(result.build).toBeDefined();
+    expect(fs.readdirSync(outDir)).toEqual([]);
+
+    writeProjectOutputs(result);
+    expect(fs.existsSync(path.join(outDir, 'lakefile.toml'))).toBe(true);
+    expect(fs.existsSync(path.join(outDir, 'lean-toolchain'))).toBe(true);
+    expect(result.files.every((file) => fs.existsSync(file.leanFile))).toBe(true);
+    fs.rmSync(outDir, { force: true, recursive: true });
+  });
+});
+
 describe('transpileProject – empty directory', () => {
   it('returns error for empty dir', () => {
     const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-empty-'));
     const result = transpileProject({ projectDir: emptyDir, outputDir: os.tmpdir() });
     expect(result.errors.length).toBeGreaterThan(0);
     expect(result.files).toHaveLength(0);
-  });
-});
-
-describe('transpileProject – with proof obligations', () => {
-  it('produces output with proof-obligation declarations', () => {
-    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-proof-obligations-'));
-    const result = transpileProject({ projectDir: BASIC, outputDir: outDir, proofObligations: true });
-    expect(result.files.length).toBeGreaterThan(0);
   });
 });

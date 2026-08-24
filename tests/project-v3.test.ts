@@ -177,33 +177,6 @@ describe('Project v3: CLI project mode', () => {
     expect(leans.length).toBeGreaterThan(0);
     fs.rmSync(outDir, { recursive: true });
   });
-
-  it('ts-to-lean with proof obligations adds declarations', () => {
-    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-verify-'));
-    runCli([
-      'ts-to-lean',
-      path.join(ROOT, 'tests/fixtures/basic'),
-      '-o',
-      outDir,
-      '--proof-obligations',
-      '--no-lakefile',
-    ]);
-    const findLean = (dir: string): string[] => {
-      const out: string[] = [];
-      if (!fs.existsSync(dir)) return out;
-      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, e.name);
-        if (e.isDirectory()) out.push(...findLean(full));
-        else if (e.name.endsWith('.lean')) out.push(full);
-      }
-      return out;
-    };
-    const leans = findLean(outDir);
-    expect(leans.length).toBe(3);
-    const contents = leans.map((f) => fs.readFileSync(f, 'utf8'));
-    expect(contents.some((c) => c.includes('open TSLean'))).toBe(true);
-    fs.rmSync(outDir, { recursive: true });
-  });
 });
 
 // ─── Single-file mode ─────────────────────────────────────────────────────────

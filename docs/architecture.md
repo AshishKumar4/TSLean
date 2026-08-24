@@ -217,16 +217,6 @@ JavaScript standard library → Lean 4 mapping tables. Contains method translati
 
 Cloudflare Workers / Durable Objects ambient type declarations. Injects a virtual `.d.ts` file when DO patterns are detected, providing type definitions for `DurableObjectState`, `DurableObjectStorage`, `Request`, `Response`, `WebSocket`, etc., so the TypeScript checker resolves types without needing `@cloudflare/workers-types`.
 
-### `src/verification/index.ts` (112 lines)
-
-Generates proof obligation stubs for safety properties. Walks the IR tree and emits Lean theorem stubs:
-
-- `IndexAccess` → `ArrayBounds` obligation
-- `BinOp` with `Div`/`Mod` → `DivisionSafe` obligation
-- `FieldAccess` `.value`/`.get` on Option → `OptionIsSome` obligation
-
-The `--proof-obligations` option enables this pass. It emits declarations to prove; it does not prove them.
-
 ### `src/project/` (4 files, 576 lines total)
 
 Multi-file transpilation orchestrator:
@@ -247,22 +237,21 @@ Records _why_ the lowerer degraded an expression, for the sites that call it. Ei
 
 ### `src/timing.ts` (59 lines)
 
-Pipeline timing instrumentation. `PipelineTimer` tracks elapsed time for each phase (parse, rewrite, codegen, verify, write). Enabled with the `--timing` CLI flag; prints a bar chart report.
+Pipeline timing instrumentation. `PipelineTimer` tracks parse, rewrite, code generation, and write phases. `--timing` prints the report.
 
 ### `src/cli.ts`
 
 One executable dispatches three explicit commands:
 
-| Command                    | Purpose                                                    |
-| -------------------------- | ---------------------------------------------------------- |
-| `tslean lean-to-ts`        | Compile admitted Lean declarations to a TypeScript package |
-| `tslean ts-to-lean <file\\ | dir>`                                                      | Compile one TypeScript file or project directory to Lean |
-| `tslean init [dir]`        | Create `tsconfig.json`, source, and Lean directories       |
+| Command                           | Purpose                                                    |
+| --------------------------------- | ---------------------------------------------------------- |
+| `tslean lean-to-ts`               | Compile admitted Lean declarations to a TypeScript package |
+| `tslean ts-to-lean <file-or-dir>` | Compile one TypeScript file or project directory to Lean   |
+| `tslean init [dir]`               | Create `tsconfig.json`, source, and Lean directories       |
 
-`--proof-obligations` appends declarations to TypeScript-to-Lean output.
 `--strict` refuses degraded output before writing any file. `--watch --lake` runs Lake
 after each successful watched compilation. Removed positional, `compile`, `--project`,
-and `--verify` forms are errors rather than compatibility aliases.
+`--verify`, and `--veil` forms are errors rather than compatibility aliases.
 
 ## Lean Runtime Library Organization
 
@@ -312,7 +301,7 @@ lean/TSLean/
 │   ├── ProofObligation.lean  Obligation kind enumeration
 │   ├── Invariants.lean       State invariant framework
 │   └── Tactics.lean          Custom tactic helpers
-├── Stubs/                Node.js API stubs (axiomatized)
+├── Stubs/                Abstract Node.js capability interfaces
 │   ├── Console.lean        IO.println / IO.eprintln
 │   ├── NodeFs.lean         readFileSync, writeFileSync, existsSync, etc.
 │   ├── NodePath.lean       join, resolve, dirname, basename, extname, etc.
@@ -336,7 +325,7 @@ lean/TSLean/
 
 4. **Print** (`printFile`): Renders the `LeanFile` to a string of valid Lean 4 source code. Handles indentation, do-notation formatting, keyword sanitization, and string interpolation.
 
-5. **Write**: The CLI writes only accepted Lean output. `--proof-obligations` appends declarations that remain to be proved.
+5. **Write**: The CLI writes only accepted Lean output.
 
 ## Data Flow: Multi-File Pipeline
 

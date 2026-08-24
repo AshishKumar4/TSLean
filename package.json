@@ -41,7 +41,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
     "test": "vitest run",
     "lean:gate": "vitest run tests/lean-build-gate.test.ts",
     "lint": "tsc --noEmit && tsc --project tsconfig.examples.json && oxlint src/lean-to-typescript tests/lean-to-typescript.test.ts tests/lean-to-typescript-ir.test.ts tests/lean-to-typescript-modules.test.ts tests/lean-to-typescript-package.test.ts tests/heap-scale.test.ts tests/helpers/lean-project-fixture.ts examples/lean-to-typescript/placement.adapter.ts src/lean-to-typescript/package-layout.ts --deny-warnings && eslint src/ scripts/*.mjs",

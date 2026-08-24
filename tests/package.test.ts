@@ -117,6 +117,7 @@ describe('package contents', () => {
     expect(files.filter((file) => /(^|\/)\.lake\//.test(file))).toEqual([]);
     expect(files.filter((file) => /\.(?:[io]lean(?:\.hash)?|trace|o|obj|a|so|dylib|dll|bc)$/.test(file))).toEqual([]);
     expect(files.filter((file) => /(^|\/)(?:node_modules|tmp|temp)(?:\/|$)/.test(file))).toEqual([]);
+    expect(files.filter((file) => file.startsWith('dist/verification/'))).toEqual([]);
     expect(files.filter((file) => /spec\/differential\/.*\.(?:olean|ilean|o|trace)$/.test(file))).toEqual([]);
   });
 });

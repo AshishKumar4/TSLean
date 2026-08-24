@@ -19,11 +19,9 @@
 //   - tick_fires_due: advancing time moves due alarms to fired
 //   - cancel_removes: cancellation removes from pending
 //
-// Veil verification stub (with --veil flag):
-//   The Veil bridge generates a TransitionSystem with actions for fetch and
-//   alarm. The safety property to verify: "in-window event count never
-//   exceeds maxRequests". See lean/TSLean/Veil/RateLimiterDO.lean for a
-//   hand-written proof of this property.
+// The hand-authored model in lean/TSLean/Veil/RateLimiterDO.lean proves its
+// stated transition-system properties. The compiler does not infer that proof
+// from this TypeScript source.
 
 export class RateLimiter extends DurableObject {
   // -- fetch: check rate limit, record event, schedule cleanup alarm.
@@ -33,18 +31,18 @@ export class RateLimiter extends DurableObject {
     const maxRequests = 100;
 
     // Read the event log from storage
-    const events: number[] = (await this.ctx.storage.get("events")) ?? [];
+    const events: number[] = (await this.ctx.storage.get('events')) ?? [];
     // Filter to events within the sliding window
     const recent = events.filter((t: number) => now - t < windowMs);
 
     // Reject if over the limit
     if (recent.length >= maxRequests) {
-      return new Response("Rate limited", { status: 429 });
+      return new Response('Rate limited', { status: 429 });
     }
 
     // Record the new event and persist
     recent.push(now);
-    await this.ctx.storage.put("events", recent);
+    await this.ctx.storage.put('events', recent);
 
     // Schedule an alarm to clean up expired events if none is pending.
     // getAlarm returns null if no alarm is set.
@@ -53,7 +51,7 @@ export class RateLimiter extends DurableObject {
       await this.ctx.storage.setAlarm(now + windowMs);
     }
 
-    return new Response("OK");
+    return new Response('OK');
   }
 
   // -- alarm: fired by the runtime when a scheduled alarm time arrives.
@@ -61,8 +59,8 @@ export class RateLimiter extends DurableObject {
   // -- AlarmInvocationInfo (optional param) carries retryCount for retry logic.
   async alarm(): Promise<void> {
     const now = Date.now();
-    const events: number[] = (await this.ctx.storage.get("events")) ?? [];
+    const events: number[] = (await this.ctx.storage.get('events')) ?? [];
     const recent = events.filter((t: number) => now - t < 60000);
-    await this.ctx.storage.put("events", recent);
+    await this.ctx.storage.put('events', recent);
   }
 }

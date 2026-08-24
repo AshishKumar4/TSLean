@@ -6,12 +6,30 @@ import * as fs from 'fs';
 import { parseFile } from '../src/parser/index.js';
 import { rewriteModule } from '../src/rewrite/index.js';
 import { generateLean } from '../src/codegen/index.js';
-import { generateVerification } from '../src/verification/index.js';
 import {
-  IRModule, IRDecl, IRExpr,
-  TyString, TyFloat, TyBool, TyNat, TyUnit, TyRef, TyArray, TyOption,
-  Pure, Async, IO, stateEffect, exceptEffect, combineEffects,
-  litNat, litStr, litBool, litUnit, litFloat, varExpr,
+  IRModule,
+  IRDecl,
+  IRExpr,
+  TyString,
+  TyFloat,
+  TyBool,
+  TyNat,
+  TyUnit,
+  TyRef,
+  TyArray,
+  TyOption,
+  Pure,
+  Async,
+  IO,
+  stateEffect,
+  exceptEffect,
+  combineEffects,
+  litNat,
+  litStr,
+  litBool,
+  litUnit,
+  litFloat,
+  varExpr,
 } from '../src/ir/types.js';
 
 const FIX = path.join(process.cwd(), 'tests/fixtures');
@@ -206,47 +224,6 @@ describe('E2E v3: complex loops', () => {
 
 // ─── Verification with complex patterns ───────────────────────────────────────
 
-describe('E2E v3: verification', () => {
-  it('nested index access gets two ArrayBounds obligations', () => {
-    const m = mod([{
-      tag: 'FuncDef', name: 'get2D', typeParams: [],
-      params: [{ name: 'mat', type: TyArray(TyArray(TyFloat)) }, { name: 'i', type: TyNat }, { name: 'j', type: TyNat }],
-      retType: TyFloat, effect: Pure,
-      body: {
-        tag: 'IndexAccess',
-        obj: {
-          tag: 'IndexAccess',
-          obj: varExpr('mat', TyArray(TyArray(TyFloat))),
-          index: varExpr('i', TyNat),
-          type: TyArray(TyFloat), effect: Pure,
-        },
-        index: varExpr('j', TyNat),
-        type: TyFloat, effect: Pure,
-      },
-    }]);
-    const { obligations } = generateVerification(m);
-    expect(obligations.filter(o => o.kind === 'ArrayBounds').length).toBeGreaterThanOrEqual(2);
-  });
-
-  it('div + array access gets both obligation types', () => {
-    const m = mod([{
-      tag: 'FuncDef', name: 'avg', typeParams: [],
-      params: [{ name: 'arr', type: TyArray(TyFloat) }],
-      retType: TyFloat, effect: Pure,
-      body: {
-        tag: 'BinOp', op: 'Div',
-        left: { tag: 'IndexAccess', obj: varExpr('arr', TyArray(TyFloat)), index: litNat(0), type: TyFloat, effect: Pure },
-        right: litFloat(2),
-        type: TyFloat, effect: Pure,
-      },
-    }]);
-    const { obligations } = generateVerification(m);
-    const kinds = obligations.map(o => o.kind);
-    expect(kinds).toContain('ArrayBounds');
-    expect(kinds).toContain('DivisionSafe');
-  });
-});
-
 // ─── Full fixture suite ────────────────────────────────────────────────────────
 
 describe('E2E v3: all fixtures produce valid Lean', () => {
@@ -274,9 +251,9 @@ describe('E2E v3: all fixtures produce valid Lean', () => {
       expect(code).toContain('-- Auto-generated');
       expect(code).toContain('open TSLean');
       // No raw TS syntax (skip lines inside string literals or with runtime artifacts)
-      const codeLines = code.split('\n').filter(l =>
-        !l.includes('"') && !l.includes('native code') && !l.trimStart().startsWith('--')
-      );
+      const codeLines = code
+        .split('\n')
+        .filter((l) => !l.includes('"') && !l.includes('native code') && !l.trimStart().startsWith('--'));
       const joined = codeLines.join('\n');
       expect(joined).not.toMatch(/\bconst\s+\w/);
       expect(code).not.toContain('===');

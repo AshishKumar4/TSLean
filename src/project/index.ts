@@ -7,7 +7,6 @@ import * as fs from 'fs';
 import { parseFile } from '../parser/index.js';
 import { rewriteModule } from '../rewrite/index.js';
 import { generateLeanTracked, type DegradationMarker } from '../codegen/index.js';
-import { generateVerification } from '../verification/index.js';
 import type { IRModule } from '../ir/types.js';
 import { fileToLeanPath } from './module-resolver.js';
 import { buildDependencyGraph, formatCycles, type DependencyGraph } from './dependency-graph.js';
@@ -20,7 +19,6 @@ export interface ProjectOpts {
   projectDir: string;
   outputDir?: string;
   tsconfigPath?: string;
-  proofObligations?: boolean;
   rootNS?: string;
   generateLakefile?: boolean;
   leanVersion?: string;
@@ -40,10 +38,11 @@ export interface ProjectResult {
   warnings: string[];
   graph: DependencyGraph;
   config: ProjectConfig;
+  build: LakefileOpts | undefined;
 }
 
 export function transpileProject(opts: ProjectOpts): ProjectResult {
-  const { projectDir, proofObligations = false, generateLakefile: genLake = true, leanVersion = 'v4.33.1' } = opts;
+  const { projectDir, generateLakefile: genLake = true, leanVersion = 'v4.33.1' } = opts;
   const progress = opts.onProgress ?? (() => {});
 
   // Phase 1: Read configuration
@@ -59,6 +58,7 @@ export function transpileProject(opts: ProjectOpts): ProjectResult {
       warnings: [],
       graph: { nodes: new Map(), order: [], cycles: [] },
       config,
+      build: undefined,
     };
   }
 
@@ -91,34 +91,26 @@ export function transpileProject(opts: ProjectOpts): ProjectResult {
       const fixed = fixModuleName(parsed, node.leanModule);
       const rw = rewriteModule(fixed);
       const { code, degradations } = generateLeanTracked(rw);
-      let content = code;
-      if (proofObligations) {
-        const { leanCode } = generateVerification(rw);
-        if (leanCode) content += '\n\n-- Proof obligations\n' + leanCode;
-      }
       const leanFile = fileToLeanPath(node.filePath, resolverOpts, config.outDir);
-      results.push({ tsFile: node.filePath, leanFile, module: node.leanModule, content, degradations });
+      results.push({ tsFile: node.filePath, leanFile, module: node.leanModule, content: code, degradations });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       errors.push(`${node.filePath}: ${message}`);
     }
   }
 
-  // Phase 4: Generate lakefile
-  if (genLake && results.length > 0) {
-    progress('Generating lakefile', total + 2, total + 3);
-    const lakeOpts: LakefileOpts = {
-      name: config.leanNamespace,
-      rootNS: config.leanNamespace,
-      modules: results.map((r) => r.module),
-      outDir: config.outDir,
-      leanVersion,
-    };
-    writeLakefiles(lakeOpts);
-  }
-
+  const build =
+    genLake && results.length > 0
+      ? {
+          name: config.leanNamespace,
+          rootNS: config.leanNamespace,
+          modules: results.map((result) => result.module),
+          outDir: config.outDir,
+          leanVersion,
+        }
+      : undefined;
   progress('Done', total + 3, total + 3);
-  return { files: results, errors, warnings, graph, config };
+  return { files: results, errors, warnings, graph, config, build };
 }
 
 export function writeProjectOutputs(result: ProjectResult): void {
@@ -126,6 +118,7 @@ export function writeProjectOutputs(result: ProjectResult): void {
     fs.mkdirSync(path.dirname(leanFile), { recursive: true });
     fs.writeFileSync(leanFile, content, 'utf-8');
   }
+  if (result.build !== undefined) writeLakefiles(result.build);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -1,4 +1,6 @@
-# Lean to TypeScript pilot
+> Edited & maintained by Claude; presented as-is.
+
+# Lean-to-TypeScript placement example
 
 `generated/TSLean/Examples/Placement.ts` is generated directly from the
 kernel-checked declarations in `lean/TSLean/Examples/Placement.lean`. Its manifest
@@ -13,10 +15,8 @@ bun run build
 bun run lean-to-typescript:generate
 ```
 
-Published packages expose the general `lean-to-typescript` executable for compiling a
-separate Lean project; the command above is the repository's canonical pilot workflow.
-Version 0.1 requires Linux with procfs and util-linux `/usr/bin/flock` and rejects other
-operating systems before compilation or publication mutation.
+Published packages expose this workflow through `tslean lean-to-ts`. The package requires
+Linux with procfs and util-linux `/usr/bin/flock`.
 
 The generator accepts only the declared pure, total, first-order fragment. Passing the
 tests means the generated decision agreed with Lean on this example's complete 4,096-case
