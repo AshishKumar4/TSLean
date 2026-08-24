@@ -2,7 +2,6 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase3-refinement-core-manifest.json",
   "baseRevision": "6c1a0861651059f44ebfa99ef2cb8e082d419bbc",
-  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,

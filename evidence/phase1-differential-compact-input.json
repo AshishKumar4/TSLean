@@ -2,7 +2,6 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase1-differential-compact-manifest.json",
   "baseRevision": "4e0953fa3a5a81b8db24077b0d28ddbcdb397655",
-  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,

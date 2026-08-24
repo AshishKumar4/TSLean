@@ -2,7 +2,6 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase4-record-refinement-manifest.json",
   "baseRevision": "51596ba30b9c51e91ae14008fe7dfe72c8993f6a",
-  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 46,

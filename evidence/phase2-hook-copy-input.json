@@ -2,7 +2,6 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase2-hook-copy-manifest.json",
   "baseRevision": "533fe9fa986c722ac13f8182a0492b0f1e4d4ff3",
-  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,

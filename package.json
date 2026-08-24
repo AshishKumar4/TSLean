@@ -2,13 +2,17 @@
   "name": "tslean",
   "version": "0.1.0",
   "type": "module",
-  "description": "TypeScript → Lean 4 transpiler under semantic reconstruction",
-  "main": "dist/codegen/index.js",
-  "types": "dist/codegen/index.d.ts",
+  "description": "TypeScript and Lean 4 compilers with explicit semantic boundaries",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/codegen/index.d.ts",
-      "import": "./dist/codegen/index.js"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./typescript-to-lean": {
+      "types": "./dist/typescript-to-lean/index.d.ts",
+      "import": "./dist/typescript-to-lean/index.js"
     },
     "./lean-to-typescript": {
       "types": "./dist/lean-to-typescript/index.d.ts",
@@ -16,8 +20,7 @@
     }
   },
   "bin": {
-    "tslean": "dist/cli.js",
-    "lean-to-typescript": "dist/lean-to-typescript/cli.js"
+    "tslean": "dist/cli.js"
   },
   "files": [
     "dist/",
@@ -27,7 +30,10 @@
     "lean/lakefile.toml",
     "lean/lean-toolchain",
     "lean/lake-manifest.json",
-    "docs/LEAN_TO_TS_PLAN.md",
+    "docs/lean-to-typescript.md",
+    "docs/trust.md",
+    "docs/architecture.md",
+    "docs/limitations.md",
     "examples/lean-to-typescript/**",
     "spec/lean-to-typescript/**",
     "spec/differential/**",
@@ -44,9 +50,9 @@
     "format:check:foundation": "prettier --check 'scripts/*.mjs' 'evidence/*.json' package.json",
     "differential:generate": "bun scripts/generate-differential-manifest.mjs",
     "differential:check": "bun scripts/generate-differential-manifest.mjs --check && bun scripts/check-differential-inventory.mjs",
-    "lean-to-typescript:generate": "node dist/lean-to-typescript/cli.js --project-root lean --module TSLean.Examples.Placement --source lean/TSLean/Examples/Placement.lean --declaration TSLean.Examples.Placement.choosePlacement --out-dir examples/lean-to-typescript/generated --manifest examples/lean-to-typescript/generated/tslean.manifest.json",
+    "lean-to-typescript:generate": "node dist/cli.js lean-to-ts --project-root lean --module TSLean.Examples.Placement --source lean/TSLean/Examples/Placement.lean --declaration TSLean.Examples.Placement.choosePlacement --out-dir examples/lean-to-typescript/generated --manifest examples/lean-to-typescript/generated/tslean.manifest.json",
     "lean-to-typescript:check": "bun run lean-to-typescript:generate --check",
-    "lean-to-typescript:enforcement:generate": "node dist/lean-to-typescript/cli.js --project-root lean --module AgentCore.Facets.Enforcement --source lean/AgentCore/Facets/Enforcement.lean --declaration AgentCore.Facets.enforcementFloor --declaration AgentCore.Facets.claimHonorsEnforcementFloor --out-dir examples/agent-core/facets/generated --manifest examples/agent-core/facets/generated/tslean.manifest.json",
+    "lean-to-typescript:enforcement:generate": "node dist/cli.js lean-to-ts --project-root lean --module AgentCore.Facets.Enforcement --source lean/AgentCore/Facets/Enforcement.lean --declaration AgentCore.Facets.enforcementFloor --declaration AgentCore.Facets.claimHonorsEnforcementFloor --out-dir examples/agent-core/facets/generated --manifest examples/agent-core/facets/generated/tslean.manifest.json",
     "lean-to-typescript:enforcement:check": "bun run lean-to-typescript:enforcement:generate --check",
     "benchmark:coercion-effects": "cd lean && lake exe js-coercion-effects-benchmark",
     "evidence:generate": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase5-emitted-tcb-input.json",
@@ -114,7 +120,7 @@
     "js:trust": "bun scripts/check-js-axioms.mjs --evidence evidence/phase5-emitted-tcb-input.json",
     "verify": "bun run format:check:foundation && bun run differential:check && bun run js:trust && bun run evidence:check && bun run lint && bun run build && bun run lean-to-typescript:check && bun run lean-to-typescript:enforcement:check && bun run lean-to-typescript:package:check && bun run test && bun run lean:gate && cd lean && lake build",
     "prepublishOnly": "bun run verify",
-    "lean-to-typescript:package:generate": "node dist/lean-to-typescript/cli.js --project-root lean --module TSLean.Examples.Package.Decision --source lean/TSLean/Examples/Package/Decision.lean --declaration TSLean.Examples.Package.decideAccess --declaration TSLean.Examples.Package.grantedCapability --declaration TSLean.Examples.Package.Policy.effective --out-dir examples/lean-to-typescript/package/generated --manifest examples/lean-to-typescript/package/generated/tslean.manifest.json",
+    "lean-to-typescript:package:generate": "node dist/cli.js lean-to-ts --project-root lean --module TSLean.Examples.Package.Decision --source lean/TSLean/Examples/Package/Decision.lean --declaration TSLean.Examples.Package.decideAccess --declaration TSLean.Examples.Package.grantedCapability --declaration TSLean.Examples.Package.Policy.effective --out-dir examples/lean-to-typescript/package/generated --manifest examples/lean-to-typescript/package/generated/tslean.manifest.json",
     "lean-to-typescript:package:check": "bun run lean-to-typescript:package:generate --check"
   },
   "keywords": [

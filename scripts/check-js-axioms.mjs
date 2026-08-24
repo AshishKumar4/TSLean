@@ -114,7 +114,6 @@ function readExpectedAuditCount(path) {
     'schemaVersion',
     'outputPath',
     'baseRevision',
-    'branch',
     'counts',
     'knownTodos',
     'validation',
@@ -125,7 +124,7 @@ function readExpectedAuditCount(path) {
   if (input.refinementProofs !== undefined) expectedKeys.push('refinementProofs');
   exactKeys(input, expectedKeys, 'evidence input');
   if (input.schemaVersion !== 1) fail('unsupported evidence input schema');
-  for (const key of ['outputPath', 'baseRevision', 'branch']) {
+  for (const key of ['outputPath', 'baseRevision']) {
     if (typeof input[key] !== 'string' || input[key].length === 0) fail(`evidence input ${key} must be non-empty`);
   }
   if (!Array.isArray(input.knownTodos)) fail('evidence input knownTodos must be an array');

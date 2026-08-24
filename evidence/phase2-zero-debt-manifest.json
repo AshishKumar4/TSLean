@@ -1,14 +1,13 @@
 {
   "schemaVersion": 1,
   "baseRevision": "d68dab44af677733dd23b15c0ca16937ebc3d2ae",
-  "branch": "lean-to-typescript/toolchain-433",
   "toolchain": {
     "bun": "1.4.0",
     "node": "v22.22.3",
     "typescript": "6.0.2",
-    "vitest": "vitest/4.1.2 linux-x64 node-v22.22.3",
+    "vitest": "vitest/4.1.11 linux-x64 node-v22.22.3",
     "prettier": "3.9.6",
-    "eslint": "v10.8.1",
+    "eslint": "v10.9.0",
     "lean": "Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)",
     "lake": "Lake version 5.0.0-src+819816b (Lean version 4.33.1)"
   },

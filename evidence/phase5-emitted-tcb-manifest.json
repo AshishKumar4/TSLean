@@ -1,21 +1,20 @@
 {
   "schemaVersion": 1,
   "baseRevision": "110c1296e1dce0f67601c13e5863e13ee9252eac",
-  "branch": "lean-to-typescript/toolchain-433",
   "toolchain": {
     "bun": "1.4.0",
     "node": "v22.22.3",
     "typescript": "6.0.2",
-    "vitest": "vitest/4.1.2 linux-x64 node-v22.22.3",
+    "vitest": "vitest/4.1.11 linux-x64 node-v22.22.3",
     "prettier": "3.9.6",
-    "eslint": "v10.8.1",
+    "eslint": "v10.9.0",
     "lean": "Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)",
     "lake": "Lake version 5.0.0-src+819816b (Lean version 4.33.1)"
   },
   "counts": {
     "tests": {
-      "files": 50,
-      "passed": 1932,
+      "files": 51,
+      "passed": 1929,
       "failed": 0,
       "todo": 10
     },
@@ -172,12 +171,12 @@
     }
   ],
   "hashes": {
-    "source": "sha256:4ed551c016ea1d25c2f78851d0459a8ba3ea9b034c83c750b9ed69caa3008453",
+    "source": "sha256:dc2344c415dee2b3b4857fdc62a12a42cc1821eb8a1a3a2551b649a79e3812f2",
     "jsRuntime": "sha256:03f43c01641fd7379f87e7e2a56ad4fc92528c129efa2c736e289e70a3283deb",
     "refinementRuntimeAndBarrel": "sha256:3c4badb33a92287e32a4156353ca3ac594fa575336a633ce98cdcd21e82e1ae2",
     "refinementTestsAuditRegistry": "sha256:442fe58d68dc9252b1622506eeecbcd9cb57f400ff4474f385f3bbb8cf9a311c",
     "corpus": "sha256:813ba0e3fa8d02912872c4451cf33773aa0fc627dac24f68f770e25506fa1903",
     "differentialSpecHarness": "sha256:a60e709b193d859da6521ab4179c645fd0c33cb50cfa9d1fba9f486a4feb6eb5",
-    "trustEvidenceInfrastructure": "sha256:2a03091653d0a9f7734e243806b07a3cb7f813179a5f5d9e2e1e7709886b806f"
+    "trustEvidenceInfrastructure": "sha256:fd323f217e9d033463dbfbec874f610e53580cf4a4c273514b73f92fe9967085"
   }
 }

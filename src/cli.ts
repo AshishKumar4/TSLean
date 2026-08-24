@@ -1,28 +1,24 @@
 #!/usr/bin/env node
-// TSLean CLI — TypeScript → Lean 4 transpiler.
+// One explicit CLI for both compiler directions.
 //
 // Usage:
-//   tslean compile <file|dir> [--output <dir>] [--verify] [--watch] [--namespace <ns>]
-//   tslean init [dir]            — scaffold a tslean project
-//
-// Legacy (still works):
-//   tslean <file.ts> [-o output.lean] [--verify]
-//   tslean --project <dir/> [-o outdir/] [--verify]
+//   tslean ts-to-lean <file|dir> [options]
+//   tslean lean-to-ts <compiler options>
+//   tslean init [dir]
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { parseFile } from './parser/index.js';
 import { rewriteModule } from './rewrite/index.js';
 import { generateLeanTracked } from './codegen/index.js';
-import {
-  countLevel, degradationSites, describeDegradation, type DegradationMarker,
-} from './codegen/degradation.js';
+import { countLevel, degradationSites, describeDegradation, type DegradationMarker } from './codegen/degradation.js';
 import { resetTimer } from './timing.js';
 import { generateVerification } from './verification/index.js';
 import { generateVeilStub } from './verification/veil-gen.js';
 import { transpileProject, writeProjectOutputs } from './project/index.js';
+import { runLeanToTypeScriptCli } from './lean-to-typescript/cli.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,12 +26,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let noColor = !!process.env['NO_COLOR'] || !process.stdout.isTTY;
 const c = {
-  bold:    (s: string) => noColor ? s : `\x1b[1m${s}\x1b[0m`,
-  dim:     (s: string) => noColor ? s : `\x1b[2m${s}\x1b[0m`,
-  red:     (s: string) => noColor ? s : `\x1b[31m${s}\x1b[0m`,
-  green:   (s: string) => noColor ? s : `\x1b[32m${s}\x1b[0m`,
-  yellow:  (s: string) => noColor ? s : `\x1b[33m${s}\x1b[0m`,
-  cyan:    (s: string) => noColor ? s : `\x1b[36m${s}\x1b[0m`,
+  bold: (s: string) => (noColor ? s : `\x1b[1m${s}\x1b[0m`),
+  dim: (s: string) => (noColor ? s : `\x1b[2m${s}\x1b[0m`),
+  red: (s: string) => (noColor ? s : `\x1b[31m${s}\x1b[0m`),
+  green: (s: string) => (noColor ? s : `\x1b[32m${s}\x1b[0m`),
+  yellow: (s: string) => (noColor ? s : `\x1b[33m${s}\x1b[0m`),
+  cyan: (s: string) => (noColor ? s : `\x1b[36m${s}\x1b[0m`),
 };
 
 // ─── Version ─────────────────────────────────────────────────────────────────
@@ -52,26 +48,29 @@ function getVersion(): string {
 // ─── Help ────────────────────────────────────────────────────────────────────
 
 const HELP = `
-${c.bold('tslean')} — TypeScript → Lean 4 transpiler
+${c.bold('tslean')} — TypeScript and Lean compilers
 
 ${c.bold('USAGE')}
-  tslean compile <file|dir>  [options]   Transpile TypeScript to Lean 4
-  tslean init [dir]                      Scaffold a new tslean project
+  tslean ts-to-lean <file|dir> [options]  Compile TypeScript to Lean 4
+  tslean lean-to-ts [options]             Compile Lean 4 to TypeScript
+  tslean init [dir]                        Create a TypeScript-to-Lean project
 
-${c.bold('OPTIONS')}
-  -o, --output <path>    Output file or directory
-  -w, --watch            Watch for changes and recompile
-  --lake                 Auto-run lake build after each watch recompile
-  --strict               Reject output containing sorry/default placeholders
-   --verify               Generate proof obligations
-   --veil                 Generate Veil transition system stubs for DO classes
-  --project <path>       Use tsconfig.json for multi-file compilation
-  --namespace <ns>       Root namespace (default: TSLean.Generated)
-  --lakefile/--no-lakefile  Generate/skip lakefile.toml
-  --timing               Show phase-by-phase timing breakdown
-  --no-color             Disable colored output
-  -v, --version          Show version
-  -h, --help             Show this help
+${c.bold('TS-TO-LEAN OPTIONS')}
+  -o, --output <path>       Output file or directory
+  --tsconfig <path>         Use an exact tsconfig.json
+  -w, --watch               Watch for changes and recompile
+  --lake                    Run Lake after each watch compilation
+  --strict                  Refuse output containing sorry/default placeholders
+  --proof-obligations       Emit proof-obligation declarations
+  --veil                    Emit Veil transition declarations for DO classes
+  --namespace <name>        Root namespace (default: TSLean.Generated)
+  --lakefile                Emit lakefile.toml (default for a directory)
+  --no-lakefile             Do not emit lakefile.toml
+  --timing                  Show compiler phase timing
+  --no-color                Disable colored output
+
+Use ${c.bold('tslean lean-to-ts --help')} for Lean-to-TypeScript options.
+Global: -v, --version; -h, --help
 `.trimStart();
 
 // ─── Argument parsing ────────────────────────────────────────────────────────
@@ -79,9 +78,10 @@ ${c.bold('OPTIONS')}
 interface CompileOpts {
   input: string;
   output: string;
-  verify: boolean;
+  proofObligations: boolean;
   veil: boolean;
   watch: boolean;
+  lake: boolean;
   ns: string;
   isDir: boolean;
   genLakefile: boolean;
@@ -91,66 +91,134 @@ interface CompileOpts {
 }
 
 type Command =
-  | { cmd: 'compile'; opts: CompileOpts }
+  | { cmd: 'ts-to-lean'; opts: CompileOpts }
+  | { cmd: 'lean-to-ts'; arguments: readonly string[] }
   | { cmd: 'init'; dir: string }
   | { cmd: 'help' }
   | { cmd: 'version' };
 
-function parseArgs(argv: string[]): Command {
-  const args = argv.slice(2);
-
-  if (args.length === 0 || args.includes('-h') || args.includes('--help')) {
+function parseArgs(args: readonly string[]): Command {
+  if (args.length === 0 || ((args[0] === '-h' || args[0] === '--help') && args.length === 1)) {
     return { cmd: 'help' };
   }
-  if (args.includes('-v') || args.includes('--version')) {
+  if ((args[0] === '-v' || args[0] === '--version') && args.length === 1) {
     return { cmd: 'version' };
   }
 
-  const sub = args[0];
+  const [command, ...rest] = args;
+  if (command === 'init') {
+    if (rest.length > 1 || rest[0]?.startsWith('-')) {
+      throw new TypeError('Usage: tslean init [dir]');
+    }
+    return { cmd: 'init', dir: rest[0] ?? '.' };
+  }
+  if (command === 'lean-to-ts') {
+    return { cmd: 'lean-to-ts', arguments: rest };
+  }
+  if (command !== 'ts-to-lean') {
+    throw new TypeError(`Unknown command ${command ?? ''}; expected ts-to-lean, lean-to-ts, or init`);
+  }
+  if (rest.length === 1 && (rest[0] === '-h' || rest[0] === '--help')) {
+    return { cmd: 'help' };
+  }
 
-  if (sub === 'init') return { cmd: 'init', dir: args[1] ?? '.' };
-
-  // "compile" subcommand or legacy mode (positional file / --project)
-  const isCompile = sub === 'compile';
-  const rest = isCompile ? args.slice(1) : args;
-
-  let input = '', output = '', verify = false, veil = false, watch = false, strict = false, timing = false;
+  let input = '';
+  let output = '';
+  let proofObligations = false;
+  let veil = false;
+  let watch = false;
+  let lake = false;
+  let strict = false;
+  let timing = false;
   let ns = 'TSLean.Generated';
-  let isDir = false, genLakefile = true, tsconfigPath = '';
+  let genLakefile = true;
+  let tsconfigPath = '';
+  const seen = new Set<string>();
 
-  for (let i = 0; i < rest.length; i++) {
-    const a = rest[i];
-    if (a === '--project')       { isDir = true; tsconfigPath = rest[++i] ?? ''; input = tsconfigPath; }
-    else if (a === '-o' || a === '--output') { output = rest[++i] ?? ''; }
-    else if (a === '--verify')   { verify = true; }
-    else if (a === '--veil')     { veil = true; }
-    else if (a === '-w' || a === '--watch') { watch = true; }
-    else if (a === '--namespace'){ ns = rest[++i] ?? ns; }
-    else if (a === '--no-color') { noColor = true; }
-    else if (a === '--lakefile') { genLakefile = true; }
-    else if (a === '--no-lakefile') { genLakefile = false; }
-    else if (a === '--strict')   { strict = true; }
-    else if (a === '--timing')   { timing = true; }
-    else if (!a.startsWith('-') && !input) { input = a; }
+  for (let index = 0; index < rest.length; index += 1) {
+    const option = rest[index]!;
+    if (!option.startsWith('-')) {
+      if (input !== '') throw new TypeError(`Unexpected positional argument ${option}`);
+      input = option;
+      continue;
+    }
+    if (option === '-o' || option === '--output') {
+      uniqueOption(seen, 'output');
+      output = optionValue(rest, ++index, option);
+    } else if (option === '--tsconfig') {
+      uniqueOption(seen, 'tsconfig');
+      tsconfigPath = optionValue(rest, ++index, option);
+    } else if (option === '--namespace') {
+      uniqueOption(seen, 'namespace');
+      ns = optionValue(rest, ++index, option);
+    } else if (option === '-w' || option === '--watch') {
+      uniqueOption(seen, 'watch');
+      watch = true;
+    } else if (option === '--lake') {
+      uniqueOption(seen, 'lake');
+      lake = true;
+    } else if (option === '--proof-obligations') {
+      uniqueOption(seen, 'proof-obligations');
+      proofObligations = true;
+    } else if (option === '--veil') {
+      uniqueOption(seen, 'veil');
+      veil = true;
+    } else if (option === '--strict') {
+      uniqueOption(seen, 'strict');
+      strict = true;
+    } else if (option === '--timing') {
+      uniqueOption(seen, 'timing');
+      timing = true;
+    } else if (option === '--no-color') {
+      uniqueOption(seen, 'no-color');
+      noColor = true;
+    } else if (option === '--lakefile' || option === '--no-lakefile') {
+      uniqueOption(seen, 'lakefile');
+      genLakefile = option === '--lakefile';
+    } else {
+      throw new TypeError(`Unknown ts-to-lean option ${option}`);
+    }
   }
 
-  if (!input) {
-    error('No input file or directory specified.\n\n  Usage: tslean compile <file|dir>');
-    process.exit(1);
+  if (input === '') throw new TypeError('Usage: tslean ts-to-lean <file|dir> [options]');
+  const isDir = fs.existsSync(input) && fs.statSync(input).isDirectory();
+  if (tsconfigPath !== '' && !isDir) {
+    throw new TypeError('--tsconfig requires a directory input');
   }
-
-  // Detect directory input
-  if (!isDir && fs.existsSync(input) && fs.statSync(input).isDirectory()) {
-    isDir = true;
+  if (lake && !watch) throw new TypeError('--lake requires --watch');
+  if (output === '') {
+    output = isDir ? `${input.replace(/\/$/u, '')}_lean` : input.replace(/\.tsx?$/u, '.lean');
   }
+  return {
+    cmd: 'ts-to-lean',
+    opts: {
+      input,
+      output,
+      proofObligations,
+      veil,
+      watch,
+      lake,
+      ns,
+      isDir,
+      genLakefile,
+      tsconfigPath,
+      strict,
+      timing,
+    },
+  };
+}
 
-  if (!output) {
-    output = isDir
-      ? input.replace(/\/$/, '') + '_lean'
-      : input.replace(/\.tsx?$/, '.lean');
+function uniqueOption(seen: Set<string>, option: string): void {
+  if (seen.has(option)) throw new TypeError(`Option --${option} may be specified only once`);
+  seen.add(option);
+}
+
+function optionValue(args: readonly string[], index: number, option: string): string {
+  const value = args[index];
+  if (value === undefined || value.startsWith('-')) {
+    throw new TypeError(`${option} requires a value`);
   }
-
-  return { cmd: 'compile', opts: { input, output, verify, veil, watch, ns, isDir, genLakefile, tsconfigPath, strict, timing } };
+  return value;
 }
 
 // ─── Output helpers ──────────────────────────────────────────────────────────
@@ -191,7 +259,7 @@ function reportDegradation(markers: readonly DegradationMarker[], strict: boolea
 // ─── Compile: single file ────────────────────────────────────────────────────
 
 function compileSingle(opts: CompileOpts): boolean {
-  const { input, output, verify, veil, strict, timing } = opts;
+  const { input, output, proofObligations, veil, strict, timing } = opts;
   if (!fs.existsSync(input)) {
     error(`File not found: ${input}`);
     return false;
@@ -199,56 +267,61 @@ function compileSingle(opts: CompileOpts): boolean {
 
   try {
     const timer = resetTimer();
-
     timer.start('parse');
-    const src = fs.readFileSync(input, 'utf-8');
-    const mod = parseFile({ fileName: path.resolve(input), sourceText: src });
+    const source = fs.readFileSync(input, 'utf-8');
+    const parsed = parseFile({ fileName: path.resolve(input), sourceText: source });
 
     timer.start('rewrite');
-    const rw  = rewriteModule(mod);
+    const rewritten = rewriteModule(parsed);
 
     timer.start('codegen');
-    const { code: rawCode, degradations } = generateLeanTracked(rw);
-    let code = rawCode;
-
-    if (verify) {
-      timer.start('verify');
-      const { leanCode, obligations } = generateVerification(rw);
-      if (leanCode) code += '\n\n-- Verification obligations\n' + leanCode;
-      if (obligations.length) info(`Generated ${obligations.length} proof obligation(s)`);
+    const { code: generated, degradations } = generateLeanTracked(rewritten);
+    let code = generated;
+    if (proofObligations) {
+      timer.start('proof-obligations');
+      const result = generateVerification(rewritten);
+      if (result.leanCode !== '') code += `\n\n-- Proof obligations\n${result.leanCode}`;
+      if (result.obligations.length > 0) {
+        info(`Generated ${result.obligations.length} proof obligation(s)`);
+      }
     }
 
-    // Generate Veil transition system stubs for DO classes
+    const veilOutputs: { readonly path: string; readonly code: string; readonly actions: number }[] = [];
     if (veil) {
       timer.start('veil');
-      for (const d of rw.decls) {
-        if (d.tag === 'Namespace') {
-          const doName = d.name;
-          const leanModule = `TSLean.Generated.${path.basename(input, '.ts').replace(/[^a-zA-Z0-9]/g, '_')}`;
-          const result = generateVeilStub(rw, doName, leanModule);
-          if (result) {
-            const veilPath = output.replace(/\.lean$/, '_veil.lean');
-            fs.writeFileSync(veilPath, result.leanCode, 'utf-8');
-            info(`Generated Veil stub: ${veilPath} (${result.actions.length} actions)`);
-          }
+      for (const declaration of rewritten.decls) {
+        if (declaration.tag !== 'Namespace') continue;
+        const moduleName = `TSLean.Generated.${path.basename(input, '.ts').replace(/[^a-zA-Z0-9]/g, '_')}`;
+        const result = generateVeilStub(rewritten, declaration.name, moduleName);
+        if (result !== null) {
+          veilOutputs.push({
+            path: output.replace(/\.lean$/u, '_veil.lean'),
+            code: result.leanCode,
+            actions: result.actions.length,
+          });
         }
       }
     }
 
+    if (!reportDegradation(degradations, strict)) return false;
     timer.start('write');
     fs.mkdirSync(path.dirname(path.resolve(output)), { recursive: true });
     fs.writeFileSync(output, code, 'utf-8');
+    for (const generatedVeil of veilOutputs) {
+      fs.writeFileSync(generatedVeil.path, generatedVeil.code, 'utf-8');
+      info(`Generated Veil declarations: ${generatedVeil.path} (${generatedVeil.actions} actions)`);
+    }
     timer.end();
 
-    if (!reportDegradation(degradations, strict)) return false;
-
     success(`${input} → ${output}`);
-    if (timing) process.stdout.write(timer.report() + '\n');
+    if (timing) process.stdout.write(`${timer.report()}\n`);
     return true;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+  } catch (failure) {
+    const message = failure instanceof Error ? failure.message : String(failure);
     error(message);
-    if (process.env['DEBUG'] && err instanceof Error && err.stack) process.stderr.write(err.stack + '\n');
+    if (process.env['DEBUG'] && failure instanceof Error && failure.stack) {
+      process.stderr.write(`${failure.stack}\n`);
+    }
     return false;
   }
 }
@@ -256,15 +329,8 @@ function compileSingle(opts: CompileOpts): boolean {
 // ─── Compile: project (directory) ────────────────────────────────────────────
 
 function compileProject(opts: CompileOpts): boolean {
-  const { input, output, verify, ns, strict } = opts;
-  const tsconfigPath = opts.tsconfigPath || '';
-  const genLakefile = opts.genLakefile !== false;
-
-  // --project tsconfig.json mode
-  const projectDir = tsconfigPath && tsconfigPath.endsWith('.json')
-    ? path.dirname(path.resolve(tsconfigPath))
-    : path.resolve(input);
-
+  const { input, output, proofObligations, ns, strict } = opts;
+  const projectDir = path.resolve(input);
   if (!fs.existsSync(projectDir)) {
     error(`Directory not found: ${projectDir}`);
     return false;
@@ -274,46 +340,48 @@ function compileProject(opts: CompileOpts): boolean {
   const result = transpileProject({
     projectDir,
     outputDir: path.resolve(output),
-    tsconfigPath: tsconfigPath && tsconfigPath.endsWith('.json') ? path.resolve(tsconfigPath) : undefined,
-    verify,
+    tsconfigPath: opts.tsconfigPath === '' ? undefined : path.resolve(opts.tsconfigPath),
+    proofObligations,
     rootNS: ns,
-    generateLakefile: genLakefile,
-    onProgress: (step, cur, total) => {
-      if (total > 0) info(`[${cur}/${total}] ${step}`);
+    generateLakefile: opts.genLakefile,
+    onProgress: (step, current, total) => {
+      if (total > 0) info(`[${current}/${total}] ${step}`);
       else info(step);
     },
   });
 
-  for (const w of result.warnings) process.stdout.write(`${c.yellow('warn')}: ${w}\n`);
-  for (const e of result.errors) error(e);
+  for (const warning of result.warnings) process.stdout.write(`${c.yellow('warn')}: ${warning}\n`);
+  for (const problem of result.errors) error(problem);
+  const degradations = result.files.flatMap((file) =>
+    file.degradations.map((marker) => ({
+      ...marker,
+      site: `${path.relative(projectDir, file.tsFile)}: ${marker.site}`,
+    })),
+  );
+  const accepted = reportDegradation(degradations, strict);
+  if (!accepted || result.errors.length > 0) return false;
+
   writeProjectOutputs(result);
   for (const { tsFile, leanFile } of result.files) {
     success(`${path.relative(projectDir, tsFile)} → ${path.relative(process.cwd(), leanFile)}`);
   }
-
-  // Attribute each marker to its source file — the sites are otherwise ambiguous
-  // across a project, and `reportDegradation` prints one aggregated list.
-  const degradations = result.files.flatMap(f =>
-    f.degradations.map(m => ({ ...m, site: `${path.relative(projectDir, f.tsFile)}: ${m.site}` })));
-  const accepted = reportDegradation(degradations, strict);
 
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
   const nFiles = result.files.length;
   const nCycles = result.graph.cycles.length;
   const summary = `${nFiles} file(s) transpiled`;
   const cycleSummary = nCycles > 0 ? `, ${c.yellow(nCycles + ' cycle(s)')}` : '';
-  const errSummary = result.errors.length ? `, ${c.red(result.errors.length + ' error(s)')}` : '';
-  const lakeSummary = genLakefile && nFiles > 0 ? `, lakefile generated` : '';
-  process.stdout.write(`\n${c.bold(summary)}${cycleSummary}${errSummary}${lakeSummary} ${c.dim(`(${elapsed}s)`)}\n`);
+  const lakeSummary = opts.genLakefile && nFiles > 0 ? ', lakefile generated' : '';
+  process.stdout.write(`\n${c.bold(summary)}${cycleSummary}${lakeSummary} ${c.dim(`(${elapsed}s)`)}\n`);
 
-  return accepted && result.errors.length === 0;
+  return true;
 }
 
 // ─── Watch mode ──────────────────────────────────────────────────────────────
 
 function watchMode(opts: CompileOpts): void {
   const target = path.resolve(opts.input);
-  const autoLake = process.argv.includes('--lake');
+  const autoLake = opts.lake;
   let compileCount = 0;
 
   const clearScreen = () => process.stdout.write('\x1b[2J\x1b[H');
@@ -359,10 +427,13 @@ function watchMode(opts: CompileOpts): void {
     if (!filename.endsWith('.ts') && !filename.endsWith('.tsx')) return;
     const existing = debounce.get(filename);
     if (existing) clearTimeout(existing);
-    debounce.set(filename, setTimeout(() => {
-      debounce.delete(filename);
-      run(filename);
-    }, DEBOUNCE_MS));
+    debounce.set(
+      filename,
+      setTimeout(() => {
+        debounce.delete(filename);
+        run(filename);
+      }, DEBOUNCE_MS),
+    );
   };
 
   if (opts.isDir) {
@@ -378,46 +449,54 @@ function watchMode(opts: CompileOpts): void {
 
 function initProject(dir: string): boolean {
   const target = path.resolve(dir);
-
-  if (fs.existsSync(path.join(target, 'tslean.json'))) {
+  if (fs.existsSync(path.join(target, 'tsconfig.json'))) {
     error(`Project already initialized in ${target}`);
     return false;
   }
 
   fs.mkdirSync(path.join(target, 'src'), { recursive: true });
   fs.mkdirSync(path.join(target, 'lean'), { recursive: true });
+  fs.writeFileSync(
+    path.join(target, 'tsconfig.json'),
+    JSON.stringify(
+      {
+        compilerOptions: {
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          strict: true,
+          target: 'ES2022',
+        },
+        include: ['src/**/*.ts'],
+        exclude: ['**/*.test.ts', '**/*.spec.ts'],
+      },
+      null,
+      2,
+    ) + '\n',
+    'utf-8',
+  );
+  fs.writeFileSync(
+    path.join(target, 'src', 'example.ts'),
+    [
+      '// Compile with: tslean ts-to-lean src --output lean/Generated',
+      '',
+      'export interface Point {',
+      '  x: number;',
+      '  y: number;',
+      '}',
+      '',
+      'export function distance(a: Point, b: Point): number {',
+      '  const dx = a.x - b.x;',
+      '  const dy = a.y - b.y;',
+      '  return Math.sqrt(dx * dx + dy * dy);',
+      '}',
+      '',
+    ].join('\n'),
+    'utf-8',
+  );
 
-  // tslean.json project config
-  fs.writeFileSync(path.join(target, 'tslean.json'), JSON.stringify({
-    compilerOptions: {
-      output: 'lean/Generated',
-      namespace: 'TSLean.Generated',
-      verify: false,
-    },
-    include: ['src/**/*.ts'],
-    exclude: ['**/*.test.ts', '**/*.spec.ts'],
-  }, null, 2) + '\n', 'utf-8');
-
-  // Example source file
-  fs.writeFileSync(path.join(target, 'src', 'example.ts'), [
-    '// Example: transpile this with `tslean compile src/`',
-    '',
-    'export interface Point {',
-    '  x: number;',
-    '  y: number;',
-    '}',
-    '',
-    'export function distance(a: Point, b: Point): number {',
-    '  const dx = a.x - b.x;',
-    '  const dy = a.y - b.y;',
-    '  return Math.sqrt(dx * dx + dy * dy);',
-    '}',
-    '',
-  ].join('\n'), 'utf-8');
-
-  success(`Initialized tslean project in ${target}`);
-  info('Created tslean.json, src/example.ts');
-  info(`Run: ${c.bold('tslean compile src/ -o lean/Generated/')}`);
+  success(`Initialized TSLean project in ${target}`);
+  info('Created tsconfig.json and src/example.ts');
+  info(`Run: ${c.bold('tslean ts-to-lean src --output lean/Generated')}`);
   return true;
 }
 
@@ -426,28 +505,33 @@ function initProject(dir: string): boolean {
 function runCompile(opts: CompileOpts): void {
   if (opts.watch) {
     watchMode(opts);
-  } else if (opts.isDir) {
-    if (!compileProject(opts)) process.exit(1);
-  } else {
-    if (!compileSingle(opts)) process.exit(1);
+    return;
   }
+  const accepted = opts.isDir ? compileProject(opts) : compileSingle(opts);
+  if (!accepted) process.exitCode = 1;
 }
 
-// ─── Main ────────────────────────────────────────────────────────────────────
-
-function main(): void {
-  const command = parseArgs(process.argv);
-  const cmd = command.cmd;
-
-  if (cmd === 'help') {
+export function runTsleanCli(arguments_: readonly string[]): void {
+  const command = parseArgs(arguments_);
+  if (command.cmd === 'help') {
     process.stdout.write(HELP);
-  } else if (cmd === 'version') {
+  } else if (command.cmd === 'version') {
     process.stdout.write(`tslean ${getVersion()}\n`);
-  } else if (cmd === 'init') {
-    if (!initProject(command.dir)) process.exit(1);
-  } else if (cmd === 'compile') {
+  } else if (command.cmd === 'init') {
+    if (!initProject(command.dir)) process.exitCode = 1;
+  } else if (command.cmd === 'ts-to-lean') {
     runCompile(command.opts);
+  } else {
+    runLeanToTypeScriptCli(command.arguments);
   }
 }
 
-main();
+const entrypoint = process.argv[1];
+if (entrypoint !== undefined && import.meta.url === pathToFileURL(fs.realpathSync(entrypoint)).href) {
+  try {
+    runTsleanCli(process.argv.slice(2));
+  } catch (failure) {
+    error(failure instanceof Error ? failure.message : String(failure));
+    process.exitCode = 1;
+  }
+}

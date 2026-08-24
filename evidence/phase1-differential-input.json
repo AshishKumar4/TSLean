@@ -2,7 +2,6 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase1-differential-manifest.json",
   "baseRevision": "be709a49dd663bef8c37545a58a80a8403381839",
-  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,

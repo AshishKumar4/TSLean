@@ -1,8 +1,28 @@
+> Edited & maintained by Claude; presented as-is.
+
 # TSLean Architecture
 
-## Pipeline Overview
+## Lean to TypeScript
 
-TSLean is a five-stage compiler that transforms TypeScript source into verified Lean 4 code. Every stage operates on an explicitly typed, effect-annotated intermediate representation (IR), so downstream passes never need to re-analyze the original TypeScript AST.
+Lean to TypeScript is the primary compiler. Lean elaborates the selected declarations,
+then `lean/TSLean/LeanToTypeScript/Export.lean` emits a closed semantic program. The
+TypeScript compiler validates that program, assigns deterministic modules and imports,
+emits TypeScript plus source maps and runtime boundaries, type-checks the complete tree,
+and publishes it transactionally with a hash-bound manifest.
+
+The proof-carrying contract under construction adds a source semantics, target
+JavaScript-model semantics, lowering theorem, and checked certificate for every admitted
+IR operation. External JavaScript runtime behavior remains an explicit trusted-base
+assumption with its own conformance oracle.
+
+See [Lean to TypeScript](lean-to-typescript.md) for the artifact and proof boundary.
+
+## TypeScript to Lean
+
+The secondary compiler transforms a typed TypeScript subset into Lean source. Its
+effect-annotated IR keeps later passes independent of the original TypeScript AST.
+Generated Lean can be checked by Lean, but compilation alone does not prove that it
+refines the TypeScript program.
 
 ```mermaid
 graph TD
@@ -59,27 +79,28 @@ The front-end parser. Creates a `ts.Program` with a `TypeChecker`, walks the Typ
 **Entry point:** `parseFile(opts: ParseOptions): IRModule`
 
 **Key responsibilities:**
-- **Import collection** — relative and external module specifiers are resolved to Lean module paths.
-- **Statement dispatch** — routes each top-level statement to specialized handlers: `parseFnDecl`, `parseClassDecl`, `parseInterface`, `parseTypeAlias`, `parseEnum`, `parseVarStmt`, `parseNamespace`, `parseExportDecl`.
-- **Class handling** — extracts state fields, detects Durable Object patterns (via `DurableObject` heritage), synthesizes constructors, parses methods including getters and setters.
-- **CPS early-return transform** — `if (cond) return x; rest` becomes `if cond then x else rest` to produce functional-style Lean without early exits.
-- **Loop transforms** — `for`, `for-of`, `for-in`, `while`, `do-while` are converted to tail-recursive `let rec` helpers.
-- **Switch → Match** — switch statements become pattern match expressions, with fall-through handling and discriminated union detection.
-- **Expression parsing** — handles 30+ TypeScript node types: literals, identifiers, property access, calls, `new`, lambdas, binary/prefix/postfix ops, ternary, object/array literals, `await`, `as`/`satisfies`, template strings, optional chaining, `typeof`, `delete`, regex, destructuring.
-- **Destructuring** — `flattenObjectBinding()` and `flattenArrayBinding()` with nested support and default values.
-- **JSDoc extraction** — strips `@param`/`@returns` tags, preserves summary descriptions as Lean doc comments.
+
+- **Import collection**: relative and external module specifiers are resolved to Lean module paths.
+- **Statement dispatch**: routes each top-level statement to specialized handlers: `parseFnDecl`, `parseClassDecl`, `parseInterface`, `parseTypeAlias`, `parseEnum`, `parseVarStmt`, `parseNamespace`, `parseExportDecl`.
+- **Class handling**: extracts state fields, detects Durable Object patterns (via `DurableObject` heritage), synthesizes constructors, parses methods including getters and setters.
+- **CPS early-return transform**: `if (cond) return x; rest` becomes `if cond then x else rest` to produce functional-style Lean without early exits.
+- **Loop transforms**: `for`, `for-of`, `for-in`, `while`, `do-while` are converted to tail-recursive `let rec` helpers.
+- **Switch → Match**: switch statements become pattern match expressions, with fall-through handling and discriminated union detection.
+- **Expression parsing**: handles 30+ TypeScript node types: literals, identifiers, property access, calls, `new`, lambdas, binary/prefix/postfix ops, ternary, object/array literals, `await`, `as`/`satisfies`, template strings, optional chaining, `typeof`, `delete`, regex, destructuring.
+- **Destructuring**: `flattenObjectBinding()` and `flattenArrayBinding()` with nested support and default values.
+- **JSDoc extraction**: strips `@param`/`@returns` tags, preserves summary descriptions as Lean doc comments.
 
 ### `src/ir/types.ts` (411 lines)
 
 The central data model. Defines the entire intermediate representation: the type universe, expression language, declarations, effects, patterns, and module structure.
 
-- **`Effect`** — discriminated union with 6 variants: `Pure`, `State`, `IO`, `Async`, `Except`, `Combined`. Effects form a join-semilattice with `Pure` as bottom.
-- **`IRType`** — discriminated union with 23 variants covering primitives (`Nat`, `Int`, `Float`, `String`, `Bool`, `Unit`, `Never`), containers (`Option`, `Array`, `Tuple`, `Map`, `Set`, `Promise`, `Result`), named types (`Structure`, `Inductive`, `TypeRef`, `TypeVar`), and advanced types (`Function`, `Dependent`, `Subtype`, `Universe`).
-- **`IRExpr`** — discriminated union with 37+ variants covering literals, variables, function application, let-binding, monadic bind, if-then-else, match, do-blocks, state get/set, throw/try-catch, await, assignment, binary/unary ops, casts, type tests, and structural operations.
-- **`IRDecl`** — discriminated union with 14 variants: `TypeAlias`, `StructDef`, `InductiveDef`, `FuncDef`, `InstanceDef`, `TheoremDef`, `ClassDecl`, `Namespace`, `RawLean`, `VarDecl`, `SectionDecl`, `AttributeDecl`, `DeriveDecl`.
-- **`IRModule`** — `{ name, imports, exports?, decls, comments, sourceFile? }`, the top-level unit passed between pipeline stages.
+- **`Effect`**: discriminated union with 6 variants: `Pure`, `State`, `IO`, `Async`, `Except`, `Combined`. Effects form a join-semilattice with `Pure` as bottom.
+- **`IRType`**: discriminated union with 23 variants covering primitives (`Nat`, `Int`, `Float`, `String`, `Bool`, `Unit`, `Never`), containers (`Option`, `Array`, `Tuple`, `Map`, `Set`, `Promise`, `Result`), named types (`Structure`, `Inductive`, `TypeRef`, `TypeVar`), and advanced types (`Function`, `Dependent`, `Subtype`, `Universe`).
+- **`IRExpr`**: discriminated union with 37+ variants covering literals, variables, function application, let-binding, monadic bind, if-then-else, match, do-blocks, state get/set, throw/try-catch, await, assignment, binary/unary ops, casts, type tests, and structural operations.
+- **`IRDecl`**: discriminated union with 14 variants: `TypeAlias`, `StructDef`, `InductiveDef`, `FuncDef`, `InstanceDef`, `TheoremDef`, `ClassDecl`, `Namespace`, `RawLean`, `VarDecl`, `SectionDecl`, `AttributeDecl`, `DeriveDecl`.
+- **`IRModule`**: `{ name, imports, exports?, decls, comments, sourceFile? }`, the top-level unit passed between pipeline stages.
 
-Every `IRExpr` node implements the `IRNode` mixin, carrying a resolved `type: IRType` and `effect: Effect`. This is the central invariant — the IR is always fully typed and effected.
+Every `IRExpr` node implements the `IRNode` mixin, carrying a resolved `type: IRType` and `effect: Effect`. This is the central invariant: the IR is always fully typed and effected.
 
 ### `src/typemap/index.ts` (410 lines)
 
@@ -88,6 +109,7 @@ Maps TypeScript compiler types (via `ts.TypeChecker`) to IR types. Recursion dep
 **Entry point:** `mapType(t: ts.Type, checker, depth?): IRType`
 
 **Key features:**
+
 - Primitive mapping: `number` → `Float`, `string` → `String`, `boolean` → `Bool`, `void`/`undefined` → `Unit`, `never` → `Empty`, `any`/`unknown` → `TSAny`, `bigint` → `Int`.
 - Union simplification: `T | undefined` → `Option T`, string literal unions → `TyRef(alias)`, `true | false` → `Bool`.
 - Intersection handling: branded newtypes (`string & { __brand: X }`) → `TyRef(alias)`.
@@ -96,10 +118,11 @@ Maps TypeScript compiler types (via `ts.TypeChecker`) to IR types. Recursion dep
 - Utility type pass-through: `Readonly<T>`, `NonNullable<T>`, `Required<T>` are transparent (Lean is immutable).
 
 **Additional exports:**
-- `irTypeToLean(t: IRType, parens?): string` — renders IR types as Lean 4 syntax strings.
-- `extractStructFields(node, checker): StructField[]` — extracts interface/class property signatures.
-- `detectDiscriminatedUnion(t, checker): DiscriminantInfo | null` — detects tagged unions.
-- `extractTypeParams(node, checker?): TypeParam[]` — extracts generic parameters with constraints and defaults.
+
+- `irTypeToLean(t: IRType, parens?): string`: renders IR types as Lean 4 syntax strings.
+- `extractStructFields(node, checker): StructField[]`: extracts interface/class property signatures.
+- `detectDiscriminatedUnion(t, checker): DiscriminantInfo | null`: detects tagged unions.
+- `extractTypeParams(node, checker?): TypeParam[]`: extracts generic parameters with constraints and defaults.
 
 ### `src/effects/index.ts` (209 lines)
 
@@ -108,12 +131,14 @@ Infers which algebraic effects a function body uses by scanning the TypeScript A
 **Entry point:** `inferNodeEffect(node, checker): Effect`
 
 **Scanning rules (each scanner never recurses into nested function scopes):**
+
 - `bodyContainsAwait()` → `Async` effect
 - `bodyContainsThrow()` → `Except` effect (with `String` error type)
 - `bodyContainsMutation()` → `State` effect (assignment operators, `++`/`--`)
 - `bodyContainsIO()` → `IO` effect (triggers: `console.*`, `Date.*`, `Math.random`, `crypto.*`, `fetch`)
 
 **Monad string generation:**
+
 - `monadString(effect)` builds the Lean 4 monad transformer stack right-to-left: `StateT S (ExceptT E IO)`.
 - `doMonadType(stateTypeName)` generates `DOMonad S` for Durable Objects.
 - `joinEffects(a, b)` computes the least upper bound.
@@ -126,19 +151,20 @@ Post-parse IR transformation pass. The hallmark transformation: converts string-
 **Entry point:** `rewriteModule(mod: IRModule): IRModule`
 
 **Transformations:**
-1. **Union registry** — `collectUnionInfo()` builds a map from `InductiveDef` declarations, tracking which discriminant value maps to which constructor.
-2. **Match rewriting** — `rewriteMatch()` detects `obj.kind`/`obj.tag` scrutinees, rewrites `PString("circle")` patterns to `PCtor("Shape.Circle", [radius])`, and lifts constructor fields into scope.
-3. **Struct literal rewriting** — `rewriteStructLit()` converts `{ type: "left", value: v }` to `CtorApp("Either.Left", [v])` when the discriminant matches a known union.
-4. **Field access substitution** — `substituteFieldAccesses()` recursively replaces `s.radius` with the bare binding `radius` inside match arm bodies.
+
+1. **Union registry**: `collectUnionInfo()` builds a map from `InductiveDef` declarations, tracking which discriminant value maps to which constructor.
+2. **Match rewriting**: `rewriteMatch()` detects `obj.kind`/`obj.tag` scrutinees, rewrites `PString("circle")` patterns to `PCtor("Shape.Circle", [radius])`, and lifts constructor fields into scope.
+3. **Struct literal rewriting**: `rewriteStructLit()` converts `{ type: "left", value: v }` to `CtorApp("Either.Left", [v])` when the discriminant matches a known union.
+4. **Field access substitution**: `substituteFieldAccesses()` recursively replaces `s.radius` with the bare binding `radius` inside match arm bodies.
 
 ### `src/codegen/lean-ast.ts` (184 lines)
 
-Typed AST for Lean 4 surface syntax — the intermediate between IR and text output.
+Typed AST for Lean 4 surface syntax: the intermediate between IR and text output.
 
-- **`LeanTy`** — 5 variants: `TyName`, `TyApp`, `TyArrow`, `TyTuple`, `TyParen`.
-- **`LeanPat`** — 10 variants: `PVar`, `PWild`, `PCtor`, `PLit`, `PNone`, `PSome`, `PTuple`, `PStruct`, `POr`, `PAs`.
-- **`LeanExpr`** — 30 variants covering literals, variables, application, let/bind, if/match/do, pure/return/throw, try-catch, modify, operators, field access, struct literal/update, string interpolation, sequences, type annotations, comments, panic.
-- **`LeanDecl`** — 16 variants: `Def`, `Structure`, `Inductive`, `Abbrev`, `Instance`, `Theorem`, `Class`, `Mutual`, `Namespace`, `Section`, `Import`, `Open`, `Attribute`, `Deriving`, `StandaloneInstance`, `Raw`, `Comment`, `Blank`.
+- **`LeanTy`**: 5 variants: `TyName`, `TyApp`, `TyArrow`, `TyTuple`, `TyParen`.
+- **`LeanPat`**: 10 variants: `PVar`, `PWild`, `PCtor`, `PLit`, `PNone`, `PSome`, `PTuple`, `PStruct`, `POr`, `PAs`.
+- **`LeanExpr`**: 30 variants covering literals, variables, application, let/bind, if/match/do, pure/return/throw, try-catch, modify, operators, field access, struct literal/update, string interpolation, sequences, type annotations, comments, panic.
+- **`LeanDecl`**: 16 variants: `Def`, `Structure`, `Inductive`, `Abbrev`, `Instance`, `Theorem`, `Class`, `Mutual`, `Namespace`, `Section`, `Import`, `Open`, `Attribute`, `Deriving`, `StandaloneInstance`, `Raw`, `Comment`, `Blank`.
 
 ### `src/codegen/lower.ts` (1664 lines)
 
@@ -147,6 +173,7 @@ The lowering pass: IR → LeanAST. The largest source file. Every semantic decis
 **Entry point:** `lowerModule(mod: IRModule): LeanFile`
 
 **Key operations:**
+
 - **Pre-passes:** `collectStructInfo()` enriches struct fields from method body analysis; `collectDefinedNames()` builds the scope.
 - **Import resolution:** `resolveImports()` maps IR imports to Lean `import` declarations, scanning for type and expression references.
 - **Missing state structs:** `emitMissingStateStructs()` auto-generates empty state structures for types referenced but not defined in the current module.
@@ -157,11 +184,12 @@ The lowering pass: IR → LeanAST. The largest source file. Every semantic decis
 
 ### `src/codegen/printer.ts` (646 lines)
 
-Pretty-prints LeanAST to valid Lean 4 source text. Purely structural — no heuristics.
+Pretty-prints LeanAST to valid Lean 4 source text. Purely structural: no heuristics.
 
 **Entry point:** `printFile(file: LeanFile): string`
 
 **Key features:**
+
 - Handles all 16 `LeanDecl` variants and all 30 `LeanExpr` variants.
 - `sanitize()` wraps Lean keywords (45 reserved words) in guillemets (`«name»`) and replaces special characters.
 - Manages indentation for multiline expressions (do-blocks, let-chains, match arms).
@@ -170,20 +198,20 @@ Pretty-prints LeanAST to valid Lean 4 source text. Purely structural — no heur
 
 ### `src/codegen/v2.ts`, `src/codegen/index.ts` and `src/codegen/degradation.ts`
 
-The public codegen API. `buildLeanFile()` calls `lowerModule()`; `generateLeanV2()` prints it. `generateLeanTracked()` is the single code path — it returns that same text plus the degradation the artifact carries, and `generateLean()` returns its `code`, so single-file and project mode emit identical bytes.
+The public codegen API. `buildLeanFile()` calls `lowerModule()`; `generateLeanV2()` prints it. `generateLeanTracked()` is the single code path: it returns that same text plus the degradation the artifact carries, and `generateLean()` returns its `code`, so single-file and project mode emit identical bytes.
 
-`scanDegradation()` walks the printed LeanAST and reports every `sorry` and `default` placeholder with the declaration carrying it. It is what `--strict` rejects on: the tracker only records the few sites that call it, whereas the scan is a property of the output. `Raw`, `StandaloneInstance` and `Theorem` carry text the AST never saw — that is how `⟨sorry⟩` reaches the output for mutually recursive types — so their code is tokenized, skipping comments and string literals.
+`scanDegradation()` walks the printed LeanAST and reports every `sorry` and `default` placeholder with the declaration carrying it. It is what `--strict` rejects on: the tracker only records the few sites that call it, whereas the scan is a property of the output. `Raw`, `StandaloneInstance` and `Theorem` carry text the AST never saw: that is how `⟨sorry⟩` reaches the output for mutually recursive types: so their code is tokenized, skipping comments and string literals.
 
 ### `src/stdlib/index.ts` (240 lines)
 
 JavaScript standard library → Lean 4 mapping tables. Contains method translation tables organized by object kind.
 
-- **String methods** — 29 entries (length, toUpperCase, toLowerCase, trim, includes, startsWith, endsWith, slice, split, replace, replaceAll, indexOf, lastIndexOf, charAt, padStart, padEnd, repeat, at, match, search, concat, normalize, toString, valueOf, etc.)
-- **Array methods** — 35 entries (size, push, pop, shift, unshift, map, filter, reduce, reduceRight, forEach, find, findIndex, findLast, some, every, includes, indexOf, slice, splice, concat, join, reverse, flat, flatMap, sort, fill, copyWithin, at, with, keys, values, entries, toString)
-- **Map methods** — 10 entries (get, set, has, delete, size, keys, values, entries, forEach, clear)
-- **Set methods** — 9 entries (add, has, delete, size, forEach, values, keys, entries, clear)
-- **Global functions** — 80+ entries covering `console.*`, `Math.*` (25 functions + 6 constants), `Number.*`, `parseInt`/`parseFloat`, `JSON.*`, `Object.*`, `Array.*`, `Promise.*`, `setTimeout`/`setInterval`, `fetch`, `crypto.*`, URI functions, `structuredClone`.
-- **Binary operator translation** — maps IR binary ops to Lean operators, with string-aware `++` for `Add`.
+- **String methods**: 29 entries (length, toUpperCase, toLowerCase, trim, includes, startsWith, endsWith, slice, split, replace, replaceAll, indexOf, lastIndexOf, charAt, padStart, padEnd, repeat, at, match, search, concat, normalize, toString, valueOf, etc.)
+- **Array methods**: 35 entries (size, push, pop, shift, unshift, map, filter, reduce, reduceRight, forEach, find, findIndex, findLast, some, every, includes, indexOf, slice, splice, concat, join, reverse, flat, flatMap, sort, fill, copyWithin, at, with, keys, values, entries, toString)
+- **Map methods**: 10 entries (get, set, has, delete, size, keys, values, entries, forEach, clear)
+- **Set methods**: 9 entries (add, has, delete, size, forEach, values, keys, entries, clear)
+- **Global functions**: 80+ entries covering `console.*`, `Math.*` (25 functions + 6 constants), `Number.*`, `parseInt`/`parseFloat`, `JSON.*`, `Object.*`, `Array.*`, `Promise.*`, `setTimeout`/`setInterval`, `fetch`, `crypto.*`, URI functions, `structuredClone`.
+- **Binary operator translation**: maps IR binary ops to Lean operators, with string-aware `++` for `Add`.
 
 ### `src/do-model/ambient.ts` (125 lines)
 
@@ -197,17 +225,17 @@ Generates proof obligation stubs for safety properties. Walks the IR tree and em
 - `BinOp` with `Div`/`Mod` → `DivisionSafe` obligation
 - `FieldAccess` `.value`/`.get` on Option → `OptionIsSome` obligation
 
-The `--verify` flag enables this pass. Emitted theorems use standard Lean 4 tactics (`simp`, `cases`).
+The `--proof-obligations` option enables this pass. It emits declarations to prove; it does not prove them.
 
 ### `src/project/` (4 files, 576 lines total)
 
 Multi-file transpilation orchestrator:
 
-- **`index.ts`** (147 lines) — `transpileProject()` reads config, builds the dependency graph, transpiles in topological order, and generates lakefile artifacts.
-- **`dependency-graph.ts`** (204 lines) — Implements Tarjan's SCC algorithm for cycle detection and Kahn's algorithm for topological sort. Produces `DependencyGraph` with `{ nodes, order, cycles }`.
-- **`module-resolver.ts`** (158 lines) — Single source of truth for file path → Lean module name resolution. Handles relative imports, path aliases, and known externals (e.g., `zod` → `TSLean.Stdlib.Validation`).
-- **`reader.ts`** (180 lines) — Reads `tsconfig.json`, discovers source files, creates a shared `ts.Program` for cross-file type checking.
-- **`lakefile-gen.ts`** (67 lines) — Generates `lakefile.toml`, `lean-toolchain`, and root barrel `.lean` module.
+- **`index.ts`** (147 lines): `transpileProject()` reads config, builds the dependency graph, transpiles in topological order, and generates lakefile artifacts.
+- **`dependency-graph.ts`** (204 lines): Implements Tarjan's SCC algorithm for cycle detection and Kahn's algorithm for topological sort. Produces `DependencyGraph` with `{ nodes, order, cycles }`.
+- **`module-resolver.ts`** (158 lines): Single source of truth for file path → Lean module name resolution. Handles relative imports, path aliases, and known externals (e.g., `zod` → `TSLean.Stdlib.Validation`).
+- **`reader.ts`** (180 lines): Reads `tsconfig.json`, discovers source files, creates a shared `ts.Program` for cross-file type checking.
+- **`lakefile-gen.ts`** (67 lines): Generates `lakefile.toml`, `lean-toolchain`, and root barrel `.lean` module.
 
 ### `src/errors.ts` (172 lines)
 
@@ -215,26 +243,26 @@ Structured error reporting with 15 error codes in ranges: TSL001–005 (parser),
 
 ### `src/sorry-tracker.ts`
 
-Records *why* the lowerer degraded an expression, for the sites that call it. Eight categories: `unresolved-expr`, `unresolved-type`, `runtime-api`, `type-test`, `inductive-field`, `mutation`, `control-flow`, `generator`, `other`. Each file gets a fresh tracker via `resetTracker()`. It is diagnostic only — whether the output *is* degraded is answered by `scanDegradation()`.
+Records _why_ the lowerer degraded an expression, for the sites that call it. Eight categories: `unresolved-expr`, `unresolved-type`, `runtime-api`, `type-test`, `inductive-field`, `mutation`, `control-flow`, `generator`, `other`. Each file gets a fresh tracker via `resetTracker()`. It is diagnostic only: whether the output _is_ degraded is answered by `scanDegradation()`.
 
 ### `src/timing.ts` (59 lines)
 
 Pipeline timing instrumentation. `PipelineTimer` tracks elapsed time for each phase (parse, rewrite, codegen, verify, write). Enabled with the `--timing` CLI flag; prints a bar chart report.
 
-### `src/cli.ts` (468 lines)
+### `src/cli.ts`
 
-The CLI entry point. Parses arguments and dispatches to commands:
+One executable dispatches three explicit commands:
 
-| Command | Flag | Description |
-|---------|------|-------------|
-| Compile (single) | `tslean input.ts -o output.lean` | Single-file pipeline |
-| Compile (project) | `tslean --project [dir]` | Multi-file mode via tsconfig |
-| Watch | `-w / --watch` | Recompile on file change (250ms debounce) |
-| Watch + lake | `--watch --lake` | Recompile + auto `lake build` |
-| Verify | `--verify` | Generate proof obligation stubs |
-| Init | `tslean init [dir]` | Scaffold project with `tslean.json` |
-| Timing | `--timing` | Print per-phase timing report |
-| Strict | `--strict` | Reject output containing `sorry`/`default` placeholders (single-file and project mode) |
+| Command                    | Purpose                                                    |
+| -------------------------- | ---------------------------------------------------------- |
+| `tslean lean-to-ts`        | Compile admitted Lean declarations to a TypeScript package |
+| `tslean ts-to-lean <file\\ | dir>`                                                      | Compile one TypeScript file or project directory to Lean |
+| `tslean init [dir]`        | Create `tsconfig.json`, source, and Lean directories       |
+
+`--proof-obligations` appends declarations to TypeScript-to-Lean output.
+`--strict` refuses degraded output before writing any file. `--watch --lake` runs Lake
+after each successful watched compilation. Removed positional, `compile`, `--project`,
+and `--verify` forms are errors rather than compatibility aliases.
 
 ## Lean Runtime Library Organization
 
@@ -300,33 +328,33 @@ lean/TSLean/
 
 ## Data Flow: Single-File Pipeline
 
-1. **Parse** (`parseFile`) — The TypeScript compiler creates a `ts.Program` and `TypeChecker`. The parser walks the AST, calling `mapType()` for every type annotation and `inferNodeEffect()` for every function body. Output: a fully-typed, effect-annotated `IRModule`.
+1. **Parse** (`parseFile`): The TypeScript compiler creates a `ts.Program` and `TypeChecker`. The parser walks the AST, calling `mapType()` for every type annotation and `inferNodeEffect()` for every function body. Output: a fully-typed, effect-annotated `IRModule`.
 
-2. **Rewrite** (`rewriteModule`) — Scans the IR for discriminated union definitions. When a `Match` expression uses a string discriminant on a known union, rewrites pattern nodes from `PString` to `PCtor` and lifts constructor fields into scope. Struct literals with discriminant fields become `CtorApp` nodes.
+2. **Rewrite** (`rewriteModule`): Scans the IR for discriminated union definitions. When a `Match` expression uses a string discriminant on a known union, rewrites pattern nodes from `PString` to `PCtor` and lifts constructor fields into scope. Struct literals with discriminant fields become `CtorApp` nodes.
 
-3. **Lower** (`lowerModule`) — Converts each IR declaration and expression to its LeanAST equivalent. Resolves imports, detects mutual type references, generates missing state structs, translates method calls via the stdlib lookup tables, and emits `sorry` for inexpressible constructs. Output: a `LeanFile` containing `LeanDecl[]`.
+3. **Lower** (`lowerModule`): Converts each IR declaration and expression to its LeanAST equivalent. Resolves imports, detects mutual type references, generates missing state structs, translates method calls via the stdlib lookup tables, and emits `sorry` for inexpressible constructs. Output: a `LeanFile` containing `LeanDecl[]`.
 
-4. **Print** (`printFile`) — Renders the `LeanFile` to a string of valid Lean 4 source code. Handles indentation, do-notation formatting, keyword sanitization, and string interpolation.
+4. **Print** (`printFile`): Renders the `LeanFile` to a string of valid Lean 4 source code. Handles indentation, do-notation formatting, keyword sanitization, and string interpolation.
 
-5. **Write** — The CLI writes the Lean source to disk. If `--verify` is enabled, proof obligation stubs are appended.
+5. **Write**: The CLI writes only accepted Lean output. `--proof-obligations` appends declarations that remain to be proved.
 
 ## Data Flow: Multi-File Pipeline
 
-For project mode (`--project`):
+For project mode (`tslean ts-to-lean <dir>`):
 
-1. **Read config** (`readProjectConfig`) — Parses `tsconfig.json`, discovers `.ts` files, resolves path aliases and base URL.
-2. **Shared compiler** (`createSharedCompiler`) — Creates a single `ts.Program` for all files, enabling cross-file type checking.
-3. **Dependency graph** (`buildDependencyGraph`) — Builds a DAG of module dependencies. Runs Tarjan's SCC to detect cycles and Kahn's algorithm for topological sort.
-4. **Transpile in order** — Each file is parsed, rewritten, and lowered in topological order. Imports resolve to Lean module paths via `fileToLeanModule()`.
-5. **Generate lakefile** (`writeLakefiles`) — Emits `lakefile.toml`, `lean-toolchain` (pinned to v4.33.1), and a root barrel module that imports all sub-modules.
-6. **Write outputs** (`writeProjectOutputs`) — Writes all `.lean` files to the output directory.
+1. **Read config** (`readProjectConfig`): Parses `tsconfig.json`, discovers `.ts` files, resolves path aliases and base URL.
+2. **Shared compiler** (`createSharedCompiler`): Creates a single `ts.Program` for all files, enabling cross-file type checking.
+3. **Dependency graph** (`buildDependencyGraph`): Builds a DAG of module dependencies. Runs Tarjan's SCC to detect cycles and Kahn's algorithm for topological sort.
+4. **Transpile in order**: Each file is parsed, rewritten, and lowered in topological order. Imports resolve to Lean module paths via `fileToLeanModule()`.
+5. **Generate lakefile** (`writeLakefiles`): Emits `lakefile.toml`, `lean-toolchain` (pinned to v4.33.1), and a root barrel module that imports all sub-modules.
+6. **Write outputs** (`writeProjectOutputs`): Writes all `.lean` files to the output directory.
 
 ## Type Checker Integration
 
 TSLean relies heavily on the TypeScript compiler API (`ts.TypeChecker`) rather than doing its own type inference. This gives several advantages:
 
-- **Full type resolution** — generics, overloads, conditional types, and mapped types are all resolved by the TS compiler before we see them.
-- **Accurate union discrimination** — the checker tells us exactly which properties exist on each union member.
-- **Branded type detection** — intersection types like `string & { __brand: "UserId" }` are visible through the checker.
+- **Full type resolution**: generics, overloads, conditional types, and mapped types are all resolved by the TS compiler before we see them.
+- **Accurate union discrimination**: the checker tells us exactly which properties exist on each union member.
+- **Branded type detection**: intersection types like `string & { __brand: "UserId" }` are visible through the checker.
 
 The parser creates a `ts.Program` (with `ts.createProgram` or `readProjectConfig`), obtains the checker, and passes it to `mapType()` for every type and `inferNodeEffect()` for every function. The `do-model/ambient.ts` module injects virtual `.d.ts` declarations for Cloudflare types when DO patterns are detected, so the checker resolves them without requiring `@cloudflare/workers-types` to be installed.

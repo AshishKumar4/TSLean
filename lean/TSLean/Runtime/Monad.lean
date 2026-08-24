@@ -32,12 +32,11 @@ instance : MonadLift (Except TSError) (DOMonad σ) where
 
 /-! ## Monad laws
 
-Deliberately absent. An earlier version asserted thirteen `axiom`s here -- the `DOMonad` and `TaskM`
-monad, state and catch laws -- on the grounds that the runtime implements them correctly and the type
-theory cannot see it. Two things were wrong with that. `REBUILD_PLAN.md` §6 rule 6 requires platform
-behaviour to be a capability parameter, never an axiom, and rule 7 allows exactly three axioms. And
-every generated module that is not pure imports this file, so those thirteen sat in the trusted base
-of every artifact the compiler produced, where the audit could not see them.
+Deliberately absent. An earlier version asserted thirteen `axiom`s here for the `DOMonad`
+and `TaskM` monad, state, and catch laws. `docs/trust.md` rule 6 requires platform
+behavior to enter through an explicit capability, model, or named assumption. Rule 7
+fixes the closed axiom gate. Every generated module that is not pure imports this file,
+so those axioms would enter every artifact's trusted base.
 
 Measured before removal: nothing anywhere consumed any of the thirteen. They were decoration. If a
 law is genuinely needed later, the honest form is the one `TSLean.Refinement.Float` already uses -- a

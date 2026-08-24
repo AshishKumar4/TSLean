@@ -2,11 +2,10 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase5-emitted-tcb-manifest.json",
   "baseRevision": "110c1296e1dce0f67601c13e5863e13ee9252eac",
-  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
-      "files": 50,
-      "passed": 1932,
+      "files": 51,
+      "passed": 1929,
       "failed": 0,
       "todo": 10
     },

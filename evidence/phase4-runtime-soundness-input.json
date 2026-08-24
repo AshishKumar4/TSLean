@@ -2,7 +2,6 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase4-runtime-soundness-manifest.json",
   "baseRevision": "4ae138ab1534e7c3fca477a59998bf9ebad3370b",
-  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 46,

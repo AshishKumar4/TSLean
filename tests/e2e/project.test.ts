@@ -1,4 +1,4 @@
-// E2E project mode tests: run --project on full-project fixture.
+// E2E project mode tests: run the explicit TypeScript-to-Lean command.
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as fs from 'fs';
@@ -6,7 +6,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { runCli } from '../helpers/run-cli.js';
 
-const ROOT   = process.cwd();
+const ROOT = process.cwd();
 const FP_DIR = path.join(ROOT, 'tests/fixtures/full-project');
 
 let outDir: string;
@@ -14,11 +14,14 @@ let files: Record<string, string> = {};
 
 beforeAll(() => {
   outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-e2e-proj-'));
-  runCli(['--project', FP_DIR, '-o', outDir, '--no-lakefile']);
+  runCli(['ts-to-lean', FP_DIR, '-o', outDir, '--no-lakefile']);
   function read(dir: string) {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, e.name);
-      if (e.isDirectory()) { read(full); continue; }
+      if (e.isDirectory()) {
+        read(full);
+        continue;
+      }
       if (e.name.endsWith('.lean')) {
         files[path.relative(outDir, full)] = fs.readFileSync(full, 'utf8');
       }
@@ -28,11 +31,12 @@ beforeAll(() => {
 });
 
 describe('Project output: file existence', () => {
-  it('at least 4 lean files produced',   () => expect(Object.keys(files).length).toBeGreaterThanOrEqual(4));
-  it('Shared/Types.lean exists',         () => expect(Object.keys(files).some(k => k.includes('Types.lean'))).toBe(true));
-  it('Shared/Validators.lean exists',    () => expect(Object.keys(files).some(k => k.includes('Validators.lean'))).toBe(true));
-  it('Backend/AuthDo.lean exists',       () => expect(Object.keys(files).some(k => k.includes('AuthDo.lean'))).toBe(true));
-  it('Backend/Router.lean exists',       () => expect(Object.keys(files).some(k => k.includes('Router.lean'))).toBe(true));
+  it('at least 4 lean files produced', () => expect(Object.keys(files).length).toBeGreaterThanOrEqual(4));
+  it('Shared/Types.lean exists', () => expect(Object.keys(files).some((k) => k.includes('Types.lean'))).toBe(true));
+  it('Shared/Validators.lean exists', () =>
+    expect(Object.keys(files).some((k) => k.includes('Validators.lean'))).toBe(true));
+  it('Backend/AuthDo.lean exists', () => expect(Object.keys(files).some((k) => k.includes('AuthDo.lean'))).toBe(true));
+  it('Backend/Router.lean exists', () => expect(Object.keys(files).some((k) => k.includes('Router.lean'))).toBe(true));
 });
 
 describe('Project output: every file has correct header', () => {
@@ -55,46 +59,52 @@ describe('Project output: every file has correct header', () => {
 
 describe('Project output: Shared/Types.lean', () => {
   let code: string;
-  beforeAll(() => { code = files[Object.keys(files).find(k => k.includes('Types.lean'))!] ?? ''; });
+  beforeAll(() => {
+    code = files[Object.keys(files).find((k) => k.includes('Types.lean'))!] ?? '';
+  });
 
-  it('UserId is structure',    () => expect(code).toContain('structure UserId'));
-  it('RoomId is structure',    () => expect(code).toContain('structure RoomId'));
-  it('User structure',         () => expect(code).toContain('structure User'));
+  it('UserId is structure', () => expect(code).toContain('structure UserId'));
+  it('RoomId is structure', () => expect(code).toContain('structure RoomId'));
+  it('User structure', () => expect(code).toContain('structure User'));
   it('makeApiSuccess defined', () => expect(code).toMatch(/def makeApiSuccess/));
-  it('makeApiError defined',   () => expect(code).toMatch(/def makeApiError/));
+  it('makeApiError defined', () => expect(code).toMatch(/def makeApiError/));
 });
 
 describe('Project output: Shared/Validators.lean', () => {
   let code: string;
-  beforeAll(() => { code = files[Object.keys(files).find(k => k.includes('Validators.lean'))!] ?? ''; });
+  beforeAll(() => {
+    code = files[Object.keys(files).find((k) => k.includes('Validators.lean'))!] ?? '';
+  });
 
-  it('validateEmail defined',      () => expect(code).toMatch(/def validateEmail/));
+  it('validateEmail defined', () => expect(code).toMatch(/def validateEmail/));
   it('validateDisplayName defined', () => expect(code).toMatch(/def validateDisplayName/));
-  it('validateRoomName defined',   () => expect(code).toMatch(/def validateRoomName/));
+  it('validateRoomName defined', () => expect(code).toMatch(/def validateRoomName/));
   it('ValidationResult structure', () => expect(code).toContain('structure ValidationResult'));
 });
 
 describe('Project output: Backend/AuthDo.lean cross-file imports', () => {
   let code: string;
-  beforeAll(() => { code = files[Object.keys(files).find(k => k.includes('AuthDo.lean'))!] ?? ''; });
+  beforeAll(() => {
+    code = files[Object.keys(files).find((k) => k.includes('AuthDo.lean'))!] ?? '';
+  });
 
   it('imports Shared.Types (no .js)', () => {
     expect(code).toContain('import TSLean.Generated.Shared.Types');
     expect(code).not.toContain('import TSLean.Generated.Shared.Types.js');
   });
-  it('imports Shared.Validators',    () => expect(code).toContain('import TSLean.Generated.Shared.Validators'));
-  it('imports DO Http',              () => expect(code).toContain('import TSLean.DurableObjects.Http'));
+  it('imports Shared.Validators', () => expect(code).toContain('import TSLean.Generated.Shared.Validators'));
+  it('imports DO Http', () => expect(code).toContain('import TSLean.DurableObjects.Http'));
   it('StoredUser structure emitted', () => expect(code).toContain('structure StoredUser'));
-  it('register function defined',    () => expect(code).toMatch(/def.*register/));
-  it('login function defined',       () => expect(code).toMatch(/def.*login/));
-  it('verify function defined',      () => expect(code).toMatch(/def.*verify/));
-  it('content not empty stub',       () => expect(code.split('\n').length).toBeGreaterThan(20));
+  it('register function defined', () => expect(code).toMatch(/def.*register/));
+  it('login function defined', () => expect(code).toMatch(/def.*login/));
+  it('verify function defined', () => expect(code).toMatch(/def.*verify/));
+  it('content not empty stub', () => expect(code.split('\n').length).toBeGreaterThan(20));
 });
 
 describe('Project output: no duplicates', () => {
   it('no duplicate import lines', () => {
     for (const [n, content] of Object.entries(files)) {
-      const imps = content.split('\n').filter(l => l.startsWith('import '));
+      const imps = content.split('\n').filter((l) => l.startsWith('import '));
       const unique = new Set(imps);
       expect(unique.size, `${n} has duplicate imports`).toBe(imps.length);
     }
@@ -115,12 +125,13 @@ describe('Project output: balanced parentheses', () => {
   });
 });
 
-describe('Project with --verify', () => {
+describe('Project with proof obligations', () => {
   it('produces valid output', () => {
     const vdir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-e2e-verify-'));
-    runCli(['--project', FP_DIR, '-o', vdir, '--verify']);
-    const leans = fs.readdirSync(vdir, { recursive: true, withFileTypes: true })
-      .filter(e => e.isFile() && (e.name as string).endsWith('.lean'));
+    runCli(['ts-to-lean', FP_DIR, '-o', vdir, '--proof-obligations']);
+    const leans = fs
+      .readdirSync(vdir, { recursive: true, withFileTypes: true })
+      .filter((e) => e.isFile() && (e.name as string).endsWith('.lean'));
     expect(leans.length).toBeGreaterThan(0);
     fs.rmSync(vdir, { recursive: true });
   });

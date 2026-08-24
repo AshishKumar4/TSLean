@@ -28,8 +28,13 @@ function file(...decls: LeanDecl[]): LeanFile {
 
 function def(name: string, body: LeanExpr): Extract<LeanDecl, { tag: 'Def' }> {
   return {
-    tag: 'Def', partial: false, name, tyParams: [], params: [],
-    retTy: { tag: 'TyName', name: 'Unit' }, body,
+    tag: 'Def',
+    partial: false,
+    name,
+    tyParams: [],
+    params: [],
+    retTy: { tag: 'TyName', name: 'Unit' },
+    body,
   };
 }
 
@@ -71,26 +76,34 @@ describe('degradation scan: AST placeholders', () => {
 
   it('reports placeholders nested in expressions', () => {
     const body: LeanExpr = {
-      tag: 'App', fn: { tag: 'Var', name: 'g' },
+      tag: 'App',
+      fn: { tag: 'Var', name: 'g' },
       args: [{ tag: 'Default' }, { tag: 'Paren', inner: { tag: 'Sorry' } }],
     };
-    expect(scanned(def('f', body)).map(m => m.level)).toEqual(['default', 'sorry']);
+    expect(scanned(def('f', body)).map((m) => m.level)).toEqual(['default', 'sorry']);
   });
 
   it('reports a structure field default against the field', () => {
-    expect(scanned({
-      tag: 'Structure', name: 'IRExpr', tyParams: [], deriving: [],
-      fields: [{ name: 'type', ty: { tag: 'TyName', name: 'IRType' }, default_: { tag: 'Default' } }],
-    })).toEqual([{ level: 'default', site: 'structure IRExpr.type' }]);
+    expect(
+      scanned({
+        tag: 'Structure',
+        name: 'IRExpr',
+        tyParams: [],
+        deriving: [],
+        fields: [{ name: 'type', ty: { tag: 'TyName', name: 'IRType' }, default_: { tag: 'Default' } }],
+      }),
+    ).toEqual([{ level: 'default', site: 'structure IRExpr.type' }]);
   });
 
   it('reports placeholders inside namespaces, mutual blocks and where clauses', () => {
     const helper: LeanDecl = def('helper', { tag: 'Sorry' });
     const outer: LeanDecl = {
-      ...def('outer', Unit), where_: [helper],
+      ...def('outer', Unit),
+      where_: [helper],
     };
     const markers = scanned({
-      tag: 'Namespace', name: 'N',
+      tag: 'Namespace',
+      name: 'N',
       decls: [{ tag: 'Mutual', decls: [def('a', { tag: 'Default' })] }, outer],
     });
     expect(markers).toEqual([
@@ -100,25 +113,41 @@ describe('degradation scan: AST placeholders', () => {
   });
 
   it('reports the sorry that mutual interfaces smuggle through a standalone instance', () => {
-    expect(scanned({
-      tag: 'StandaloneInstance', code: 'instance : Inhabited Node1 := ⟨sorry⟩',
-    })).toEqual([{ level: 'sorry', site: 'instance : Inhabited Node1 := ⟨sorry⟩' }]);
+    expect(
+      scanned({
+        tag: 'StandaloneInstance',
+        code: 'instance : Inhabited Node1 := ⟨sorry⟩',
+      }),
+    ).toEqual([{ level: 'sorry', site: 'instance : Inhabited Node1 := ⟨sorry⟩' }]);
   });
 
   it('reports raw Lean and unproven theorems', () => {
-    expect(scanned({ tag: 'Raw', code: 'def x : Nat := default' }).map(m => m.level)).toEqual(['default']);
-    expect(scanned({
-      tag: 'Theorem', name: 't', statement: 'True', proof: 'sorry',
-    })).toEqual([{ level: 'sorry', site: 'theorem t' }]);
+    expect(scanned({ tag: 'Raw', code: 'def x : Nat := default' }).map((m) => m.level)).toEqual(['default']);
+    expect(
+      scanned({
+        tag: 'Theorem',
+        name: 't',
+        statement: 'True',
+        proof: 'sorry',
+      }),
+    ).toEqual([{ level: 'sorry', site: 'theorem t' }]);
   });
 });
 
 describe('degradation scan: no false positives', () => {
   it('ignores string literals, interpolations and panics', () => {
     expect(scanned(def('f', { tag: 'Lit', value: '"sorry"' }))).toEqual([]);
-    expect(scanned(def('f', {
-      tag: 'SInterp', parts: [{ tag: 'Str', value: 'default' }, { tag: 'Expr', expr: { tag: 'Var', name: 'x' } }],
-    }))).toEqual([]);
+    expect(
+      scanned(
+        def('f', {
+          tag: 'SInterp',
+          parts: [
+            { tag: 'Str', value: 'default' },
+            { tag: 'Expr', expr: { tag: 'Var', name: 'x' } },
+          ],
+        }),
+      ),
+    ).toEqual([]);
     expect(scanned(def('f', { tag: 'Panic', msg: 'sorry: default' }))).toEqual([]);
   });
 
@@ -161,13 +190,13 @@ describe('degradation scan: reporting', () => {
 describe('degradation scan: transpiler output', () => {
   it('finds the untracked sorry emitted for mutually recursive interfaces', () => {
     const markers = markersFor(MUTUAL_INTERFACES);
-    expect(markers.filter(m => m.level === 'sorry')).toHaveLength(2);
-    expect(markers.map(m => m.site)).toContain('instance : Inhabited Node1 := ⟨sorry⟩');
+    expect(markers.filter((m) => m.level === 'sorry')).toHaveLength(2);
+    expect(markers.map((m) => m.site)).toContain('instance : Inhabited Node1 := ⟨sorry⟩');
   });
 
   it('finds the defaults an anonymous object parameter leaves behind', () => {
     const source = fs.readFileSync(path.join(FIX, 'advanced/anonymous-object.ts'), 'utf8');
-    expect(markersFor(source).every(m => m.level === 'default')).toBe(true);
+    expect(markersFor(source).every((m) => m.level === 'default')).toBe(true);
     expect(markersFor(source).length).toBeGreaterThan(0);
   });
 
@@ -208,24 +237,32 @@ describe('CLI --strict', () => {
 
   it('rejects a generated sorry in single-file mode', () => {
     const { dir, file } = withMutualSource();
-    const run = spawnCli([file, '-o', path.join(dir, 'out.lean'), '--strict']);
+    const output = path.join(dir, 'out.lean');
+    const run = spawnCli(['ts-to-lean', file, '-o', output, '--strict']);
     expect(run.status).toBe(1);
     expect(run.stderr).toContain('--strict: 2 sorry axiom(s) in generated Lean');
     expect(run.stderr).toContain('instance : Inhabited Node1 := ⟨sorry⟩');
+    expect(fs.existsSync(output)).toBe(false);
   });
 
   it('rejects a generated sorry in project mode', () => {
     const { dir } = withMutualSource();
-    const run = spawnCli(['--project', dir, '-o', path.join(dir, 'out'), '--no-lakefile', '--strict']);
+    const output = path.join(dir, 'out');
+    const run = spawnCli(['ts-to-lean', dir, '-o', output, '--no-lakefile', '--strict']);
     expect(run.status).toBe(1);
     expect(run.stderr).toContain('--strict: 2 sorry axiom(s) in generated Lean');
     expect(run.stderr).toContain('mutual.ts: instance : Inhabited Node1 := ⟨sorry⟩');
+    expect(fs.existsSync(output)).toBe(false);
   });
 
   it('rejects a default placeholder that stands in for a value', () => {
     const dir = tmpDir('tslean-strict-default-');
     const run = spawnCli([
-      path.join(FIX, 'advanced/anonymous-object.ts'), '-o', path.join(dir, 'out.lean'), '--strict',
+      'ts-to-lean',
+      path.join(FIX, 'advanced/anonymous-object.ts'),
+      '-o',
+      path.join(dir, 'out.lean'),
+      '--strict',
     ]);
     expect(run.status).toBe(1);
     expect(run.stderr).toContain('default placeholder(s) in generated Lean');
@@ -235,7 +272,11 @@ describe('CLI --strict', () => {
   it('rejects the sorry a struct field carrying an uninhabited type leaves behind', () => {
     const dir = tmpDir('tslean-strict-carrier-');
     const run = spawnCli([
-      path.join(FIX, 'do-workers/nested-carrier.ts'), '-o', path.join(dir, 'out.lean'), '--strict',
+      'ts-to-lean',
+      path.join(FIX, 'do-workers/nested-carrier.ts'),
+      '-o',
+      path.join(dir, 'out.lean'),
+      '--strict',
     ]);
     expect(run.status).toBe(1);
     expect(run.stderr).toContain('--strict: 1 sorry axiom(s) in generated Lean');
@@ -244,7 +285,13 @@ describe('CLI --strict', () => {
 
   it('accepts output that carries no placeholder', () => {
     const dir = tmpDir('tslean-strict-clean-');
-    const run = spawnCli([path.join(FIX, 'basic/hello.ts'), '-o', path.join(dir, 'out.lean'), '--strict']);
+    const run = spawnCli([
+      'ts-to-lean',
+      path.join(FIX, 'basic/hello.ts'),
+      '-o',
+      path.join(dir, 'out.lean'),
+      '--strict',
+    ]);
     expect(run.status).toBe(0);
     expect(run.stdout).toContain('→');
   });
@@ -252,7 +299,7 @@ describe('CLI --strict', () => {
   it('emits the same degraded output without --strict', () => {
     const { dir, file } = withMutualSource();
     const out = path.join(dir, 'out.lean');
-    const run = spawnCli([file, '-o', out]);
+    const run = spawnCli(['ts-to-lean', file, '-o', out]);
     expect(run.status).toBe(0);
     expect(fs.readFileSync(out, 'utf8')).toContain('⟨sorry⟩');
   });

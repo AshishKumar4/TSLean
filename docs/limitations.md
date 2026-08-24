@@ -1,10 +1,14 @@
-# TSLean Limitations
+> Edited & maintained by Claude; presented as-is.
 
-An honest accounting of what TSLean cannot do, what it does imperfectly, workarounds for each limitation, and what is planned for future improvement.
+# TypeScript-to-Lean Limitations
 
-## Fundamentally Inexpressible in Lean 4
+This document describes the secondary TypeScript-to-Lean compiler. It does not describe
+the primary Lean-to-TypeScript fragment.
 
-These TypeScript features use type-level computation that has no equivalent in Lean 4's type system. They will never produce fully faithful translations — the gap is inherent to the target language.
+The listed TypeScript forms are not represented by the current typed IR and lowering
+rules. This is a compiler boundary, not a claim that no Lean encoding could exist.
+
+## Type-level forms outside the current IR
 
 ### Conditional Types with `infer`
 
@@ -28,7 +32,7 @@ type ReadonlyMap<T> = { readonly [K in keyof T]: T[K] };
 
 Lean has no `keyof` operator and no mechanism for iterating over the fields of a structure at the type level. There is no way to express "for each field in T, produce a corresponding field in the output type."
 
-**What happens:** Same as conditional types — concrete instantiations resolved by the checker work; generic uses emit `sorry`.
+**What happens:** Same as conditional types: concrete instantiations resolved by the checker work; generic uses emit `sorry`.
 
 **Workaround:** Define concrete types directly rather than deriving them with mapped types.
 
@@ -61,7 +65,7 @@ When `T` is a union, TypeScript distributes the conditional across each member. 
 ### Index Access Types
 
 ```typescript
-type NameType = User['name'];  // string
+type NameType = User['name']; // string
 type FirstArg<F> = F extends (a: infer A, ...args: any[]) => any ? A : never;
 ```
 
@@ -94,8 +98,10 @@ These are runtime type tests. Lean's type system is checked at compile time; the
 type Value = { tag: 'str'; value: string } | { tag: 'num'; value: number };
 function process(v: Value) {
   switch (v.tag) {
-    case 'str': return v.value.toUpperCase();
-    case 'num': return String(v.value);
+    case 'str':
+      return v.value.toUpperCase();
+    case 'num':
+      return String(v.value);
   }
 }
 ```
@@ -137,7 +143,7 @@ TypeScript uses structural typing: a function accepting `{ name: string }` works
 const cache = new WeakMap<object, string>();
 ```
 
-**What happens:** Modeled as `AssocMap`/`AssocSet` — no garbage collection semantics. Keys are not weakly held.
+**What happens:** Modeled as `AssocMap`/`AssocSet`: no garbage collection semantics. Keys are not weakly held.
 
 **Workaround:** None needed for correctness verification. The semantic difference only matters for memory management, which is outside the verification scope.
 
@@ -150,13 +156,13 @@ const match = str.match(re);
 
 **What happens:** `RegExp` exists as an opaque structure. Pattern matching operations (`test`, `match`, `replace` with regex) use stub implementations that return default values.
 
-**Workaround:** Use `String.includes`, `String.startsWith`, `String.endsWith` where possible — these have faithful Lean implementations.
+**Workaround:** Use `String.includes`, `String.startsWith`, `String.endsWith` where possible: these have faithful Lean implementations.
 
 ### Dynamic Property Access
 
 ```typescript
-const key = "name";
-const value = obj[key];  // dynamic key
+const key = 'name';
+const value = obj[key]; // dynamic key
 ```
 
 **What happens:** Dynamic property access where the key is a runtime value emits `sorry`. Static property access (`obj.name`) works.
@@ -177,7 +183,7 @@ Mutable variables (`let x = 0; x = 1;`) are modeled via `StateT` or `IO.Ref`. Th
 
 TypeScript's `number` is IEEE 754 double. Lean's `Float` is also IEEE 754 double, but `Nat`/`Int` are arbitrary precision. The transpiler defaults to `Float`, which can lose precision for large integers.
 
-**Workaround:** Use `bigint` in TypeScript for values that need arbitrary precision — it maps to `Int` in Lean. Or use explicit type annotations in your code.
+**Workaround:** Use `bigint` in TypeScript for values that need arbitrary precision: it maps to `Int` in Lean. Or use explicit type annotations in your code.
 
 ### Optional Chaining Depth
 
@@ -209,52 +215,52 @@ TypeScript decorators (`@log`, `@injectable`) are not supported. They are metapr
 
 ## Error Codes Reference
 
-| Code | Category | Description | Severity |
-|------|----------|-------------|----------|
-| TSL001 | Parser | Unknown AST node encountered | Warning |
-| TSL002 | Parser | Unsupported syntax construct | Warning |
-| TSL003 | Parser | Missing type annotation (cannot infer) | Warning |
-| TSL004 | Parser | Cycle detected in type references | Error |
-| TSL005 | Parser | Invalid import specifier | Warning |
-| TSL100 | Types | Unresolved type (falls back to `TSAny`) | Warning |
-| TSL101 | Types | Inexpressible type (conditional/mapped/infer) | Warning |
-| TSL102 | Types | Type constraint lost in translation | Warning |
-| TSL103 | Types | Intersection type erased | Warning |
-| TSL200 | Lowering | Sorry emitted (general) | Warning |
-| TSL201 | Lowering | typeof/instanceof not supported | Warning |
-| TSL202 | Lowering | Runtime API call not mapped to stub | Warning |
-| TSL203 | Lowering | Mutation pattern requires StateT | Info |
-| TSL204 | Lowering | Generator/yield not supported | Warning |
-| TSL205 | Lowering | Inductive field access pattern issue | Warning |
-| TSL300 | Project | Source file not found | Error |
-| TSL301 | Project | Circular import detected | Error |
-| TSL302 | Project | Invalid tsconfig.json | Error |
-| TSL400 | Lean | Lean build failed | Error |
-| TSL401 | Lean | Lean type mismatch in generated code | Error |
+| Code   | Category | Description                                   | Severity |
+| ------ | -------- | --------------------------------------------- | -------- |
+| TSL001 | Parser   | Unknown AST node encountered                  | Warning  |
+| TSL002 | Parser   | Unsupported syntax construct                  | Warning  |
+| TSL003 | Parser   | Missing type annotation (cannot infer)        | Warning  |
+| TSL004 | Parser   | Cycle detected in type references             | Error    |
+| TSL005 | Parser   | Invalid import specifier                      | Warning  |
+| TSL100 | Types    | Unresolved type (falls back to `TSAny`)       | Warning  |
+| TSL101 | Types    | Inexpressible type (conditional/mapped/infer) | Warning  |
+| TSL102 | Types    | Type constraint lost in translation           | Warning  |
+| TSL103 | Types    | Intersection type erased                      | Warning  |
+| TSL200 | Lowering | Sorry emitted (general)                       | Warning  |
+| TSL201 | Lowering | typeof/instanceof not supported               | Warning  |
+| TSL202 | Lowering | Runtime API call not mapped to stub           | Warning  |
+| TSL203 | Lowering | Mutation pattern requires StateT              | Info     |
+| TSL204 | Lowering | Generator/yield not supported                 | Warning  |
+| TSL205 | Lowering | Inductive field access pattern issue          | Warning  |
+| TSL300 | Project  | Source file not found                         | Error    |
+| TSL301 | Project  | Circular import detected                      | Error    |
+| TSL302 | Project  | Invalid tsconfig.json                         | Error    |
+| TSL400 | Lean     | Lean build failed                             | Error    |
+| TSL401 | Lean     | Lean type mismatch in generated code          | Error    |
 
 ## Sorry Tracking Categories
 
 Every `sorry` emitted by the lowerer is tracked with a category. Run with `--timing` or check the appended comment block in the output to see the sorry summary.
 
-| Category | Description | Typical Cause |
-|----------|-------------|---------------|
-| `unresolved-expr` | Expression could not be lowered | Unknown AST pattern |
-| `unresolved-type` | Type could not be mapped | Inexpressible utility type |
-| `runtime-api` | JS runtime API not mapped | Missing stub in stdlib |
-| `type-test` | typeof/instanceof test | Runtime type check |
+| Category          | Description                       | Typical Cause                     |
+| ----------------- | --------------------------------- | --------------------------------- |
+| `unresolved-expr` | Expression could not be lowered   | Unknown AST pattern               |
+| `unresolved-type` | Type could not be mapped          | Inexpressible utility type        |
+| `runtime-api`     | JS runtime API not mapped         | Missing stub in stdlib            |
+| `type-test`       | typeof/instanceof test            | Runtime type check                |
 | `inductive-field` | Field access on inductive variant | Direct field access without match |
-| `mutation` | Complex mutation pattern | Non-trivial assignment |
-| `control-flow` | Unhandled control flow | labeled break/continue, goto-like |
-| `generator` | Generator/yield | Coroutine pattern |
-| `other` | Uncategorized | Miscellaneous |
+| `mutation`        | Complex mutation pattern          | Non-trivial assignment            |
+| `control-flow`    | Unhandled control flow            | labeled break/continue, goto-like |
+| `generator`       | Generator/yield                   | Coroutine pattern                 |
+| `other`           | Uncategorized                     | Miscellaneous                     |
 
 ## Roadmap
 
 The following improvements are planned or under consideration:
 
-- **Type class synthesis for structural subtyping** — Generate type classes from shared interface shapes to recover some structural typing.
-- **Generator → LazyList** — Map generator functions to `LazyList` or `Stream` using thunked evaluation.
-- **typeof elimination** — Analyze the branches of typeof checks and synthesize discriminated union wrappers.
-- **Improved mutation analysis** — Detect simple mutation patterns (counter increment, accumulator append) and use pure functional equivalents instead of `StateT`.
-- **Partial/Pick/Omit concrete expansion** — When the base type is known, expand utility types to concrete structures instead of emitting `sorry`.
-- **Decorator support** — Map common decorators to Lean attributes or wrapper functions.
+- **Type class synthesis for structural subtyping**: Generate type classes from shared interface shapes to recover some structural typing.
+- **Generator → LazyList**: Map generator functions to `LazyList` or `Stream` using thunked evaluation.
+- **typeof elimination**: Analyze the branches of typeof checks and synthesize discriminated union wrappers.
+- **Improved mutation analysis**: Detect simple mutation patterns (counter increment, accumulator append) and use pure functional equivalents instead of `StateT`.
+- **Partial/Pick/Omit concrete expansion**: When the base type is known, expand utility types to concrete structures instead of emitting `sorry`.
+- **Decorator support**: Map common decorators to Lean attributes or wrapper functions.

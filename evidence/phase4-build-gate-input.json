@@ -2,7 +2,6 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase4-build-gate-manifest.json",
   "baseRevision": "9d8916eba21b52a1e6a2584253616e654e7fe3a6",
-  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 45,

@@ -507,31 +507,19 @@ const { check, input: inputArgument, requireAttestation } = parseArgs(argv.slice
 const inputPath = repositoryPath(inputArgument, '--input');
 const input = JSON.parse(readFileSync(inputPath, 'utf8'));
 const revisionKey = input.baseRevision === undefined ? 'upstreamRevision' : 'baseRevision';
-const expectedKeys = [
-  'schemaVersion',
-  'outputPath',
-  revisionKey,
-  'branch',
-  'counts',
-  'knownTodos',
-  'validation',
-  'hashGroups',
-];
+const expectedKeys = ['schemaVersion', 'outputPath', revisionKey, 'counts', 'knownTodos', 'validation', 'hashGroups'];
 if (input.formalDebt !== undefined) expectedKeys.push('formalDebt');
 if (input.executableAssumptions !== undefined) expectedKeys.push('executableAssumptions');
 if (input.refinementProofs !== undefined) expectedKeys.push('refinementProofs');
 exactKeys(input, expectedKeys, 'input');
 if (input.schemaVersion !== 1) fail('unsupported evidence input schema');
 if (typeof input[revisionKey] !== 'string' || input[revisionKey].length === 0) fail(`${revisionKey} must be non-empty`);
-if (typeof input.branch !== 'string' || input.branch.length === 0) fail('branch must be non-empty');
 if (!Array.isArray(input.knownTodos)) fail('knownTodos must be an array');
 validateCounts(input.counts);
 if (input.formalDebt !== undefined) validateFormalDebt(input.formalDebt);
 if (input.executableAssumptions !== undefined) validateExecutableAssumptions(input.executableAssumptions);
 if (input.refinementProofs !== undefined) validateRefinementProofs(input.refinementProofs);
 
-const branch = textCommand('git', ['branch', '--show-current']);
-if (branch !== input.branch) fail(`expected branch ${input.branch}, found ${branch || '<detached HEAD>'}`);
 const groups = object(input.hashGroups, 'hashGroups');
 if (Object.keys(groups).length === 0) fail('hashGroups must not be empty');
 // Before any count is read, so a half-frozen snapshot reports why rather than surfacing as a
@@ -545,7 +533,6 @@ const hashes = Object.fromEntries(Object.entries(groups).map(([name, group]) => 
 const manifest = {
   schemaVersion: 1,
   [revisionKey]: input[revisionKey],
-  branch,
   toolchain: {
     bun: textCommand('bun', ['--version']),
     node: textCommand('node', ['--version']),

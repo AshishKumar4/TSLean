@@ -2,7 +2,6 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase1-execution-manifest.json",
   "baseRevision": "cfeda92b09ba4990c61ef70066df61df4004674a",
-  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 42,

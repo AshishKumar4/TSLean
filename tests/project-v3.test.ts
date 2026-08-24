@@ -4,10 +4,10 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { transpileProject, toLeanPath, toModuleName } from '../src/project/index.js';
+import { transpileProject } from '../src/project/index.js';
 import { runCli } from './helpers/run-cli.js';
 
-const ROOT   = process.cwd();
+const ROOT = process.cwd();
 const FP_DIR = path.join(ROOT, 'tests/fixtures/full-project');
 
 // ─── File content verification ─────────────────────────────────────────────────
@@ -18,11 +18,14 @@ describe('Project v3: content quality', () => {
 
   beforeAll(() => {
     outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-'));
-    runCli(['--project', FP_DIR, '-o', outDir, '--no-lakefile']);
+    runCli(['ts-to-lean', FP_DIR, '-o', outDir, '--no-lakefile']);
     function read(dir: string) {
       for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, e.name);
-        if (e.isDirectory()) { read(full); continue; }
+        if (e.isDirectory()) {
+          read(full);
+          continue;
+        }
         if (e.name.endsWith('.lean')) files[path.relative(outDir, full)] = fs.readFileSync(full, 'utf8');
       }
     }
@@ -38,51 +41,51 @@ describe('Project v3: content quality', () => {
   });
 
   it('Router.lean has def fetch (from export default)', () => {
-    const router = files[Object.keys(files).find(k => k.includes('Router.lean'))!];
+    const router = files[Object.keys(files).find((k) => k.includes('Router.lean'))!];
     expect(router).toBeDefined();
     expect(router).toMatch(/def fetch/);
   });
 
   it('Router.lean has RouterEnv structure', () => {
-    const router = files[Object.keys(files).find(k => k.includes('Router.lean'))!];
+    const router = files[Object.keys(files).find((k) => k.includes('Router.lean'))!];
     expect(router).toContain('structure RouterEnv');
   });
 
   it('Router.lean has RouterEnv structure', () => {
-    const router = files[Object.keys(files).find(k => k.includes('Router.lean'))!];
+    const router = files[Object.keys(files).find((k) => k.includes('Router.lean'))!];
     // RouterEnv defined as structure (extends suppressed for unknown parent Env)
     expect(router).toMatch(/structure RouterEnv/);
   });
 
   it('AuthDo.lean has real function bodies (not just sorry)', () => {
-    const auth = files[Object.keys(files).find(k => k.includes('AuthDo.lean'))!];
+    const auth = files[Object.keys(files).find((k) => k.includes('AuthDo.lean'))!];
     expect(auth).toBeDefined();
     // Should have def register, login, verify with actual bodies
     expect(auth).toMatch(/def.*register/);
     expect(auth).toMatch(/def.*login/);
     expect(auth).toMatch(/def.*verify/);
     // Verify there are actual expressions, not just `sorry` everywhere
-    const lines = auth.split('\n').filter(l => l.trim().length > 0);
-    const sorrys = lines.filter(l => l.trim() === 'sorry').length;
-    expect(sorrys).toBeLessThan(lines.length * 0.3);  // Less than 30% sorry
+    const lines = auth.split('\n').filter((l) => l.trim().length > 0);
+    const sorrys = lines.filter((l) => l.trim() === 'sorry').length;
+    expect(sorrys).toBeLessThan(lines.length * 0.3); // Less than 30% sorry
   });
 
   it('ChatRoomDo.lean has Message structure and fetch', () => {
-    const chat = files[Object.keys(files).find(k => k.includes('ChatRoomDo.lean'))!];
+    const chat = files[Object.keys(files).find((k) => k.includes('ChatRoomDo.lean'))!];
     expect(chat).toBeDefined();
     expect(chat).toContain('structure Message');
     expect(chat).toMatch(/def.*fetch/);
   });
 
   it('Types.lean has UserId and User structures', () => {
-    const types = files[Object.keys(files).find(k => k.includes('Types.lean'))!];
+    const types = files[Object.keys(files).find((k) => k.includes('Types.lean'))!];
     expect(types).toBeDefined();
     expect(types).toContain('structure UserId');
     expect(types).toContain('structure User');
   });
 
   it('Validators.lean has validateEmail function', () => {
-    const val = files[Object.keys(files).find(k => k.includes('Validators.lean'))!];
+    const val = files[Object.keys(files).find((k) => k.includes('Validators.lean'))!];
     expect(val).toBeDefined();
     expect(val).toMatch(/def validateEmail/);
   });
@@ -94,11 +97,14 @@ describe('Project v3: cross-file imports (no .js suffix)', () => {
   let files: Record<string, string> = {};
   beforeAll(() => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-imp-'));
-    runCli(['--project', FP_DIR, '-o', outDir, '--no-lakefile']);
+    runCli(['ts-to-lean', FP_DIR, '-o', outDir, '--no-lakefile']);
     function read(dir: string) {
       for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, e.name);
-        if (e.isDirectory()) { read(full); continue; }
+        if (e.isDirectory()) {
+          read(full);
+          continue;
+        }
         if (e.name.endsWith('.lean')) files[path.relative(outDir, full)] = fs.readFileSync(full, 'utf8');
       }
     }
@@ -106,11 +112,11 @@ describe('Project v3: cross-file imports (no .js suffix)', () => {
   });
 
   it('AuthDo imports Types (no .js in import lines)', () => {
-    const auth = files[Object.keys(files).find(k => k.includes('AuthDo.lean'))!];
+    const auth = files[Object.keys(files).find((k) => k.includes('AuthDo.lean'))!];
     if (auth) {
       expect(auth).toContain('import TSLean.Generated.Shared.Types');
       // Check import lines specifically (not all content — json method contains .js substring)
-      const importLines = auth.split('\n').filter(l => l.startsWith('import '));
+      const importLines = auth.split('\n').filter((l) => l.startsWith('import '));
       for (const line of importLines) {
         expect(line).not.toContain('.js');
       }
@@ -118,13 +124,13 @@ describe('Project v3: cross-file imports (no .js suffix)', () => {
   });
 
   it('AuthDo imports Validators (no .js)', () => {
-    const auth = files[Object.keys(files).find(k => k.includes('AuthDo.lean'))!];
+    const auth = files[Object.keys(files).find((k) => k.includes('AuthDo.lean'))!];
     if (auth) expect(auth).toContain('import TSLean.Generated.Shared.Validators');
   });
 
   it('no import has .js extension', () => {
     for (const [n, content] of Object.entries(files)) {
-      const importLines = content.split('\n').filter(l => l.startsWith('import '));
+      const importLines = content.split('\n').filter((l) => l.startsWith('import '));
       for (const line of importLines) {
         expect(line, `${n}: ${line}`).not.toContain('.js');
       }
@@ -132,12 +138,12 @@ describe('Project v3: cross-file imports (no .js suffix)', () => {
   });
 });
 
-// ─── --project flag with various options ──────────────────────────────────────
+// ─── Explicit project command ────────────────────────────────────────────────
 
 describe('Project v3: CLI project mode', () => {
-  it('--project on basic/ transpiles 3 files', () => {
+  it('ts-to-lean on basic/ compiles 3 files', () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-basic-'));
-    runCli(['--project', path.join(ROOT, 'tests/fixtures/basic'), '-o', outDir, '--no-lakefile']);
+    runCli(['ts-to-lean', path.join(ROOT, 'tests/fixtures/basic'), '-o', outDir, '--no-lakefile']);
     // Files are in hierarchical module structure, find all .lean recursively
     const findLean = (dir: string): string[] => {
       const out: string[] = [];
@@ -154,9 +160,9 @@ describe('Project v3: CLI project mode', () => {
     fs.rmSync(outDir, { recursive: true });
   });
 
-  it('--project on advanced/ transpiles fixtures', () => {
+  it('ts-to-lean on advanced/ compiles fixtures', () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-adv-'));
-    runCli(['--project', path.join(ROOT, 'tests/fixtures/advanced'), '-o', outDir, '--no-lakefile']);
+    runCli(['ts-to-lean', path.join(ROOT, 'tests/fixtures/advanced'), '-o', outDir, '--no-lakefile']);
     const findLean = (dir: string): string[] => {
       const out: string[] = [];
       if (!fs.existsSync(dir)) return out;
@@ -172,9 +178,16 @@ describe('Project v3: CLI project mode', () => {
     fs.rmSync(outDir, { recursive: true });
   });
 
-  it('--project with --verify adds obligations', () => {
+  it('ts-to-lean with proof obligations adds declarations', () => {
     const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tslean-v3-verify-'));
-    runCli(['--project', path.join(ROOT, 'tests/fixtures/basic'), '-o', outDir, '--verify', '--no-lakefile']);
+    runCli([
+      'ts-to-lean',
+      path.join(ROOT, 'tests/fixtures/basic'),
+      '-o',
+      outDir,
+      '--proof-obligations',
+      '--no-lakefile',
+    ]);
     const findLean = (dir: string): string[] => {
       const out: string[] = [];
       if (!fs.existsSync(dir)) return out;
@@ -187,8 +200,8 @@ describe('Project v3: CLI project mode', () => {
     };
     const leans = findLean(outDir);
     expect(leans.length).toBe(3);
-    const contents = leans.map(f => fs.readFileSync(f, 'utf8'));
-    expect(contents.some(c => c.includes('open TSLean'))).toBe(true);
+    const contents = leans.map((f) => fs.readFileSync(f, 'utf8'));
+    expect(contents.some((c) => c.includes('open TSLean'))).toBe(true);
     fs.rmSync(outDir, { recursive: true });
   });
 });
@@ -198,7 +211,7 @@ describe('Project v3: CLI project mode', () => {
 describe('Project v3: single-file CLI', () => {
   it('hello.ts generates correct output', () => {
     const out = path.join(os.tmpdir(), 'hello_v3.lean');
-    runCli([path.join(ROOT, 'tests/fixtures/basic/hello.ts'), '-o', out]);
+    runCli(['ts-to-lean', path.join(ROOT, 'tests/fixtures/basic/hello.ts'), '-o', out]);
     const content = fs.readFileSync(out, 'utf8');
     expect(content).toContain('partial def factorial');
     expect(content).toContain('def greet');
@@ -207,7 +220,7 @@ describe('Project v3: single-file CLI', () => {
 
   it('counter DO generates DO imports', () => {
     const out = path.join(os.tmpdir(), 'counter_v3.lean');
-    runCli([path.join(ROOT, 'tests/fixtures/durable-objects/counter.ts'), '-o', out]);
+    runCli(['ts-to-lean', path.join(ROOT, 'tests/fixtures/durable-objects/counter.ts'), '-o', out]);
     const content = fs.readFileSync(out, 'utf8');
     expect(content).toContain('import TSLean.DurableObjects.Http');
     expect(content).toContain('import TSLean.Runtime.Monad');
@@ -216,29 +229,10 @@ describe('Project v3: single-file CLI', () => {
 
   it('export-patterns.ts generates def createConfig', () => {
     const out = path.join(os.tmpdir(), 'exports_v3.lean');
-    runCli([path.join(ROOT, 'tests/fixtures/advanced/export-patterns.ts'), '-o', out]);
+    runCli(['ts-to-lean', path.join(ROOT, 'tests/fixtures/advanced/export-patterns.ts'), '-o', out]);
     const content = fs.readFileSync(out, 'utf8');
     expect(content).toMatch(/def createConfig/);
     fs.unlinkSync(out);
-  });
-});
-
-// ─── toModuleName and toLeanPath ───────────────────────────────────────────────
-
-describe('Project v3: path utilities', () => {
-  it('toModuleName converts paths correctly', () => {
-    expect(toModuleName('/p/src/foo.ts', '/p/src')).toBe('TSLean.Generated.Foo');
-    expect(toModuleName('/p/src/shared/types.ts', '/p/src')).toBe('TSLean.Generated.Shared.Types');
-    expect(toModuleName('/p/src/chat-room.ts', '/p/src')).toBe('TSLean.Generated.ChatRoom');
-  });
-
-  it('toLeanPath converts paths correctly', () => {
-    expect(toLeanPath('/p/src/foo.ts', '/p/src', '/out')).toBe('/out/Foo.lean');
-    expect(toLeanPath('/p/src/shared/types.ts', '/p/src', '/out')).toBe('/out/Shared/Types.lean');
-  });
-
-  it('custom rootNS works', () => {
-    expect(toModuleName('/p/src/foo.ts', '/p/src', 'MyApp')).toBe('MyApp.Foo');
   });
 });
 
@@ -255,7 +249,7 @@ describe('Project v3: transpileProject API', () => {
     const result = transpileProject({ projectDir: path.join(ROOT, 'tests/fixtures/basic'), outputDir: outDir });
     expect(result.files.length).toBe(3);
     expect(result.errors.length).toBe(0);
-    result.files.forEach(f => {
+    result.files.forEach((f) => {
       expect(f.leanFile).toMatch(/\.lean$/);
       expect(f.content.length).toBeGreaterThan(0);
     });

@@ -2,7 +2,6 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase1-callable-manifest.json",
   "baseRevision": "9a7c7b50c5775add36cd07b9759af03a8281559e",
-  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 42,

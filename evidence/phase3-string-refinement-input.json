@@ -2,7 +2,6 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase3-string-refinement-manifest.json",
   "baseRevision": "50fedc36a2aed89cd59973ac97c0411eeae3fae5",
-  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,

@@ -545,7 +545,7 @@ function assertCurrent(absolutePath: string, expected: string): void {
 
 function usage(): string {
   return [
-    'Usage: lean-to-typescript --project-root <path> --module <name> --source <path>',
+    'Usage: tslean lean-to-ts --project-root <path> --module <name> --source <path>',
     '  --declaration <name> [--declaration <name> ...] --out-dir <path> --manifest <path>',
     '  [--check [--require-attestation]]',
     '',

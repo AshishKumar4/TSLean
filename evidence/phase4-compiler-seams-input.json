@@ -2,7 +2,6 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase4-compiler-seams-manifest.json",
   "baseRevision": "12c5674f8ae1f406c8724d9ef67e9a666b2f6454",
-  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 46,

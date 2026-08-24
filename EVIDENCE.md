@@ -1,3 +1,5 @@
+> Edited & maintained by Claude; presented as-is.
+
 # Evidence Ledger
 
 This file is append-only. Counts describe the named revision and working-tree state; they are not correctness claims.
@@ -1538,10 +1540,10 @@ introduced earlier would otherwise have rejected.
 
 ## A live inconsistency in the runtime every artifact imports
 
-`docs/REBUILD_PLAN.md` lists `LawfulBEq Float` among the causes of the previous attempt's failure -- a
-`sorry`-backed instance, false for `NaN`, from which the imported runtime could prove `False` -- and
-§6 rule 5 records it as deleted. It was not deleted. It was still present at
-`lean/TSLean/Runtime/Basic.lean:102-106`:
+`docs/trust.md` rule 5 prohibits fabricated language instances. The previous runtime still
+carried `LawfulBEq Float`: a `sorry`-backed instance, false for `NaN`, from which an
+imported artifact could prove `False`.
+It was present at `lean/TSLean/Runtime/Basic.lean:102-106`:
 
 ```lean
 instance : LawfulBEq Float where
@@ -1606,7 +1608,7 @@ called that the crown jewel.
 Three things in it were actively harmful rather than merely useless.
 `Proofs/PipelineCorrectness.lean:84,89,94` declared `axiom parseFile_preserves_name`,
 `axiom generateLean_nonempty` and `axiom generateLean_has_namespace` -- asserting properties of the
-compiler as axioms, which is what `REBUILD_PLAN.md` §6 rule 6 exists to forbid. Several theorems used
+compiler as axioms, which `docs/trust.md` rule 6 forbids. Several theorems used
 `native_decide`, which injects `Lean.ofReduceBool`, outside the three-axiom allowlist. And
 `PipelineCorrectness.lean:73` proved `selfhost_modules_typecheck : True := by trivial` with a comment
 claiming that its own compilation witnesses eleven transpiled modules being well-typed Lean -- while
@@ -1703,10 +1705,10 @@ artifact.
 **Thirteen asserted monad laws.** `Runtime/Monad.lean` declared `axiom pureDO_bind`, `bind_pureDO`,
 `doMonad_bind_assoc`, `throwDO_catchDO`, `pureDO_catchDO`, `getDO_setDO_id`, `setDO_getDO`,
 `setDO_setDO`, `modifyDO_eq_get_set` and three `TaskM` counterparts, with a header arguing this was
-"honest" because the runtime implements them and the type theory cannot see it. `REBUILD_PLAN.md` §6
-rule 6 requires platform behaviour to be a capability parameter rather than an axiom, and rule 7
-allows three axioms. Measured before removal: **nothing anywhere consumed any of the thirteen.** They
-were decoration sitting in the trusted base.
+"honest" because the runtime implements them and the type theory cannot see it.
+`docs/trust.md` rule 6 requires an explicit capability, model, or assumption instead of
+an untracked axiom. Rule 7 fixes the closed axiom gate. Measured before removal:
+nothing consumed any of the thirteen. They were decoration sitting in the trusted base.
 
 **Nineteen `native_decide` axioms**, each injecting `Lean.ofReduceBool`. Two concrete `strStartsWith`
 facts in `Runtime/Coercions.lean`, six branches of `TSError.name_nonempty_builtin` in

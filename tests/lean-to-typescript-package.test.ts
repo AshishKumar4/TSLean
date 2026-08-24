@@ -1889,9 +1889,12 @@ describe('published Lean to TypeScript API', () => {
         );
         execFileSync('bun', ['install', '--offline', '--ignore-scripts'], { cwd: consumerRoot, stdio: 'pipe' });
         installedPackageRoot = join(consumerRoot, 'node_modules', 'tslean');
-        const compilerExecutable = join(consumerRoot, 'node_modules', '.bin', 'lean-to-typescript');
-        const help = execFileSync(compilerExecutable, ['--help'], { cwd: consumerRoot, encoding: 'utf8' });
-        expect(help).toContain('Usage: lean-to-typescript');
+        const compilerExecutable = join(consumerRoot, 'node_modules', '.bin', 'tslean');
+        const help = execFileSync(compilerExecutable, ['lean-to-ts', '--help'], {
+          cwd: consumerRoot,
+          encoding: 'utf8',
+        });
+        expect(help).toContain('Usage: tslean lean-to-ts');
         expect(help).toContain('--out-dir <path>');
         expect(help).not.toContain('--output');
         writeFileSync(join(leanRoot, 'lean-toolchain'), 'leanprover/lean4:v4.33.1\n');
@@ -1951,6 +1954,7 @@ describe('published Lean to TypeScript API', () => {
         const generatedPath = join(outputDirectory, 'Consumer.ts');
         const manifestPath = join(outputDirectory, 'tslean.manifest.json');
         const compilerArguments = [
+          'lean-to-ts',
           '--project-root',
           leanRoot,
           '--module',
@@ -1989,8 +1993,13 @@ describe('published Lean to TypeScript API', () => {
         writeFileSync(
           join(consumerRoot, 'compile.mjs'),
           [
+            "import { compileLeanToTypeScript as compileFromRoot, compileTypeScriptToLean } from 'tslean';",
             "import { compileLeanToTypeScript, verifyLeanToTypeScriptPackage } from 'tslean/lean-to-typescript';",
+            "import { compileTypeScriptToLean as compileForwardSubpath } from 'tslean/typescript-to-lean';",
             "import { resolve } from 'node:path';",
+            "if (compileFromRoot !== compileLeanToTypeScript || compileTypeScriptToLean !== compileForwardSubpath) throw new TypeError('package facades drifted');",
+            "const forward = compileTypeScriptToLean({ fileName: '/virtual/answer.ts', sourceText: 'export function answer(): number { return 42; }' });",
+            "if (!forward.code.includes('def answer') || forward.degradations.length !== 0) throw new TypeError('forward facade failed');",
             "const root = resolve('lean-project');",
             'const artifact = compileLeanToTypeScript({',
             '  projectRoot: root,',

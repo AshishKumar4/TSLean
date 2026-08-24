@@ -19,6 +19,26 @@ describe('package contents', () => {
     expect(packageJson['os']).toEqual(['linux']);
   });
 
+  it('publishes one CLI and explicit compiler directions', () => {
+    const repository = resolve(import.meta.dirname, '..');
+    const packageJson: unknown = JSON.parse(readFileSync(resolve(repository, 'package.json'), 'utf8'));
+    if (!isRecord(packageJson)) throw new TypeError('package metadata is missing');
+    expect(packageJson['bin']).toEqual({ tslean: 'dist/cli.js' });
+    expect(packageJson['main']).toBe('dist/index.js');
+    expect(packageJson['types']).toBe('dist/index.d.ts');
+    expect(packageJson['exports']).toEqual({
+      '.': { types: './dist/index.d.ts', import: './dist/index.js' },
+      './typescript-to-lean': {
+        types: './dist/typescript-to-lean/index.d.ts',
+        import: './dist/typescript-to-lean/index.js',
+      },
+      './lean-to-typescript': {
+        types: './dist/lean-to-typescript/index.d.ts',
+        import: './dist/lean-to-typescript/index.js',
+      },
+    });
+  });
+
   it('does not restore the deleted rival compiler', () => {
     const repository = resolve(import.meta.dirname, '..');
     for (const path of [
@@ -59,9 +79,16 @@ describe('package contents', () => {
         'lean/lake-manifest.json',
         'scripts/generate-differential-manifest.mjs',
         'scripts/differential-manifest-lib.d.mts',
+        'dist/index.js',
+        'dist/index.d.ts',
+        'dist/typescript-to-lean/index.js',
+        'dist/typescript-to-lean/index.d.ts',
         'dist/lean-to-typescript/index.js',
         'dist/lean-to-typescript/index.d.ts',
-        'docs/LEAN_TO_TS_PLAN.md',
+        'docs/lean-to-typescript.md',
+        'docs/trust.md',
+        'docs/architecture.md',
+        'docs/limitations.md',
         'examples/lean-to-typescript/README.md',
         'examples/lean-to-typescript/generated/tslean.manifest.json',
         'examples/lean-to-typescript/generated/TSLean/Examples/Placement.ts',
@@ -75,8 +102,6 @@ describe('package contents', () => {
         'examples/lean-to-typescript/package/generated/TSLean/Examples/Package/Policy.ts.map',
         'examples/lean-to-typescript/package/generated/tslean-runtime.ts',
         'examples/lean-to-typescript/placement.adapter.ts',
-        'dist/lean-to-typescript/cli.js',
-        'dist/lean-to-typescript/cli.d.ts',
         'spec/differential/schema.json',
         'spec/differential/primitive.json',
         'spec/differential/abstract-operations.json',

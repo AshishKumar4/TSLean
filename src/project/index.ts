@@ -9,7 +9,6 @@ import { rewriteModule } from '../rewrite/index.js';
 import { generateLeanTracked, type DegradationMarker } from '../codegen/index.js';
 import { generateVerification } from '../verification/index.js';
 import type { IRModule } from '../ir/types.js';
-import { capitalize } from '../utils.js';
 import { fileToLeanPath } from './module-resolver.js';
 import { buildDependencyGraph, formatCycles, type DependencyGraph } from './dependency-graph.js';
 import { readProjectDir, readProjectConfig, toResolverOpts, type ProjectConfig } from './reader.js';
@@ -21,7 +20,7 @@ export interface ProjectOpts {
   projectDir: string;
   outputDir?: string;
   tsconfigPath?: string;
-  verify?: boolean;
+  proofObligations?: boolean;
   rootNS?: string;
   generateLakefile?: boolean;
   leanVersion?: string;
@@ -44,7 +43,7 @@ export interface ProjectResult {
 }
 
 export function transpileProject(opts: ProjectOpts): ProjectResult {
-  const { projectDir, verify = false, generateLakefile: genLake = true, leanVersion = 'v4.33.1' } = opts;
+  const { projectDir, proofObligations = false, generateLakefile: genLake = true, leanVersion = 'v4.33.1' } = opts;
   const progress = opts.onProgress ?? (() => {});
 
   // Phase 1: Read configuration
@@ -54,7 +53,13 @@ export function transpileProject(opts: ProjectOpts): ProjectResult {
     : readProjectDir(projectDir, { outDir: opts.outputDir, namespace: opts.rootNS });
 
   if (config.files.length === 0) {
-    return { files: [], errors: [`No .ts files found in ${projectDir}`], warnings: [], graph: { nodes: new Map(), order: [], cycles: [] }, config };
+    return {
+      files: [],
+      errors: [`No .ts files found in ${projectDir}`],
+      warnings: [],
+      graph: { nodes: new Map(), order: [], cycles: [] },
+      config,
+    };
   }
 
   // Phase 2: Build dependency graph
@@ -87,9 +92,9 @@ export function transpileProject(opts: ProjectOpts): ProjectResult {
       const rw = rewriteModule(fixed);
       const { code, degradations } = generateLeanTracked(rw);
       let content = code;
-      if (verify) {
+      if (proofObligations) {
         const { leanCode } = generateVerification(rw);
-        if (leanCode) content += '\n\n-- Verification\n' + leanCode;
+        if (leanCode) content += '\n\n-- Proof obligations\n' + leanCode;
       }
       const leanFile = fileToLeanPath(node.filePath, resolverOpts, config.outDir);
       results.push({ tsFile: node.filePath, leanFile, module: node.leanModule, content, degradations });
@@ -105,7 +110,7 @@ export function transpileProject(opts: ProjectOpts): ProjectResult {
     const lakeOpts: LakefileOpts = {
       name: config.leanNamespace,
       rootNS: config.leanNamespace,
-      modules: results.map(r => r.module),
+      modules: results.map((r) => r.module),
       outDir: config.outDir,
       leanVersion,
     };
@@ -126,32 +131,11 @@ export function writeProjectOutputs(result: ProjectResult): void {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fixModuleName(mod: IRModule, leanModule: string): IRModule {
-  const fixedImports = mod.imports.map(imp => {
+  const fixedImports = mod.imports.map((imp) => {
     if (imp.module.startsWith('TSLean.') || imp.module.startsWith('Lean')) return imp;
     // External packages stay as TSLean.External.*
     if (imp.module.startsWith('TSLean.External.')) return imp;
     return imp;
   });
   return { ...mod, name: leanModule, imports: fixedImports };
-}
-
-// Legacy exports for backwards compatibility
-export { fileToLeanModule, fileToLeanPath } from './module-resolver.js';
-export { buildDependencyGraph, formatCycles } from './dependency-graph.js';
-export { readProjectDir, readProjectConfig } from './reader.js';
-export { writeLakefiles } from './lakefile-gen.js';
-
-// Legacy helpers used by old project mode
-export function toLeanPath(tsFile: string, projectDir: string, outputDir: string, rootNS = 'TSLean.Generated'): string {
-  void rootNS;
-  const rel = path.relative(projectDir, tsFile);
-  const parts = rel.replace(/\.ts$/, '').split(path.sep).map(p => p.split(/[-_]/).map(capitalize).join(''));
-  return path.join(outputDir, ...parts) + '.lean';
-}
-
-export function toModuleName(tsFile: string, projectDir: string, rootNS = 'TSLean.Generated'): string {
-  const rel = path.relative(projectDir, tsFile);
-  const parts = rel.replace(/\.ts$/, '').split(path.sep).filter(Boolean)
-    .map(p => p.split(/[-_]/).map(capitalize).join(''));
-  return `${rootNS}.${parts.join('.')}`;
 }

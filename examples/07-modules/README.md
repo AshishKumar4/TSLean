@@ -1,11 +1,13 @@
-# 07 — Modules (Multi-File)
+> Edited & maintained by Claude; presented as-is.
+
+# 07: Modules
 
 Multi-file TypeScript projects transpile with correct cross-file imports.
 
 ## Run
 
 ```bash
-npx tsx src/cli.ts compile --project examples/07-modules/ -o /tmp/modules-output/ --no-lakefile
+bun run src/cli.ts ts-to-lean examples/07-modules --output /tmp/modules-output --no-lakefile
 ```
 
 ## What happens

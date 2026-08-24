@@ -2,7 +2,6 @@
   "schemaVersion": 1,
   "outputPath": "evidence/phase3-primitive-refinements-manifest.json",
   "baseRevision": "e0665cdb7f2fae5e9092ba3dacb96ae26edf2227",
-  "branch": "lean-to-typescript/toolchain-433",
   "counts": {
     "tests": {
       "files": 43,
