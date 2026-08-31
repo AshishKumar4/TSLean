@@ -1,0 +1,12 @@
+import TSLean.LeanToTypeScript.Semantics.Ir
+import TSLean.LeanToTypeScript.Semantics.Source
+import TSLean.LeanToTypeScript.Semantics.Target
+import TSLean.LeanToTypeScript.Semantics.Relation
+import TSLean.LeanToTypeScript.Semantics.Compile
+import TSLean.LeanToTypeScript.Semantics.Assumption
+import TSLean.LeanToTypeScript.Semantics.Opcode
+import TSLean.LeanToTypeScript.Semantics.Allocation
+import TSLean.LeanToTypeScript.Semantics.Preservation
+import TSLean.LeanToTypeScript.Semantics.Tests.Registry
+import TSLean.LeanToTypeScript.Semantics.Program
+import TSLean.LeanToTypeScript.Semantics.Closure

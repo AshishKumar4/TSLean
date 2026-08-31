@@ -1,0 +1,583 @@
+{
+  "assumptions": [
+    {
+      "canonicalWording": "28:sec-binary-logical-operators:24:sec-logical-not-operator:207:The && operator returns its left operand when ToBoolean of that operand is false and its right operand otherwise. The || operator is the dual. The ! operator returns the negation of ToBoolean of its operand.:42:semantics-probes/boolean.logical-operators:20:operator-logical-and:19:operator-logical-or:20:operator-logical-not:24:short-circuit-evaluation",
+      "clauses": [
+        "sec-binary-logical-operators",
+        "sec-logical-not-operator"
+      ],
+      "coverage": [
+        "operator-logical-and",
+        "operator-logical-or",
+        "operator-logical-not",
+        "short-circuit-evaluation"
+      ],
+      "id": "boolean.logical-operators",
+      "oracle": "semantics-probes/boolean.logical-operators",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "The && operator returns its left operand when ToBoolean of that operand is false and its right operand otherwise. The || operator is the dual. The ! operator returns the negation of ToBoolean of its operand."
+    },
+    {
+      "canonicalWording": "30:sec-strict-equality-comparison:22:sec-equality-operators:115:The === operator applied to two values of the same primitive type compares those values and performs no conversion.:42:semantics-probes/strict-equality.same-type:23:strict-equality-boolean:22:strict-equality-bigint:22:strict-equality-string:22:strict-equality-number",
+      "clauses": [
+        "sec-strict-equality-comparison",
+        "sec-equality-operators"
+      ],
+      "coverage": [
+        "strict-equality-boolean",
+        "strict-equality-bigint",
+        "strict-equality-string",
+        "strict-equality-number"
+      ],
+      "id": "strict-equality.same-type",
+      "oracle": "semantics-probes/strict-equality.same-type",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "The === operator applied to two values of the same primitive type compares those values and performs no conversion."
+    },
+    {
+      "canonicalWording": "28:sec-numeric-types-bigint-add:33:sec-numeric-types-bigint-subtract:33:sec-numeric-types-bigint-multiply:126:The +, - and * operators applied to two bigints are exact integer addition, subtraction and multiplication at every magnitude.:40:semantics-probes/bigint.exact-arithmetic:10:bigint-add:15:bigint-subtract:15:bigint-multiply:26:bigint-beyond-safe-integer",
+      "clauses": [
+        "sec-numeric-types-bigint-add",
+        "sec-numeric-types-bigint-subtract",
+        "sec-numeric-types-bigint-multiply"
+      ],
+      "coverage": [
+        "bigint-add",
+        "bigint-subtract",
+        "bigint-multiply",
+        "bigint-beyond-safe-integer"
+      ],
+      "id": "bigint.exact-arithmetic",
+      "oracle": "semantics-probes/bigint.exact-arithmetic",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "The +, - and * operators applied to two bigints are exact integer addition, subtraction and multiplication at every magnitude."
+    },
+    {
+      "canonicalWording": "24:sec-relational-operators:33:sec-numeric-types-bigint-lessThan:77:The < and <= operators applied to two bigints compare them as exact integers.:34:semantics-probes/bigint.relational:16:bigint-less-than:25:bigint-less-than-or-equal",
+      "clauses": [
+        "sec-relational-operators",
+        "sec-numeric-types-bigint-lessThan"
+      ],
+      "coverage": [
+        "bigint-less-than",
+        "bigint-less-than-or-equal"
+      ],
+      "id": "bigint.relational",
+      "oracle": "semantics-probes/bigint.relational",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "The < and <= operators applied to two bigints compare them as exact integers."
+    },
+    {
+      "canonicalWording": "24:sec-conditional-operator:13:sec-toboolean:157:The form condition ? consequent : alternate applies ToBoolean to the condition and yields the consequent when the result is true and the alternate otherwise.:45:semantics-probes/conditional.truthy-selection:21:conditional-selection:25:conditional-single-branch",
+      "clauses": [
+        "sec-conditional-operator",
+        "sec-toboolean"
+      ],
+      "coverage": [
+        "conditional-selection",
+        "conditional-single-branch",
+        "conditional-option-selection"
+      ],
+      "id": "conditional.truthy-selection",
+      "oracle": "semantics-probes/conditional.truthy-selection",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "The form condition ? consequent : alternate applies ToBoolean to the condition and yields the consequent when the result is true and the alternate otherwise."
+    },
+    {
+      "canonicalWording": "26:sec-addition-operator-plus:41:sec-ecmascript-language-types-string-type:96:The + operator applied to two strings concatenates their UTF-16 code units and converts nothing.:43:semantics-probes/string.utf16-concatenation:20:string-concatenation:23:string-code-unit-length:21:string-surrogate-pair",
+      "clauses": [
+        "sec-addition-operator-plus",
+        "sec-ecmascript-language-types-string-type"
+      ],
+      "coverage": [
+        "string-concatenation",
+        "string-code-unit-length",
+        "string-surrogate-pair"
+      ],
+      "id": "string.utf16-concatenation",
+      "oracle": "semantics-probes/string.utf16-concatenation",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "The + operator applied to two strings concatenates their UTF-16 code units and converts nothing."
+    },
+    {
+      "canonicalWording": "24:sec-array-exotic-objects:23:sec-array.prototype.map:26:sec-array.prototype.filter:26:sec-array.prototype.reduce:31:sec-array.prototype.reduceright:24:sec-array.prototype.some:25:sec-array.prototype.every:27:sec-array.prototype.reverse:25:sec-array.prototype.slice:256:An array literal, a spread of an array, and length, indexing, slice, reverse, map, filter, reduce, reduceRight, some and every over it observe and produce exactly the dense element sequence, including the length === 0 comparison the emitted guards perform.:45:semantics-probes/array.dense-element-sequence:12:array-length:12:array-spread:13:array-reverse:9:array-map:12:array-filter:12:array-reduce:18:array-reduce-right:10:array-some:11:array-every:11:array-index:11:array-slice",
+      "clauses": [
+        "sec-array-exotic-objects",
+        "sec-array.prototype.map",
+        "sec-array.prototype.filter",
+        "sec-array.prototype.reduce",
+        "sec-array.prototype.reduceright",
+        "sec-array.prototype.some",
+        "sec-array.prototype.every",
+        "sec-array.prototype.reverse",
+        "sec-array.prototype.slice"
+      ],
+      "coverage": [
+        "array-length",
+        "array-spread",
+        "array-reverse",
+        "array-map",
+        "array-filter",
+        "array-reduce",
+        "array-reduce-right",
+        "array-some",
+        "array-every",
+        "array-index",
+        "array-slice"
+      ],
+      "id": "array.dense-element-sequence",
+      "oracle": "semantics-probes/array.dense-element-sequence",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "An array literal, a spread of an array, and length, indexing, slice, reverse, map, filter, reduce, reduceRight, some and every over it observe and produce exactly the dense element sequence, including the length === 0 comparison the emitted guards perform."
+    },
+    {
+      "canonicalWording": "35:sec-bigint-constructor-number-value:89:The BigInt constructor applied to an array length yields that length as an exact integer.:35:semantics-probes/bigint.from-length:18:bigint-from-length",
+      "clauses": [
+        "sec-bigint-constructor-number-value"
+      ],
+      "coverage": [
+        "bigint-from-length"
+      ],
+      "id": "bigint.from-length",
+      "oracle": "semantics-probes/bigint.from-length",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "The BigInt constructor applied to an array length yields that length as an exact integer."
+    },
+    {
+      "canonicalWording": "22:sec-object-initializer:22:sec-property-accessors:150:An object literal of the form { kind: tag } or { kind: tag, value: payload } answers exactly that tag and that payload when read at kind and at value.:37:semantics-probes/option.tagged-object:23:object-literal-own-keys:20:object-property-read:22:object-absent-property",
+      "clauses": [
+        "sec-object-initializer",
+        "sec-property-accessors"
+      ],
+      "coverage": [
+        "object-literal-own-keys",
+        "object-property-read",
+        "object-absent-property"
+      ],
+      "id": "option.tagged-object",
+      "oracle": "semantics-probes/option.tagged-object",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "An object literal of the form { kind: tag } or { kind: tag, value: payload } answers exactly that tag and that payload when read at kind and at value."
+    }
+  ],
+  "declarationFamilies": [
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Family.enum",
+      "kind": "enum"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Family.record",
+      "kind": "record"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Family.function",
+      "kind": "function"
+    }
+  ],
+  "expressionOperations": [
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.varRef",
+      "kind": "variable"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.boolLit",
+      "kind": "boolean"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.letBind",
+      "kind": "let"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.fieldGet",
+      "kind": "field"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.ifThenElse",
+      "kind": "if"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.boolEquals",
+      "kind": "equals"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.boolAnd",
+      "kind": "and"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.boolOr",
+      "kind": "or"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.boolNot",
+      "kind": "not"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.someValue",
+      "kind": "some"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.noneValue",
+      "kind": "none"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.variant",
+      "kind": "variant"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.record",
+      "kind": "record"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.matchOn",
+      "kind": "match"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.call",
+      "kind": "call"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.lambda",
+      "kind": "lambda"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Op.apply",
+      "kind": "apply"
+    }
+  ],
+  "opcodes": [
+    {
+      "emittedForm": "left && right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.boolAnd",
+      "opcode": "bool.and",
+      "relation": "source = model",
+      "requires": [
+        "boolean.logical-operators"
+      ],
+      "runtimeSymbol": "&&",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.boolAndModelsAnd"
+    },
+    {
+      "emittedForm": "left || right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.boolOr",
+      "opcode": "bool.or",
+      "relation": "source = model",
+      "requires": [
+        "boolean.logical-operators"
+      ],
+      "runtimeSymbol": "||",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.boolOrModelsOr"
+    },
+    {
+      "emittedForm": "!operand",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.boolNot",
+      "opcode": "bool.not",
+      "relation": "source = model",
+      "requires": [
+        "boolean.logical-operators"
+      ],
+      "runtimeSymbol": "!",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.boolNotModelsNot"
+    },
+    {
+      "emittedForm": "left === right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.boolEquals",
+      "opcode": "bool.equals",
+      "relation": "source = model",
+      "requires": [
+        "strict-equality.same-type"
+      ],
+      "runtimeSymbol": "===",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.boolEqualsModelsBEq"
+    },
+    {
+      "emittedForm": "left + right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.natAdd",
+      "opcode": "nat.add",
+      "relation": "source = model",
+      "requires": [
+        "bigint.exact-arithmetic"
+      ],
+      "runtimeSymbol": "+",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.natAddModelsAdd"
+    },
+    {
+      "emittedForm": "left < right ? 0n : left - right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.natSubtract",
+      "opcode": "nat.subtract",
+      "relation": "source = model",
+      "requires": [
+        "bigint.relational",
+        "conditional.truthy-selection",
+        "bigint.exact-arithmetic"
+      ],
+      "runtimeSymbol": "helper:nat-truncated-subtraction",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.natSubtractModelsSub",
+      "components": [
+        "inline:nat.less",
+        "conditional:select",
+        "primitive:bigint.subtract"
+      ]
+    },
+    {
+      "emittedForm": "left * right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.natMultiply",
+      "opcode": "nat.multiply",
+      "relation": "source = model",
+      "requires": [
+        "bigint.exact-arithmetic"
+      ],
+      "runtimeSymbol": "*",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.natMultiplyModelsMul"
+    },
+    {
+      "emittedForm": "left < right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.natLess",
+      "opcode": "nat.less",
+      "relation": "source = model",
+      "requires": [
+        "bigint.relational"
+      ],
+      "runtimeSymbol": "<",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.natLessModelsLt"
+    },
+    {
+      "emittedForm": "left <= right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.natLessOrEqual",
+      "opcode": "nat.lessOrEqual",
+      "relation": "source = model",
+      "requires": [
+        "bigint.relational"
+      ],
+      "runtimeSymbol": "<=",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.natLessOrEqualModelsLe"
+    },
+    {
+      "emittedForm": "left === right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.natEquals",
+      "opcode": "nat.equals",
+      "relation": "source = model",
+      "requires": [
+        "strict-equality.same-type"
+      ],
+      "runtimeSymbol": "===",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.natEqualsModelsBEq"
+    },
+    {
+      "emittedForm": "operand + 1n",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.natSuccessor",
+      "opcode": "nat.successor",
+      "relation": "source = model",
+      "requires": [
+        "bigint.exact-arithmetic"
+      ],
+      "runtimeSymbol": "+",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.natSuccessorModelsSucc"
+    },
+    {
+      "emittedForm": "left + right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.stringAppend",
+      "opcode": "string.append",
+      "relation": "source = model",
+      "requires": [
+        "string.utf16-concatenation"
+      ],
+      "runtimeSymbol": "+",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.stringAppendModelsAppend"
+    },
+    {
+      "emittedForm": "left === right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.stringEquals",
+      "opcode": "string.equals",
+      "relation": "source = model",
+      "requires": [
+        "strict-equality.same-type"
+      ],
+      "runtimeSymbol": "===",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.stringEqualsModelsBEq"
+    },
+    {
+      "emittedForm": "BigInt(value.length)",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listLength",
+      "opcode": "list.length",
+      "relation": "source = model",
+      "requires": [
+        "bigint.from-length"
+      ],
+      "runtimeSymbol": "BigInt",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.listLengthModelsLength"
+    },
+    {
+      "emittedForm": "value.length === 0",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listIsEmpty",
+      "opcode": "list.isEmpty",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "length",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.listIsEmptyModelsIsEmpty"
+    },
+    {
+      "emittedForm": "[...left, ...right]",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listAppend",
+      "opcode": "list.append",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "spread",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.listAppendModelsAppend"
+    },
+    {
+      "emittedForm": "[...value].reverse()",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listReverse",
+      "opcode": "list.reverse",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "reverse",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.listReverseModelsReverse"
+    },
+    {
+      "emittedForm": "value.map((element) => transform(element))",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listMap",
+      "opcode": "list.map",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "map",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.listMapModelsMap"
+    },
+    {
+      "emittedForm": "value.filter((element) => keep(element))",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listFilter",
+      "opcode": "list.filter",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "filter",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.listFilterModelsFilter"
+    },
+    {
+      "emittedForm": "value.reduce((accumulator, element) => step(accumulator, element), initial)",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listFoldLeft",
+      "opcode": "list.foldLeft",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "reduce",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.listFoldLeftModelsFoldl"
+    },
+    {
+      "emittedForm": "value.reduceRight((accumulator, element) => step(element, accumulator), initial)",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listFoldRight",
+      "opcode": "list.foldRight",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "reduceRight",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.listFoldRightModelsFoldr"
+    },
+    {
+      "emittedForm": "value.some((element) => holds(element))",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listAny",
+      "opcode": "list.any",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "some",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.listAnyModelsAny"
+    },
+    {
+      "emittedForm": "value.every((element) => holds(element))",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listAll",
+      "opcode": "list.all",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "every",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.listAllModelsAll"
+    },
+    {
+      "emittedForm": "value.length === 0 ? { kind: \"none\" } : { kind: \"some\", value: value[0] }",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listHead",
+      "opcode": "list.head",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence",
+        "conditional.truthy-selection",
+        "option.tagged-object"
+      ],
+      "runtimeSymbol": "helper:list-head-option",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.listHeadModelsHead",
+      "components": [
+        "inline:list.isEmpty",
+        "inline:list.first",
+        "conditional:select",
+        "representation:option.tagged-option"
+      ]
+    },
+    {
+      "emittedForm": "value[0]",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listFirst",
+      "opcode": "list.first",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "index",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.listFirstModelsHead"
+    },
+    {
+      "emittedForm": "value.slice(1)",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listRest",
+      "opcode": "list.rest",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "slice",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.listRestModelsTail"
+    }
+  ],
+  "schemaVersion": 1,
+  "typeForms": [
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.TyKind.boolean",
+      "kind": "boolean"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.TyKind.option",
+      "kind": "option"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.TyKind.named",
+      "kind": "named"
+    }
+  ]
+}

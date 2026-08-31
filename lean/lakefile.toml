@@ -1,6 +1,6 @@
 name = "TSLean"
 version = "0.1.0"
-defaultTargets = ["TSLean", "AgentCore"]
+defaultTargets = ["TSLean", "AgentCore", "LeanToTypeScriptSemantics"]
 
 [[lean_lib]]
 name = "TSLean"
@@ -9,6 +9,16 @@ roots = ["TSLean"]
 [[lean_lib]]
 name = "AgentCore"
 roots = ["AgentCore"]
+
+# The Lean-to-TypeScript source and target semantics, and the preservation proofs over them.
+# A separate library so the proofs build and audit on their own, without the runtime barrel.
+[[lean_lib]]
+name = "LeanToTypeScriptSemantics"
+roots = ["TSLean.LeanToTypeScript.Semantics"]
+
+[[lean_exe]]
+name = "semantics-registry"
+root = "TSLean.LeanToTypeScript.Semantics.RegistryReport"
 
 [[lean_exe]]
 name = "js-array-scale-tests"

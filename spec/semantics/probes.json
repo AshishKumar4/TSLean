@@ -1,0 +1,751 @@
+{
+  "schemaVersion": 1,
+  "suite": "semantics-probes",
+  "note": "One executed probe per clause of every assumption in TSLean.LeanToTypeScript.Semantics.Assumption. scripts/check-semantics-registry.mjs evaluates each source in the host engine and compares the result with the value the Lean model predicts. A probe that disagrees is an assumption the engine does not satisfy.",
+  "groups": [
+    {
+      "id": "boolean.logical-operators",
+      "probes": [
+        {
+          "id": "and-returns-left-when-falsy",
+          "source": "false && 1",
+          "expect": {
+            "boolean": false
+          },
+          "family": "operator-logical-and"
+        },
+        {
+          "id": "and-returns-right-when-truthy",
+          "source": "true && 2",
+          "expect": {
+            "number": 2
+          },
+          "family": "operator-logical-and"
+        },
+        {
+          "id": "and-on-booleans",
+          "source": "true && false",
+          "expect": {
+            "boolean": false
+          },
+          "family": "operator-logical-and"
+        },
+        {
+          "id": "or-returns-left-when-truthy",
+          "source": "true || 3",
+          "expect": {
+            "boolean": true
+          },
+          "family": "operator-logical-or"
+        },
+        {
+          "id": "or-returns-right-when-falsy",
+          "source": "false || 4",
+          "expect": {
+            "number": 4
+          },
+          "family": "operator-logical-or"
+        },
+        {
+          "id": "or-on-booleans",
+          "source": "false || true",
+          "expect": {
+            "boolean": true
+          },
+          "family": "operator-logical-or"
+        },
+        {
+          "id": "not-false",
+          "source": "!false",
+          "expect": {
+            "boolean": true
+          },
+          "family": "operator-logical-not"
+        },
+        {
+          "id": "not-true",
+          "source": "!true",
+          "expect": {
+            "boolean": false
+          },
+          "family": "operator-logical-not"
+        },
+        {
+          "id": "and-evaluates-right-once",
+          "source": "(() => { let calls = 0; const step = () => { calls += 1; return true; }; true && step(); return calls; })()",
+          "expect": {
+            "number": 1
+          },
+          "family": "short-circuit-evaluation"
+        },
+        {
+          "id": "and-skips-right-when-falsy",
+          "source": "(() => { let calls = 0; const step = () => { calls += 1; return true; }; false && step(); return calls; })()",
+          "expect": {
+            "number": 0
+          },
+          "family": "short-circuit-evaluation"
+        },
+        {
+          "id": "or-skips-right-when-truthy",
+          "source": "(() => { let calls = 0; const step = () => { calls += 1; return true; }; true || step(); return calls; })()",
+          "expect": {
+            "number": 0
+          },
+          "family": "short-circuit-evaluation"
+        }
+      ]
+    },
+    {
+      "id": "strict-equality.same-type",
+      "probes": [
+        {
+          "id": "boolean-equal",
+          "source": "true === true",
+          "expect": {
+            "boolean": true
+          },
+          "family": "strict-equality-boolean"
+        },
+        {
+          "id": "boolean-different",
+          "source": "false === true",
+          "expect": {
+            "boolean": false
+          },
+          "family": "strict-equality-boolean"
+        },
+        {
+          "id": "bigint-equal",
+          "source": "1n === 1n",
+          "expect": {
+            "boolean": true
+          },
+          "family": "strict-equality-bigint"
+        },
+        {
+          "id": "bigint-different",
+          "source": "1n === 2n",
+          "expect": {
+            "boolean": false
+          },
+          "family": "strict-equality-bigint"
+        },
+        {
+          "id": "bigint-equal-large",
+          "source": "(2n ** 70n) === (2n ** 70n)",
+          "expect": {
+            "boolean": true
+          },
+          "family": "strict-equality-bigint"
+        },
+        {
+          "id": "string-equal",
+          "source": "\"kind\" === \"kind\"",
+          "expect": {
+            "boolean": true
+          },
+          "family": "strict-equality-string"
+        },
+        {
+          "id": "string-different",
+          "source": "\"kind\" === \"value\"",
+          "expect": {
+            "boolean": false
+          },
+          "family": "strict-equality-string"
+        },
+        {
+          "id": "string-surrogate-pair",
+          "source": "\"\\ud83d\\ude00\" === \"\\ud83d\\ude00\"",
+          "expect": {
+            "boolean": true
+          },
+          "family": "strict-equality-string"
+        },
+        {
+          "id": "number-length-zero",
+          "source": "[].length === 0",
+          "expect": {
+            "boolean": true
+          },
+          "family": "strict-equality-number"
+        },
+        {
+          "id": "number-length-nonzero",
+          "source": "[1].length === 0",
+          "expect": {
+            "boolean": false
+          },
+          "family": "strict-equality-number"
+        }
+      ]
+    },
+    {
+      "id": "bigint.exact-arithmetic",
+      "probes": [
+        {
+          "id": "add-small",
+          "source": "2n + 3n",
+          "expect": {
+            "bigint": "5"
+          },
+          "family": "bigint-add"
+        },
+        {
+          "id": "add-beyond-double",
+          "source": "(2n ** 60n) + (2n ** 60n)",
+          "expect": {
+            "bigint": "2305843009213693952"
+          },
+          "family": "bigint-beyond-safe-integer"
+        },
+        {
+          "id": "add-beyond-safe-integer",
+          "source": "9007199254740993n + 1n",
+          "expect": {
+            "bigint": "9007199254740994"
+          },
+          "family": "bigint-beyond-safe-integer"
+        },
+        {
+          "id": "multiply-small",
+          "source": "6n * 7n",
+          "expect": {
+            "bigint": "42"
+          },
+          "family": "bigint-multiply"
+        },
+        {
+          "id": "multiply-beyond-double",
+          "source": "(2n ** 40n) * (2n ** 40n)",
+          "expect": {
+            "bigint": "1208925819614629174706176"
+          },
+          "family": "bigint-beyond-safe-integer"
+        },
+        {
+          "id": "successor",
+          "source": "41n + 1n",
+          "expect": {
+            "bigint": "42"
+          },
+          "family": "bigint-add"
+        },
+        {
+          "id": "subtract-above-diagonal",
+          "source": "5n - 3n",
+          "expect": {
+            "bigint": "2"
+          },
+          "family": "bigint-subtract"
+        },
+        {
+          "id": "subtract-equal",
+          "source": "3n - 3n",
+          "expect": {
+            "bigint": "0"
+          },
+          "family": "bigint-subtract"
+        }
+      ]
+    },
+    {
+      "id": "bigint.relational",
+      "probes": [
+        {
+          "id": "less-true",
+          "source": "1n < 2n",
+          "expect": {
+            "boolean": true
+          },
+          "family": "bigint-less-than"
+        },
+        {
+          "id": "less-false",
+          "source": "2n < 2n",
+          "expect": {
+            "boolean": false
+          },
+          "family": "bigint-less-than"
+        },
+        {
+          "id": "less-large",
+          "source": "(2n ** 70n) < (2n ** 70n + 1n)",
+          "expect": {
+            "boolean": true
+          },
+          "family": "bigint-less-than"
+        },
+        {
+          "id": "lessOrEqual-equal",
+          "source": "2n <= 2n",
+          "expect": {
+            "boolean": true
+          },
+          "family": "bigint-less-than-or-equal"
+        },
+        {
+          "id": "lessOrEqual-greater",
+          "source": "3n <= 2n",
+          "expect": {
+            "boolean": false
+          },
+          "family": "bigint-less-than-or-equal"
+        }
+      ]
+    },
+    {
+      "id": "conditional.truthy-selection",
+      "probes": [
+        {
+          "id": "clamped-below-diagonal",
+          "source": "(() => { const left = 2n, right = 5n; return left < right ? 0n : left - right; })()",
+          "expect": {
+            "bigint": "0"
+          },
+          "family": "conditional-selection"
+        },
+        {
+          "id": "difference-above-diagonal",
+          "source": "(() => { const left = 5n, right = 2n; return left < right ? 0n : left - right; })()",
+          "expect": {
+            "bigint": "3"
+          },
+          "family": "conditional-selection"
+        },
+        {
+          "id": "difference-on-diagonal",
+          "source": "(() => { const left = 2n, right = 2n; return left < right ? 0n : left - right; })()",
+          "expect": {
+            "bigint": "0"
+          },
+          "family": "conditional-selection"
+        },
+        {
+          "id": "selects-one-branch-only",
+          "source": "(() => { let calls = 0; const step = () => { calls += 1; return 0n; }; (1n < 2n) ? 0n : step(); return calls; })()",
+          "expect": {
+            "number": 0
+          },
+          "family": "conditional-single-branch"
+        },
+        {
+          "id": "option-none-selects-none-branch",
+          "family": "conditional-option-selection",
+          "source": "(() => { const value = []; return value.length === 0 ? { kind: \"none\" } : { kind: \"some\", value: value[0] }; })().kind",
+          "expect": {
+            "string": "none"
+          }
+        },
+        {
+          "id": "option-some-selects-some-branch",
+          "family": "conditional-option-selection",
+          "source": "(() => { const value = [4]; return value.length === 0 ? { kind: \"none\" } : { kind: \"some\", value: value[0] }; })().value",
+          "expect": {
+            "number": 4
+          }
+        }
+      ]
+    },
+    {
+      "id": "string.utf16-concatenation",
+      "probes": [
+        {
+          "id": "concatenate",
+          "source": "\"ki\" + \"nd\"",
+          "expect": {
+            "string": "kind"
+          },
+          "family": "string-concatenation"
+        },
+        {
+          "id": "concatenate-empty",
+          "source": "\"\" + \"kind\"",
+          "expect": {
+            "string": "kind"
+          },
+          "family": "string-concatenation"
+        },
+        {
+          "id": "code-unit-length",
+          "source": "(\"\\ud83d\" + \"\\ude00\").length",
+          "expect": {
+            "number": 2
+          },
+          "family": "string-code-unit-length"
+        },
+        {
+          "id": "surrogate-pair-joins",
+          "source": "(\"\\ud83d\" + \"\\ude00\") === \"\\ud83d\\ude00\"",
+          "expect": {
+            "boolean": true
+          },
+          "family": "string-surrogate-pair"
+        },
+        {
+          "id": "no-conversion",
+          "source": "(\"1\" + \"2\").length",
+          "expect": {
+            "number": 2
+          },
+          "family": "string-concatenation"
+        }
+      ]
+    },
+    {
+      "id": "array.dense-element-sequence",
+      "probes": [
+        {
+          "id": "isEmpty-true",
+          "source": "[].length === 0",
+          "expect": {
+            "boolean": true
+          },
+          "family": "array-length"
+        },
+        {
+          "id": "isEmpty-false",
+          "source": "[1, 2].length === 0",
+          "expect": {
+            "boolean": false
+          },
+          "family": "array-length"
+        },
+        {
+          "id": "append",
+          "source": "[...[1, 2], ...[3]]",
+          "expect": {
+            "array": [
+              {
+                "number": 1
+              },
+              {
+                "number": 2
+              },
+              {
+                "number": 3
+              }
+            ]
+          },
+          "family": "array-spread"
+        },
+        {
+          "id": "append-empty",
+          "source": "[...[], ...[1]]",
+          "expect": {
+            "array": [
+              {
+                "number": 1
+              }
+            ]
+          },
+          "family": "array-spread"
+        },
+        {
+          "id": "reverse",
+          "source": "[...[1, 2, 3]].reverse()",
+          "expect": {
+            "array": [
+              {
+                "number": 3
+              },
+              {
+                "number": 2
+              },
+              {
+                "number": 1
+              }
+            ]
+          },
+          "family": "array-reverse"
+        },
+        {
+          "id": "reverse-copies",
+          "source": "(() => { const source = [1, 2]; [...source].reverse(); return source; })()",
+          "expect": {
+            "array": [
+              {
+                "number": 1
+              },
+              {
+                "number": 2
+              }
+            ]
+          },
+          "family": "array-reverse"
+        },
+        {
+          "id": "map",
+          "source": "[1, 2, 3].map((element) => element + 1)",
+          "expect": {
+            "array": [
+              {
+                "number": 2
+              },
+              {
+                "number": 3
+              },
+              {
+                "number": 4
+              }
+            ]
+          },
+          "family": "array-map"
+        },
+        {
+          "id": "filter",
+          "source": "[1, 2, 3, 4].filter((element) => element % 2 === 0)",
+          "expect": {
+            "array": [
+              {
+                "number": 2
+              },
+              {
+                "number": 4
+              }
+            ]
+          },
+          "family": "array-filter"
+        },
+        {
+          "id": "filter-truthiness",
+          "source": "[0, 1, 2].filter((element) => element)",
+          "expect": {
+            "array": [
+              {
+                "number": 1
+              },
+              {
+                "number": 2
+              }
+            ]
+          },
+          "family": "array-filter"
+        },
+        {
+          "id": "foldLeft",
+          "source": "[1, 2, 3].reduce((accumulator, element) => accumulator + \":\" + element, \"start\")",
+          "expect": {
+            "string": "start:1:2:3"
+          },
+          "family": "array-reduce"
+        },
+        {
+          "id": "foldRight",
+          "source": "[1, 2, 3].reduceRight((accumulator, element) => accumulator + \":\" + element, \"start\")",
+          "expect": {
+            "string": "start:3:2:1"
+          },
+          "family": "array-reduce-right"
+        },
+        {
+          "id": "any-true",
+          "source": "[1, 2].some((element) => element === 2)",
+          "expect": {
+            "boolean": true
+          },
+          "family": "array-some"
+        },
+        {
+          "id": "any-false",
+          "source": "[1, 2].some((element) => element === 3)",
+          "expect": {
+            "boolean": false
+          },
+          "family": "array-some"
+        },
+        {
+          "id": "any-empty",
+          "source": "[].some((element) => true)",
+          "expect": {
+            "boolean": false
+          },
+          "family": "array-some"
+        },
+        {
+          "id": "all-true",
+          "source": "[2, 4].every((element) => element % 2 === 0)",
+          "expect": {
+            "boolean": true
+          },
+          "family": "array-every"
+        },
+        {
+          "id": "all-false",
+          "source": "[2, 3].every((element) => element % 2 === 0)",
+          "expect": {
+            "boolean": false
+          },
+          "family": "array-every"
+        },
+        {
+          "id": "all-empty",
+          "source": "[].every((element) => false)",
+          "expect": {
+            "boolean": true
+          },
+          "family": "array-every"
+        },
+        {
+          "id": "first",
+          "source": "[7, 8][0]",
+          "expect": {
+            "number": 7
+          },
+          "family": "array-index"
+        },
+        {
+          "id": "rest",
+          "source": "[7, 8, 9].slice(1)",
+          "expect": {
+            "array": [
+              {
+                "number": 8
+              },
+              {
+                "number": 9
+              }
+            ]
+          },
+          "family": "array-slice"
+        },
+        {
+          "id": "rest-singleton",
+          "source": "[7].slice(1)",
+          "expect": {
+            "array": []
+          },
+          "family": "array-slice"
+        },
+        {
+          "id": "element-order-preserved",
+          "source": "[...[1, 2, 3]].map((element) => element)",
+          "expect": {
+            "array": [
+              {
+                "number": 1
+              },
+              {
+                "number": 2
+              },
+              {
+                "number": 3
+              }
+            ]
+          },
+          "family": "array-map"
+        }
+      ]
+    },
+    {
+      "id": "bigint.from-length",
+      "probes": [
+        {
+          "id": "length-zero",
+          "source": "BigInt([].length)",
+          "expect": {
+            "bigint": "0"
+          },
+          "family": "bigint-from-length"
+        },
+        {
+          "id": "length-three",
+          "source": "BigInt([1, 2, 3].length)",
+          "expect": {
+            "bigint": "3"
+          },
+          "family": "bigint-from-length"
+        },
+        {
+          "id": "length-is-exact",
+          "source": "BigInt(new Array(1000).fill(0).length)",
+          "expect": {
+            "bigint": "1000"
+          },
+          "family": "bigint-from-length"
+        }
+      ]
+    },
+    {
+      "id": "option.tagged-object",
+      "probes": [
+        {
+          "id": "some-tag",
+          "source": "({ kind: \"some\", value: 5 }).kind",
+          "expect": {
+            "string": "some"
+          },
+          "family": "object-property-read"
+        },
+        {
+          "id": "some-payload",
+          "source": "({ kind: \"some\", value: 5 }).value",
+          "expect": {
+            "number": 5
+          },
+          "family": "object-property-read"
+        },
+        {
+          "id": "none-tag",
+          "source": "({ kind: \"none\" }).kind",
+          "expect": {
+            "string": "none"
+          },
+          "family": "object-property-read"
+        },
+        {
+          "id": "none-payload-absent",
+          "source": "({ kind: \"none\" }).value",
+          "expect": {
+            "undefined": true
+          },
+          "family": "object-absent-property"
+        },
+        {
+          "id": "own-keys-in-order",
+          "source": "Object.keys({ kind: \"some\", value: 5 })",
+          "expect": {
+            "array": [
+              {
+                "string": "kind"
+              },
+              {
+                "string": "value"
+              }
+            ]
+          },
+          "family": "object-literal-own-keys"
+        },
+        {
+          "id": "own-keys-none",
+          "source": "Object.keys({ kind: \"none\" })",
+          "expect": {
+            "array": [
+              {
+                "string": "kind"
+              }
+            ]
+          },
+          "family": "object-literal-own-keys"
+        },
+        {
+          "id": "head-helper-empty",
+          "source": "(() => { const value = []; return value.length === 0 ? { kind: \"none\" } : { kind: \"some\", value: value[0] }; })().kind",
+          "expect": {
+            "string": "none"
+          },
+          "family": "object-property-read"
+        },
+        {
+          "id": "head-helper-nonempty",
+          "source": "(() => { const value = [4, 5]; return value.length === 0 ? { kind: \"none\" } : { kind: \"some\", value: value[0] }; })().value",
+          "expect": {
+            "number": 4
+          },
+          "family": "object-property-read"
+        }
+      ]
+    }
+  ]
+}
