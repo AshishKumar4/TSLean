@@ -98,6 +98,7 @@ describe('Lean package to TypeScript module tree', () => {
     expect(importBlock('TSLean/Examples/Package/Decision.ts')).toEqual([
       'import { type Capability } from "./Capability.js";',
       'import { type Policy } from "./Policy.js";',
+      'import { type Option } from "../../../tslean-runtime.js";',
     ]);
     expect(importBlock(LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH)).toEqual([]);
   });
@@ -113,6 +114,7 @@ describe('Lean package to TypeScript module tree', () => {
     expect(imports.get('TSLean/Examples/Package/Decision.ts')).toEqual([
       'TSLean/Examples/Package/Capability.ts',
       'TSLean/Examples/Package/Policy.ts',
+      'tslean-runtime.ts',
     ]);
     expect(imports.get(LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH)).toEqual([]);
     // Every recorded import names a module the package actually emits, and nothing imports itself.
@@ -310,7 +312,8 @@ describe('Lean package to TypeScript module tree', () => {
             capabilities.map((requested) => {
               const policy = new Policy({ granted, ceiling, frozen });
               const admitted = grantedCapability(policy, requested);
-              return `${decideAccess(policy, requested)}/${admitted ?? 'undefined'}`;
+              const admittedName = admitted.kind === 'some' ? `some ${admitted.value}` : 'none';
+              return `${decideAccess(policy, requested)}/${admittedName}`;
             }),
           ),
         ),
@@ -502,7 +505,9 @@ describe('Lean package to TypeScript module tree', () => {
             declarations: ['Fixture.read'],
             outputDirectory: join(fixture.projectRoot, 'out'),
           }),
-        ).toThrowError(/Fixture\.Left\.Config.*Fixture\.Right\.Config.*both emit Config/u);
+        ).toThrowError(
+          /Fixture\.Right\.Config: emitted declaration name Config collides with Fixture\.Left\.Config/u,
+        );
       } finally {
         fixture.dispose();
       }
@@ -586,7 +591,8 @@ describe('Lean package to TypeScript module tree', () => {
     const granted = { read: true, write: false, administer: false };
     const policy = Policy.fromData({ granted, ceiling: 'read', frozen: false });
     expect(decideAccess(policy, Capability.fromData('read'))).toBe('allow');
-    expect(grantedCapability(policy, Capability.fromData('write'))).toBeUndefined();
+    expect(grantedCapability(policy, Capability.fromData('read'))).toEqual({ kind: 'some', value: 'read' });
+    expect(grantedCapability(policy, Capability.fromData('write'))).toEqual({ kind: 'none' });
     // A field decode reaches the same decoder across the module edge and reports the field it read
     // rather than the type, so one type has one decoder and still two diagnostics.
     expect(() => Policy.fromData({ granted, ceiling: 'root', frozen: false })).toThrowError(
@@ -685,11 +691,13 @@ describe('Lean package to TypeScript module tree', () => {
           'export function reads(tag: Tag, box: Box, flag: boolean): boolean {',
         );
         expect(code.get('Fixture/Entry.ts')).toContain('import { type Box } from "./Box.js";');
-        // An optional input names the same boundary: presence is the caller's to resolve, and the
-        // type it wraps gets no second decoder for being reached through an `Option`.
-        expect(code.get('Fixture/Entry.ts')).toContain(
-          'export function passes(tag: Tag | undefined): Tag | undefined {',
+        // An optional input crosses the boundary through the shared `Option` validator, handed the
+        // decoder of the type it wraps, so that type gets no second decoder for being optional.
+        expect(code.get('Fixture/Entry.ts')).toContain('export function passes(tag: Option<Tag>): Option<Tag> {');
+        expect(code.get(LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH)).toContain(
+          'export function requireOption<A>(value: GeneratedData, name: string, element: (value: GeneratedData, name: string) => A): Option<A> {',
         );
+        expect(occurrences('function requireTag(')).toBe(1);
         expect(occurrences(': unknown')).toBe(0);
         expect(moduleBytes(compileLeanToTypeScript(request))).toEqual(moduleBytes(emitted));
       } finally {
@@ -825,8 +833,8 @@ function evaluateLeanAccess(): readonly string[] {
         '  | .allow => "allow"',
         '  | .deny => "deny"',
         'def admittedName : Option Capability → String',
-        '  | some capability => capabilityName capability',
-        '  | none => "undefined"',
+        '  | some capability => "some " ++ capabilityName capability',
+        '  | none => "none"',
         'def rows : List String := grants.flatMap fun granted =>',
         '  capabilities.flatMap fun ceiling => [true, false].flatMap fun frozen =>',
         '    capabilities.map fun requested =>',

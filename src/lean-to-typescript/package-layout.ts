@@ -135,21 +135,35 @@ export function isExportedStatement(statement: ts.Statement): boolean {
 }
 
 /**
- * Adds `export` to a function declaration. A helper stays module-private until another generated
- * module names it, so the emitted surface is exactly what the package's imports require.
+ * Adds `export` to a declaration another generated module names. A helper stays module-private
+ * until something imports it, so the emitted surface is exactly what the package's imports
+ * require. Functions and type aliases are the two shapes the generated prelude places in a shared
+ * module; every other statement already carries the export its own emitter decided.
  */
-export function exportedFunction(statement: ts.FunctionDeclaration): ts.FunctionDeclaration {
+export function exportedDeclaration(statement: ts.Statement, required: ReadonlySet<string>): ts.Statement {
   if (isExportedStatement(statement)) return statement;
-  return ts.factory.updateFunctionDeclaration(
-    statement,
-    [ts.factory.createModifier(ts.SyntaxKind.ExportKeyword), ...(ts.getModifiers(statement) ?? [])],
-    statement.asteriskToken,
-    statement.name,
-    statement.typeParameters,
-    statement.parameters,
-    statement.type,
-    statement.body,
-  );
+  if (ts.isFunctionDeclaration(statement) && statement.name !== undefined && required.has(statement.name.text)) {
+    return ts.factory.updateFunctionDeclaration(
+      statement,
+      [ts.factory.createModifier(ts.SyntaxKind.ExportKeyword), ...(ts.getModifiers(statement) ?? [])],
+      statement.asteriskToken,
+      statement.name,
+      statement.typeParameters,
+      statement.parameters,
+      statement.type,
+      statement.body,
+    );
+  }
+  if (ts.isTypeAliasDeclaration(statement) && required.has(statement.name.text)) {
+    return ts.factory.updateTypeAliasDeclaration(
+      statement,
+      [ts.factory.createModifier(ts.SyntaxKind.ExportKeyword), ...(ts.getModifiers(statement) ?? [])],
+      statement.name,
+      statement.typeParameters,
+      statement.type,
+    );
+  }
+  return statement;
 }
 
 /** What one module refers to, split by whether the reference survives type erasure. */
@@ -159,58 +173,308 @@ export interface ModuleReferences {
 }
 
 /**
- * Every name a statement uses, and which of them the module still needs once types are erased. A
- * name in declaration, member, or property position binds or selects rather than refers, so it is
- * skipped: the result is exactly the set of free names the module has to resolve, and a generated
- * local can never collide with one because the identifier allocator reserves every declaration
- * name first.
+ * One lexical scope in generated TypeScript. Type and value names are separate namespaces: a type
+ * parameter `A` must not hide a value import inside `typeof A`, and a value parameter `left` must
+ * not hide an external type named `left` in a type annotation.
+ */
+interface LexicalScope {
+  readonly parent: LexicalScope | undefined;
+  readonly values: ReadonlySet<string>;
+  readonly types: ReadonlySet<string>;
+}
+
+interface ScopeBindings {
+  readonly values: readonly string[];
+  readonly types: readonly string[];
+}
+
+/** The common syntax surface of a generated callable declaration or signature. */
+interface CallableNode {
+  readonly typeParameters?: readonly ts.TypeParameterDeclaration[];
+  readonly parameters: readonly ts.ParameterDeclaration[];
+  readonly type?: ts.TypeNode;
+  readonly body?: ts.ConciseBody;
+}
+
+/**
+ * Every name a statement uses, and which names survive type erasure. The traversal resolves the
+ * lexical binders it sees before consulting the module owner map: a helper local such as `left`, a
+ * type parameter such as `A`, or a loop local such as `codeUnit` is never an import merely because
+ * another generated module happens to export the same spelling.
  */
 export function referencedNames(statements: readonly ts.Statement[]): ModuleReferences {
   const all = new Set<string>();
   const values = new Set<string>();
-  const visit = (node: ts.Node, inType: boolean): void => {
+  const root = scope(undefined, statementBindings(statements));
+
+  const addReference = (name: string, inType: boolean, current: LexicalScope): void => {
+    if (isBound(current, name, inType)) return;
+    all.add(name);
+    if (!inType) values.add(name);
+  };
+
+  const visitEntityName = (name: ts.EntityName, inType: boolean, current: LexicalScope): void => {
+    if (ts.isIdentifier(name)) {
+      addReference(name.text, inType, current);
+      return;
+    }
+    // `A.B.C` imports only its root. `B` and `C` select members of that root; treating either as a
+    // free name would synthesize an import when another module exports one by coincidence.
+    visitEntityName(name.left, inType, current);
+  };
+
+  const visitPropertyName = (name: ts.PropertyName, current: LexicalScope): void => {
+    if (ts.isComputedPropertyName(name)) visit(name.expression, false, current);
+  };
+
+  const visitTypeParameters = (
+    parameters: readonly ts.TypeParameterDeclaration[] | undefined,
+    current: LexicalScope,
+  ): void => {
+    for (const parameter of parameters ?? []) {
+      if (parameter.constraint !== undefined) visit(parameter.constraint, true, current);
+      if (parameter.default !== undefined) visit(parameter.default, true, current);
+    }
+  };
+
+  const visitParameters = (parameters: readonly ts.ParameterDeclaration[], current: LexicalScope): void => {
+    for (const parameter of parameters) {
+      if (parameter.type !== undefined) visit(parameter.type, true, current);
+      if (parameter.initializer !== undefined) visit(parameter.initializer, false, current);
+    }
+  };
+
+  const visitCallable = (node: CallableNode, current: LexicalScope): void => {
+    const typeNames = typeParameterBindings(node.typeParameters);
+    const valueNames = parameterBindings(node.parameters);
+    const callable = scope(current, { values: valueNames, types: typeNames });
+    visitTypeParameters(node.typeParameters, callable);
+    visitParameters(node.parameters, callable);
+    if (node.type !== undefined) visit(node.type, true, callable);
+    if (node.body !== undefined) visit(node.body, false, callable);
+  };
+
+  const visitClass = (node: ts.ClassDeclaration | ts.ClassExpression, current: LexicalScope): void => {
+    const className = node.name === undefined ? [] : [node.name.text];
+    const classScope = scope(current, {
+      values: className,
+      types: [...className, ...typeParameterBindings(node.typeParameters)],
+    });
+    visitTypeParameters(node.typeParameters, classScope);
+    for (const clause of node.heritageClauses ?? []) visit(clause, false, classScope);
+    for (const member of node.members) visit(member, false, classScope);
+  };
+
+  const visitInterface = (node: ts.InterfaceDeclaration, current: LexicalScope): void => {
+    const interfaceScope = scope(current, { values: [], types: [node.name.text, ...typeParameterBindings(node.typeParameters)] });
+    visitTypeParameters(node.typeParameters, interfaceScope);
+    for (const clause of node.heritageClauses ?? []) visit(clause, false, interfaceScope);
+    for (const member of node.members) visit(member, true, interfaceScope);
+  };
+
+  const visitVariableDeclaration = (node: ts.VariableDeclaration, current: LexicalScope): void => {
+    if (ts.isObjectBindingPattern(node.name) || ts.isArrayBindingPattern(node.name)) {
+      for (const element of node.name.elements) {
+        if (ts.isBindingElement(element) && element.propertyName !== undefined) visitPropertyName(element.propertyName, current);
+        if (ts.isBindingElement(element) && element.initializer !== undefined) visit(element.initializer, false, current);
+      }
+    }
+    if (node.type !== undefined) visit(node.type, true, current);
+    if (node.initializer !== undefined) visit(node.initializer, false, current);
+  };
+
+  const visitStatements = (entries: readonly ts.Statement[], current: LexicalScope): void => {
+    const blockScope = scope(current, statementBindings(entries));
+    for (const entry of entries) visit(entry, false, blockScope);
+  };
+
+  const visitFor = (node: ts.ForStatement, current: LexicalScope): void => {
+    const loop = scope(current, variableBindings(node.initializer));
+    if (node.initializer !== undefined) visit(node.initializer, false, loop);
+    if (node.condition !== undefined) visit(node.condition, false, loop);
+    if (node.incrementor !== undefined) visit(node.incrementor, false, loop);
+    visit(node.statement, false, loop);
+  };
+
+  const visitForInOrOf = (node: ts.ForInOrOfStatement, current: LexicalScope): void => {
+    const loop = scope(current, variableBindings(node.initializer));
+    visit(node.initializer, false, loop);
+    visit(node.expression, false, loop);
+    visit(node.statement, false, loop);
+  };
+
+  const visit = (node: ts.Node, inType: boolean, current: LexicalScope): void => {
     if (ts.isIdentifier(node)) {
-      all.add(node.text);
-      if (!inType) values.add(node.text);
+      addReference(node.text, inType, current);
+      return;
+    }
+    if (ts.isQualifiedName(node)) {
+      visitEntityName(node, inType, current);
+      return;
+    }
+    if (ts.isPropertyAccessExpression(node)) {
+      visit(node.expression, false, current);
+      return;
+    }
+    if (ts.isPropertyAssignment(node)) {
+      visitPropertyName(node.name, current);
+      visit(node.initializer, false, current);
+      return;
+    }
+    if (ts.isShorthandPropertyAssignment(node)) {
+      addReference(node.name.text, false, current);
+      if (node.objectAssignmentInitializer !== undefined) visit(node.objectAssignmentInitializer, false, current);
+      return;
+    }
+    if (ts.isTypeReferenceNode(node)) {
+      visitEntityName(node.typeName, true, current);
+      for (const argument of node.typeArguments ?? []) visit(argument, true, current);
+      return;
+    }
+    if (ts.isTypePredicateNode(node)) {
+      // `value is T` sits inside a type annotation, but `value` resolves in the callable's value
+      // scope; only the narrowed `T` resolves in type space.
+      if (ts.isIdentifier(node.parameterName)) addReference(node.parameterName.text, false, current);
+      if (node.type !== undefined) visit(node.type, true, current);
       return;
     }
     // `typeof x` and a heritage clause name a value from inside a type, so the reference returns
     // to value position rather than being erased with the type that encloses it.
-    if (ts.isTypeQueryNode(node) || ts.isExpressionWithTypeArguments(node)) {
-      visit(ts.isTypeQueryNode(node) ? node.exprName : node.expression, false);
-      for (const argument of node.typeArguments ?? []) visit(argument, true);
+    if (ts.isTypeQueryNode(node)) {
+      visitEntityName(node.exprName, false, current);
       return;
     }
-    const bound = boundName(node);
-    ts.forEachChild(node, (child) => {
-      if (child !== bound) visit(child, inType || ts.isTypeNode(child));
-    });
+    if (ts.isExpressionWithTypeArguments(node)) {
+      visit(node.expression, false, current);
+      for (const argument of node.typeArguments ?? []) visit(argument, true, current);
+      return;
+    }
+    if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node)) {
+      visitCallable(node, current);
+      return;
+    }
+    if (ts.isMethodDeclaration(node) || ts.isMethodSignature(node) || ts.isGetAccessorDeclaration(node) ||
+      ts.isSetAccessorDeclaration(node) || ts.isConstructorDeclaration(node) || ts.isFunctionTypeNode(node) ||
+      ts.isConstructorTypeNode(node) || ts.isCallSignatureDeclaration(node) || ts.isConstructSignatureDeclaration(node) ||
+      ts.isIndexSignatureDeclaration(node)) {
+      visitCallable(node, current);
+      return;
+    }
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      visitClass(node, current);
+      return;
+    }
+    if (ts.isInterfaceDeclaration(node)) {
+      visitInterface(node, current);
+      return;
+    }
+    if (ts.isTypeAliasDeclaration(node)) {
+      const aliasScope = scope(current, { values: [], types: [node.name.text, ...typeParameterBindings(node.typeParameters)] });
+      visitTypeParameters(node.typeParameters, aliasScope);
+      visit(node.type, true, aliasScope);
+      return;
+    }
+    if (ts.isVariableDeclaration(node)) {
+      visitVariableDeclaration(node, current);
+      return;
+    }
+    if (ts.isBlock(node)) {
+      visitStatements(node.statements, current);
+      return;
+    }
+    if (ts.isForStatement(node)) {
+      visitFor(node, current);
+      return;
+    }
+    if (ts.isForInStatement(node) || ts.isForOfStatement(node)) {
+      visitForInOrOf(node, current);
+      return;
+    }
+    if (ts.isCatchClause(node)) {
+      const catchScope = scope(current, { values: node.variableDeclaration === undefined ? [] : bindingNames(node.variableDeclaration.name), types: [] });
+      if (node.variableDeclaration !== undefined) visitVariableDeclaration(node.variableDeclaration, catchScope);
+      visit(node.block, false, catchScope);
+      return;
+    }
+    if (ts.isPropertyDeclaration(node)) {
+      visitPropertyName(node.name, current);
+      if (node.type !== undefined) visit(node.type, true, current);
+      if (node.initializer !== undefined) visit(node.initializer, false, current);
+      return;
+    }
+    if (ts.isPropertySignature(node)) {
+      visitPropertyName(node.name, current);
+      if (node.type !== undefined) visit(node.type, true, current);
+      return;
+    }
+    if (ts.isLabeledStatement(node)) {
+      visit(node.statement, inType, current);
+      return;
+    }
+    if (ts.isBreakStatement(node) || ts.isContinueStatement(node)) return;
+    ts.forEachChild(node, (child) => visit(child, inType || ts.isTypeNode(node), current));
   };
-  for (const statement of statements) visit(statement, false);
+
+  for (const statement of statements) visit(statement, false, root);
   return { all, values };
 }
 
-function boundName(node: ts.Node): ts.Node | undefined {
-  if (
-    ts.isPropertyAccessExpression(node) ||
-    ts.isPropertyAssignment(node) ||
-    ts.isPropertySignature(node) ||
-    ts.isPropertyDeclaration(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isMethodSignature(node) ||
-    ts.isGetAccessorDeclaration(node) ||
-    ts.isSetAccessorDeclaration(node) ||
-    ts.isFunctionDeclaration(node) ||
-    ts.isClassDeclaration(node) ||
-    ts.isInterfaceDeclaration(node) ||
-    ts.isTypeAliasDeclaration(node) ||
-    ts.isVariableDeclaration(node) ||
-    ts.isParameter(node) ||
-    ts.isBindingElement(node)
-  ) {
-    return node.name;
+function scope(parent: LexicalScope | undefined, bindings: ScopeBindings): LexicalScope {
+  return { parent, values: new Set(bindings.values), types: new Set(bindings.types) };
+}
+
+function isBound(scope: LexicalScope, name: string, inType: boolean): boolean {
+  for (let current: LexicalScope | undefined = scope; current !== undefined; current = current.parent) {
+    if ((inType ? current.types : current.values).has(name)) return true;
   }
-  return undefined;
+  return false;
+}
+
+function statementBindings(statements: readonly ts.Statement[]): ScopeBindings {
+  const values: string[] = [];
+  const types: string[] = [];
+  for (const statement of statements) {
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) values.push(...bindingNames(declaration.name));
+      continue;
+    }
+    if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) {
+      values.push(statement.name.text);
+      continue;
+    }
+    if (ts.isClassDeclaration(statement) && statement.name !== undefined) {
+      values.push(statement.name.text);
+      types.push(statement.name.text);
+      continue;
+    }
+    if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) {
+      types.push(statement.name.text);
+      continue;
+    }
+    if (ts.isEnumDeclaration(statement)) {
+      values.push(statement.name.text);
+      types.push(statement.name.text);
+    }
+  }
+  return { values, types };
+}
+
+function variableBindings(initializer: ts.Node | undefined): ScopeBindings {
+  if (initializer === undefined || !ts.isVariableDeclarationList(initializer)) return { values: [], types: [] };
+  return { values: initializer.declarations.flatMap((declaration) => bindingNames(declaration.name)), types: [] };
+}
+
+function typeParameterBindings(parameters: readonly ts.TypeParameterDeclaration[] | undefined): readonly string[] {
+  return (parameters ?? []).map((parameter) => parameter.name.text);
+}
+
+function parameterBindings(parameters: readonly ts.ParameterDeclaration[]): readonly string[] {
+  return parameters.flatMap((parameter) => bindingNames(parameter.name));
+}
+
+function bindingNames(name: ts.BindingName): readonly string[] {
+  if (ts.isIdentifier(name)) return [name.text];
+  return name.elements.flatMap((element) => (ts.isBindingElement(element) ? bindingNames(element.name) : []));
 }
 
 export interface ModuleImport {

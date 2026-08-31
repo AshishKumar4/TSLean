@@ -63,9 +63,38 @@ Unsupported input produces a typed refusal before publication. The compiler emit
 
 ## Current fragment
 
-The current semantic IR admits a structural, total, first-order Lean fragment. Checked examples include Boolean behavior, finite inductive values admitted by the exporter, immutable structures, supported Option values, pure functions, cross-module references, and generated decode boundaries.
+The semantic IR admits a total, pure Lean fragment named `tslean-semantic-typed-v5`. The Lean
+exporter and the semantic IR validator decide what the fragment admits, and they are the source of
+truth. The compiler registry under `spec/lean-to-typescript/` binds the checked models to their
+oracles and bounds. This document does not expand the fragment.
 
-The semantic IR validator and compiler registry under `spec/lean-to-typescript/` are the source of truth. Documentation does not expand the fragment.
+These families are admitted:
+
+- `Bool`, `Nat` and `String`. `Nat` is a non-negative `bigint`, so subtraction truncates at zero
+  through one shared helper.
+- Type parameters on functions and on data types. The generated type parameters are positional, so
+  a Lean binder name never decides a generated signature.
+- Structures and finite inductives. A type whose namespace carries dot-notation methods becomes an
+  immutable class; a type with no methods stays structural.
+- Pattern matching on a user inductive, a structure, a `List`, an `Option` and an `Except`.
+- `Option` and `Except`, each as one tagged union in the shared runtime module.
+- `List`, as a readonly array, with the collection operations the runtime opcode registry names.
+- Function values, as uncurried arrows at their full Lean arity. An abstraction may capture the
+  binders in scope at its own position.
+- Recursion Lean proved. A single structural recursion is re-verified against the emitted program;
+  a mutual group or a well-founded measure is carried as Lean's own evidence, read from the
+  kernel-checked unfolding equation, and no call may leave the recorded group.
+- Modules and namespaces. One Lean module becomes one TypeScript file, and cross-module references
+  become relative imports.
+
+Method ownership comes from elaborated evidence. The exporter resolves a receiver against the
+environment and records which parameter carries it; the compiler reads that record and never the
+shape of a name.
+
+Every runtime operation carries a stable opcode. `LEAN_RUNTIME_OPCODES` gives each one its Lean
+symbol, the single TypeScript form the emitter produces, the kernel-checked model theorem that
+relates them, and the assumption records that theorem closes over. The set is closed and total:
+an operation outside it is refused rather than emitted.
 
 Every admitted family must eventually carry:
 
@@ -77,6 +106,21 @@ Every admitted family must eventually carry:
 - adversarial and differential tests.
 
 Differential agreement finds counterexamples. It is not a proof.
+
+## What the compiler refuses
+
+A construct with no deterministic representation fails before publication, with a typed diagnostic
+that names the declaration it was reading. The refused set includes `Int`, `Float`, the sized
+integer types, `Char`, `Nat` division, matching on a `Nat`, string length and indexing, anything
+that needs an instance dictionary, instance parameters, universe-polymorphic declarations,
+dependent result types, dependent matches, matches on more than one discriminant, a `let` inside an
+argument, `partial`, `unsafe`, `opaque`, `axiom`, `noncomputable`, and a declaration whose
+executable form was replaced inside the target module closure.
+
+Two audits run over the whole reachable closure. A declaration that rests on an axiom outside
+`propext`, `Classical.choice` and `Quot.sound` is refused, and so is one whose unfolding proof
+depends on `sorry`. A root's boundary is monomorphic: a polymorphic root, or one whose parameter or
+result has no data image, is refused rather than given a decoder a caller cannot use.
 
 ## Generated package
 

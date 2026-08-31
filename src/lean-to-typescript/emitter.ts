@@ -12,9 +12,25 @@ import type {
   LeanDeclaration,
   LeanEnumConstructor,
   LeanExpression,
+  LeanExpressionLiveness,
   LeanField,
+  LeanFunctionDeclaration,
+  LeanOpcode,
+  LeanParameter,
+  LeanReceiver,
+  LeanRuntimeHelperRole,
   LeanSemanticProgram,
   LeanType,
+} from './ir.js';
+import {
+  constructorsOf,
+  analyzeExpressionLiveness,
+  LEAN_RUNTIME_OPCODES,
+  referencedRuntimeOpcodes,
+  renderType,
+  runtimeHelperRole,
+  sameType,
+  substituteType,
 } from './ir.js';
 import {
   canonicalManifest,
@@ -29,7 +45,7 @@ import { compareCodePoints } from './ordering.js';
 import {
   compareGeneratedPaths,
   declaredNames,
-  exportedFunction,
+  exportedDeclaration,
   generatedModulePath,
   groupByLeanModule,
   importStatement,
@@ -86,7 +102,7 @@ export function emitTypeScriptPackage(
   const ordered = [...drafts, ...(runtime === undefined ? [] : [runtime])].sort((left, right) =>
     compareGeneratedPaths(left.path, right.path),
   );
-  const printed = printPackage(ordered, program, provenance);
+  const printed = printPackage(ordered, program, context, provenance);
   const manifest = canonicalManifest({
     schemaVersion: LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION,
     semantic: {
@@ -107,6 +123,36 @@ export function emitTypeScriptPackage(
   };
   verifyLeanToTypeScriptPackage(emitted);
   return emitted;
+}
+
+/**
+ * One generated helper a certificate has to resolve: the opcode that spends it, the abstract role
+ * the registry names it by, and the identifier the emitter allocated for it in this package.
+ */
+export interface LeanToTypeScriptHelperBinding {
+  readonly opcode: LeanOpcode;
+  readonly role: LeanRuntimeHelperRole;
+  readonly declaration: string;
+}
+
+/**
+ * The helper declarations one program prints, with the name each one was allocated. An opcode whose
+ * exact Lean semantics need a guard is emitted as one shared declaration, and the identifier comes
+ * from the emitter's allocator rather than from a fixed name, so a certificate that binds a helper
+ * to emitted bytes resolves the name through here instead of guessing it. A role the program never
+ * reaches is absent, because no declaration is printed for it.
+ */
+export function leanToTypeScriptHelperBindings(
+  program: LeanSemanticProgram,
+): readonly LeanToTypeScriptHelperBinding[] {
+  const context = planProgram(program);
+  const bindings: LeanToTypeScriptHelperBinding[] = [];
+  for (const opcode of referencedRuntimeOpcodes(program)) {
+    const role = runtimeHelperRole(LEAN_RUNTIME_OPCODES[opcode].runtimeSymbol);
+    if (role === undefined) continue;
+    bindings.push({ opcode, role, declaration: requiredHelper(context, role) });
+  }
+  return bindings;
 }
 
 function emitModuleDeclarations(program: LeanSemanticProgram, context: EmitContext): readonly ModuleDraft[] {
@@ -210,6 +256,7 @@ interface PrintedModule {
 function printPackage(
   drafts: readonly ModuleDraft[],
   program: LeanSemanticProgram,
+  context: EmitContext,
   provenance: LeanToTypeScriptProvenance,
 ): readonly PrintedModule[] {
   const owners = new Map<string, string>();
@@ -221,14 +268,10 @@ function printPackage(
   const declarations = new Map(program.declarations.map((declaration) => [declaration.name, declaration]));
   return drafts.map((draft) => {
     const entries = imports.get(draft.path) ?? [];
-    const statements = draft.statements.map((statement) =>
-      ts.isFunctionDeclaration(statement) && statement.name !== undefined && required.has(statement.name.text)
-        ? exportedFunction(statement)
-        : statement,
-    );
+    const statements = draft.statements.map((statement) => exportedDeclaration(statement, required));
     assertImportsAreExported(draft, entries, drafts, owners);
     const body = printModuleBody(entries.map(importStatement), statements);
-    const generated = moduleDeclarations(draft, declarations, body.lines, provenance);
+    const generated = moduleDeclarations(draft, declarations, context, body.lines, provenance);
     const sourceMap = buildSourceMap(draft, generated, provenance);
     return {
       identity: {
@@ -315,6 +358,7 @@ function printModuleBody(
 function moduleDeclarations(
   draft: ModuleDraft,
   declarations: ReadonlyMap<string, LeanDeclaration>,
+  context: EmitContext,
   lines: readonly number[],
   provenance: LeanToTypeScriptProvenance,
 ): readonly LeanToTypeScriptGeneratedDeclaration[] {
@@ -332,7 +376,9 @@ function moduleDeclarations(
       }
       return {
         declaration: name,
-        emitted: requiredDeclarationName(new Map([[name, localName(name)]]), name),
+        // A method shares its receiver's statement but has its own member name. Every other
+        // carrier is top-level and uses the allocated declaration name the emitter printed.
+        emitted: context.methods.get(name)?.name ?? requiredDeclarationName(context.declarationNames, name),
         line: PROVENANCE_HEADER_LINES + line,
         span: { source: source ?? '', ...declaration.span },
       };
@@ -416,14 +462,24 @@ function sha256(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }
 
-type LeanFunction = Extract<LeanDeclaration, { readonly kind: 'function' }>;
+type LeanFunction = LeanFunctionDeclaration;
 type LeanEnum = Extract<LeanDeclaration, { readonly kind: 'enum' }>;
-type LeanRecord = Extract<LeanDeclaration, { readonly kind: 'record' }>;
-type LeanData = LeanEnum | LeanRecord;
+type LeanStructure = Extract<LeanDeclaration, { readonly kind: 'record' }>;
+type LeanData = LeanEnum | LeanStructure;
 
+/**
+ * One Lean function emitted as a method on its receiver's class. Which function is a method comes
+ * from the IR's own receiver record, which the exporter read out of the elaborated environment, so
+ * the shape of a Lean name never decides where code lands.
+ */
 interface MethodPlan {
   readonly declaration: LeanFunction;
   readonly name: string;
+  readonly receiver: LeanReceiver;
+  /** The declared parameters other than the receiver, in declared order. */
+  readonly parameters: readonly LeanParameter[];
+  /** Emitted names for every type parameter the declaration takes, positionally. */
+  readonly typeParameters: readonly string[];
   readonly dispatches: boolean;
 }
 
@@ -433,16 +489,41 @@ interface CasePlan {
   readonly singleton: string;
 }
 
+/** One source field and the binder that carries it inside one generated class member. */
+interface CaseFieldBinder {
+  readonly field: LeanField;
+  readonly binder: string;
+}
+
 /**
- * How one Lean data type is represented. A type whose namespace carries dot-notation functions
- * over it has behaviour, so it becomes a nominal class exactly as the handwritten value objects
- * are written; a type with no behaviour stays structural, because promoting it would add a
- * constructor and an identity the Lean source does not have. The distinction is read off the
- * source, so the same Lean always lowers to the same TypeScript.
+ * The binders one class member gives a constructor's fields. A static factory and a case-class
+ * constructor are separate scopes, so each allocates its own: a field keeps its Lean spelling
+ * unless that spelling is genuinely in scope there, such as the case class the factory constructs.
+ */
+function caseFieldBinders(
+  entry: CasePlan,
+  context: EmitContext,
+  inScope: readonly string[],
+): readonly CaseFieldBinder[] {
+  const allocator = new IdentifierAllocator([...context.reserved, ...context.typeParameters, ...inScope]);
+  return entry.constructor.fields.map((field) => ({ field, binder: allocator.allocate(field.name) }));
+}
+
+/**
+ * How one Lean data type is represented. A type whose namespace carries dot-notation methods over
+ * it has behaviour, so it becomes a nominal class exactly as a handwritten value object is written;
+ * a type with no behaviour stays structural, because promoting it would add a constructor and an
+ * identity the Lean source does not have.
+ *
+ * A generic type has no data image: a codec per instantiation would be a second representation of
+ * one type, so `fromData`, `toData` and `equals` exist only where the type is ground.
  */
 interface TypePlan {
   readonly declaration: LeanData;
   readonly typeName: string;
+  /** Emitted type parameter names, positional so a Lean binder name cannot change a signature. */
+  readonly typeParameters: readonly string[];
+  readonly ground: boolean;
   readonly nominal: boolean;
   readonly cases: readonly CasePlan[];
   readonly methods: readonly MethodPlan[];
@@ -455,6 +536,19 @@ interface PreludeNames {
   readonly isDataObject: string;
   readonly dataFields: string;
   readonly requireBoolean: string;
+  readonly requireNat: string;
+  readonly requireString: string;
+  readonly requireList: string;
+  readonly optionType: string;
+  readonly exceptType: string;
+  readonly requireOption: string;
+  readonly requireExcept: string;
+  readonly equalOption: string;
+  readonly equalExcept: string;
+  readonly equalList: string;
+  /** The generated helper for each runtime opcode whose exact semantics need a guard. */
+  readonly helpers: ReadonlyMap<LeanRuntimeHelperRole, string>;
+  /** The decoder of each ground structural data type, in the module that declares the type. */
   readonly decoders: ReadonlyMap<string, string>;
 }
 
@@ -466,6 +560,11 @@ interface CodecLocals {
   readonly data: string;
   readonly fields: string;
   readonly field: string;
+  readonly element: string;
+  readonly index: string;
+  readonly entry: string;
+  readonly other: string;
+  readonly codeUnit: string;
 }
 
 /**
@@ -483,6 +582,7 @@ interface BoundaryPlan {
 interface EmitContext {
   readonly roots: ReadonlySet<string>;
   readonly declarationNames: ReadonlyMap<string, string>;
+  readonly declarations: ReadonlyMap<string, LeanDeclaration>;
   readonly types: ReadonlyMap<string, TypePlan>;
   readonly methods: ReadonlyMap<string, MethodPlan>;
   readonly reserved: readonly string[];
@@ -490,18 +590,137 @@ interface EmitContext {
   readonly locals: CodecLocals;
   readonly boundary: BoundaryPlan;
   readonly used: Set<string>;
+  /** The enclosing declaration's type parameters, in order, as emitted names. */
+  readonly typeParameters: readonly string[];
 }
 
 type Binding =
   | { readonly kind: 'identifier'; readonly name: string }
-  | { readonly kind: 'receiver' }
-  | { readonly kind: 'receiverField'; readonly field: string };
+  | { readonly kind: 'this' }
+  /** A binder the generated code reads back out of a value it already holds. */
+  | { readonly kind: 'expression'; readonly value: ts.Expression }
+  /**
+   * A binder the enclosing body never reads. It occupies its de Bruijn position so every index
+   * above it still counts, and emitting it is a compiler defect rather than a refused program.
+   */
+  | { readonly kind: 'unread' };
+
+/**
+ * Type parameters are positional. Their emitted names come from a fixed sequence rather than from a
+ * Lean binder name, so renaming `α` in Lean cannot change a generated signature, and a Lean library
+ * that spells its parameters in Greek still lowers.
+ */
+/**
+ * The globals emitted code reads by name. A Lean binder that shadowed one would silently change
+ * what `BigInt(...)`, `Object.freeze(...)` or `throw new TypeError(...)` resolves to.
+ */
+const EMITTED_GLOBALS: readonly string[] = ['undefined', 'this', 'Array', 'BigInt', 'Object', 'TypeError'];
+
+function positionalTypeParameter(index: number): string {
+  return index < 26 ? String.fromCodePoint(65 + index) : `T${index}`;
+}
+
+function allocateTypeParameters(count: number, reserved: readonly string[]): readonly string[] {
+  const allocator = new IdentifierAllocator(reserved);
+  return Array.from({ length: count }, (_, index) => allocator.allocate(positionalTypeParameter(index)));
+}
+
+function withTypeParameters(context: EmitContext, typeParameters: readonly string[]): EmitContext {
+  return { ...context, typeParameters };
+}
+
+function typeParameterDeclarations(names: readonly string[]): readonly ts.TypeParameterDeclaration[] | undefined {
+  if (names.length === 0) return undefined;
+  return names.map((name) => ts.factory.createTypeParameterDeclaration(undefined, name));
+}
+
+function typeParameterReferences(names: readonly string[]): readonly ts.TypeNode[] | undefined {
+  return names.length === 0 ? undefined : names.map((name) => ts.factory.createTypeReferenceNode(name));
+}
+
+/**
+ * The members the generated representation owns. A Lean name that lands on one of these would be
+ * emitted beside it, so the collision is refused in the Lean source rather than resolved silently.
+ */
+const RESERVED_REPRESENTATION_MEMBERS: Readonly<Record<string, string>> = {
+  kind: 'constructor discriminant',
+  from: 'tag constructor',
+  fromData: 'decode boundary',
+  toData: 'data image',
+  equals: 'structural equality',
+};
+
+/**
+ * A structural type carries `__proto__` as an own data property, because an object literal with a
+ * computed key creates one and element access reads it. A class cannot: its constructor assigns
+ * each field, and an assignment to `__proto__` reaches the prototype setter however it is spelled.
+ * So the name is refused exactly where the representation is a class.
+ */
+const PROTOTYPE_KEY = '__proto__';
+
+function reservedMemberRole(name: string): string | undefined {
+  return Object.hasOwn(RESERVED_REPRESENTATION_MEMBERS, name)
+    ? RESERVED_REPRESENTATION_MEMBERS[name]
+    : undefined;
+}
+
+function refuseReservedMember(owner: string, what: string, name: string, role: string): never {
+  throw new UnsupportedLeanFragmentError(
+    owner,
+    `${what} ${name} collides with the ${role} the generated representation emits for ${owner}; rename it in the Lean source`,
+  );
+}
+
+/**
+ * Refuses a data type whose own names collide with the representation the emitter gives it. A
+ * value object carries `kind`, `fromData`, `toData`, `equals` and, when every constructor is
+ * nullary, `from`; a tagged union carries `kind`. Anything a Lean source spells that lands on one
+ * of those has no second place to go.
+ */
+function assertRepresentationNames(plan: TypePlan): void {
+  const owner = plan.declaration.name;
+  const tagged =
+    plan.declaration.kind === 'enum' && plan.declaration.constructors.some((entry) => entry.fields.length > 0);
+  const fields =
+    plan.declaration.kind === 'record'
+      ? plan.declaration.fields
+      : plan.declaration.constructors.flatMap((constructor) => constructor.fields);
+  for (const field of fields) {
+    if (plan.nominal && field.name === PROTOTYPE_KEY) {
+      throw new UnsupportedLeanFragmentError(
+        owner,
+        `field ${PROTOTYPE_KEY} has no own-property form on the class the generated representation emits for ${owner}, because a class constructor assigns its fields and that assignment reaches the prototype setter; rename it in the Lean source`,
+      );
+    }
+    const role = reservedMemberRole(field.name);
+    if (role === undefined) continue;
+    if (plan.nominal || (tagged && field.name === 'kind')) refuseReservedMember(owner, 'field', field.name, role);
+  }
+  if (!plan.nominal) return;
+  for (const method of plan.methods) {
+    const role = reservedMemberRole(method.name);
+    if (role !== undefined) refuseReservedMember(owner, 'dot-notation method', method.name, role);
+  }
+  if (plan.declaration.kind !== 'enum') return;
+  for (const constructor of plan.declaration.constructors) {
+    const role = reservedMemberRole(constructor.name);
+    if (role !== undefined) refuseReservedMember(owner, 'constructor', constructor.name, role);
+  }
+}
 
 function planProgram(program: LeanSemanticProgram): EmitContext {
+  // A declaration binds at module scope, where it can shadow a global the generated class body
+  // reads. Allocate the local spelling before any plan exists, in canonical declaration order, so
+  // Object/BigInt/Array/TypeError are handled exactly like a binder inside a function.
+  const declarationAllocator = new IdentifierAllocator(EMITTED_GLOBALS);
   const declarationNames = new Map(
-    program.declarations.map((declaration) => [declaration.name, localName(declaration.name)]),
+    [...program.declarations]
+      .sort((left, right) => compareCodePoints(left.name, right.name))
+      .map((declaration) => [declaration.name, declarationAllocator.allocate(localName(declaration.name))]),
   );
-  const allocator = new IdentifierAllocator([...declarationNames.values(), 'undefined', 'this']);
+  const declarations = new Map(program.declarations.map((declaration) => [declaration.name, declaration]));
+  const declaredIdentifiers = [...declarationNames.values()];
+  const allocator = new IdentifierAllocator([...declaredIdentifiers, ...EMITTED_GLOBALS]);
   const functions = program.declarations.filter(
     (declaration): declaration is LeanFunction => declaration.kind === 'function',
   );
@@ -512,18 +731,29 @@ function planProgram(program: LeanSemanticProgram): EmitContext {
   const methods = new Map<string, MethodPlan>();
   for (const declaration of data) {
     const typeName = requiredDeclarationName(declarationNames, declaration.name);
-    const plan: MethodPlan[] = functions
-      .filter((candidate) => isDotNotationMethod(candidate, declaration))
-      .map((candidate) => ({
-        declaration: candidate,
-        name: localName(candidate.name),
-        dispatches: dispatchesOnReceiver(candidate, declaration.name),
-      }));
-    const nominal = plan.length > 0;
+    const owned = functions
+      .filter((candidate) => candidate.receiver?.type === declaration.name)
+      .map((candidate): MethodPlan => {
+        const receiver = candidate.receiver;
+        if (receiver === undefined) throw new TypeError(`${candidate.name} lost its receiver record`);
+        return {
+          declaration: candidate,
+          name: localName(candidate.name),
+          receiver,
+          parameters: candidate.parameters.filter((_, index) => index !== receiver.parameter),
+          typeParameters: allocateTypeParameters(candidate.typeParameters.length, declaredIdentifiers),
+          dispatches: declaration.kind === 'enum' && dispatchesOnReceiver(candidate, receiver),
+        };
+      });
+    const nominal = owned.length > 0;
+    const ground = declaration.typeParameters.length === 0;
     const cases =
       declaration.kind === 'enum' && nominal
         ? declaration.constructors.map((constructor): CasePlan => ({
             constructor,
+            // A class name and its singleton bind at module scope. A constructor field does not:
+            // its binder belongs to one class member, so reserving it here would rename every
+            // Lean binder of that spelling across the whole module.
             className: allocator.allocate(`${capitalize(constructor.name)}${typeName}`),
             singleton: allocator.allocate(`${constructor.name}${typeName}`),
           }))
@@ -531,81 +761,125 @@ function planProgram(program: LeanSemanticProgram): EmitContext {
     types.set(declaration.name, {
       declaration,
       typeName,
+      typeParameters: allocateTypeParameters(declaration.typeParameters.length, declaredIdentifiers),
+      ground,
       nominal,
       cases,
-      methods: plan,
+      methods: owned,
       dataName: nominal ? allocator.allocate(`${typeName}Data`) : typeName,
       initName: nominal ? allocator.allocate(`${typeName}Init`) : typeName,
     });
-    for (const method of plan) methods.set(method.declaration.name, method);
+    for (const method of owned) methods.set(method.declaration.name, method);
+    const plan = types.get(declaration.name);
+    if (plan === undefined) throw new TypeError(`missing type plan for ${declaration.name}`);
+    assertRepresentationNames(plan);
   }
   const decoders = new Map<string, string>();
   for (const declaration of data) {
-    if (types.get(declaration.name)?.nominal === true) continue;
+    const plan = types.get(declaration.name);
+    if (plan === undefined || plan.nominal || !plan.ground) continue;
     decoders.set(declaration.name, allocator.allocate(`require${capitalize(localName(declaration.name))}`));
   }
-  // Captured before the codec names are allocated: a Lean binder shares no scope with a generated
-  // validator, so only names a Lean body can actually refer to are reserved against it.
-  const reserved = allocator.allocated();
   const prelude: PreludeNames = {
     dataBoundary: allocator.allocate('GeneratedData'),
     isDataObject: allocator.allocate('isDataObject'),
     dataFields: allocator.allocate('dataFields'),
     requireBoolean: allocator.allocate('requireBoolean'),
+    requireNat: allocator.allocate('requireNat'),
+    requireString: allocator.allocate('requireString'),
+    requireList: allocator.allocate('requireList'),
+    optionType: allocator.allocate('Option'),
+    exceptType: allocator.allocate('Except'),
+    requireOption: allocator.allocate('requireOption'),
+    requireExcept: allocator.allocate('requireExcept'),
+    equalOption: allocator.allocate('equalOption'),
+    equalExcept: allocator.allocate('equalExcept'),
+    equalList: allocator.allocate('equalList'),
+    helpers: new Map<LeanRuntimeHelperRole, string>([
+      ['nat-truncated-subtraction', allocator.allocate('natSubtract')],
+      ['list-head-option', allocator.allocate('listHead')],
+    ]),
     decoders,
   };
+  // Every generated name an emitted function body can reach: the shared helpers it calls, the
+  // decoders it names, and the globals it reads. A Lean binder never shadows one of these. The
+  // codec locals below are deliberately outside the set: they exist only inside generated codec
+  // bodies, which hold no Lean binder, and reserving them would rename ordinary Lean parameters.
+  const reserved = allocator.allocated();
   const locals: CodecLocals = {
     value: allocator.allocate('value'),
     name: allocator.allocate('name'),
     data: allocator.allocate('data'),
     fields: allocator.allocate('fields'),
     field: allocator.allocate('field'),
+    element: allocator.allocate('element'),
+    index: allocator.allocate('index'),
+    entry: allocator.allocate('entry'),
+    other: allocator.allocate('other'),
+    codeUnit: allocator.allocate('codeUnit'),
   };
   const roots = new Set(program.roots);
-  const boundary = planBoundary(program, roots, types, prelude);
+  const base: EmitContext = {
+    roots,
+    declarationNames,
+    declarations,
+    types,
+    methods,
+    reserved,
+    prelude,
+    locals,
+    boundary: { types: new Set(), validators: new Set() },
+    used: new Set(),
+    typeParameters: [],
+  };
+  const boundary = planBoundary(program, base);
   const used = new Set(boundary.validators);
   for (const name of boundary.types) {
     const decoder = decoders.get(name);
     if (decoder === undefined) throw new TypeError(`missing generated decoder for ${name}`);
     used.add(decoder);
   }
-  return {
-    roots,
-    declarationNames,
-    types,
-    methods,
-    reserved,
-    prelude,
-    locals,
-    boundary,
-    used,
-  };
+  return { ...base, boundary, used };
 }
 
 /**
- * The decode boundary an external caller has to cross: the type of every parameter a root
- * declaration takes, and the shared validator each primitive parameter is read by. A type reached
- * only through another type's field is read by that type's own codec, so the boundary is exactly
- * the callable surface and never wider.
+ * The decode boundary an external caller has to cross: the type of every parameter a root takes,
+ * with the shared validator each primitive one is read by. A root's result travels the other way
+ * and is never decoded, and a type reached only through another type's field is read by that type's
+ * own codec, so the boundary is exactly the callable surface and never wider.
  */
-function planBoundary(
-  program: LeanSemanticProgram,
-  roots: ReadonlySet<string>,
-  types: ReadonlyMap<string, TypePlan>,
-  prelude: PreludeNames,
-): BoundaryPlan {
+function planBoundary(program: LeanSemanticProgram, context: EmitContext): BoundaryPlan {
   const boundaryTypes = new Set<string>();
   const validators = new Set<string>();
   const walk = (type: LeanType): void => {
     switch (type.kind) {
       case 'boolean':
-        validators.add(prelude.requireBoolean);
+        validators.add(context.prelude.requireBoolean);
+        return;
+      case 'nat':
+        validators.add(context.prelude.requireNat);
+        return;
+      case 'string':
+        validators.add(context.prelude.requireString);
         return;
       case 'option':
-        walk(type.inner);
+        validators.add(context.prelude.requireOption);
+        walk(type.value);
         return;
+      case 'except':
+        validators.add(context.prelude.requireExcept);
+        walk(type.error);
+        walk(type.value);
+        return;
+      case 'list':
+        validators.add(context.prelude.requireList);
+        walk(type.element);
+        return;
+      case 'parameter':
+      case 'function':
+        throw new TypeError(`a root declaration cannot expose ${renderType(type)} at its boundary`);
       case 'named': {
-        const plan = types.get(type.name);
+        const plan = context.types.get(type.name);
         if (plan === undefined) throw new TypeError(`root parameter names an undeclared type ${type.name}`);
         // A value object already carries `fromData`; a structural type gets one beside its decoder.
         if (!plan.nominal) boundaryTypes.add(type.name);
@@ -614,38 +888,24 @@ function planBoundary(
     }
   };
   for (const declaration of program.declarations) {
-    if (declaration.kind !== 'function' || !roots.has(declaration.name)) continue;
+    if (declaration.kind !== 'function' || !context.roots.has(declaration.name)) continue;
     for (const parameter of declaration.parameters) walk(parameter.type);
   }
   return { types: boundaryTypes, validators };
 }
 
 /**
- * Lean dot notation names the receiver, so `T.f (t : T) …` is a method on `T`. The method is
- * emitted inside `T`'s class, so it has to be declared by the same Lean module: a receiver in
- * another module would move code across the module boundary the generated tree preserves.
+ * Whether a method decides its receiver's constructors directly, which is what lets it lower to one
+ * abstract method with an override per case class instead of a tag comparison inside one body.
  */
-function isDotNotationMethod(declaration: LeanFunction, data: LeanData): boolean {
-  if (!declaration.name.startsWith(`${data.name}.`)) return false;
-  if (declaration.name.slice(data.name.length + 1).includes('.')) return false;
-  const receiver = declaration.parameters[0];
-  if (receiver === undefined || receiver.type.kind !== 'named' || receiver.type.name !== data.name) return false;
-  if (declaration.module !== data.module) {
-    throw new UnsupportedLeanFragmentError(
-      declaration.name,
-      `dot-notation method is declared by ${declaration.module} but its receiver ${data.name} is declared by ${data.module}; declare it beside its type`,
-    );
-  }
-  return true;
-}
-
-function dispatchesOnReceiver(declaration: LeanFunction, enumName: string): boolean {
+function dispatchesOnReceiver(declaration: LeanFunction, receiver: LeanReceiver): boolean {
   const body = declaration.body;
+  if (body.kind !== 'match' || body.scrutinee.kind !== 'variable') return false;
+  const parameter = declaration.parameters[receiver.parameter];
+  if (parameter === undefined) return false;
   return (
-    body.kind === 'match' &&
-    body.type === enumName &&
-    body.scrutinee.kind === 'variable' &&
-    body.scrutinee.index === declaration.parameters.length - 1
+    sameType(body.type, parameter.type) &&
+    body.scrutinee.index === declaration.parameters.length - 1 - receiver.parameter
   );
 }
 
@@ -655,18 +915,23 @@ function emitDeclaration(declaration: LeanDeclaration, context: EmitContext): re
     return [emitFunction(declaration, context)];
   }
   const plan = requiredTypePlan(context, declaration.name);
+  const scoped = withTypeParameters(context, plan.typeParameters);
   if (declaration.kind === 'enum') {
     return plan.nominal
-      ? emitNominalEnum(plan, declaration, context)
-      : [emitStructuralEnum(plan, declaration, context)];
+      ? emitNominalEnum(plan, declaration, scoped)
+      : [emitStructuralEnum(plan, declaration, scoped)];
   }
   return plan.nominal
-    ? emitNominalRecord(plan, declaration, context)
-    : [emitStructuralRecord(plan, declaration, context)];
+    ? emitNominalRecord(plan, declaration, scoped)
+    : [emitStructuralRecord(plan, declaration, scoped)];
 }
 
 function emitFunction(declaration: LeanFunction, context: EmitContext): ts.Statement {
-  const allocator = newAllocator(context);
+  const scoped = withTypeParameters(
+    context,
+    allocateTypeParameters(declaration.typeParameters.length, [...context.declarationNames.values()]),
+  );
+  const allocator = newAllocator(scoped);
   const parameters = declaration.parameters.map((parameter) => ({
     ...parameter,
     emittedName: allocator.allocate(parameter.name),
@@ -678,19 +943,19 @@ function emitFunction(declaration: LeanFunction, context: EmitContext): ts.State
     ts.factory.createFunctionDeclaration(
       context.roots.has(declaration.name) ? [modifier(ts.SyntaxKind.ExportKeyword)] : undefined,
       undefined,
-      localName(declaration.name),
-      undefined,
+      requiredDeclarationName(context.declarationNames, declaration.name),
+      typeParameterDeclarations(scoped.typeParameters),
       parameters.map((parameter) =>
         ts.factory.createParameterDeclaration(
           undefined,
           undefined,
           parameter.emittedName,
           undefined,
-          emitType(parameter.type, context),
+          emitType(parameter.type, scoped),
         ),
       ),
-      emitType(declaration.result, context),
-      emitFunctionBody(declaration.body, scope, allocator, context),
+      emitType(declaration.result, scoped),
+      emitFunctionBody(declaration.body, scope, allocator, scoped),
     ),
     declaration.doc,
   );
@@ -706,7 +971,7 @@ function emitStructuralEnum(plan: TypePlan, declaration: LeanEnum, context: Emit
     ts.factory.createTypeAliasDeclaration(
       [modifier(ts.SyntaxKind.ExportKeyword)],
       plan.typeName,
-      undefined,
+      typeParameterDeclarations(plan.typeParameters),
       ts.factory.createUnionTypeNode(members),
     ),
     declaration.doc,
@@ -720,12 +985,12 @@ function variantObjectType(constructor: LeanEnumConstructor, context: EmitContex
   ]);
 }
 
-function emitStructuralRecord(plan: TypePlan, declaration: LeanRecord, context: EmitContext): ts.Statement {
+function emitStructuralRecord(plan: TypePlan, declaration: LeanStructure, context: EmitContext): ts.Statement {
   return documented(
     ts.factory.createInterfaceDeclaration(
       [modifier(ts.SyntaxKind.ExportKeyword)],
       plan.typeName,
-      undefined,
+      typeParameterDeclarations(plan.typeParameters),
       undefined,
       declaration.fields.map((field) =>
         documented(readonlyProperty(field.name, emitType(field.type, context)), field.doc),
@@ -737,53 +1002,19 @@ function emitStructuralRecord(plan: TypePlan, declaration: LeanRecord, context: 
 
 /**
  * A behaviour-carrying inductive becomes an abstract base with one private subclass per
- * constructor: a nullary constructor has exactly one inhabitant, so it is a singleton behind a
- * static getter; a payload constructor is a static factory over its fields.
+ * constructor. A nullary constructor of a ground type has exactly one inhabitant, so it is a
+ * singleton behind a static getter; a nullary constructor of a generic type has one inhabitant per
+ * instantiation, so it is a static factory instead. A payload constructor is a factory over its
+ * fields either way.
  */
 function emitNominalEnum(plan: TypePlan, declaration: LeanEnum, context: EmitContext): readonly ts.Statement[] {
-  const base = ts.factory.createTypeReferenceNode(plan.typeName);
+  const self = selfType(plan);
   const nullary = plan.cases.every((entry) => entry.constructor.fields.length === 0);
   const members: ts.ClassElement[] = plan.cases.map((entry) =>
-    documented(
-      entry.constructor.fields.length === 0
-        ? ts.factory.createGetAccessorDeclaration(
-            [modifier(ts.SyntaxKind.PublicKeyword), modifier(ts.SyntaxKind.StaticKeyword)],
-            entry.constructor.name,
-            [],
-            base,
-            block(ts.factory.createReturnStatement(ts.factory.createIdentifier(entry.singleton))),
-          )
-        : ts.factory.createMethodDeclaration(
-            [modifier(ts.SyntaxKind.PublicKeyword), modifier(ts.SyntaxKind.StaticKeyword)],
-            undefined,
-            entry.constructor.name,
-            undefined,
-            undefined,
-            entry.constructor.fields.map((field) =>
-              ts.factory.createParameterDeclaration(
-                undefined,
-                undefined,
-                field.name,
-                undefined,
-                emitType(field.type, context),
-              ),
-            ),
-            base,
-            block(
-              ts.factory.createReturnStatement(
-                ts.factory.createNewExpression(
-                  ts.factory.createIdentifier(entry.className),
-                  undefined,
-                  entry.constructor.fields.map((field) => ts.factory.createIdentifier(field.name)),
-                ),
-              ),
-            ),
-          ),
-      entry.constructor.doc,
-    ),
+    documented(emitCaseFactory(entry, plan, context), entry.constructor.doc),
   );
-  if (nullary) members.push(emitTagConstructor(plan, base));
-  members.push(emitEnumFromData(plan, declaration, base, context));
+  if (nullary && plan.ground) members.push(emitTagConstructor(plan, self, context));
+  if (plan.ground) members.push(emitEnumFromData(plan, declaration, self, context));
   members.push(
     ts.factory.createPropertyDeclaration(
       [
@@ -797,35 +1028,75 @@ function emitNominalEnum(plan: TypePlan, declaration: LeanEnum, context: EmitCon
       undefined,
     ),
   );
-  for (const method of plan.methods) members.push(emitBaseMethod(method, context));
-  members.push(...emitEnumRepresentation(plan, base, nullary));
+  for (const method of plan.methods) members.push(emitBaseMethod(method, plan, context));
+  if (plan.ground) members.push(...emitEnumRepresentation(plan, self, nullary, context));
   const declarationStatement = documented(
     ts.factory.createClassDeclaration(
       [modifier(ts.SyntaxKind.ExportKeyword), modifier(ts.SyntaxKind.AbstractKeyword)],
       plan.typeName,
-      undefined,
+      typeParameterDeclarations(plan.typeParameters),
       undefined,
       members,
     ),
     declaration.doc,
   );
   return [
-    emitEnumDataType(plan, declaration, nullary, context),
+    ...(plan.ground ? [emitEnumDataType(plan, declaration, nullary, context)] : []),
     declarationStatement,
     ...plan.cases.map((entry) => emitCaseClass(entry, plan, nullary, context)),
-    ...plan.cases
-      .filter((entry) => entry.constructor.fields.length === 0)
-      .map((entry) =>
-        constantStatement(
-          entry.singleton,
-          ts.factory.createNewExpression(ts.factory.createIdentifier(entry.className), undefined, []),
-        ),
-      ),
+    ...(plan.ground
+      ? plan.cases
+          .filter((entry) => entry.constructor.fields.length === 0)
+          .map((entry) =>
+            constantStatement(
+              entry.singleton,
+              ts.factory.createNewExpression(ts.factory.createIdentifier(entry.className), undefined, []),
+            ),
+          )
+      : []),
   ];
 }
 
+function selfType(plan: TypePlan): ts.TypeNode {
+  return ts.factory.createTypeReferenceNode(plan.typeName, typeParameterReferences(plan.typeParameters));
+}
+
+/** The static constructor for one case: a getter where the value is unique, a factory otherwise. */
+function emitCaseFactory(entry: CasePlan, plan: TypePlan, context: EmitContext): ts.ClassElement {
+  const self = selfType(plan);
+  // The body constructs the case class and names the enclosing type, so both are in scope here.
+  const fields = caseFieldBinders(entry, context, [entry.className, plan.typeName, entry.singleton]);
+  const construct = ts.factory.createNewExpression(
+    ts.factory.createIdentifier(entry.className),
+    typeParameterReferences(plan.typeParameters),
+    fields.map(({ binder }) => ts.factory.createIdentifier(binder)),
+  );
+  if (entry.constructor.fields.length === 0 && plan.ground) {
+    return ts.factory.createGetAccessorDeclaration(
+      [modifier(ts.SyntaxKind.PublicKeyword), modifier(ts.SyntaxKind.StaticKeyword)],
+      entry.constructor.name,
+      [],
+      self,
+      block(ts.factory.createReturnStatement(ts.factory.createIdentifier(entry.singleton))),
+    );
+  }
+  return ts.factory.createMethodDeclaration(
+    [modifier(ts.SyntaxKind.PublicKeyword), modifier(ts.SyntaxKind.StaticKeyword)],
+    undefined,
+    entry.constructor.name,
+    undefined,
+    typeParameterDeclarations(plan.typeParameters),
+    fields.map(({ field, binder }) =>
+      ts.factory.createParameterDeclaration(undefined, undefined, binder, undefined, emitType(field.type, context)),
+    ),
+    self,
+    block(ts.factory.createReturnStatement(construct)),
+  );
+}
+
 /** `kind` back to the one value that carries it: total, and only where every case is nullary. */
-function emitTagConstructor(plan: TypePlan, base: ts.TypeNode): ts.ClassElement {
+function emitTagConstructor(plan: TypePlan, base: ts.TypeNode, context: EmitContext): ts.ClassElement {
+  const kind = newAllocator(context).allocate('kind');
   return ts.factory.createMethodDeclaration(
     [modifier(ts.SyntaxKind.PublicKeyword), modifier(ts.SyntaxKind.StaticKeyword)],
     undefined,
@@ -836,7 +1107,7 @@ function emitTagConstructor(plan: TypePlan, base: ts.TypeNode): ts.ClassElement 
       ts.factory.createParameterDeclaration(
         undefined,
         undefined,
-        'kind',
+        kind,
         undefined,
         ts.factory.createIndexedAccessTypeNode(base, literalType('kind')),
       ),
@@ -844,7 +1115,7 @@ function emitTagConstructor(plan: TypePlan, base: ts.TypeNode): ts.ClassElement 
     base,
     block(
       ts.factory.createSwitchStatement(
-        ts.factory.createIdentifier('kind'),
+        ts.factory.createIdentifier(kind),
         ts.factory.createCaseBlock(
           plan.cases.map((entry) =>
             ts.factory.createCaseClause(ts.factory.createStringLiteral(entry.constructor.name), [
@@ -862,9 +1133,21 @@ function emitTagConstructor(plan: TypePlan, base: ts.TypeNode): ts.ClassElement 
   );
 }
 
-function emitBaseMethod(method: MethodPlan, context: EmitContext): ts.ClassElement {
-  const allocator = newAllocator(context);
-  const parameters = methodParameters(method, allocator, context);
+/** The type scope inside a method: its receiver's parameters first, then its own. */
+function methodContext(method: MethodPlan, context: EmitContext): EmitContext {
+  return withTypeParameters(context, method.typeParameters);
+}
+
+/** The type parameters a method declares beyond the ones its receiver's class already binds. */
+function methodOwnTypeParameters(method: MethodPlan, plan: TypePlan): readonly string[] {
+  return method.typeParameters.slice(plan.typeParameters.length);
+}
+
+function emitBaseMethod(method: MethodPlan, plan: TypePlan, context: EmitContext): ts.ClassElement {
+  const scoped = methodContext(method, context);
+  const allocator = newAllocator(scoped);
+  const parameters = methodParameters(method, allocator, scoped);
+  const own = typeParameterDeclarations(methodOwnTypeParameters(method, plan));
   if (method.dispatches) {
     return documented(
       ts.factory.createMethodDeclaration(
@@ -872,9 +1155,9 @@ function emitBaseMethod(method: MethodPlan, context: EmitContext): ts.ClassEleme
         undefined,
         method.name,
         undefined,
-        undefined,
+        own,
         parameters,
-        emitType(method.declaration.result, context),
+        emitType(method.declaration.result, scoped),
         undefined,
       ),
       method.declaration.doc,
@@ -886,10 +1169,10 @@ function emitBaseMethod(method: MethodPlan, context: EmitContext): ts.ClassEleme
       undefined,
       method.name,
       undefined,
-      undefined,
+      own,
       parameters,
-      emitType(method.declaration.result, context),
-      emitFunctionBody(method.declaration.body, methodScope(parameters), allocator, context),
+      emitType(method.declaration.result, scoped),
+      emitFunctionBody(method.declaration.body, methodScope(method, parameters), allocator, scoped),
     ),
     method.declaration.doc,
   );
@@ -908,22 +1191,37 @@ function emitCaseClass(entry: CasePlan, plan: TypePlan, nullary: boolean, contex
       ),
     ),
   ];
-  if (entry.constructor.fields.length > 0) {
+  const constructorFields = caseFieldBinders(entry, context, [entry.className, plan.typeName]);
+  if (constructorFields.length > 0) {
+    // A parameter property would make the source field name a local binder too. Keep the public
+    // property under its Lean name, but allocate the constructor binder and assign it explicitly.
     members.push(
+      ...constructorFields.map(({ field }) =>
+        ts.factory.createPropertyDeclaration(
+          [modifier(ts.SyntaxKind.PublicKeyword), modifier(ts.SyntaxKind.ReadonlyKeyword)],
+          propertyName(field.name),
+          undefined,
+          emitType(field.type, context),
+          undefined,
+        ),
+      ),
       ts.factory.createConstructorDeclaration(
         [modifier(ts.SyntaxKind.PublicKeyword)],
-        entry.constructor.fields.map((field) =>
-          ts.factory.createParameterDeclaration(
-            [modifier(ts.SyntaxKind.PublicKeyword), modifier(ts.SyntaxKind.ReadonlyKeyword)],
-            undefined,
-            field.name,
-            undefined,
-            emitType(field.type, context),
-          ),
+        constructorFields.map(({ field, binder }) =>
+          ts.factory.createParameterDeclaration(undefined, undefined, binder, undefined, emitType(field.type, context)),
         ),
         block(
           ts.factory.createExpressionStatement(
             ts.factory.createCallExpression(ts.factory.createSuper(), undefined, []),
+          ),
+          ...constructorFields.map(({ field, binder }) =>
+            ts.factory.createExpressionStatement(
+              ts.factory.createBinaryExpression(
+                fieldAccess(ts.factory.createThis(), field.name),
+                ts.SyntaxKind.EqualsToken,
+                ts.factory.createIdentifier(binder),
+              ),
+            ),
           ),
           freezeThis(),
         ),
@@ -938,24 +1236,24 @@ function emitCaseClass(entry: CasePlan, plan: TypePlan, nullary: boolean, contex
     if (arm === undefined) {
       throw new TypeError(`method ${method.declaration.name} decides no ${entry.constructor.name} case`);
     }
-    const allocator = newAllocator(context);
-    const declared = methodParameters(method, allocator, context);
-    const scope = [...armBindings(entry.constructor), ...methodScope(declared)];
-    const used = usedParameterCount(arm.value, scope, entry.constructor.fields.length);
+    const scoped = methodContext(method, context);
+    const allocator = newAllocator(scoped);
+    const declared = methodParameters(method, allocator, scoped);
+    const scope = [...armBindings(entry.constructor), ...methodScope(method, declared)];
     members.push(
       ts.factory.createMethodDeclaration(
         [modifier(ts.SyntaxKind.PublicKeyword), modifier(ts.SyntaxKind.OverrideKeyword)],
         undefined,
         method.name,
         undefined,
-        undefined,
-        declared.slice(0, used),
-        emitType(method.declaration.result, context),
-        emitFunctionBody(arm.value, scope, allocator, context),
+        typeParameterDeclarations(methodOwnTypeParameters(method, plan)),
+        declared,
+        emitType(method.declaration.result, scoped),
+        emitFunctionBody(arm.value, scope, allocator, scoped),
       ),
     );
   }
-  if (!nullary) {
+  if (!nullary && plan.ground) {
     members.push(
       overrideMethod(
         'toData',
@@ -981,28 +1279,21 @@ function emitCaseClass(entry: CasePlan, plan: TypePlan, nullary: boolean, contex
       ),
       overrideMethod(
         'equals',
-        [
-          ts.factory.createParameterDeclaration(
-            undefined,
-            undefined,
-            'other',
-            undefined,
-            ts.factory.createTypeReferenceNode(plan.typeName),
-          ),
-        ],
+        [ts.factory.createParameterDeclaration(undefined, undefined, context.locals.other, undefined, selfType(plan))],
         ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
         ts.factory.createReturnStatement(
           conjunction([
             ts.factory.createBinaryExpression(
-              ts.factory.createIdentifier('other'),
+              ts.factory.createIdentifier(context.locals.other),
               ts.SyntaxKind.InstanceOfKeyword,
               ts.factory.createIdentifier(entry.className),
             ),
             ...entry.constructor.fields.map((field) =>
               equalityExpression(
                 receiverField(field.name),
-                fieldAccess(ts.factory.createIdentifier('other'), field.name),
+                fieldAccess(ts.factory.createIdentifier(context.locals.other), field.name),
                 field.type,
+                equalityAllocator(context),
                 context,
               ),
             ),
@@ -1014,10 +1305,13 @@ function emitCaseClass(entry: CasePlan, plan: TypePlan, nullary: boolean, contex
   return ts.factory.createClassDeclaration(
     undefined,
     entry.className,
-    undefined,
+    typeParameterDeclarations(plan.typeParameters),
     [
       ts.factory.createHeritageClause(ts.SyntaxKind.ExtendsKeyword, [
-        ts.factory.createExpressionWithTypeArguments(ts.factory.createIdentifier(plan.typeName), undefined),
+        ts.factory.createExpressionWithTypeArguments(
+          ts.factory.createIdentifier(plan.typeName),
+          typeParameterReferences(plan.typeParameters),
+        ),
       ]),
     ],
     members,
@@ -1029,8 +1323,8 @@ function emitCaseClass(entry: CasePlan, plan: TypePlan, nullary: boolean, contex
  * init object, frozen on construction, with its transition helpers falling out of the Lean
  * functions that return the record itself.
  */
-function emitNominalRecord(plan: TypePlan, declaration: LeanRecord, context: EmitContext): readonly ts.Statement[] {
-  const self = ts.factory.createTypeReferenceNode(plan.typeName);
+function emitNominalRecord(plan: TypePlan, declaration: LeanStructure, context: EmitContext): readonly ts.Statement[] {
+  const self = selfType(plan);
   const members: ts.ClassElement[] = declaration.fields.map((field) =>
     documented(
       ts.factory.createPropertyDeclaration(
@@ -1052,7 +1346,7 @@ function emitNominalRecord(plan: TypePlan, declaration: LeanRecord, context: Emi
           undefined,
           'init',
           undefined,
-          ts.factory.createTypeReferenceNode(plan.initName),
+          ts.factory.createTypeReferenceNode(plan.initName, typeParameterReferences(plan.typeParameters)),
         ),
       ],
       block(
@@ -1068,64 +1362,71 @@ function emitNominalRecord(plan: TypePlan, declaration: LeanRecord, context: Emi
         freezeThis(),
       ),
     ),
-    emitRecordFromData(plan, declaration, context),
   );
-  for (const method of plan.methods) members.push(emitBaseMethod(method, context));
-  members.push(
-    ts.factory.createMethodDeclaration(
-      [modifier(ts.SyntaxKind.PublicKeyword)],
-      undefined,
-      'toData',
-      undefined,
-      undefined,
-      [],
-      ts.factory.createTypeReferenceNode(plan.dataName),
-      block(
-        ts.factory.createReturnStatement(
-          ts.factory.createObjectLiteralExpression(
-            declaration.fields.map((field) =>
-              ts.factory.createPropertyAssignment(
-                propertyName(field.name),
-                encodeExpression(receiverField(field.name), field.type, context),
+  if (plan.ground) members.push(emitRecordFromData(plan, declaration, context));
+  for (const method of plan.methods) members.push(emitBaseMethod(method, plan, context));
+  if (plan.ground) {
+    members.push(
+      ts.factory.createMethodDeclaration(
+        [modifier(ts.SyntaxKind.PublicKeyword)],
+        undefined,
+        'toData',
+        undefined,
+        undefined,
+        [],
+        ts.factory.createTypeReferenceNode(plan.dataName),
+        block(
+          ts.factory.createReturnStatement(
+            ts.factory.createObjectLiteralExpression(
+              declaration.fields.map((field) =>
+                ts.factory.createPropertyAssignment(
+                  propertyName(field.name),
+                  encodeExpression(receiverField(field.name), field.type, context),
+                ),
               ),
-            ),
-            true,
-          ),
-        ),
-      ),
-    ),
-    ts.factory.createMethodDeclaration(
-      [modifier(ts.SyntaxKind.PublicKeyword)],
-      undefined,
-      'equals',
-      undefined,
-      undefined,
-      [ts.factory.createParameterDeclaration(undefined, undefined, 'other', undefined, self)],
-      ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
-      block(
-        ts.factory.createReturnStatement(
-          conjunction(
-            declaration.fields.map((field) =>
-              equalityExpression(
-                receiverField(field.name),
-                fieldAccess(ts.factory.createIdentifier('other'), field.name),
-                field.type,
-                context,
-              ),
+              true,
             ),
           ),
         ),
       ),
-    ),
-  );
+      ts.factory.createMethodDeclaration(
+        [modifier(ts.SyntaxKind.PublicKeyword)],
+        undefined,
+        'equals',
+        undefined,
+        undefined,
+        [ts.factory.createParameterDeclaration(undefined, undefined, context.locals.other, undefined, self)],
+        ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
+        block(
+          ts.factory.createReturnStatement(
+            conjunction(
+              declaration.fields.map((field) =>
+                equalityExpression(
+                  receiverField(field.name),
+                  fieldAccess(ts.factory.createIdentifier(context.locals.other), field.name),
+                  field.type,
+                  equalityAllocator(context),
+                  context,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
   return [
-    interfaceOfFields(plan.initName, declaration.fields, (field) => emitType(field.type, context)),
-    interfaceOfFields(plan.dataName, declaration.fields, (field) => dataType(field.type, context)),
+    interfaceOfFields(plan.initName, plan.typeParameters, declaration.fields, (field) =>
+      emitType(field.type, context),
+    ),
+    ...(plan.ground
+      ? [interfaceOfFields(plan.dataName, [], declaration.fields, (field) => dataType(field.type, context))]
+      : []),
     documented(
       ts.factory.createClassDeclaration(
         [modifier(ts.SyntaxKind.ExportKeyword)],
         plan.typeName,
-        undefined,
+        typeParameterDeclarations(plan.typeParameters),
         undefined,
         members,
       ),
@@ -1136,13 +1437,14 @@ function emitNominalRecord(plan: TypePlan, declaration: LeanRecord, context: Emi
 
 function interfaceOfFields(
   name: string,
+  typeParameters: readonly string[],
   fields: readonly LeanField[],
   type: (field: LeanField) => ts.TypeNode,
 ): ts.Statement {
   return ts.factory.createInterfaceDeclaration(
     [modifier(ts.SyntaxKind.ExportKeyword)],
     name,
-    undefined,
+    typeParameterDeclarations(typeParameters),
     undefined,
     fields.map((field) => readonlyProperty(field.name, type(field))),
   );
@@ -1168,13 +1470,18 @@ function emitEnumDataType(plan: TypePlan, declaration: LeanEnum, nullary: boolea
 }
 
 /** The representation of a nullary-only inductive is its tag; otherwise a tagged data object. */
-function emitEnumRepresentation(plan: TypePlan, base: ts.TypeNode, nullary: boolean): readonly ts.ClassElement[] {
+function emitEnumRepresentation(
+  plan: TypePlan,
+  base: ts.TypeNode,
+  nullary: boolean,
+  context: EmitContext,
+): readonly ts.ClassElement[] {
   if (!nullary) {
     return [
       abstractMethod('toData', [], ts.factory.createTypeReferenceNode(plan.dataName)),
       abstractMethod(
         'equals',
-        [ts.factory.createParameterDeclaration(undefined, undefined, 'other', undefined, base)],
+        [ts.factory.createParameterDeclaration(undefined, undefined, context.locals.other, undefined, base)],
         ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
       ),
     ];
@@ -1188,13 +1495,13 @@ function emitEnumRepresentation(plan: TypePlan, base: ts.TypeNode, nullary: bool
     ),
     publicMethod(
       'equals',
-      [ts.factory.createParameterDeclaration(undefined, undefined, 'other', undefined, base)],
+      [ts.factory.createParameterDeclaration(undefined, undefined, context.locals.other, undefined, base)],
       ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
       ts.factory.createReturnStatement(
         ts.factory.createBinaryExpression(
           ts.factory.createThis(),
           ts.SyntaxKind.EqualsEqualsEqualsToken,
-          ts.factory.createIdentifier('other'),
+          ts.factory.createIdentifier(context.locals.other),
         ),
       ),
     ),
@@ -1264,7 +1571,7 @@ function emitEnumFromData(
   return staticMethod('fromData', base, statements, context);
 }
 
-function emitRecordFromData(plan: TypePlan, declaration: LeanRecord, context: EmitContext): ts.ClassElement {
+function emitRecordFromData(plan: TypePlan, declaration: LeanStructure, context: EmitContext): ts.ClassElement {
   return staticMethod(
     'fromData',
     ts.factory.createTypeReferenceNode(plan.typeName),
@@ -1303,48 +1610,123 @@ function emitDataDecoder(
     constantStatement(context.locals.data, validated),
     build(
       fields.map((field) =>
-        decodeExpression(elementAccess(data, field.name), field.type, `${owner} ${field.name}`, context),
+        decodeExpression(
+          elementAccess(data, field.name),
+          field.type,
+          ts.factory.createStringLiteral(`${owner} ${field.name}`),
+          context,
+        ),
       ),
     ),
   ];
 }
 
+/**
+ * A value's data image. A value object encodes through its own `toData`; everything else is already
+ * its own image, so encoding is the identity. A type that nests a value object under a mapped type
+ * would need a per-instantiation encoder, which would be a second representation of one type, so it
+ * is refused with the source-level remedy instead.
+ */
 function encodeExpression(value: ts.Expression, type: LeanType, context: EmitContext): ts.Expression {
+  if (type.kind === 'named') {
+    const plan = requiredTypePlan(context, type.name);
+    if (plan.nominal) {
+      return ts.factory.createCallExpression(ts.factory.createPropertyAccessExpression(value, 'toData'), undefined, []);
+    }
+  }
+  assertIdentityDataImage(type, context);
+  return value;
+}
+
+/**
+ * Every type inside this one is its own data image. A nested value object is not, and neither is a
+ * type parameter or an arrow, so each is refused by name and by the path that reached it rather
+ * than encoded by guesswork.
+ */
+function assertIdentityDataImage(type: LeanType, context: EmitContext, path: readonly string[] = []): void {
+  const at = path.length === 0 ? '' : ` at ${path.join('.')}`;
   switch (type.kind) {
     case 'boolean':
-      return value;
+    case 'nat':
+    case 'string':
+      return;
+    case 'parameter':
+    case 'function':
+      throw new TypeError(`${renderType(type)}${at} has no data image`);
+    case 'option':
+      assertIdentityDataImage(type.value, context, path);
+      return;
+    case 'except':
+      assertIdentityDataImage(type.error, context, path);
+      assertIdentityDataImage(type.value, context, path);
+      return;
+    case 'list':
+      assertIdentityDataImage(type.element, context, path);
+      return;
     case 'named': {
       const plan = requiredTypePlan(context, type.name);
-      return plan.nominal
-        ? ts.factory.createCallExpression(ts.factory.createPropertyAccessExpression(value, 'toData'), undefined, [])
-        : value;
-    }
-    case 'option': {
-      const inner = encodeExpression(value, type.inner, context);
-      if (inner === value) {
-        return ts.factory.createBinaryExpression(value, ts.SyntaxKind.QuestionQuestionToken, ts.factory.createNull());
+      if (plan.nominal) {
+        throw new TypeError(
+          `the value object ${plan.typeName}${at} has no data image of its own; give the type that holds it behaviour so it becomes a value object too`,
+        );
       }
-      return ts.factory.createConditionalExpression(
-        ts.factory.createBinaryExpression(
-          value,
-          ts.SyntaxKind.EqualsEqualsEqualsToken,
-          ts.factory.createIdentifier('undefined'),
-        ),
-        undefined,
-        ts.factory.createNull(),
-        undefined,
-        inner,
-      );
+      if (!plan.ground) {
+        throw new TypeError(
+          `the generic type ${plan.typeName}${at} has no data image; a codec per instantiation would represent one type twice`,
+        );
+      }
+      const fields =
+        plan.declaration.kind === 'record'
+          ? plan.declaration.fields
+          : plan.declaration.constructors.flatMap((constructor) => constructor.fields);
+      for (const field of fields) {
+        assertIdentityDataImage(field.type, context, [...path, plan.typeName, field.name]);
+      }
+      return;
     }
   }
 }
 
-function decodeExpression(value: ts.Expression, type: LeanType, name: string, context: EmitContext): ts.Expression {
+function decodeExpression(
+  value: ts.Expression,
+  type: LeanType,
+  label: ts.Expression,
+  context: EmitContext,
+): ts.Expression {
   switch (type.kind) {
     case 'boolean':
-      return callPrelude(context, context.prelude.requireBoolean, [value, ts.factory.createStringLiteral(name)]);
+      return callPrelude(context, context.prelude.requireBoolean, [value, label]);
+    case 'nat':
+      return callPrelude(context, context.prelude.requireNat, [value, label]);
+    case 'string':
+      return callPrelude(context, context.prelude.requireString, [value, label]);
+    case 'parameter':
+    case 'function':
+      throw new TypeError(`${renderType(type)} cannot be decoded at the package boundary`);
+    case 'option':
+      return callPrelude(context, context.prelude.requireOption, [
+        value,
+        label,
+        elementDecoder(type.value, context),
+      ]);
+    case 'except':
+      return callPrelude(context, context.prelude.requireExcept, [
+        value,
+        label,
+        elementDecoder(type.error, context),
+        elementDecoder(type.value, context),
+      ]);
+    case 'list':
+      return callPrelude(context, context.prelude.requireList, [
+        value,
+        label,
+        elementDecoder(type.element, context),
+      ]);
     case 'named': {
       const plan = requiredTypePlan(context, type.name);
+      if (!plan.ground) {
+        throw new TypeError(`the generic type ${plan.typeName} cannot be decoded at the package boundary`);
+      }
       if (plan.nominal) {
         return ts.factory.createCallExpression(
           ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier(plan.typeName), 'fromData'),
@@ -1354,62 +1736,98 @@ function decodeExpression(value: ts.Expression, type: LeanType, name: string, co
       }
       const decoder = context.prelude.decoders.get(type.name);
       if (decoder === undefined) throw new TypeError(`missing generated decoder for ${type.name}`);
-      return callPrelude(context, decoder, [value, ts.factory.createStringLiteral(name)]);
+      return callPrelude(context, decoder, [value, label]);
     }
-    case 'option':
-      return ts.factory.createConditionalExpression(
-        ts.factory.createBinaryExpression(value, ts.SyntaxKind.EqualsEqualsEqualsToken, ts.factory.createNull()),
-        undefined,
-        ts.factory.createIdentifier('undefined'),
-        undefined,
-        decodeExpression(value, type.inner, name, context),
-      );
   }
 }
 
+/** The payload decoder a mapped type's validator is handed, as `(value, name) => decoded`. */
+function elementDecoder(type: LeanType, context: EmitContext): ts.Expression {
+  return ts.factory.createArrowFunction(
+    undefined,
+    undefined,
+    [dataParameter(context.locals.element, context), stringParameter(context.locals.name)],
+    undefined,
+    undefined,
+    decodeExpression(
+      ts.factory.createIdentifier(context.locals.element),
+      type,
+      ts.factory.createIdentifier(context.locals.name),
+      context,
+    ),
+  );
+}
+
+/**
+ * Structural equality at one type. A list comparison binds its own element and index, and a nested
+ * list binds fresh ones: reusing the names would let an inner binder shadow the outer index the
+ * inner comparison still reads, and the comparison would silently read the wrong element.
+ */
 function equalityExpression(
   left: ts.Expression,
   right: ts.Expression,
   type: LeanType,
+  allocator: IdentifierAllocator,
   context: EmitContext,
 ): ts.Expression {
   switch (type.kind) {
     case 'boolean':
+    case 'nat':
+    case 'string':
       return ts.factory.createBinaryExpression(left, ts.SyntaxKind.EqualsEqualsEqualsToken, right);
+    case 'parameter':
+    case 'function':
+      throw new TypeError(`${renderType(type)} has no structural equality`);
     case 'named': {
       const plan = requiredTypePlan(context, type.name);
-      if (!plan.nominal) return structuralEquality(left, right, plan, context);
+      if (!plan.nominal) return structuralEquality(left, right, plan, type, allocator, context);
       return ts.factory.createCallExpression(ts.factory.createPropertyAccessExpression(left, 'equals'), undefined, [
         right,
       ]);
     }
-    case 'option': {
-      const inner = equalityExpression(left, right, type.inner, context);
-      return ts.factory.createConditionalExpression(
-        ts.factory.createBinaryExpression(
-          left,
-          ts.SyntaxKind.EqualsEqualsEqualsToken,
-          ts.factory.createIdentifier('undefined'),
-        ),
-        undefined,
-        ts.factory.createBinaryExpression(
-          right,
-          ts.SyntaxKind.EqualsEqualsEqualsToken,
-          ts.factory.createIdentifier('undefined'),
-        ),
-        undefined,
-        ts.factory.createBinaryExpression(
-          ts.factory.createBinaryExpression(
-            right,
-            ts.SyntaxKind.ExclamationEqualsEqualsToken,
-            ts.factory.createIdentifier('undefined'),
-          ),
-          ts.SyntaxKind.AmpersandAmpersandToken,
-          inner,
-        ),
-      );
-    }
+    case 'option':
+      return callPrelude(context, context.prelude.equalOption, [
+        left,
+        right,
+        comparator(type.value, allocator, context),
+      ]);
+    case 'except':
+      return callPrelude(context, context.prelude.equalExcept, [
+        left,
+        right,
+        comparator(type.error, allocator, context),
+        comparator(type.value, allocator, context),
+      ]);
+    case 'list':
+      return callPrelude(context, context.prelude.equalList, [
+        left,
+        right,
+        comparator(type.element, allocator, context),
+      ]);
   }
+}
+
+/** The payload comparison a shared comparison helper is handed, as `(left, right) => same`. */
+function comparator(type: LeanType, allocator: IdentifierAllocator, context: EmitContext): ts.Expression {
+  const leftName = allocator.allocate('left');
+  const rightName = allocator.allocate('right');
+  return ts.factory.createArrowFunction(
+    undefined,
+    undefined,
+    [
+      ts.factory.createParameterDeclaration(undefined, undefined, leftName),
+      ts.factory.createParameterDeclaration(undefined, undefined, rightName),
+    ],
+    undefined,
+    undefined,
+    equalityExpression(
+      ts.factory.createIdentifier(leftName),
+      ts.factory.createIdentifier(rightName),
+      type,
+      allocator,
+      context,
+    ),
+  );
 }
 
 /**
@@ -1420,6 +1838,8 @@ function structuralEquality(
   left: ts.Expression,
   right: ts.Expression,
   plan: TypePlan,
+  type: Extract<LeanType, { readonly kind: 'named' }>,
+  allocator: IdentifierAllocator,
   context: EmitContext,
 ): ts.Expression {
   if (plan.declaration.kind === 'enum') {
@@ -1432,58 +1852,31 @@ function structuralEquality(
   }
   return conjunction(
     plan.declaration.fields.map((field) =>
-      equalityExpression(fieldAccess(left, field.name), fieldAccess(right, field.name), field.type, context),
+      equalityExpression(
+        fieldAccess(left, field.name),
+        fieldAccess(right, field.name),
+        substituteType(field.type, type.arguments),
+        allocator,
+        context,
+      ),
     ),
   );
 }
 
-/** The JSON image of a Lean type: `Option` is `null` in data, and a value object is its data. */
+/** The data image of a Lean type: a value object is its data, and every other type is its own. */
 function dataType(type: LeanType, context: EmitContext): ts.TypeNode {
-  switch (type.kind) {
-    case 'boolean':
-      return ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword);
-    case 'named': {
-      const plan = requiredTypePlan(context, type.name);
-      if (plan.nominal) return ts.factory.createTypeReferenceNode(plan.dataName);
-      assertStructuralDataImage(plan, context, type.name);
-      return ts.factory.createTypeReferenceNode(plan.typeName);
-    }
-    case 'option':
-      return ts.factory.createUnionTypeNode([
-        dataType(type.inner, context),
-        ts.factory.createLiteralTypeNode(ts.factory.createNull()),
-      ]);
+  if (type.kind === 'named') {
+    const plan = requiredTypePlan(context, type.name);
+    if (plan.nominal) return ts.factory.createTypeReferenceNode(plan.dataName);
   }
+  assertIdentityDataImage(type, context);
+  return emitType(type, context);
 }
 
 /**
- * A structural type is its own data image only while it holds no value object; one that does
- * would need a second image, so it is refused with the source-level remedy.
- */
-function assertStructuralDataImage(plan: TypePlan, context: EmitContext, name: string): void {
-  const fields =
-    plan.declaration.kind === 'record'
-      ? plan.declaration.fields
-      : plan.declaration.constructors.flatMap((constructor) => constructor.fields);
-  for (const field of fields) {
-    const type = field.type.kind === 'option' ? field.type.inner : field.type;
-    if (type.kind !== 'named') continue;
-    const referenced = requiredTypePlan(context, type.name);
-    if (referenced.nominal) {
-      throw new TypeError(
-        `${name} is used in data position but its field ${field.name} carries the value object ${type.name}; give ${name} behaviour so it becomes a value object too`,
-      );
-    }
-    assertStructuralDataImage(referenced, context, type.name);
-  }
-}
-
-/**
- * The boundary type and the primitive validators every generated codec shares. They are built in
- * reverse dependency order, so a validator reached only through another one is still emitted, and
- * returned in a fixed order so the bytes are stable. A validator that reads a root declaration's
- * own parameter is exported, because there the caller is the one holding the undecoded value. The
- * per-type decoders are emitted separately, each in the module that declares its type.
+ * The boundary type and the primitive validators every generated codec shares, plus the two mapped
+ * type aliases and the helpers whose opcode semantics need a guard. Each is emitted only where the
+ * package actually reached it, so an unused validator never lands in a generated file.
  */
 function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
   const { prelude, locals } = context;
@@ -1491,14 +1884,146 @@ function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
   const name = ts.factory.createIdentifier(locals.name);
   const fields = ts.factory.createIdentifier(locals.fields);
   const dataRecord = dataRecordType(prelude.dataBoundary);
-  const booleanBoundary: readonly ts.Modifier[] | undefined = context.boundary.validators.has(prelude.requireBoolean)
-    ? [modifier(ts.SyntaxKind.ExportKeyword)]
-    : undefined;
-  const requireBooleanDeclaration: ts.Statement[] = [];
-  if (context.used.has(prelude.requireBoolean)) {
-    requireBooleanDeclaration.push(
+  const boundaryExport = (validator: string): readonly ts.Modifier[] | undefined =>
+    context.boundary.validators.has(validator) ? [modifier(ts.SyntaxKind.ExportKeyword)] : undefined;
+  const statements: ts.Statement[] = [];
+  // Built last-to-first so a validator reached only through another one is still emitted, then
+  // returned in a fixed order so the bytes are stable.
+  if (context.used.has(requiredHelper(context, 'list-head-option'))) statements.push(emitListHeadHelper(context));
+  if (context.used.has(requiredHelper(context, 'nat-truncated-subtraction'))) {
+    statements.push(emitNatSubtractHelper(context));
+  }
+  if (context.used.has(prelude.equalList)) statements.push(emitEqualListHelper(context));
+  if (context.used.has(prelude.equalExcept)) statements.push(emitEqualExceptHelper(context));
+  if (context.used.has(prelude.equalOption)) statements.push(emitEqualOptionHelper(context));
+  if (context.used.has(prelude.requireExcept)) statements.push(emitExceptValidator(context));
+  if (context.used.has(prelude.requireOption)) statements.push(emitOptionValidator(context));
+  if (context.used.has(prelude.requireList)) statements.push(emitListValidator(context));
+  if (context.used.has(prelude.requireString)) {
+    statements.push(
       ts.factory.createFunctionDeclaration(
-        booleanBoundary,
+        boundaryExport(prelude.requireString),
+        undefined,
+        prelude.requireString,
+        undefined,
+        [dataParameter(locals.value, context), stringParameter(locals.name)],
+        ts.factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword),
+        block(
+          guard(
+            ts.factory.createPrefixUnaryExpression(ts.SyntaxKind.ExclamationToken, typeOfIs(value, 'string')),
+            namedMessage(context, 'must be a string'),
+          ),
+          // Lean String is a sequence of Unicode scalar values. JavaScript admits lone UTF-16
+          // surrogates, so decode the boundary rather than letting an ill-formed code-unit sequence
+          // enter a value the string opcodes model as scalar text.
+          ts.factory.createForStatement(
+            ts.factory.createVariableDeclarationList(
+              [
+                ts.factory.createVariableDeclaration(
+                  locals.index,
+                  undefined,
+                  undefined,
+                  ts.factory.createNumericLiteral(0),
+                ),
+              ],
+              ts.NodeFlags.Let,
+            ),
+            ts.factory.createBinaryExpression(
+              ts.factory.createIdentifier(locals.index),
+              ts.SyntaxKind.LessThanToken,
+              ts.factory.createPropertyAccessExpression(value, 'length'),
+            ),
+            ts.factory.createBinaryExpression(
+              ts.factory.createIdentifier(locals.index),
+              ts.SyntaxKind.PlusEqualsToken,
+              ts.factory.createNumericLiteral(1),
+            ),
+            block(
+              constantStatement(locals.codeUnit, charCodeAt(value, ts.factory.createIdentifier(locals.index))),
+              ts.factory.createIfStatement(
+                codeUnitInRange(ts.factory.createIdentifier(locals.codeUnit), 0xd800, 0xdbff),
+                block(
+                  guard(
+                    ts.factory.createBinaryExpression(
+                      ts.factory.createBinaryExpression(
+                        ts.factory.createBinaryExpression(
+                          ts.factory.createIdentifier(locals.index),
+                          ts.SyntaxKind.PlusToken,
+                          ts.factory.createNumericLiteral(1),
+                        ),
+                        ts.SyntaxKind.GreaterThanEqualsToken,
+                        ts.factory.createPropertyAccessExpression(value, 'length'),
+                      ),
+                      ts.SyntaxKind.BarBarToken,
+                      ts.factory.createPrefixUnaryExpression(
+                        ts.SyntaxKind.ExclamationToken,
+                        codeUnitInRange(
+                          charCodeAt(
+                            value,
+                            ts.factory.createBinaryExpression(
+                              ts.factory.createIdentifier(locals.index),
+                              ts.SyntaxKind.PlusToken,
+                              ts.factory.createNumericLiteral(1),
+                            ),
+                          ),
+                          0xdc00,
+                          0xdfff,
+                        ),
+                      ),
+                    ),
+                    namedMessage(context, 'must contain only well-formed UTF-16 code units'),
+                  ),
+                  ts.factory.createExpressionStatement(
+                    ts.factory.createBinaryExpression(
+                      ts.factory.createIdentifier(locals.index),
+                      ts.SyntaxKind.PlusEqualsToken,
+                      ts.factory.createNumericLiteral(1),
+                    ),
+                  ),
+                ),
+                ts.factory.createIfStatement(
+                  codeUnitInRange(ts.factory.createIdentifier(locals.codeUnit), 0xdc00, 0xdfff),
+                  block(throwNamed(context, 'must contain only well-formed UTF-16 code units')),
+                ),
+              ),
+            ),
+          ),
+          ts.factory.createReturnStatement(value),
+        ),
+      ),
+    );
+  }
+  if (context.used.has(prelude.requireNat)) {
+    statements.push(
+      ts.factory.createFunctionDeclaration(
+        boundaryExport(prelude.requireNat),
+        undefined,
+        prelude.requireNat,
+        undefined,
+        [dataParameter(locals.value, context), stringParameter(locals.name)],
+        ts.factory.createKeywordTypeNode(ts.SyntaxKind.BigIntKeyword),
+        block(
+          ts.factory.createIfStatement(
+            ts.factory.createBinaryExpression(
+              typeOfIs(value, 'bigint'),
+              ts.SyntaxKind.AmpersandAmpersandToken,
+              ts.factory.createBinaryExpression(
+                value,
+                ts.SyntaxKind.GreaterThanEqualsToken,
+                ts.factory.createBigIntLiteral('0n'),
+              ),
+            ),
+            block(ts.factory.createReturnStatement(value)),
+          ),
+          throwNamed(context, 'must be a nonnegative integer'),
+        ),
+      ),
+    );
+  }
+  if (context.used.has(prelude.requireBoolean)) {
+    statements.push(
+      ts.factory.createFunctionDeclaration(
+        boundaryExport(prelude.requireBoolean),
         undefined,
         prelude.requireBoolean,
         undefined,
@@ -1519,9 +2044,8 @@ function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
       ),
     );
   }
-  const dataFieldsDeclaration: ts.Statement[] = [];
   if (context.used.has(prelude.dataFields)) {
-    dataFieldsDeclaration.push(
+    statements.push(
       ts.factory.createFunctionDeclaration(
         undefined,
         undefined,
@@ -1598,9 +2122,8 @@ function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
       ),
     );
   }
-  const isDataObjectDeclaration: ts.Statement[] = [];
   if (context.used.has(prelude.isDataObject)) {
-    isDataObjectDeclaration.push(
+    statements.push(
       ts.factory.createFunctionDeclaration(
         undefined,
         undefined,
@@ -1611,11 +2134,7 @@ function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
         block(
           ts.factory.createReturnStatement(
             conjunction([
-              ts.factory.createBinaryExpression(
-                ts.factory.createTypeOfExpression(value),
-                ts.SyntaxKind.EqualsEqualsEqualsToken,
-                ts.factory.createStringLiteral('object'),
-              ),
+              typeOfIs(value, 'object'),
               ts.factory.createBinaryExpression(
                 value,
                 ts.SyntaxKind.ExclamationEqualsEqualsToken,
@@ -1623,11 +2142,7 @@ function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
               ),
               ts.factory.createPrefixUnaryExpression(
                 ts.SyntaxKind.ExclamationToken,
-                ts.factory.createCallExpression(
-                  ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('Array'), 'isArray'),
-                  undefined,
-                  [value],
-                ),
+                isArrayCall(value),
               ),
             ]),
           ),
@@ -1635,11 +2150,591 @@ function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
       ),
     );
   }
-  // Built last: the alias is emitted only once some validator above has actually referenced it.
-  const boundaryDeclaration: ts.Statement[] = context.used.has(prelude.dataBoundary)
-    ? [emitDataBoundaryAlias(prelude.dataBoundary)]
-    : [];
-  return [...boundaryDeclaration, ...isDataObjectDeclaration, ...dataFieldsDeclaration, ...requireBooleanDeclaration];
+  // Built last: each alias is emitted only once something above has actually referenced it.
+  const aliases: ts.Statement[] = [];
+  if (context.used.has(prelude.exceptType)) aliases.push(emitExceptAlias(prelude.exceptType));
+  if (context.used.has(prelude.optionType)) aliases.push(emitOptionAlias(prelude.optionType));
+  if (context.used.has(prelude.dataBoundary)) aliases.push(emitDataBoundaryAlias(prelude.dataBoundary));
+  return [...aliases.reverse(), ...statements.reverse()];
+}
+
+/** Reads one UTF-16 code unit without widening a decoded string to an untyped value. */
+function charCodeAt(value: ts.Expression, index: ts.Expression): ts.Expression {
+  return ts.factory.createCallExpression(ts.factory.createPropertyAccessExpression(value, 'charCodeAt'), undefined, [index]);
+}
+
+/** Whether one code-unit expression lies in one inclusive UTF-16 surrogate range. */
+function codeUnitInRange(value: ts.Expression, lower: number, upper: number): ts.Expression {
+  return ts.factory.createBinaryExpression(
+    ts.factory.createBinaryExpression(value, ts.SyntaxKind.GreaterThanEqualsToken, ts.factory.createNumericLiteral(lower)),
+    ts.SyntaxKind.AmpersandAmpersandToken,
+    ts.factory.createBinaryExpression(value, ts.SyntaxKind.LessThanEqualsToken, ts.factory.createNumericLiteral(upper)),
+  );
+}
+
+function typeOfIs(value: ts.Expression, expected: string): ts.Expression {
+  return ts.factory.createBinaryExpression(
+    ts.factory.createTypeOfExpression(value),
+    ts.SyntaxKind.EqualsEqualsEqualsToken,
+    ts.factory.createStringLiteral(expected),
+  );
+}
+
+function isArrayCall(value: ts.Expression): ts.Expression {
+  return ts.factory.createCallExpression(
+    ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('Array'), 'isArray'),
+    undefined,
+    [value],
+  );
+}
+
+/** `Option<A>`, the tagged union every admitted `Option` lowers to. */
+function emitOptionAlias(name: string): ts.Statement {
+  return ts.factory.createTypeAliasDeclaration(
+    [modifier(ts.SyntaxKind.ExportKeyword)],
+    name,
+    [ts.factory.createTypeParameterDeclaration(undefined, 'A')],
+    ts.factory.createUnionTypeNode([
+      ts.factory.createTypeLiteralNode([readonlyProperty('kind', literalType('none'))]),
+      ts.factory.createTypeLiteralNode([
+        readonlyProperty('kind', literalType('some')),
+        readonlyProperty('value', ts.factory.createTypeReferenceNode('A')),
+      ]),
+    ]),
+  );
+}
+
+/** `Except<E, A>`, the tagged union every admitted `Except` lowers to. */
+function emitExceptAlias(name: string): ts.Statement {
+  return ts.factory.createTypeAliasDeclaration(
+    [modifier(ts.SyntaxKind.ExportKeyword)],
+    name,
+    [
+      ts.factory.createTypeParameterDeclaration(undefined, 'E'),
+      ts.factory.createTypeParameterDeclaration(undefined, 'A'),
+    ],
+    ts.factory.createUnionTypeNode([
+      ts.factory.createTypeLiteralNode([
+        readonlyProperty('kind', literalType('error')),
+        readonlyProperty('error', ts.factory.createTypeReferenceNode('E')),
+      ]),
+      ts.factory.createTypeLiteralNode([
+        readonlyProperty('kind', literalType('ok')),
+        readonlyProperty('value', ts.factory.createTypeReferenceNode('A')),
+      ]),
+    ]),
+  );
+}
+
+/** `Nat` subtraction truncates at zero, so the guard exists once rather than at every use site. */
+function emitNatSubtractHelper(context: EmitContext): ts.Statement {
+  const helper = requiredHelper(context, 'nat-truncated-subtraction');
+  const left = ts.factory.createIdentifier('left');
+  const right = ts.factory.createIdentifier('right');
+  const bigint = ts.factory.createKeywordTypeNode(ts.SyntaxKind.BigIntKeyword);
+  return ts.factory.createFunctionDeclaration(
+    undefined,
+    undefined,
+    helper,
+    undefined,
+    [
+      ts.factory.createParameterDeclaration(undefined, undefined, 'left', undefined, bigint),
+      ts.factory.createParameterDeclaration(undefined, undefined, 'right', undefined, bigint),
+    ],
+    bigint,
+    block(
+      ts.factory.createReturnStatement(
+        ts.factory.createConditionalExpression(
+          ts.factory.createBinaryExpression(left, ts.SyntaxKind.LessThanToken, right),
+          undefined,
+          ts.factory.createBigIntLiteral('0n'),
+          undefined,
+          ts.factory.createBinaryExpression(left, ts.SyntaxKind.MinusToken, right),
+        ),
+      ),
+    ),
+  );
+}
+
+/** `List.head?` is total on an empty list, so the guard exists once. */
+function emitListHeadHelper(context: EmitContext): ts.Statement {
+  const helper = requiredHelper(context, 'list-head-option');
+  const value = ts.factory.createIdentifier(context.locals.value);
+  const element = ts.factory.createTypeReferenceNode('A');
+  return ts.factory.createFunctionDeclaration(
+    undefined,
+    undefined,
+    helper,
+    [ts.factory.createTypeParameterDeclaration(undefined, 'A')],
+    [
+      ts.factory.createParameterDeclaration(
+        undefined,
+        undefined,
+        context.locals.value,
+        undefined,
+        readonlyArrayType(element),
+      ),
+    ],
+    optionTypeNode(context, element),
+    block(
+      ts.factory.createIfStatement(
+        isEmptyList(value),
+        block(ts.factory.createReturnStatement(noneLiteral())),
+      ),
+      ts.factory.createReturnStatement(
+        someLiteral(ts.factory.createElementAccessExpression(value, ts.factory.createNumericLiteral(0))),
+      ),
+    ),
+  );
+}
+
+function requiredHelper(context: EmitContext, role: LeanRuntimeHelperRole): string {
+  const helper = context.prelude.helpers.get(role);
+  if (helper === undefined) throw new TypeError(`missing generated helper for ${role}`);
+  return helper;
+}
+
+/** Resolves an operation's helper through its tagged runtime symbol, never through an opcode switch. */
+function requiredOpcodeHelper(context: EmitContext, opcode: LeanOpcode): string {
+  const role = runtimeHelperRole(LEAN_RUNTIME_OPCODES[opcode].runtimeSymbol);
+  if (role === undefined) throw new TypeError(`${opcode} does not name a generated runtime helper`);
+  return requiredHelper(context, role);
+}
+
+function readonlyArrayType(element: ts.TypeNode): ts.TypeNode {
+  return ts.factory.createTypeOperatorNode(ts.SyntaxKind.ReadonlyKeyword, ts.factory.createArrayTypeNode(element));
+}
+
+function optionTypeNode(context: EmitContext, element: ts.TypeNode): ts.TypeNode {
+  return ts.factory.createTypeReferenceNode(usePrelude(context, context.prelude.optionType), [element]);
+}
+
+function isEmptyList(value: ts.Expression): ts.Expression {
+  return ts.factory.createBinaryExpression(
+    ts.factory.createPropertyAccessExpression(value, 'length'),
+    ts.SyntaxKind.EqualsEqualsEqualsToken,
+    ts.factory.createNumericLiteral(0),
+  );
+}
+
+function taggedLiteral(tag: string, payload?: { readonly field: string; readonly value: ts.Expression }): ts.Expression {
+  return ts.factory.createObjectLiteralExpression(
+    [
+      ts.factory.createPropertyAssignment(propertyName('kind'), ts.factory.createStringLiteral(tag)),
+      ...(payload === undefined
+        ? []
+        : [ts.factory.createPropertyAssignment(propertyName(payload.field), payload.value)]),
+    ],
+    false,
+  );
+}
+
+function noneLiteral(): ts.Expression {
+  return taggedLiteral('none');
+}
+
+function someLiteral(value: ts.Expression): ts.Expression {
+  return taggedLiteral('some', { field: 'value', value });
+}
+
+/** A comparison parameter, as `(left: T, right: T) => boolean`. */
+function comparatorParameter(name: string, payload: ts.TypeNode): ts.ParameterDeclaration {
+  return ts.factory.createParameterDeclaration(
+    undefined,
+    undefined,
+    name,
+    undefined,
+    ts.factory.createFunctionTypeNode(
+      undefined,
+      [
+        ts.factory.createParameterDeclaration(undefined, undefined, 'left', undefined, payload),
+        ts.factory.createParameterDeclaration(undefined, undefined, 'right', undefined, payload),
+      ],
+      ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
+    ),
+  );
+}
+
+function comparedParameter(name: string, type: ts.TypeNode): ts.ParameterDeclaration {
+  return ts.factory.createParameterDeclaration(undefined, undefined, name, undefined, type);
+}
+
+
+/**
+ * Compares two `Option` values. The payload is read inside this declaration, where each side is a
+ * parameter the type system narrows, so a nested comparison can never read a payload whose tag has
+ * not been decided.
+ */
+function emitEqualOptionHelper(context: EmitContext): ts.Statement {
+  const payload = ts.factory.createTypeReferenceNode('A');
+  const option = optionTypeNode(context, payload);
+  const left = ts.factory.createIdentifier('left');
+  const right = ts.factory.createIdentifier('right');
+  return ts.factory.createFunctionDeclaration(
+    undefined,
+    undefined,
+    context.prelude.equalOption,
+    [ts.factory.createTypeParameterDeclaration(undefined, 'A')],
+    [comparedParameter('left', option), comparedParameter('right', option), comparatorParameter('same', payload)],
+    ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
+    block(
+      ts.factory.createIfStatement(
+        tagEquals(left, 'none'),
+        block(ts.factory.createReturnStatement(tagEquals(right, 'none'))),
+      ),
+      ts.factory.createReturnStatement(
+        ts.factory.createBinaryExpression(
+          tagEquals(right, 'some'),
+          ts.SyntaxKind.AmpersandAmpersandToken,
+          ts.factory.createCallExpression(ts.factory.createIdentifier('same'), undefined, [
+            ts.factory.createPropertyAccessExpression(left, 'value'),
+            ts.factory.createPropertyAccessExpression(right, 'value'),
+          ]),
+        ),
+      ),
+    ),
+  );
+}
+
+/** Compares two `Except` values, reading each payload behind its own decided tag. */
+function emitEqualExceptHelper(context: EmitContext): ts.Statement {
+  const error = ts.factory.createTypeReferenceNode('E');
+  const value = ts.factory.createTypeReferenceNode('A');
+  const except = ts.factory.createTypeReferenceNode(usePrelude(context, context.prelude.exceptType), [error, value]);
+  const left = ts.factory.createIdentifier('left');
+  const right = ts.factory.createIdentifier('right');
+  const compare = (name: string, field: string): ts.Expression =>
+    ts.factory.createBinaryExpression(
+      tagEquals(right, field === 'error' ? 'error' : 'ok'),
+      ts.SyntaxKind.AmpersandAmpersandToken,
+      ts.factory.createCallExpression(ts.factory.createIdentifier(name), undefined, [
+        ts.factory.createPropertyAccessExpression(left, field),
+        ts.factory.createPropertyAccessExpression(right, field),
+      ]),
+    );
+  return ts.factory.createFunctionDeclaration(
+    undefined,
+    undefined,
+    context.prelude.equalExcept,
+    [
+      ts.factory.createTypeParameterDeclaration(undefined, 'E'),
+      ts.factory.createTypeParameterDeclaration(undefined, 'A'),
+    ],
+    [
+      comparedParameter('left', except),
+      comparedParameter('right', except),
+      comparatorParameter('sameError', error),
+      comparatorParameter('sameValue', value),
+    ],
+    ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
+    block(
+      ts.factory.createIfStatement(
+        tagEquals(left, 'error'),
+        block(ts.factory.createReturnStatement(compare('sameError', 'error'))),
+      ),
+      ts.factory.createReturnStatement(compare('sameValue', 'value')),
+    ),
+  );
+}
+
+/** Compares two lists elementwise. The paired element arrives as a parameter of `same`. */
+function emitEqualListHelper(context: EmitContext): ts.Statement {
+  const payload = ts.factory.createTypeReferenceNode('A');
+  const list = readonlyArrayType(payload);
+  const left = ts.factory.createIdentifier('left');
+  const right = ts.factory.createIdentifier('right');
+  return ts.factory.createFunctionDeclaration(
+    undefined,
+    undefined,
+    context.prelude.equalList,
+    [ts.factory.createTypeParameterDeclaration(undefined, 'A')],
+    [comparedParameter('left', list), comparedParameter('right', list), comparatorParameter('same', payload)],
+    ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
+    block(
+      ts.factory.createIfStatement(
+        ts.factory.createBinaryExpression(
+          ts.factory.createPropertyAccessExpression(left, 'length'),
+          ts.SyntaxKind.ExclamationEqualsEqualsToken,
+          ts.factory.createPropertyAccessExpression(right, 'length'),
+        ),
+        block(ts.factory.createReturnStatement(ts.factory.createFalse())),
+      ),
+      ts.factory.createReturnStatement(
+        ts.factory.createCallExpression(ts.factory.createPropertyAccessExpression(left, 'every'), undefined, [
+          ts.factory.createArrowFunction(
+            undefined,
+            undefined,
+            [
+              ts.factory.createParameterDeclaration(undefined, undefined, context.locals.element),
+              ts.factory.createParameterDeclaration(undefined, undefined, context.locals.index),
+            ],
+            undefined,
+            undefined,
+            ts.factory.createCallExpression(ts.factory.createIdentifier('same'), undefined, [
+              ts.factory.createIdentifier(context.locals.element),
+              ts.factory.createElementAccessExpression(right, ts.factory.createIdentifier(context.locals.index)),
+            ]),
+          ),
+        ]),
+      ),
+    ),
+  );
+}
+
+function tagEquals(target: ts.Expression, tag: string): ts.Expression {
+  return ts.factory.createBinaryExpression(
+    ts.factory.createPropertyAccessExpression(target, 'kind'),
+    ts.SyntaxKind.EqualsEqualsEqualsToken,
+    ts.factory.createStringLiteral(tag),
+  );
+}
+
+/** Reads an array at the boundary, decoding each element with the caller's own element decoder. */
+function emitListValidator(context: EmitContext): ts.Statement {
+  const { locals, prelude } = context;
+  const value = ts.factory.createIdentifier(locals.value);
+  const element = ts.factory.createTypeReferenceNode('A');
+  return ts.factory.createFunctionDeclaration(
+    context.boundary.validators.has(prelude.requireList) ? [modifier(ts.SyntaxKind.ExportKeyword)] : undefined,
+    undefined,
+    prelude.requireList,
+    [ts.factory.createTypeParameterDeclaration(undefined, 'A')],
+    [
+      dataParameter(locals.value, context),
+      stringParameter(locals.name),
+      decoderParameter(locals.element, element, context),
+    ],
+    readonlyArrayType(element),
+    block(
+      guard(
+        ts.factory.createPrefixUnaryExpression(ts.SyntaxKind.ExclamationToken, isArrayCall(value)),
+        namedMessage(context, 'must be an array'),
+      ),
+      ts.factory.createVariableStatement(
+        undefined,
+        ts.factory.createVariableDeclarationList(
+          [
+            ts.factory.createVariableDeclaration(
+              locals.entry,
+              undefined,
+              ts.factory.createArrayTypeNode(element),
+              ts.factory.createArrayLiteralExpression([], false),
+            ),
+          ],
+          ts.NodeFlags.Const,
+        ),
+      ),
+      // Every index is read, and a hole is refused: `map` skips holes, so a sparse array would
+      // decode to a shorter list than the one it claims to be.
+      ts.factory.createForStatement(
+        ts.factory.createVariableDeclarationList(
+          [
+            ts.factory.createVariableDeclaration(
+              locals.index,
+              undefined,
+              undefined,
+              ts.factory.createNumericLiteral(0),
+            ),
+          ],
+          ts.NodeFlags.Let,
+        ),
+        ts.factory.createBinaryExpression(
+          ts.factory.createIdentifier(locals.index),
+          ts.SyntaxKind.LessThanToken,
+          ts.factory.createPropertyAccessExpression(value, 'length'),
+        ),
+        ts.factory.createBinaryExpression(
+          ts.factory.createIdentifier(locals.index),
+          ts.SyntaxKind.PlusEqualsToken,
+          ts.factory.createNumericLiteral(1),
+        ),
+        block(
+          guard(
+            ts.factory.createPrefixUnaryExpression(
+              ts.SyntaxKind.ExclamationToken,
+              ts.factory.createCallExpression(
+                ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('Object'), 'hasOwn'),
+                undefined,
+                [value, ts.factory.createIdentifier(locals.index)],
+              ),
+            ),
+            indexedMessage(context, 'is missing'),
+          ),
+          ts.factory.createExpressionStatement(
+            ts.factory.createCallExpression(
+              ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier(locals.entry), 'push'),
+              undefined,
+              [
+                ts.factory.createCallExpression(ts.factory.createIdentifier(locals.element), undefined, [
+                  ts.factory.createElementAccessExpression(value, ts.factory.createIdentifier(locals.index)),
+                  indexedName(context),
+                ]),
+              ],
+            ),
+          ),
+        ),
+      ),
+      ts.factory.createReturnStatement(ts.factory.createIdentifier(locals.entry)),
+    ),
+  );
+}
+
+/** `${name}[${index}] <suffix>`, so a refused element names the position that carried it. */
+function indexedMessage(context: EmitContext, suffix: string): ts.Expression {
+  return ts.factory.createTemplateExpression(ts.factory.createTemplateHead(''), [
+    ts.factory.createTemplateSpan(
+      ts.factory.createIdentifier(context.locals.name),
+      ts.factory.createTemplateMiddle('['),
+    ),
+    ts.factory.createTemplateSpan(
+      ts.factory.createIdentifier(context.locals.index),
+      ts.factory.createTemplateTail(`] ${suffix}`),
+    ),
+  ]);
+}
+
+/** `${name}[${index}]`, so an element's diagnostic names the position that rejected the input. */
+function indexedName(context: EmitContext): ts.Expression {
+  return ts.factory.createTemplateExpression(ts.factory.createTemplateHead(''), [
+    ts.factory.createTemplateSpan(
+      ts.factory.createIdentifier(context.locals.name),
+      ts.factory.createTemplateMiddle('['),
+    ),
+    ts.factory.createTemplateSpan(
+      ts.factory.createIdentifier(context.locals.index),
+      ts.factory.createTemplateTail(']'),
+    ),
+  ]);
+}
+
+function decoderParameter(name: string, result: ts.TypeNode, context: EmitContext): ts.ParameterDeclaration {
+  return ts.factory.createParameterDeclaration(
+    undefined,
+    undefined,
+    name,
+    undefined,
+    ts.factory.createFunctionTypeNode(
+      undefined,
+      [dataParameter(context.locals.value, context), stringParameter(context.locals.name)],
+      result,
+    ),
+  );
+}
+
+/** Reads a tagged union at the boundary: one constructor decides, and its payload is decoded. */
+function emitTaggedValidator(
+  name: string,
+  typeParameters: readonly string[],
+  result: ts.TypeNode,
+  cases: readonly { readonly tag: string; readonly field?: string; readonly decoder?: string }[],
+  decoders: readonly ts.ParameterDeclaration[],
+  context: EmitContext,
+): ts.Statement {
+  const { locals } = context;
+  const value = ts.factory.createIdentifier(locals.value);
+  const clauses = cases.map((entry) => {
+    const payload = entry.field;
+    const decoder = entry.decoder;
+    if (payload === undefined || decoder === undefined) {
+      return ts.factory.createCaseClause(ts.factory.createStringLiteral(entry.tag), [
+        ts.factory.createBlock(
+          [
+            ts.factory.createExpressionStatement(
+              callPrelude(context, context.prelude.dataFields, [
+                value,
+                ts.factory.createIdentifier(locals.name),
+                ts.factory.createArrayLiteralExpression([ts.factory.createStringLiteral('kind')]),
+              ]),
+            ),
+            ts.factory.createReturnStatement(taggedLiteral(entry.tag)),
+          ],
+          true,
+        ),
+      ]);
+    }
+    return ts.factory.createCaseClause(ts.factory.createStringLiteral(entry.tag), [
+      ts.factory.createBlock(
+        [
+          constantStatement(
+            locals.data,
+            callPrelude(context, context.prelude.dataFields, [
+              value,
+              ts.factory.createIdentifier(locals.name),
+              ts.factory.createArrayLiteralExpression([
+                ts.factory.createStringLiteral('kind'),
+                ts.factory.createStringLiteral(payload),
+              ]),
+            ]),
+          ),
+          ts.factory.createReturnStatement(
+            taggedLiteral(entry.tag, {
+              field: payload,
+              value: ts.factory.createCallExpression(ts.factory.createIdentifier(decoder), undefined, [
+                elementAccess(ts.factory.createIdentifier(locals.data), payload),
+                ts.factory.createIdentifier(locals.name),
+              ]),
+            }),
+          ),
+        ],
+        true,
+      ),
+    ]);
+  });
+  return ts.factory.createFunctionDeclaration(
+    context.boundary.validators.has(name) ? [modifier(ts.SyntaxKind.ExportKeyword)] : undefined,
+    undefined,
+    name,
+    typeParameters.map((parameter) => ts.factory.createTypeParameterDeclaration(undefined, parameter)),
+    [dataParameter(locals.value, context), stringParameter(locals.name), ...decoders],
+    result,
+    block(
+      guard(
+        ts.factory.createPrefixUnaryExpression(
+          ts.SyntaxKind.ExclamationToken,
+          callPrelude(context, context.prelude.isDataObject, [value]),
+        ),
+        namedMessage(context, 'data must be an object'),
+      ),
+      ts.factory.createSwitchStatement(
+        elementAccess(value, 'kind'),
+        ts.factory.createCaseBlock([
+          ...clauses,
+          ts.factory.createDefaultClause([throwNamed(context, 'data must name a constructor')]),
+        ]),
+      ),
+    ),
+  );
+}
+
+function emitOptionValidator(context: EmitContext): ts.Statement {
+  return emitTaggedValidator(
+    context.prelude.requireOption,
+    ['A'],
+    optionTypeNode(context, ts.factory.createTypeReferenceNode('A')),
+    [{ tag: 'none' }, { tag: 'some', field: 'value', decoder: context.locals.element }],
+    [decoderParameter(context.locals.element, ts.factory.createTypeReferenceNode('A'), context)],
+    context,
+  );
+}
+
+function emitExceptValidator(context: EmitContext): ts.Statement {
+  return emitTaggedValidator(
+    context.prelude.requireExcept,
+    ['E', 'A'],
+    ts.factory.createTypeReferenceNode(usePrelude(context, context.prelude.exceptType), [
+      ts.factory.createTypeReferenceNode('E'),
+      ts.factory.createTypeReferenceNode('A'),
+    ]),
+    [
+      { tag: 'error', field: 'error', decoder: context.locals.field },
+      { tag: 'ok', field: 'value', decoder: context.locals.element },
+    ],
+    [
+      decoderParameter(context.locals.field, ts.factory.createTypeReferenceNode('E'), context),
+      decoderParameter(context.locals.element, ts.factory.createTypeReferenceNode('A'), context),
+    ],
+    context,
+  );
 }
 
 /**
@@ -1649,9 +2744,11 @@ function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
  * diagnostic each of them can act on.
  */
 function emitBoundaryDecoder(leanName: string, emitted: string, context: EmitContext): readonly ts.Statement[] {
-  const decoder = emitStructuralDecoder(leanName, emitted, context);
+  const plan = requiredTypePlan(context, leanName);
+  const scoped = withTypeParameters(context, plan.typeParameters);
+  const decoder = emitStructuralDecoder(leanName, emitted, scoped);
   if (!context.boundary.types.has(leanName)) return [decoder];
-  return [decoder, emitBoundaryCompanion(requiredTypePlan(context, leanName), emitted, context)];
+  return [decoder, emitBoundaryCompanion(plan, emitted, scoped)];
 }
 
 /**
@@ -1778,103 +2875,94 @@ function methodParameters(
   allocator: IdentifierAllocator,
   context: EmitContext,
 ): readonly ts.ParameterDeclaration[] {
-  return method.declaration.parameters
-    .slice(1)
-    .map((parameter) =>
-      ts.factory.createParameterDeclaration(
-        undefined,
-        undefined,
-        allocator.allocate(parameter.name),
-        undefined,
-        emitType(parameter.type, context),
-      ),
-    );
+  return method.parameters.map((parameter) =>
+    ts.factory.createParameterDeclaration(
+      undefined,
+      undefined,
+      allocator.allocate(parameter.name),
+      undefined,
+      emitType(parameter.type, context),
+    ),
+  );
 }
 
-/** de Bruijn scope for a method body: the receiver is `this`, the rest are its parameters. */
-function methodScope(parameters: readonly ts.ParameterDeclaration[]): readonly Binding[] {
-  const names = parameters.map((parameter): Binding => {
+/**
+ * de Bruijn scope for a method body. The receiver is `this` at whichever declared position it
+ * holds, and the remaining parameters keep their declared order, so a receiver that is not the
+ * first argument still lowers without reordering anything.
+ */
+function methodScope(method: MethodPlan, parameters: readonly ts.ParameterDeclaration[]): readonly Binding[] {
+  const emitted = parameters.map((parameter): Binding => {
     if (!ts.isIdentifier(parameter.name)) throw new TypeError('emitted parameter is not an identifier');
     return { kind: 'identifier', name: parameter.name.text };
   });
-  return [...names].reverse().concat({ kind: 'receiver' });
+  const declared: Binding[] = [];
+  let next = 0;
+  for (let index = 0; index < method.declaration.parameters.length; index += 1) {
+    if (index === method.receiver.parameter) {
+      declared.push({ kind: 'this' });
+      continue;
+    }
+    const binding = emitted[next];
+    if (binding === undefined) throw new TypeError(`method ${method.declaration.name} lost a parameter`);
+    next += 1;
+    declared.push(binding);
+  }
+  return declared.reverse();
 }
 
 /** A dispatched arm reads its constructor's fields off the receiver, innermost binder last. */
 function armBindings(constructor: LeanEnumConstructor): readonly Binding[] {
-  return [...constructor.fields].reverse().map((field) => ({ kind: 'receiverField', field: field.name }) as const);
-}
-
-/**
- * How many leading declared parameters an override has to keep: TypeScript admits an
- * override that ignores a trailing suffix, and the handwritten idiom drops it.
- */
-function usedParameterCount(expression: LeanExpression, scope: readonly Binding[], fieldCount: number): number {
-  const receiverIndex = scope.length - 1;
-  let highest = 0;
-  const visit = (node: LeanExpression, depth: number): void => {
-    switch (node.kind) {
-      case 'variable': {
-        const index = node.index - depth;
-        if (index < fieldCount || index >= receiverIndex) return;
-        highest = Math.max(highest, receiverIndex - index);
-        return;
-      }
-      case 'let':
-        visit(node.value, depth);
-        visit(node.body, depth + 1);
-        return;
-      case 'field':
-        visit(node.target, depth);
-        return;
-      case 'if':
-        visit(node.condition, depth);
-        visit(node.consequent, depth);
-        visit(node.alternate, depth);
-        return;
-      case 'equals':
-      case 'and':
-      case 'or':
-        visit(node.left, depth);
-        visit(node.right, depth);
-        return;
-      case 'not':
-        visit(node.operand, depth);
-        return;
-      case 'some':
-        visit(node.value, depth);
-        return;
-      case 'record':
-        node.fields.forEach((field) => visit(field.value, depth));
-        return;
-      case 'match':
-        visit(node.scrutinee, depth);
-        node.cases.forEach((entry) => visit(entry.value, depth));
-        return;
-      case 'variant':
-      case 'call':
-        node.arguments.forEach((argument) => visit(argument, depth));
-        return;
-      case 'boolean':
-      case 'none':
-        return;
-    }
-  };
-  visit(expression, 0);
-  return highest;
+  return [...constructor.fields]
+    .reverse()
+    .map((field): Binding => ({ kind: 'expression', value: receiverField(field.name) }));
 }
 
 function emitType(type: LeanType, context: EmitContext): ts.TypeNode {
   switch (type.kind) {
     case 'boolean':
       return ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword);
-    case 'named':
-      return ts.factory.createTypeReferenceNode(requiredDeclarationName(context.declarationNames, type.name));
+    case 'nat':
+      return ts.factory.createKeywordTypeNode(ts.SyntaxKind.BigIntKeyword);
+    case 'string':
+      return ts.factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword);
+    case 'parameter': {
+      const name = context.typeParameters[type.index];
+      if (name === undefined) {
+        throw new TypeError(`type parameter ${type.index} is not in scope for this declaration`);
+      }
+      return ts.factory.createTypeReferenceNode(name);
+    }
+    case 'named': {
+      const plan = requiredTypePlan(context, type.name);
+      return ts.factory.createTypeReferenceNode(
+        plan.typeName,
+        type.arguments.length === 0 ? undefined : type.arguments.map((argument) => emitType(argument, context)),
+      );
+    }
     case 'option':
-      return ts.factory.createUnionTypeNode([
-        emitType(type.inner, context),
-        ts.factory.createKeywordTypeNode(ts.SyntaxKind.UndefinedKeyword),
+      return optionTypeNode(context, emitType(type.value, context));
+    case 'except':
+      return ts.factory.createTypeReferenceNode(usePrelude(context, context.prelude.exceptType), [
+        emitType(type.error, context),
+        emitType(type.value, context),
       ]);
+    case 'list':
+      return readonlyArrayType(emitType(type.element, context));
+    case 'function':
+      return ts.factory.createFunctionTypeNode(
+        undefined,
+        type.parameters.map((parameter, index) =>
+          ts.factory.createParameterDeclaration(
+            undefined,
+            undefined,
+            `argument${index}`,
+            undefined,
+            emitType(parameter, context),
+          ),
+        ),
+        emitType(type.result, context),
+      );
   }
 }
 
@@ -1884,20 +2972,204 @@ function emitFunctionBody(
   allocator: IdentifierAllocator,
   context: EmitContext,
 ): ts.Block {
-  const statements: ts.Statement[] = [];
-  let current = expression;
-  let currentScope = scope;
-  while (current.kind === 'let') {
-    const emittedName = allocator.allocate(current.name);
-    statements.push(constantStatement(emittedName, emitExpression(current.value, currentScope, context)));
-    currentScope = [{ kind: 'identifier', name: emittedName }, ...currentScope];
-    current = current.body;
-  }
-  statements.push(ts.factory.createReturnStatement(emitExpression(current, currentScope, context)));
-  return ts.factory.createBlock(statements, true);
+  const liveness = analyzeExpressionLiveness(expression, context.declarations);
+  return ts.factory.createBlock(emitReturn(expression, scope, allocator, liveness, context), true);
 }
 
-function emitExpression(expression: LeanExpression, scope: readonly Binding[], context: EmitContext): ts.Expression {
+/**
+ * The statements a generated function returns through. A `let` becomes a `const`, an `if` becomes
+ * an `if` whose branch returns, and a `match` becomes one test per alternative with the payload
+ * bound as a `const` inside the branch that decided it. Every branch returns, so TypeScript narrows
+ * the scrutinee as the tests fall through and no branch reads a payload it has not yet decided is
+ * present.
+ */
+function emitReturn(
+  expression: LeanExpression,
+  scope: readonly Binding[],
+  allocator: IdentifierAllocator,
+  liveness: LeanExpressionLiveness,
+  context: EmitContext,
+): readonly ts.Statement[] {
+  switch (expression.kind) {
+    case 'let': {
+      // Every admitted expression is pure and total, so a binding the body never reads has no
+      // observable effect and no emitted form. Naming it would leave an unread `const` behind,
+      // which the generated package's own type check refuses.
+      if (!liveness.uses(expression.body, 0)) {
+        return emitReturn(expression.body, [{ kind: 'unread' }, ...scope], allocator, liveness, context);
+      }
+      const emittedName = allocator.allocate(expression.name);
+      return [
+        constantStatement(emittedName, emitExpression(expression.value, scope, allocator, context)),
+        ...emitReturn(expression.body, [{ kind: 'identifier', name: emittedName }, ...scope], allocator, liveness, context),
+      ];
+    }
+    case 'if':
+      return [
+        ts.factory.createIfStatement(
+          emitExpression(expression.condition, scope, allocator, context),
+          ts.factory.createBlock(emitReturn(expression.consequent, scope, allocator, liveness, context), true),
+        ),
+        ...emitReturn(expression.alternate, scope, allocator, liveness, context),
+      ];
+    case 'match':
+      return emitMatchStatements(expression, scope, allocator, liveness, context);
+    default:
+      return [ts.factory.createReturnStatement(emitExpression(expression, scope, allocator, context))];
+  }
+}
+
+/**
+ * One alternative's payload bindings, as `const` statements over the value that decided it. A field
+ * the alternative never reads is not named: the binding keeps its de Bruijn position so every index
+ * above it still counts, and no unread `const` reaches the generated file.
+ */
+function bindConstructorFields(
+  scrutinee: ts.Expression,
+  fields: readonly LeanField[],
+  type: LeanType,
+  body: LeanExpression,
+  allocator: IdentifierAllocator,
+  liveness: LeanExpressionLiveness,
+  context: EmitContext,
+): { readonly statements: readonly ts.Statement[]; readonly bindings: readonly Binding[] } {
+  const statements: ts.Statement[] = [];
+  const bindings: Binding[] = [];
+  fields.forEach((field, position) => {
+    // The alternative binds its fields innermost last, so field `position` sits at this index.
+    if (!liveness.uses(body, fields.length - 1 - position)) {
+      bindings.push({ kind: 'unread' });
+      return;
+    }
+    const emittedName = allocator.allocate(field.name);
+    statements.push(constantStatement(emittedName, constructorFieldAccess(scrutinee, field.name, type, context)));
+    bindings.push({ kind: 'identifier', name: emittedName });
+  });
+  return { statements, bindings: [...bindings].reverse() };
+}
+
+/**
+ * How one alternative reads a constructor field. A user type carries its fields as properties; a
+ * `List` carries them as the first element and the rest of the array, which are the `list.first`
+ * and `list.rest` runtime opcodes.
+ */
+function constructorFieldAccess(
+  scrutinee: ts.Expression,
+  field: string,
+  type: LeanType,
+  context: EmitContext,
+): ts.Expression {
+  if (type.kind !== 'list') return fieldAccess(scrutinee, field);
+  if (field === 'head') {
+    return ts.factory.createElementAccessExpression(scrutinee, ts.factory.createNumericLiteral(0));
+  }
+  return ts.factory.createCallExpression(ts.factory.createPropertyAccessExpression(scrutinee, 'slice'), undefined, [
+    ts.factory.createNumericLiteral(1),
+  ]);
+}
+
+/** The test that decides one alternative of a match, given the scrutinee's representation. */
+function alternativeTest(
+  scrutinee: ts.Expression,
+  type: LeanType,
+  constructor: string,
+  context: EmitContext,
+): ts.Expression {
+  if (type.kind === 'list') {
+    return constructor === 'nil'
+      ? isEmptyList(scrutinee)
+      : ts.factory.createBinaryExpression(
+          ts.factory.createPropertyAccessExpression(scrutinee, 'length'),
+          ts.SyntaxKind.GreaterThanToken,
+          ts.factory.createNumericLiteral(0),
+        );
+  }
+  if (type.kind === 'named') {
+    const plan = requiredTypePlan(context, type.name);
+    if (plan.declaration.kind === 'enum' && plan.declaration.constructors.every((entry) => entry.fields.length === 0)) {
+      return ts.factory.createBinaryExpression(
+        scrutinee,
+        ts.SyntaxKind.EqualsEqualsEqualsToken,
+        ts.factory.createStringLiteral(constructor),
+      );
+    }
+  }
+  return ts.factory.createBinaryExpression(
+    ts.factory.createPropertyAccessExpression(scrutinee, 'kind'),
+    ts.SyntaxKind.EqualsEqualsEqualsToken,
+    ts.factory.createStringLiteral(constructor),
+  );
+}
+
+/**
+ * A `match` in return position. The scrutinee is bound once, every alternative but the last is a
+ * test that returns, and the last alternative falls through to the narrowed remainder.
+ */
+function emitMatchStatements(
+  expression: Extract<LeanExpression, { readonly kind: 'match' }>,
+  scope: readonly Binding[],
+  allocator: IdentifierAllocator,
+  liveness: LeanExpressionLiveness,
+  context: EmitContext,
+): readonly ts.Statement[] {
+  const constructors = constructorsOf(expression.type, context.declarations);
+  dispatchOnValueObject(expression, context);
+  const statements: ts.Statement[] = [];
+  let scrutinee = emitExpression(expression.scrutinee, scope, allocator, context);
+  if (!ts.isIdentifier(scrutinee)) {
+    const bound = allocator.allocate(context.locals.value);
+    statements.push(constantStatement(bound, scrutinee));
+    scrutinee = ts.factory.createIdentifier(bound);
+  }
+  expression.cases.forEach((entry, index) => {
+    const constructor = constructors[index];
+    if (constructor === undefined) throw new TypeError(`${renderType(expression.type)} has no alternative ${index}`);
+    const bound = bindConstructorFields(
+      scrutinee,
+      constructor.fields,
+      expression.type,
+      entry.value,
+      allocator,
+      liveness,
+      context,
+    );
+    const armStatements = [
+      ...bound.statements,
+      ...emitReturn(entry.value, [...bound.bindings, ...scope], allocator, liveness, context),
+    ];
+    if (index === expression.cases.length - 1) {
+      statements.push(...armStatements);
+      return;
+    }
+    statements.push(
+      ts.factory.createIfStatement(
+        alternativeTest(scrutinee, expression.type, constructor.name, context),
+        ts.factory.createBlock(armStatements, true),
+      ),
+    );
+  });
+  return statements;
+}
+
+/** A value object decides its constructors through dispatch, never through a tag comparison. */
+function dispatchOnValueObject(
+  expression: Extract<LeanExpression, { readonly kind: 'match' }>,
+  context: EmitContext,
+): void {
+  if (expression.type.kind !== 'named') return;
+  const plan = context.types.get(expression.type.name);
+  if (plan?.nominal !== true) return;
+  throw new TypeError(
+    `a match on the value object ${plan.typeName} outside dot-notation dispatch position is outside this fragment version`,
+  );
+}
+
+function emitExpression(
+  expression: LeanExpression,
+  scope: readonly Binding[],
+  allocator: IdentifierAllocator,
+  context: EmitContext,
+): ts.Expression {
   switch (expression.kind) {
     case 'variable': {
       const binding = scope[expression.index];
@@ -1906,84 +3178,66 @@ function emitExpression(expression: LeanExpression, scope: readonly Binding[], c
     }
     case 'boolean':
       return expression.value ? ts.factory.createTrue() : ts.factory.createFalse();
+    case 'nat':
+      return ts.factory.createBigIntLiteral(`${expression.value}n`);
+    case 'string':
+      return ts.factory.createStringLiteral(expression.value);
     case 'let':
-      throw new TypeError('nested let expressions must be normalized before emission');
+      throw new TypeError('a let outside return position must be lifted before emission');
     case 'field':
-      return fieldAccess(emitExpression(expression.target, scope, context), expression.field);
+      return fieldAccess(emitExpression(expression.target, scope, allocator, context), expression.field);
     case 'if':
       return ts.factory.createConditionalExpression(
-        emitExpression(expression.condition, scope, context),
+        emitExpression(expression.condition, scope, allocator, context),
         undefined,
-        emitExpression(expression.consequent, scope, context),
+        emitExpression(expression.consequent, scope, allocator, context),
         undefined,
-        emitExpression(expression.alternate, scope, context),
+        emitExpression(expression.alternate, scope, allocator, context),
       );
-    case 'equals':
-      if (expression.right.kind === 'boolean' && expression.right.value) {
-        return emitExpression(expression.left, scope, context);
-      }
-      if (expression.left.kind === 'boolean' && expression.left.value) {
-        return emitExpression(expression.right, scope, context);
-      }
-      return ts.factory.createBinaryExpression(
-        emitExpression(expression.left, scope, context),
-        ts.SyntaxKind.EqualsEqualsEqualsToken,
-        emitExpression(expression.right, scope, context),
+    case 'operation':
+      return emitOperation(expression, scope, allocator, context);
+    case 'lambda': {
+      const parameters = expression.parameters.map((parameter) => ({
+        ...parameter,
+        emittedName: allocator.allocate(parameter.name),
+      }));
+      const inner: readonly Binding[] = parameters
+        .map((parameter): Binding => ({ kind: 'identifier', name: parameter.emittedName }))
+        .reverse()
+        .concat(scope);
+      return ts.factory.createArrowFunction(
+        undefined,
+        undefined,
+        parameters.map((parameter) =>
+          ts.factory.createParameterDeclaration(
+            undefined,
+            undefined,
+            parameter.emittedName,
+            undefined,
+            emitType(parameter.type, context),
+          ),
+        ),
+        undefined,
+        undefined,
+        emitExpression(expression.body, inner, allocator, context),
       );
-    case 'and':
-    case 'or':
-      return ts.factory.createBinaryExpression(
-        emitExpression(expression.left, scope, context),
-        expression.kind === 'and' ? ts.SyntaxKind.AmpersandAmpersandToken : ts.SyntaxKind.BarBarToken,
-        emitExpression(expression.right, scope, context),
-      );
-    case 'not':
-      return ts.factory.createPrefixUnaryExpression(
-        ts.SyntaxKind.ExclamationToken,
-        emitExpression(expression.operand, scope, context),
-      );
-    case 'some':
-      return emitExpression(expression.value, scope, context);
-    case 'none':
-      return ts.factory.createIdentifier('undefined');
-    case 'variant': {
-      const plan = requiredTypePlan(context, expression.type);
-      const values = expression.arguments.map((argument) => emitExpression(argument, scope, context));
-      const constructor =
-        plan.declaration.kind === 'enum'
-          ? plan.declaration.constructors.find((candidate) => candidate.name === expression.name)
-          : undefined;
-      if (constructor === undefined) throw new TypeError(`unknown constructor ${expression.type}.${expression.name}`);
-      if (!plan.nominal) {
-        if (constructor.fields.length === 0 && plan.declaration.kind === 'enum') {
-          const carriesData = plan.declaration.constructors.some((candidate) => candidate.fields.length > 0);
-          if (!carriesData) return ts.factory.createStringLiteral(expression.name);
-        }
-        return ts.factory.createObjectLiteralExpression(
-          [
-            ts.factory.createPropertyAssignment(propertyName('kind'), ts.factory.createStringLiteral(expression.name)),
-            ...constructor.fields.map((field, index) => {
-              const value = values[index];
-              if (value === undefined) throw new TypeError(`missing constructor field ${field.name}`);
-              return ts.factory.createPropertyAssignment(propertyName(field.name), value);
-            }),
-          ],
-          true,
-        );
-      }
-      const member = ts.factory.createPropertyAccessExpression(
-        ts.factory.createIdentifier(plan.typeName),
-        expression.name,
-      );
-      return constructor.fields.length === 0 ? member : ts.factory.createCallExpression(member, undefined, values);
     }
+    case 'apply':
+      return ts.factory.createCallExpression(
+        emitExpression(expression.target, scope, allocator, context),
+        undefined,
+        expression.arguments.map((argument) => emitExpression(argument, scope, allocator, context)),
+      );
+    case 'variant':
+      return emitVariant(expression, scope, allocator, context);
     case 'match':
-      return emitTagMatch(expression, scope, context);
+      return emitMatchExpression(expression, scope, allocator, context);
     case 'record': {
-      const plan = requiredTypePlan(context, expression.type);
+      if (expression.type.kind !== 'named') throw new TypeError('a record construction lost its type');
+      const plan = requiredTypePlan(context, expression.type.name);
       const literal = ts.factory.createObjectLiteralExpression(
         expression.fields.map((field) =>
-          ts.factory.createPropertyAssignment(propertyName(field.name), emitExpression(field.value, scope, context)),
+          ts.factory.createPropertyAssignment(propertyName(field.name), emitExpression(field.value, scope, allocator, context)),
         ),
         true,
       );
@@ -1996,73 +3250,316 @@ function emitExpression(expression: LeanExpression, scope: readonly Binding[], c
       if (method === undefined) {
         return ts.factory.createCallExpression(
           ts.factory.createIdentifier(requiredDeclarationName(context.declarationNames, expression.function)),
-          undefined,
-          expression.arguments.map((argument) => emitExpression(argument, scope, context)),
+          expression.typeArguments.length === 0
+            ? undefined
+            : expression.typeArguments.map((argument) => emitType(argument, context)),
+          expression.arguments.map((argument) => emitExpression(argument, scope, allocator, context)),
         );
       }
-      const [receiver, ...rest] = expression.arguments;
+      const receiver = expression.arguments[method.receiver.parameter];
       if (receiver === undefined) throw new TypeError(`method call ${expression.function} has no receiver`);
+      const rest = expression.arguments.filter((_, index) => index !== method.receiver.parameter);
+      const own = expression.typeArguments.slice(
+        requiredTypePlan(context, method.receiver.type).typeParameters.length,
+      );
       return ts.factory.createCallExpression(
-        ts.factory.createPropertyAccessExpression(emitExpression(receiver, scope, context), method.name),
-        undefined,
-        rest.map((argument) => emitExpression(argument, scope, context)),
+        ts.factory.createPropertyAccessExpression(emitExpression(receiver, scope, allocator, context), method.name),
+        own.length === 0 ? undefined : own.map((argument) => emitType(argument, context)),
+        rest.map((argument) => emitExpression(argument, scope, allocator, context)),
       );
     }
   }
 }
 
-/**
- * A `match` on a tag union, in any expression position: the representation of a nullary-only
- * structural enum is its own tag, so the alternatives lower to strict-equality conditionals in
- * declaration order. The IR has already proved the match decides every constructor exactly once,
- * which is what makes the final alternative an unconditional fallback rather than a guess.
- *
- * The scrutinee is read once per test, so only a binding or a field read is admitted: anything
- * that computes has to be named by a `let` first rather than be silently re-evaluated per arm.
- * A value object keeps its dot-notation dispatch, and a payload-carrying union still needs one,
- * because neither can be decided by comparing the scrutinee against a tag.
- */
-function emitTagMatch(
-  expression: Extract<LeanExpression, { kind: 'match' }>,
+/** One runtime opcode, in the single TypeScript form its registry row fixes. */
+function emitOperation(
+  expression: Extract<LeanExpression, { readonly kind: 'operation' }>,
   scope: readonly Binding[],
+  allocator: IdentifierAllocator,
   context: EmitContext,
 ): ts.Expression {
-  const plan = requiredTypePlan(context, expression.type);
-  if (plan.declaration.kind !== 'enum') {
-    throw new TypeError(`match scrutinee ${plan.typeName} is not an inductive`);
+  const operands = expression.arguments.map((argument) => emitExpression(argument, scope, allocator, context));
+  const binary = (index: number): [ts.Expression, ts.Expression] => {
+    const left = operands[0];
+    const right = operands[index];
+    if (left === undefined || right === undefined) {
+      throw new TypeError(`${expression.opcode} is missing an operand`);
+    }
+    return [left, right];
+  };
+  const unary = (): ts.Expression => {
+    const only = operands[0];
+    if (only === undefined) throw new TypeError(`${expression.opcode} is missing its operand`);
+    return only;
+  };
+  const infix = (token: ts.BinaryOperator): ts.Expression => {
+    const [left, right] = binary(1);
+    return ts.factory.createBinaryExpression(left, token, right);
+  };
+  const callback = (index: number, arity: number): ts.Expression => {
+    const target = operands[index];
+    if (target === undefined) throw new TypeError(`${expression.opcode} is missing its callback`);
+    if (ts.isArrowFunction(target) && target.parameters.length === arity) return target;
+    // The wrapper's own binders come from the enclosing allocator, because the callback it applies
+    // may be a binding the same body holds under one of these names.
+    const names = (arity === 1 ? [context.locals.element] : [context.locals.value, context.locals.element]).map(
+      (hint) => allocator.allocate(hint),
+    );
+    return ts.factory.createArrowFunction(
+      undefined,
+      undefined,
+      names.map((parameter) => ts.factory.createParameterDeclaration(undefined, undefined, parameter)),
+      undefined,
+      undefined,
+      ts.factory.createCallExpression(
+        target,
+        undefined,
+        names.map((parameter) => ts.factory.createIdentifier(parameter)),
+      ),
+    );
+  };
+  const method = (receiver: number, name: string, argumentsList: readonly ts.Expression[]): ts.Expression => {
+    const target = operands[receiver];
+    if (target === undefined) throw new TypeError(`${expression.opcode} is missing its receiver`);
+    return ts.factory.createCallExpression(
+      ts.factory.createPropertyAccessExpression(target, name),
+      undefined,
+      argumentsList,
+    );
+  };
+  switch (expression.opcode) {
+    case 'bool.and':
+      return infix(ts.SyntaxKind.AmpersandAmpersandToken);
+    case 'bool.or':
+      return infix(ts.SyntaxKind.BarBarToken);
+    case 'bool.not':
+      return ts.factory.createPrefixUnaryExpression(ts.SyntaxKind.ExclamationToken, unary());
+    case 'bool.equals':
+    case 'nat.equals':
+    case 'string.equals':
+      return infix(ts.SyntaxKind.EqualsEqualsEqualsToken);
+    case 'nat.add':
+    case 'string.append':
+      return infix(ts.SyntaxKind.PlusToken);
+    case 'nat.multiply':
+      return infix(ts.SyntaxKind.AsteriskToken);
+    case 'nat.less':
+      return infix(ts.SyntaxKind.LessThanToken);
+    case 'nat.lessOrEqual':
+      return infix(ts.SyntaxKind.LessThanEqualsToken);
+    case 'nat.successor':
+      return ts.factory.createBinaryExpression(unary(), ts.SyntaxKind.PlusToken, ts.factory.createBigIntLiteral('1n'));
+    case 'nat.subtract': {
+      const [left, right] = binary(1);
+      return callPrelude(context, requiredOpcodeHelper(context, 'nat.subtract'), [left, right]);
+    }
+    case 'list.head':
+      return callPrelude(context, requiredOpcodeHelper(context, 'list.head'), [unary()]);
+    case 'list.length':
+      return ts.factory.createCallExpression(ts.factory.createIdentifier('BigInt'), undefined, [
+        ts.factory.createPropertyAccessExpression(unary(), 'length'),
+      ]);
+    case 'list.isEmpty':
+      return isEmptyList(unary());
+    case 'list.append': {
+      const [left, right] = binary(1);
+      return ts.factory.createArrayLiteralExpression(
+        [ts.factory.createSpreadElement(left), ts.factory.createSpreadElement(right)],
+        false,
+      );
+    }
+    case 'list.reverse':
+      return ts.factory.createCallExpression(
+        ts.factory.createPropertyAccessExpression(
+          ts.factory.createArrayLiteralExpression([ts.factory.createSpreadElement(unary())], false),
+          'reverse',
+        ),
+        undefined,
+        [],
+      );
+    case 'list.map':
+      return method(1, 'map', [callback(0, 1)]);
+    case 'list.filter':
+      return method(1, 'filter', [callback(0, 1)]);
+    case 'list.any':
+      return method(0, 'some', [callback(1, 1)]);
+    case 'list.all':
+      return method(0, 'every', [callback(1, 1)]);
+    case 'list.foldLeft': {
+      const initial = operands[1];
+      if (initial === undefined) throw new TypeError('list.foldLeft is missing its initial value');
+      return method(2, 'reduce', [callback(0, 2), initial]);
+    }
+    case 'list.foldRight': {
+      const initial = operands[1];
+      if (initial === undefined) throw new TypeError('list.foldRight is missing its initial value');
+      return method(2, 'reduceRight', [reversedCallback(operands, allocator, context), initial]);
+    }
+    case 'list.first':
+      return ts.factory.createElementAccessExpression(unary(), ts.factory.createNumericLiteral(0));
+    case 'list.rest':
+      return method(0, 'slice', [ts.factory.createNumericLiteral(1)]);
   }
-  if (plan.nominal) {
-    throw new TypeError(
-      `a match on the value object ${plan.typeName} outside dot-notation dispatch position is outside this fragment version`,
+}
+
+/**
+ * `reduceRight` hands the accumulator first and Lean's `foldr` hands the element first, so the
+ * generated callback swaps them rather than relying on the two orders happening to agree.
+ */
+function reversedCallback(
+  operands: readonly ts.Expression[],
+  allocator: IdentifierAllocator,
+  context: EmitContext,
+): ts.Expression {
+  const step = operands[0];
+  if (step === undefined) throw new TypeError('list.foldRight is missing its step function');
+  if (ts.isArrowFunction(step) && step.parameters.length === 2) {
+    const [element, accumulator] = step.parameters;
+    if (element === undefined || accumulator === undefined) {
+      throw new TypeError('list.foldRight step function lost a binder');
+    }
+    return ts.factory.updateArrowFunction(
+      step,
+      step.modifiers,
+      step.typeParameters,
+      [accumulator, element],
+      step.type,
+      step.equalsGreaterThanToken,
+      step.body,
     );
   }
-  if (plan.declaration.constructors.some((constructor) => constructor.fields.length > 0)) {
-    throw new TypeError(
-      `a match on the payload-carrying union ${plan.typeName} outside dot-notation dispatch position is outside this fragment version`,
+  const accumulator = allocator.allocate(context.locals.value);
+  const element = allocator.allocate(context.locals.element);
+  return ts.factory.createArrowFunction(
+    undefined,
+    undefined,
+    [accumulator, element].map((parameter) =>
+      ts.factory.createParameterDeclaration(undefined, undefined, parameter),
+    ),
+    undefined,
+    undefined,
+    ts.factory.createCallExpression(step, undefined, [
+      ts.factory.createIdentifier(element),
+      ts.factory.createIdentifier(accumulator),
+    ]),
+  );
+}
+
+/** One constructor application, in the representation its type's plan fixes. */
+function emitVariant(
+  expression: Extract<LeanExpression, { readonly kind: 'variant' }>,
+  scope: readonly Binding[],
+  allocator: IdentifierAllocator,
+  context: EmitContext,
+): ts.Expression {
+  const values = expression.arguments.map((argument) => emitExpression(argument, scope, allocator, context));
+  const constructors = constructorsOf(expression.type, context.declarations);
+  const constructor = constructors.find((candidate) => candidate.name === expression.name);
+  if (constructor === undefined) {
+    throw new TypeError(`unknown constructor ${renderType(expression.type)}.${expression.name}`);
+  }
+  if (expression.type.kind === 'list') {
+    if (expression.name === 'nil') return ts.factory.createArrayLiteralExpression([], false);
+    const [head, tail] = values;
+    if (head === undefined || tail === undefined) throw new TypeError('list.cons is missing an argument');
+    if (ts.isArrayLiteralExpression(tail) && tail.elements.length === 0) {
+      return ts.factory.createArrayLiteralExpression([head], false);
+    }
+    return ts.factory.createArrayLiteralExpression([head, ts.factory.createSpreadElement(tail)], false);
+  }
+  if (expression.type.kind === 'option' || expression.type.kind === 'except') {
+    const field = constructor.fields[0];
+    const [payload] = values;
+    if (field === undefined || payload === undefined) return taggedLiteral(expression.name);
+    return taggedLiteral(expression.name, { field: field.name, value: payload });
+  }
+  if (expression.type.kind !== 'named') {
+    throw new TypeError(`${renderType(expression.type)} has no constructor representation`);
+  }
+  const plan = requiredTypePlan(context, expression.type.name);
+  if (!plan.nominal) {
+    if (
+      constructor.fields.length === 0 &&
+      plan.declaration.kind === 'enum' &&
+      plan.declaration.constructors.every((candidate) => candidate.fields.length === 0)
+    ) {
+      return ts.factory.createStringLiteral(expression.name);
+    }
+    return ts.factory.createObjectLiteralExpression(
+      [
+        ts.factory.createPropertyAssignment(propertyName('kind'), ts.factory.createStringLiteral(expression.name)),
+        ...constructor.fields.map((field, index) => {
+          const value = values[index];
+          if (value === undefined) throw new TypeError(`missing constructor field ${field.name}`);
+          return ts.factory.createPropertyAssignment(propertyName(field.name), value);
+        }),
+      ],
+      true,
     );
   }
-  if (expression.scrutinee.kind !== 'variable' && expression.scrutinee.kind !== 'field') {
+  const member = ts.factory.createPropertyAccessExpression(
+    ts.factory.createIdentifier(plan.typeName),
+    expression.name,
+  );
+  if (constructor.fields.length === 0 && plan.ground) return member;
+  return ts.factory.createCallExpression(
+    member,
+    plan.ground ? undefined : expression.type.arguments.map((argument) => emitType(argument, context)),
+    values,
+  );
+}
+
+/**
+ * Whether a scrutinee can be read again without recomputing anything. A binding can; a field of a
+ * re-readable value can; anything else computes, and the condition is transitive because a field of
+ * a call would otherwise smuggle the call in behind one property read.
+ */
+function isRereadable(expression: LeanExpression): boolean {
+  if (expression.kind === 'variable') return true;
+  return expression.kind === 'field' && isRereadable(expression.target);
+}
+
+/**
+ * A `match` in argument position, where no `const` can be bound. The scrutinee is read once per
+ * test, so only a binding or a chain of field reads over one is admitted: anything that computes
+ * has to be named by a `let` first rather than be silently re-evaluated per alternative.
+ */
+function emitMatchExpression(
+  expression: Extract<LeanExpression, { readonly kind: 'match' }>,
+  scope: readonly Binding[],
+  allocator: IdentifierAllocator,
+  context: EmitContext,
+): ts.Expression {
+  dispatchOnValueObject(expression, context);
+  if (!isRereadable(expression.scrutinee)) {
     throw new TypeError(
-      `a match on a computed ${plan.typeName} is outside this fragment version: bind the scrutinee with let first`,
+      `a match on a computed ${renderType(expression.type)} outside return position is outside this fragment version: bind the scrutinee with let first`,
     );
   }
-  const scrutinee = emitExpression(expression.scrutinee, scope, context);
-  const arms = expression.cases.map((entry) => ({
-    tag: entry.constructor,
-    value: emitExpression(entry.value, scope, context),
-  }));
+  const scrutinee = emitExpression(expression.scrutinee, scope, allocator, context);
+  const constructors = constructorsOf(expression.type, context.declarations);
+  const arms = expression.cases.map((entry, index) => {
+    const constructor = constructors[index];
+    if (constructor === undefined) throw new TypeError(`${renderType(expression.type)} has no alternative ${index}`);
+    const bindings = [...constructor.fields]
+      .reverse()
+      .map((field): Binding => ({
+        kind: 'expression',
+        value: constructorFieldAccess(scrutinee, field.name, expression.type, context),
+      }));
+    return {
+      constructor: constructor.name,
+      value: emitExpression(entry.value, [...bindings, ...scope], allocator, context),
+    };
+  });
   const fallback = arms.at(-1);
-  if (fallback === undefined) throw new TypeError(`match on ${plan.typeName} decides no alternative`);
+  if (fallback === undefined) throw new TypeError(`match on ${renderType(expression.type)} decides no alternative`);
   return arms
     .slice(0, -1)
     .reduceRight(
       (alternate, arm) =>
         ts.factory.createConditionalExpression(
-          ts.factory.createBinaryExpression(
-            scrutinee,
-            ts.SyntaxKind.EqualsEqualsEqualsToken,
-            ts.factory.createStringLiteral(arm.tag),
-          ),
+          alternativeTest(scrutinee, expression.type, arm.constructor, context),
           undefined,
           arm.value,
           undefined,
@@ -2076,13 +3573,20 @@ function emitBinding(binding: Binding): ts.Expression {
   switch (binding.kind) {
     case 'identifier':
       return ts.factory.createIdentifier(binding.name);
-    case 'receiver':
+    case 'this':
       return ts.factory.createThis();
-    case 'receiverField':
-      return receiverField(binding.field);
+    case 'expression':
+      return binding.value;
+    case 'unread':
+      throw new TypeError('an unread binding reached emission');
   }
 }
 
+/**
+ * The emission order of one program's declarations: data types first, then functions in dependency
+ * order. A recursive group Lean recorded is emitted as one adjacent block, because TypeScript
+ * hoists function declarations and the group's members refer to each other.
+ */
 function orderedDeclarations(program: LeanSemanticProgram): readonly LeanDeclaration[] {
   const types = program.declarations
     .filter((declaration) => declaration.kind !== 'function')
@@ -2095,35 +3599,46 @@ function orderedDeclarations(program: LeanSemanticProgram): readonly LeanDeclara
       .filter((declaration): declaration is LeanFunction => declaration.kind === 'function')
       .map((declaration) => [declaration.name, declaration]),
   );
-  const orderedFunctions: LeanFunction[] = [];
+  const ordered: LeanFunction[] = [];
   const visiting = new Set<string>();
   const visited = new Set<string>();
   const visit = (name: string): void => {
     if (visited.has(name)) return;
-    // Direct self-recursion is admitted where Lean proved it structural; a cycle through another
-    // declaration has no such proof and no ordering.
-    if (visiting.has(name)) throw new TypeError(`mutual recursion is outside the fragment: ${name}`);
     const declaration = functions.get(name);
     if (declaration === undefined) return;
-    visiting.add(name);
-    for (const dependency of calledFunctions(declaration.body)) {
-      if (dependency !== name) visit(dependency);
+    const group = declaration.termination?.group ?? [name];
+    if (group.some((member) => visited.has(member))) return;
+    if (visiting.has(name)) {
+      throw new TypeError(`mutual recursion outside a recorded group: ${name}`);
     }
-    visiting.delete(name);
-    visited.add(name);
-    orderedFunctions.push(declaration);
+    for (const member of group) visiting.add(member);
+    for (const member of group) {
+      for (const dependency of calledFunctions(functions.get(member)?.body)) {
+        if (!group.includes(dependency)) visit(dependency);
+      }
+    }
+    for (const member of group) {
+      visiting.delete(member);
+      visited.add(member);
+      const peer = functions.get(member);
+      if (peer !== undefined) ordered.push(peer);
+    }
   };
   for (const root of program.roots) visit(root);
   for (const name of [...functions.keys()].sort(compareCodePoints)) visit(name);
-  return [...types, ...orderedFunctions];
+  return [...types, ...ordered];
 }
 
-function calledFunctions(expression: LeanExpression): readonly string[] {
+function calledFunctions(expression: LeanExpression | undefined): readonly string[] {
   const names = new Set<string>();
   const visit = (node: LeanExpression): void => {
     switch (node.kind) {
       case 'call':
         names.add(node.function);
+        node.arguments.forEach(visit);
+        return;
+      case 'operation':
+      case 'variant':
         node.arguments.forEach(visit);
         return;
       case 'let':
@@ -2138,18 +3653,6 @@ function calledFunctions(expression: LeanExpression): readonly string[] {
         visit(node.consequent);
         visit(node.alternate);
         return;
-      case 'equals':
-      case 'and':
-      case 'or':
-        visit(node.left);
-        visit(node.right);
-        return;
-      case 'not':
-        visit(node.operand);
-        return;
-      case 'some':
-        visit(node.value);
-        return;
       case 'record':
         node.fields.forEach((field) => visit(field.value));
         return;
@@ -2157,33 +3660,53 @@ function calledFunctions(expression: LeanExpression): readonly string[] {
         visit(node.scrutinee);
         node.cases.forEach((entry) => visit(entry.value));
         return;
-      case 'variant':
+      case 'lambda':
+        visit(node.body);
+        return;
+      case 'apply':
+        visit(node.target);
         node.arguments.forEach(visit);
         return;
       case 'variable':
       case 'boolean':
-      case 'none':
+      case 'nat':
+      case 'string':
         return;
     }
   };
-  visit(expression);
-  return [...names].sort(compareCodePoints);
+  if (expression !== undefined) visit(expression);
+  return [...names];
+}
+
+/** The binder scope of one generated `equals`: its own parameter, plus everything reserved. */
+function equalityAllocator(context: EmitContext): IdentifierAllocator {
+  return new IdentifierAllocator([...context.reserved, ...context.typeParameters, context.locals.other]);
 }
 
 function newAllocator(context: EmitContext): IdentifierAllocator {
-  return new IdentifierAllocator(context.reserved);
+  return new IdentifierAllocator([...context.reserved, ...context.typeParameters]);
 }
 
 function requiredTypePlan(context: EmitContext, name: string): TypePlan {
   const plan = context.types.get(name);
-  if (plan === undefined) throw new TypeError(`missing emitted representation for data type ${name}`);
+  if (plan === undefined) throw new TypeError(`missing type plan for ${name}`);
   return plan;
 }
 
-function callPrelude(context: EmitContext, name: string, argumentsList: readonly ts.Expression[]): ts.CallExpression {
+/** Records that the package reached one prelude declaration, so only what is used is emitted. */
+function usePrelude(context: EmitContext, name: string): string {
   context.used.add(name);
-  return ts.factory.createCallExpression(ts.factory.createIdentifier(name), undefined, argumentsList);
+  return name;
 }
+
+function callPrelude(context: EmitContext, name: string, argumentsList: readonly ts.Expression[]): ts.CallExpression {
+  return ts.factory.createCallExpression(
+    ts.factory.createIdentifier(usePrelude(context, name)),
+    undefined,
+    argumentsList,
+  );
+}
+
 
 function conjunction(operands: readonly ts.Expression[]): ts.Expression {
   const [first, ...rest] = operands;
@@ -2323,6 +3846,7 @@ function emitDataBoundaryAlias(name: string): ts.Statement {
     undefined,
     ts.factory.createUnionTypeNode([
       ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
+      ts.factory.createKeywordTypeNode(ts.SyntaxKind.BigIntKeyword),
       ts.factory.createKeywordTypeNode(ts.SyntaxKind.NumberKeyword),
       ts.factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword),
       ts.factory.createLiteralTypeNode(ts.factory.createNull()),

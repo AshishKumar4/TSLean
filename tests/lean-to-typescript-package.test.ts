@@ -2149,7 +2149,10 @@ describe('published Lean to TypeScript API', () => {
   test('keeps the registered runtime adapter explicit and fail-closed', () => {
     const all = { bundled: true, dynamic: true, provider: true };
     const provider = { bundled: false, dynamic: false, provider: true };
-    expect(choosePlacementFromData(all, all, all, provider)).toBe('provider');
+    expect(choosePlacementFromData(all, all, all, provider)).toEqual({ kind: 'some', value: 'provider' });
+    expect(choosePlacementFromData(all, all, all, { bundled: false, provider: false, dynamic: false })).toEqual({
+      kind: 'none',
+    });
     expect(() => choosePlacementFromData({ bundled: true }, all, all, all)).toThrowError(
       /PlacementSet data fields must be exactly bundled, provider, dynamic/u,
     );

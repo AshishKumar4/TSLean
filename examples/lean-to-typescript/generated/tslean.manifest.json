@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
   "semantic": {
-    "fragmentVersion": "tslean-structural-first-order-v4",
+    "fragmentVersion": "tslean-semantic-typed-v5",
     "entryModule": "TSLean.Examples.Placement",
     "leanProjectPath": "../../../lean",
     "declarations": [
@@ -67,7 +67,7 @@
             }
           }
         ],
-        "bodySha256": "sha256:cae734266b3c3d3ddbd10e528bc6f85ef290baca088cc1907064d0073314618f",
+        "bodySha256": "sha256:b7a95e8f4caf392c731ff923718e1fc7fca7e63c9d7d6601b122866ede33077c",
         "sourceMapSha256": "sha256:46e79d4c9e300218770759d53ddedaf1d98d7114af8908efa577c8e432d43444"
       }
     ],
@@ -376,7 +376,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:emitter",
-        "sha256": "sha256:19648b27537e9547b870ad8da5140cda5c899a4bdb0cf2a6e7c45faa3367d047"
+        "sha256": "sha256:b15a66aadc3009c31148824bdbe2fe23a25e113c85b89f467a5e4c8e833c0b30"
       },
       {
         "kind": "compiler-source",
@@ -386,17 +386,17 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:index",
-        "sha256": "sha256:42df4f6e15e97e6504bcf11aef172c2c52ec6acf4a5c2a51a53e3c4f0736fb4a"
+        "sha256": "sha256:1edac2effc7bd77748f0991c248cec4b78cd2a759354d43d19f4bbe6df6d357e"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:ir",
-        "sha256": "sha256:b2d6668979f2e9d90bab7aad5e16a6c2e31b6d83a6bf1af1e6c34bc48ec8466c"
+        "sha256": "sha256:ab1b1be287cc07e71c94aa0ca937652dc49dd57fce968ccfa8fd4e90fd35ad59"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-exporter",
-        "sha256": "sha256:3e6ab6321d8643fca2ee6db0504c5d16cd806afbce4d8e55c13dced987b0989e"
+        "sha256": "sha256:59df35a00e87e500b7afcec51cd95a00b42a268ac58d3379e2e7d4213fcbfabb"
       },
       {
         "kind": "compiler-source",
@@ -416,7 +416,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:package-layout",
-        "sha256": "sha256:020e02e764da150f55e55fb4cac9a051af2562b19df3578190beb1452b351c07"
+        "sha256": "sha256:aad3dfb8bfa63fefbd1d37ab0689bf83d287fefa6ea5de78882cb3b4ed59f917"
       },
       {
         "kind": "compiler-source",
@@ -451,7 +451,7 @@
       {
         "kind": "lean-source",
         "identity": "source:TSLean.LeanToTypeScript.Export",
-        "sha256": "sha256:3e6ab6321d8643fca2ee6db0504c5d16cd806afbce4d8e55c13dced987b0989e"
+        "sha256": "sha256:59df35a00e87e500b7afcec51cd95a00b42a268ac58d3379e2e7d4213fcbfabb"
       },
       {
         "kind": "lean-project",
@@ -469,12 +469,12 @@
         "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       }
     ],
-    "inputClosureSha256": "sha256:68feb1f86859e14fc1bf520eb3b029367837f1585d440b3106719ff3d6a9e05e",
-    "semanticIrSha256": "sha256:196adc6b4440a5ce67221c5a98c217dafb7a1bc6e565b90120e838233954667b",
-    "generatedBodySha256": "sha256:63e29b246e204156ea0e15f5b07f3cc7522d7730f435bba47f66f490842988e4"
+    "inputClosureSha256": "sha256:39461e1b6e9ac1b880902998d54d740e845874288aeba74d22d228d17d8104a7",
+    "semanticIrSha256": "sha256:2d7d55bcff52b5967d2f1faaac2f3bc3a68583d4ecc74f9936c75b93386a81dd",
+    "generatedBodySha256": "sha256:72b6e26e675733935398b9c1b849a8b9ed1d3482d5228fe443372ef1d9aad551"
   },
   "environment": {
-    "runtime": "node:v22.22.3",
+    "runtime": "node:v22.22.1",
     "typescriptVersion": "6.0.2",
     "platform": "linux-x64",
     "inputs": [
@@ -491,7 +491,7 @@
       {
         "kind": "compiler-runtime",
         "identity": "compiler:runtime",
-        "sha256": "sha256:e6ec2c188d83d813f81f2de8aea084d74dce603ac1abedd0a30ad941b10087b2"
+        "sha256": "sha256:d0efb6fcb9d023ba4e2b160ec2384dc28fe4f17732141ef47f676828fa960505"
       },
       {
         "kind": "lean-module",
@@ -511,7 +511,7 @@
       {
         "kind": "lean-module",
         "identity": "module:TSLean.LeanToTypeScript.Export",
-        "sha256": "sha256:17be7d0af9ebdaf12e09ec28fc40ea5da7ef4be048ac2df39452946b71ec013b"
+        "sha256": "sha256:9db5d6884429a8ba1056df9305fcf5a71ce3d80811fcb6553af5a03d292493ba"
       },
       {
         "kind": "lean-toolchain",
@@ -1134,6 +1134,6 @@
         "sha256": "sha256:bb6ee7e709ae60426e30b8d393df4d939ee61407794b4f053ce6338d6eaa8c63"
       }
     ],
-    "inputClosureSha256": "sha256:3367531b8e0fd103cc0e8436c513e911a58bea9094a999fd2bd9da20bc5e9054"
+    "inputClosureSha256": "sha256:7c922d495eecc72e1b30096548e7bf5f92a29ffef1b5e59c508612bfa035de73"
   }
 }
