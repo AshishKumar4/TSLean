@@ -16,7 +16,7 @@ The current release gate establishes these facts:
 
 These gates do not establish a whole-compiler refinement theorem. Non-strict
 TypeScript-to-Lean output can contain reported degradation. Raw Lean syntax nodes and
-source scanners still exist in the secondary compiler. The present audits cover their
+source scanners still exist in the TypeScript-to-Lean compiler. The present audits cover their
 registered sets, not every future program or analysis.
 
 ## Required before a proof-carrying claim

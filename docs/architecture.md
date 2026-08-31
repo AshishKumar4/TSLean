@@ -4,7 +4,7 @@
 
 ## Lean to TypeScript
 
-Lean to TypeScript is the primary compiler. Lean elaborates the selected declarations,
+Lean to TypeScript compiles as follows. Lean elaborates the selected declarations,
 then `lean/TSLean/LeanToTypeScript/Export.lean` emits a closed semantic program. The
 TypeScript compiler validates that program, assigns deterministic modules and imports,
 emits TypeScript plus source maps and runtime boundaries, type-checks the complete tree,
@@ -19,7 +19,7 @@ See [Lean to TypeScript](lean-to-typescript.md) for the artifact and proof bound
 
 ## TypeScript to Lean
 
-The secondary compiler transforms a typed TypeScript subset into Lean source. Its
+TypeScript to Lean transforms a typed TypeScript subset into Lean source. Its
 effect-annotated IR keeps later passes independent of the original TypeScript AST.
 Generated Lean can be checked by Lean, but compilation alone does not prove that it
 refines the TypeScript program.
@@ -35,8 +35,6 @@ graph TD
     SL["Stdlib Lookup<br/><code>src/stdlib/</code>"] -.->|method tables| D
     D -->|"LeanFile (LeanDecl[], LeanExpr[], LeanTy[])"| E["Printer<br/><code>src/codegen/printer.ts</code>"]
     E -->|"String (valid Lean 4 source)"| F["Output (.lean)"]
-    D -.->|optional| V["Verification<br/><code>src/verification/</code>"]
-    V -.->|"proof obligation stubs"| F
 ```
 
 ```

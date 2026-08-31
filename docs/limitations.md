@@ -2,8 +2,8 @@
 
 # TypeScript-to-Lean Limitations
 
-This document describes the secondary TypeScript-to-Lean compiler. It does not describe
-the primary Lean-to-TypeScript fragment.
+This document describes the TypeScript-to-Lean compiler. It does not describe the
+Lean-to-TypeScript fragment.
 
 The listed TypeScript forms are not represented by the current typed IR and lowering
 rules. This is a compiler boundary, not a claim that no Lean encoding could exist.

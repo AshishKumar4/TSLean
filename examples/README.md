@@ -2,7 +2,9 @@
 
 # TSLean Examples
 
-These 12 examples exercise the secondary TypeScript-to-Lean compiler.
+These 12 example trees exercise the TypeScript-to-Lean compiler. The Lean-to-TypeScript
+examples are in [lean-to-typescript](lean-to-typescript/), and the round-trip examples are
+in [roundtrip](roundtrip/).
 
 ## Running Examples
 

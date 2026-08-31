@@ -154,6 +154,68 @@ type StaticLeanImport = (typeof STATIC_LEAN_IMPORTS)[number];
 
 // ─── Public API ─────────────────────────────────────────────────────────────────
 
+/** Every name a body binds or reads, so a generated binding cannot shadow one. */
+function namesUsedIn(body: IRExpr, into: Set<string>): Set<string> {
+  const walk = (node: unknown): void => {
+    if (node === null || typeof node !== 'object') return;
+    const irNode = node as { tag?: string; name?: string; errName?: string };
+    if (typeof irNode.name === 'string') into.add(irNode.name);
+    if (typeof irNode.errName === 'string') into.add(irNode.errName);
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) value.forEach(walk);
+      else if (value !== null && typeof value === 'object') walk(value);
+    }
+  };
+  walk(body);
+  return into;
+}
+
+/**
+ * Every lexical binding a body introduces.
+ *
+ * A name can also name a module declaration. A string comparison alone cannot tell whether
+ * `chosen` in a nested expression resolves to the module function or to a local `const
+ * chosen`, so a hoist treats any body-local shadow as unavailable at the definition head.
+ * That is conservative when scopes do not overlap, and correct when they do.
+ */
+function localBindingNamesIn(body: IRExpr, into = new Set<string>()): Set<string> {
+  const walk = (node: unknown): void => {
+    if (node === null || typeof node !== 'object') return;
+    const value = node as {
+      tag?: string;
+      name?: string;
+      errName?: string;
+      params?: readonly IRParam[];
+      bindings?: readonly { name: string }[];
+    };
+    switch (value.tag) {
+      case 'Let':
+      case 'Bind':
+      case 'DoBind':
+      case 'DoLet':
+      case 'PVar':
+      case 'PAs':
+        if (value.name !== undefined) into.add(value.name);
+        break;
+      case 'TryCatch':
+        if (value.errName !== undefined) into.add(value.errName);
+        break;
+      case 'Lambda':
+        for (const param of value.params ?? []) into.add(param.name);
+        break;
+      case 'MultiLet':
+        for (const binding of value.bindings ?? []) into.add(binding.name);
+        break;
+    }
+    for (const child of Object.values(node)) {
+      if (Array.isArray(child)) child.forEach(walk);
+      else if (child !== null && typeof child === 'object') walk(child);
+    }
+  };
+  walk(body);
+  return into;
+}
+
 /** Lower an IR module to a LeanAST file. */
 export function lowerModule(mod: IRModule): LeanFile {
   const ctx = new LowerCtx();
@@ -161,8 +223,13 @@ export function lowerModule(mod: IRModule): LeanFile {
   ctx.collectDefinedNames(mod.decls);
   // Track names imported from external modules (not resolvable in Lean)
   for (const imp of mod.imports) {
-    if (imp.module.startsWith('TSLean.External.') && imp.names) {
+    if (imp.names === undefined) continue;
+    if (imp.module.startsWith('TSLean.External.')) {
       for (const n of imp.names) ctx.externalImportNames.add(n);
+    } else if (imp.isGenerated === true) {
+      // A sibling module's declarations are in scope here, because the emitted module opens
+      // the sibling modules its source imports.
+      for (const n of imp.names) ctx.siblingImportNames.add(n);
     }
   }
 
@@ -294,6 +361,31 @@ class LowerCtx {
   mutableRefNames = new Set<string>();
   /** Names imported from external (non-local) modules — emit default when referenced. */
   externalImportNames = new Set<string>();
+
+  /** Names this module imports from a sibling generated module, so they resolve in Lean. */
+  siblingImportNames = new Set<string>();
+
+  /**
+   * Scrutinees hoisted out of the definition being lowered.
+   *
+   * A match decides a bound name rather than a computed value, and a nested `let` is refused
+   * as well, so a computed scrutinee is bound once at the head of the definition. Every
+   * profile term is pure and total, so evaluating the binding before a branch that may not
+   * use it changes no result.
+   */
+  hoistedScrutinees: Array<{ name: string; value: LeanExpr }> = [];
+
+  /** Parameter names of the definition being lowered: what a hoisted binding may read. */
+  definitionScope = new Set<string>();
+
+  /**
+   * Names bound anywhere in the body currently being lowered. A module declaration with the
+   * same spelling cannot make one of these bindings safe to hoist.
+   */
+  bodyLocalBindings = new Set<string>();
+
+  /** Every name the definition being lowered already uses, so a hoist cannot shadow one. */
+  definitionNames = new Set<string>();
   /** Current function's lowered return type — used to reconcile none vs default. */
   currentReturnType: LeanTy | undefined;
   /** Current function's IR return type — used for numeric literal annotations. */
@@ -442,17 +534,28 @@ class LowerCtx {
     for (const imp of mod.imports) {
       if (imp.module.startsWith('TSLean.External.')) continue;
       if (isSelfHost && imp.module.startsWith('TSLean.Generated.')) continue;
-      if (imp.module.startsWith('TSLean.')) emitted.add(imp.module);
+      emitted.add(imp.module);
     }
     return [...emitted].sort();
   }
 
-  resolveOpens(_mod: IRModule, imports: string[]): string[] {
+  resolveOpens(mod: IRModule, imports: string[]): string[] {
     const opens = ['TSLean'];
     if (imports.some(i => i === 'TSLean.Runtime.WebAPI')) opens.push('TSLean.WebAPI');
     if (imports.some(i => i.includes('HashMap'))) opens.push('TSLean.Stdlib.HashMap');
     if (imports.some(i => i.includes('Stubs.WebAPIs'))) opens.push('TSLean.Stubs.WebAPIs');
     if (imports.some(i => i.includes('DurableObjects'))) opens.push('TSLean.DO');
+    // A TypeScript import binds the imported names unqualified, so the module that emits
+    // them has to be open for a reference to resolve to it rather than to an implicit
+    // binder. Only sibling modules of the same emission are opened: a runtime module's
+    // namespace is not its module path, and the rules above already name those.
+    for (const imported of mod.imports) {
+      if (imported.isSideEffect === true) continue;
+      if (imported.isGenerated !== true) continue;
+      if (imports.includes(imported.module) && !opens.includes(imported.module)) {
+        opens.push(imported.module);
+      }
+    }
     return opens;
   }
 
@@ -1027,7 +1130,7 @@ class LowerCtx {
     for (const p of d.params) {
       if (p.type.tag === 'Option') this.optionParams.add(p.name);
     }
-    const body = this.lowerFuncBody(d.body, fixedEffect, d.retType);
+    const body = this.lowerFuncBody(d.body, fixedEffect, d.retType, d.params);
     this.currentReturnType = prevRetType;
     this.currentReturnIRType = prevRetIRType;
     this.optionParams = prevOptionParams;
@@ -1114,7 +1217,38 @@ class LowerCtx {
     };
   }
 
-  private lowerFuncBody(body: IRExpr, effect: Effect, retType: IRType): LeanExpr {
+  /** Lower a definition's body and bind whatever it hoisted, in the order it was hoisted. */
+  private lowerFuncBody(
+    body: IRExpr,
+    effect: Effect,
+    retType: IRType,
+    params: readonly IRParam[] = [],
+  ): LeanExpr {
+    const outer = {
+      hoisted: this.hoistedScrutinees,
+      scope: this.definitionScope,
+      locals: this.bodyLocalBindings,
+      names: this.definitionNames,
+    };
+    this.hoistedScrutinees = [];
+    this.definitionScope = new Set(params.map((param) => param.name));
+    this.bodyLocalBindings = localBindingNamesIn(body);
+    this.definitionNames = namesUsedIn(body, new Set(this.definitionScope));
+    try {
+      const lowered = this.lowerFuncBodyTerm(body, effect, retType);
+      return this.hoistedScrutinees.reduceRight<LeanExpr>(
+        (inner, binding) => ({ tag: 'Let', name: binding.name, value: binding.value, body: inner }),
+        lowered,
+      );
+    } finally {
+      this.hoistedScrutinees = outer.hoisted;
+      this.definitionScope = outer.scope;
+      this.bodyLocalBindings = outer.locals;
+      this.definitionNames = outer.names;
+    }
+  }
+
+  private lowerFuncBodyTerm(body: IRExpr, effect: Effect, retType: IRType): LeanExpr {
     if (!isPure(effect)) {
       // Effectful function: wrap body in `do`
       const inner = this.lowerExpr(body, effect);
@@ -2273,8 +2407,12 @@ class LowerCtx {
     if (mappedField === 'toString' || mappedField.startsWith('function'))
       return { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [obj] };
 
+    // A field the receiver's own structure declares is that field, whatever a JavaScript API
+    // of the same name would have meant.
+    const declaredField = this.declaresField(e.obj?.type, mappedField);
+
     // JS-specific methods/fields with no Lean equivalent → default
-    if (['test', 'getSourceFile', 'fileExists', 'readFile', 'writeFile', 'existsSync',
+    if (!declaredField && ['test', 'getSourceFile', 'fileExists', 'readFile', 'writeFile', 'existsSync',
       'val', 'dispose', 'abort', 'signal', 'addEventListener', 'removeEventListener',
       'then', 'catch', 'finally', 'send', 'close', 'terminate', 'postMessage',
       'accept', 'respond', 'respondWith', 'waitUntil', 'passThroughOnException',
@@ -2317,13 +2455,14 @@ class LowerCtx {
     }
 
     // Check if field exists on known struct type — use default instead of sorry
-    if (e.obj?.type?.tag === 'TypeRef') {
+    if (e.obj?.type?.tag === 'TypeRef' || e.obj?.type?.tag === 'TypeVar') {
       const rawName = e.obj.type.name;
       const stateName = this.classToState.get(rawName) ?? rawName;
       const knownFields = this.structFields.get(stateName) ?? this.structFields.get(rawName) ?? this.structFields.get(rawName + 'State');
       if (knownFields && !knownFields.some(f => f.name === mappedField)) return this.defaultForType(e.type ?? { tag: 'String' });
       // Unknown external types (no struct definition, not locally defined) → graceful default
-      if (!knownFields && !LEAN_BUILTIN_TYPES.has(rawName) && !this.definedNames.has(rawName))
+      if (!knownFields && !LEAN_BUILTIN_TYPES.has(rawName) && !this.definedNames.has(rawName) &&
+          !this.siblingImportNames.has(rawName))
         return this.defaultForType(e.type ?? { tag: 'String' });
     }
 
@@ -2502,6 +2641,46 @@ class LowerCtx {
     return { tag: 'App', fn, args };
   }
 
+  /**
+   * Decide an equality between an enumeration value and one of its constructors.
+   *
+   * Answers `null` when neither operand is a constructor carrying its enumeration's case
+   * list, which leaves every other equality to the general rules below.
+   */
+  private lowerEnumerationEquality(
+    e: Extract<IRExpr, { tag: 'BinOp' }>,
+    ctx: Effect,
+  ): LeanExpr | null {
+    const leftCtor = e.left.tag === 'CtorApp' && e.left.cases !== undefined ? e.left : null;
+    const rightCtor = e.right.tag === 'CtorApp' && e.right.cases !== undefined ? e.right : null;
+    if (leftCtor === null && rightCtor === null) return null;
+
+    const wanted = e.op === 'Eq';
+    // Both sides named: the comparison is settled without looking at any value.
+    if (leftCtor !== null && rightCtor !== null) {
+      return { tag: 'Lit', value: String((leftCtor.ctor === rightCtor.ctor) === wanted) };
+    }
+
+    const named = leftCtor ?? rightCtor;
+    if (named === null) return null;
+    const scrutinee = this.lowerExprP(leftCtor === null ? e.left : e.right, ctx);
+    const matched = named.ctor.slice(named.ctor.lastIndexOf('.') + 1);
+    const arms: LeanMatchArm[] = (named.cases ?? []).map((constructor) => ({
+      pat: { tag: 'PCtor', name: constructor, args: [] },
+      body: { tag: 'Lit', value: String((constructor === matched) === wanted) },
+    }));
+    if (scrutinee.tag === 'Var') return { tag: 'Match', scrutinee, arms };
+    // Hoisting moves the scrutinee to the head of the definition, so it may only mention
+    // names that are in scope there. A scrutinee that reads a local bound further in stays
+    // where it is: Lean accepts a match on a computed value, and the round trip reports it
+    // if the Lean-to-TypeScript fragment will not carry it.
+    const source = leftCtor === null ? e.left : e.right;
+    if (!this.boundAtDefinitionHead(source)) return { tag: 'Match', scrutinee, arms };
+    const bound = this.allocateHoistName();
+    this.hoistedScrutinees.push({ name: bound, value: scrutinee });
+    return { tag: 'Match', scrutinee: { tag: 'Var', name: bound }, arms };
+  }
+
   private lowerMethodCall(
     e: Extract<IRExpr, { tag: 'App' }>,
     fa: Extract<IRExpr, { tag: 'FieldAccess' }>,
@@ -2587,10 +2766,86 @@ class LowerCtx {
       return call;
     }
 
+    // A method on a nominal receiver → the definition that carries it, with the receiver
+    // passed first. The type may be declared here, imported from a sibling module, or
+    // exported by a module this one opens, and all three resolve the same way in Lean.
+    // Without this the receiver's field access finds no field of that name and degrades to a
+    // default, which answers the wrong thing rather than failing.
+    const receiver = fa.obj?.type;
+    const receiverName = receiver?.tag === 'TypeRef' || receiver?.tag === 'Structure' || receiver?.tag === 'Inductive'
+      ? receiver.name
+      : null;
+    const nominalReceiver = receiverName !== null &&
+      !LEAN_BUILTIN_TYPES.has(receiverName) &&
+      !TS_API_TYPES.has(receiverName) &&
+      !this.externalImportNames.has(receiverName);
+    if (receiverName !== null && nominalReceiver) {
+      return { tag: 'App', fn: { tag: 'Var', name: `${receiverName}.${method}` }, args: [obj, ...args] };
+    }
+
     return null; // not a recognized method call
   }
 
+  /**
+   * The enumeration case a condition tests, when it tests one of a named value.
+   *
+   * Only a named scrutinee counts: a computed one is decided on its own, because folding it
+   * into a match would evaluate it once per arm.
+   */
+  private enumerationTest(
+    condition: IRExpr,
+  ): { variable: string; constructor: string; cases: readonly string[] } | null {
+    if (condition.tag !== 'BinOp' || condition.op !== 'Eq') return null;
+    const named = condition.left.tag === 'Var' ? condition.left : condition.right.tag === 'Var' ? condition.right : null;
+    const other = condition.left.tag === 'Var' ? condition.right : condition.left;
+    if (named === null || named.tag !== 'Var') return null;
+    if (other.tag !== 'CtorApp' || other.cases === undefined) return null;
+    return {
+      variable: named.name,
+      constructor: other.ctor.slice(other.ctor.lastIndexOf('.') + 1),
+      cases: other.cases,
+    };
+  }
+
+  /**
+   * A chain of tests of one enumeration value → one match over it.
+   *
+   * A chain and a match are the same decision written two ways, and the two compilers write
+   * it the two ways, so lowering each test on its own would grow the term on every lap
+   * through the pair. Folding the whole chain keeps the round trip at a fixed point.
+   */
+  private lowerEnumerationChain(e: Extract<IRExpr, { tag: 'IfThenElse' }>, ctx: Effect): LeanExpr | null {
+    const first = this.enumerationTest(e.cond);
+    if (first === null) return null;
+
+    const taken = new Map<string, IRExpr>();
+    let current: Extract<IRExpr, { tag: 'IfThenElse' }> = e;
+    let fallback: IRExpr;
+    for (;;) {
+      const test = this.enumerationTest(current.cond);
+      if (test === null || test.variable !== first.variable) {
+        fallback = current;
+        break;
+      }
+      if (!taken.has(test.constructor)) taken.set(test.constructor, current.then);
+      if (current.else_.tag === 'IfThenElse') {
+        current = current.else_;
+        continue;
+      }
+      fallback = current.else_;
+      break;
+    }
+
+    const arms: LeanMatchArm[] = first.cases.map((constructor) => ({
+      pat: { tag: 'PCtor', name: constructor, args: [] },
+      body: this.lowerExpr(taken.get(constructor) ?? fallback, ctx),
+    }));
+    return { tag: 'Match', scrutinee: { tag: 'Var', name: first.variable }, arms };
+  }
+
   private lowerIf(e: Extract<IRExpr, { tag: 'IfThenElse' }>, ctx: Effect): LeanExpr {
+    const folded = this.lowerEnumerationChain(e, ctx);
+    if (folded !== null) return folded;
     let cond = this.lowerExpr(e.cond, ctx);
     // Fix non-Bool conditions: wrap in appropriate coercion
     if (e.cond.type?.tag === 'Option' && cond.tag !== 'App') {
@@ -2682,6 +2937,14 @@ class LowerCtx {
         r = { tag: 'App', fn: { tag: 'Var', name: 'toString' }, args: [rInner] };
       }
       return { tag: 'App', fn: { tag: 'Var', name: 'Option.getD' }, args: [l, r] };
+    }
+    // Equality against an enumeration constructor → decide it by matching every constructor.
+    // Lean's derived equality on an inductive compares constructor indices through `Nat.decEq`,
+    // which the Lean-to-TypeScript fragment does not admit, so an emitted `==` would leave the
+    // round trip. An exhaustive match names only the constructors themselves.
+    if (e.op === 'Eq' || e.op === 'Ne') {
+      const decided = this.lowerEnumerationEquality(e, ctx);
+      if (decided !== null) return decided;
     }
     // Equality with none → .isNone/.isSome (only for Option-typed operands)
     if (e.op === 'Eq' && (e.right.tag === 'LitNull' || (e.right.tag === 'Var' && e.right.name === 'none'))) {
@@ -2857,9 +3120,65 @@ class LowerCtx {
     return inner;
   }
 
+  /** Whether every name the expression reads is in scope at the definition's head. */
+  private boundAtDefinitionHead(expr: IRExpr): boolean {
+    let bound = true;
+    const walk = (node: unknown): void => {
+      if (!bound || node === null || typeof node !== 'object') return;
+      const irNode = node as { tag?: string; name?: string };
+      if (irNode.tag === 'Var' && irNode.name !== undefined) {
+        // A local binding wins over a parameter or a module declaration with the same
+        // spelling. The IR does not retain TypeScript symbol identity here, so any shadow in
+        // the body makes the conservative answer "not available at the definition head".
+        if (this.bodyLocalBindings.has(irNode.name)) {
+          bound = false;
+          return;
+        }
+        if (!this.definitionScope.has(irNode.name) && !this.definedNames.has(irNode.name)) {
+          bound = false;
+          return;
+        }
+      }
+      for (const value of Object.values(node)) {
+        if (Array.isArray(value)) value.forEach(walk);
+        else if (value !== null && typeof value === 'object') walk(value);
+      }
+    };
+    walk(expr);
+    return bound;
+  }
+
+  /** A hoist name no binding of the definition already uses. */
+  private allocateHoistName(): string {
+    for (let index = 0; ; index++) {
+      const candidate = `decided${String(index)}`;
+      if (!this.definitionNames.has(candidate)) {
+        this.definitionNames.add(candidate);
+        return candidate;
+      }
+    }
+  }
+
+  /** Whether the receiver's declared structure carries a field of this name. */
+  private declaresField(type: IRType | undefined, field: string): boolean {
+    // `this` inside a method carries TypeScript's polymorphic `this` type, which maps to a
+    // type variable named after the class, so the receiver is named the same three ways.
+    if (type?.tag !== 'TypeRef' && type?.tag !== 'Structure' && type?.tag !== 'TypeVar') return false;
+    const name = type.name;
+    const fields = this.structFields.get(this.classToState.get(name) ?? name) ??
+      this.structFields.get(name) ?? this.structFields.get(`${name}State`);
+    // A structure imported from a sibling module declares fields this module cannot list, so
+    // its accesses are field accesses whatever a JavaScript API of the same name would mean.
+    if (fields === undefined) return this.siblingImportNames.has(name);
+    return fields.some((entry) => entry.name === field);
+  }
+
   private lowerStructLit(e: Extract<IRExpr, { tag: 'StructLit' }>, ctx: Effect): LeanExpr {
     // Map-typed struct literals → use AssocMap.fromList unless the typeName is a known struct
-    const hasKnownStruct = e.typeName && (this.structFields.has(e.typeName) || this.structFields.has(e.typeName + 'State'));
+    // A structure imported from a sibling module is as known as a local one: the emitted
+    // module opens that sibling, so its name and its fields resolve.
+    const hasKnownStruct = e.typeName && (this.structFields.has(e.typeName) ||
+      this.structFields.has(e.typeName + 'State') || this.siblingImportNames.has(e.typeName));
     // Also check if the function return type is AssocMap (struct literal targets AssocMap)
     const retIsAssocMap = this.currentReturnType &&
       (this.tyStartsWith(this.currentReturnType, 'AssocMap') ||

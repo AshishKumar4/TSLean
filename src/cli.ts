@@ -17,6 +17,18 @@ import { countLevel, degradationSites, describeDegradation, type DegradationMark
 import { resetTimer } from './timing.js';
 import { transpileProject, writeProjectOutputs } from './project/index.js';
 import { runLeanToTypeScriptCli } from './lean-to-typescript/cli.js';
+import {
+  leanAccepts,
+  PACKAGED_LEAN_PROJECT,
+  type LeanAcceptance,
+  type LeanModuleSource,
+} from './lean-check.js';
+import {
+  verifyLeanToTypeScriptRoundtrip,
+  verifyTypeScriptToLeanRoundtrip,
+  type RoundtripOptions,
+  type RoundtripReport,
+} from './roundtrip/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -51,6 +63,7 @@ ${c.bold('tslean')} — TypeScript and Lean compilers
 ${c.bold('USAGE')}
   tslean ts-to-lean <file|dir> [options]  Compile TypeScript to Lean 4
   tslean lean-to-ts [options]             Compile Lean 4 to TypeScript
+  tslean roundtrip <target> [options]     Send a program round and report what held
   tslean init [dir]                        Create a TypeScript-to-Lean project
 
 ${c.bold('TS-TO-LEAN OPTIONS')}
@@ -58,12 +71,21 @@ ${c.bold('TS-TO-LEAN OPTIONS')}
   --tsconfig <path>         Use an exact tsconfig.json
   -w, --watch               Watch for changes and recompile
   --lake                    Run Lake after each watch compilation
-  --strict                  Refuse output containing sorry/default placeholders
+  --strict                  Accept only output Lean accepts, with no placeholder
+  --lean-project <dir>      Lake project --strict elaborates against
   --namespace <name>        Root namespace (default: TSLean.Generated)
   --lakefile                Emit lakefile.toml (default for a directory)
   --no-lakefile             Do not emit lakefile.toml
   --timing                  Show compiler phase timing
   --no-color                Disable colored output
+
+${c.bold('ROUNDTRIP OPTIONS')}
+  --manifest <path>         Send a generated package Lean → TypeScript → Lean
+  --source <file>           Send TypeScript → Lean → TypeScript; repeatable
+  --lean-project <dir>      Lake project supplying the recovered Lean runtime
+  --source-root <dir>       Original Lean project; defaults to the manifest source root
+  --behaviour-limit <n>     Most inputs applied to one function (default 4096)
+  --json                    Print the report as JSON
 
 Use ${c.bold('tslean lean-to-ts --help')} for Lean-to-TypeScript options.
 Global: -v, --version; -h, --help
@@ -81,12 +103,22 @@ interface CompileOpts {
   genLakefile: boolean;
   tsconfigPath: string;
   strict: boolean;
+  leanProject: string;
   timing: boolean;
+}
+interface RoundtripOpts {
+  manifests: readonly string[];
+  sources: readonly string[];
+  leanProject: string;
+  sourceRoot: string | undefined;
+  behaviourLimit: number | undefined;
+  json: boolean;
 }
 
 type Command =
   | { cmd: 'ts-to-lean'; opts: CompileOpts }
   | { cmd: 'lean-to-ts'; arguments: readonly string[] }
+  | { cmd: 'roundtrip'; opts: RoundtripOpts }
   | { cmd: 'init'; dir: string }
   | { cmd: 'help' }
   | { cmd: 'version' };
@@ -109,8 +141,13 @@ function parseArgs(args: readonly string[]): Command {
   if (command === 'lean-to-ts') {
     return { cmd: 'lean-to-ts', arguments: rest };
   }
+  if (command === 'roundtrip') {
+    return rest.length === 1 && (rest[0] === '-h' || rest[0] === '--help')
+      ? { cmd: 'help' }
+      : { cmd: 'roundtrip', opts: parseRoundtripArgs(rest) };
+  }
   if (command !== 'ts-to-lean') {
-    throw new TypeError(`Unknown command ${command ?? ''}; expected ts-to-lean, lean-to-ts, or init`);
+    throw new TypeError(`Unknown command ${command ?? ''}; expected ts-to-lean, lean-to-ts, roundtrip, or init`);
   }
   if (rest.length === 1 && (rest[0] === '-h' || rest[0] === '--help')) {
     return { cmd: 'help' };
@@ -125,6 +162,7 @@ function parseArgs(args: readonly string[]): Command {
   let ns = 'TSLean.Generated';
   let genLakefile = true;
   let tsconfigPath = '';
+  let leanProject = PACKAGED_LEAN_PROJECT;
   const seen = new Set<string>();
 
   for (let index = 0; index < rest.length; index += 1) {
@@ -152,6 +190,9 @@ function parseArgs(args: readonly string[]): Command {
     } else if (option === '--strict') {
       uniqueOption(seen, 'strict');
       strict = true;
+    } else if (option === '--lean-project') {
+      uniqueOption(seen, 'lean-project');
+      leanProject = optionValue(rest, ++index, option);
     } else if (option === '--timing') {
       uniqueOption(seen, 'timing');
       timing = true;
@@ -187,9 +228,54 @@ function parseArgs(args: readonly string[]): Command {
       genLakefile,
       tsconfigPath,
       strict,
+      leanProject,
       timing,
     },
   };
+}
+function parseRoundtripArgs(args: readonly string[]): RoundtripOpts {
+  const manifests: string[] = [];
+  const sources: string[] = [];
+  let leanProject = PACKAGED_LEAN_PROJECT;
+  let sourceRoot: string | undefined;
+  let behaviourLimit: number | undefined;
+  let json = false;
+  const seen = new Set<string>();
+
+  for (let index = 0; index < args.length; index += 1) {
+    const option = args[index]!;
+    if (option === '--manifest') {
+      manifests.push(optionValue(args, ++index, option));
+    } else if (option === '--source') {
+      sources.push(optionValue(args, ++index, option));
+    } else if (option === '--lean-project') {
+      uniqueOption(seen, 'lean-project');
+      leanProject = optionValue(args, ++index, option);
+    } else if (option === '--source-root') {
+      uniqueOption(seen, 'source-root');
+      sourceRoot = optionValue(args, ++index, option);
+    } else if (option === '--behaviour-limit') {
+      uniqueOption(seen, 'behaviour-limit');
+      const value = Number(optionValue(args, ++index, option));
+      if (!Number.isSafeInteger(value) || value <= 0) {
+        throw new TypeError('--behaviour-limit takes a positive safe integer');
+      }
+      behaviourLimit = value;
+    } else if (option === '--json') {
+      uniqueOption(seen, 'json');
+      json = true;
+    } else if (option === '--no-color') {
+      uniqueOption(seen, 'no-color');
+      noColor = true;
+    } else {
+      throw new TypeError(`Unknown roundtrip option ${option}`);
+    }
+  }
+
+  if (manifests.length === 0 && sources.length === 0) {
+    throw new TypeError('Usage: tslean roundtrip --manifest <path> | --source <file> [options]');
+  }
+  return { manifests, sources, leanProject, sourceRoot, behaviourLimit, json };
 }
 
 function uniqueOption(seen: Set<string>, option: string): void {
@@ -240,10 +326,52 @@ function reportDegradation(markers: readonly DegradationMarker[], strict: boolea
   return false;
 }
 
+/**
+ * Whether `--strict` accepts this output.
+ *
+ * Strict acceptance means Lean accepts the emitted modules. A placeholder scan reads the
+ * artifact, so it cannot see a lowering that is well-formed and ill-typed, and it cannot
+ * see one that is well-typed and drops a call. Strict therefore elaborates the output
+ * under the project's pinned toolchain as well. A checker that cannot run is a refusal:
+ * an unrun check is not an acceptance.
+ *
+ * @returns false when `--strict` rejects the output.
+ */
+function acceptStrictly(
+  modules: readonly LeanModuleSource[],
+  markers: readonly DegradationMarker[],
+  opts: CompileOpts,
+): boolean {
+  if (!reportDegradation(markers, opts.strict)) return false;
+  if (!opts.strict) return true;
+  try {
+    return reportLeanAcceptance(leanAccepts(modules, { projectRoot: opts.leanProject }));
+  } catch (failure) {
+    const reason = failure instanceof Error ? failure.message : String(failure);
+    error(`--strict: Lean could not be run, so acceptance is unknown — ${reason}`);
+    return false;
+  }
+}
+
+/** Report what Lean said, and answer whether it accepted. */
+function reportLeanAcceptance(acceptance: LeanAcceptance): boolean {
+  if (acceptance.accepted) {
+    info(`Lean ${acceptance.toolchain} accepted the generated module(s)`);
+    return true;
+  }
+  error(`--strict: Lean ${acceptance.toolchain} rejected the generated Lean.`);
+  for (const diagnostic of acceptance.diagnostics.filter((entry) => entry.severity === 'error')) {
+    process.stderr.write(
+      `  ${c.dim(`${diagnostic.module}:${String(diagnostic.line)}:${String(diagnostic.column)}`)} ${diagnostic.message}\n`,
+    );
+  }
+  return false;
+}
+
 // ─── Compile: single file ────────────────────────────────────────────────────
 
 function compileSingle(opts: CompileOpts): boolean {
-  const { input, output, strict, timing } = opts;
+  const { input, output, timing } = opts;
   if (!fs.existsSync(input)) {
     error(`File not found: ${input}`);
     return false;
@@ -260,7 +388,10 @@ function compileSingle(opts: CompileOpts): boolean {
 
     timer.start('codegen');
     const { code, degradations } = generateLeanTracked(rewritten);
-    if (!reportDegradation(degradations, strict)) return false;
+
+    timer.start('lean');
+    const modules = [{ module: rewritten.name, code, imports: [] }];
+    if (!acceptStrictly(modules, degradations, opts)) return false;
 
     timer.start('write');
     fs.mkdirSync(path.dirname(path.resolve(output)), { recursive: true });
@@ -283,7 +414,7 @@ function compileSingle(opts: CompileOpts): boolean {
 // ─── Compile: project (directory) ────────────────────────────────────────────
 
 function compileProject(opts: CompileOpts): boolean {
-  const { input, output, ns, strict } = opts;
+  const { input, output, ns } = opts;
   const projectDir = path.resolve(input);
   if (!fs.existsSync(projectDir)) {
     error(`Directory not found: ${projectDir}`);
@@ -311,7 +442,13 @@ function compileProject(opts: CompileOpts): boolean {
       site: `${path.relative(projectDir, file.tsFile)}: ${marker.site}`,
     })),
   );
-  const accepted = reportDegradation(degradations, strict);
+  const names = new Set(result.files.map((file) => file.module));
+  const modules = result.files.map((file) => ({
+    module: file.module,
+    code: file.content,
+    imports: result.graph.nodes.get(file.module)?.imports.filter((name) => names.has(name)) ?? [],
+  }));
+  const accepted = acceptStrictly(modules, degradations, opts);
   if (!accepted || result.errors.length > 0) return false;
 
   writeProjectOutputs(result);
@@ -453,6 +590,46 @@ function initProject(dir: string): boolean {
   return true;
 }
 
+// ─── Roundtrip ───────────────────────────────────────────────────────────────
+
+/** Print one report, and answer whether it held. */
+function reportRoundtrip(report: RoundtripReport, json: boolean): boolean {
+  if (json) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    return report.holds;
+  }
+  process.stdout.write(`\n${c.bold(report.direction)}  ${c.dim(report.subject)}\n`);
+  for (const check of report.checks) {
+    const mark = check.holds ? c.green('✓') : c.red('✗');
+    process.stdout.write(`  ${mark} ${check.name} ${c.dim(`(${check.detail})`)}\n`);
+  }
+  for (const counterexample of report.counterexamples) {
+    process.stderr.write(`  ${c.red('counterexample')} ${counterexample.check} @ ${counterexample.subject}\n`);
+    process.stderr.write(`    expected ${counterexample.expected}\n`);
+    process.stderr.write(`    actual   ${counterexample.actual}\n`);
+  }
+  return report.holds;
+}
+
+async function runRoundtrip(opts: RoundtripOpts): Promise<boolean> {
+  const options: RoundtripOptions = {
+    leanProjectRoot: opts.leanProject,
+    ...(opts.sourceRoot === undefined ? {} : { sourceRoot: path.resolve(opts.sourceRoot) }),
+    ...(opts.behaviourLimit === undefined ? {} : { behaviourLimit: opts.behaviourLimit }),
+  };
+  let held = true;
+  for (const manifest of opts.manifests) {
+    const report = await verifyLeanToTypeScriptRoundtrip(path.resolve(manifest), options);
+    if (!reportRoundtrip(report, opts.json)) held = false;
+  }
+  if (opts.sources.length > 0) {
+    const sources = opts.sources.map((source) => path.resolve(source));
+    const report = await verifyTypeScriptToLeanRoundtrip(sources, options);
+    if (!reportRoundtrip(report, opts.json)) held = false;
+  }
+  return held;
+}
+
 // ─── Compile dispatcher ──────────────────────────────────────────────────────
 
 function runCompile(opts: CompileOpts): void {
@@ -464,7 +641,7 @@ function runCompile(opts: CompileOpts): void {
   if (!accepted) process.exitCode = 1;
 }
 
-export function runTsleanCli(arguments_: readonly string[]): void {
+export async function runTsleanCli(arguments_: readonly string[]): Promise<void> {
   const command = parseArgs(arguments_);
   if (command.cmd === 'help') {
     process.stdout.write(HELP);
@@ -474,6 +651,8 @@ export function runTsleanCli(arguments_: readonly string[]): void {
     if (!initProject(command.dir)) process.exitCode = 1;
   } else if (command.cmd === 'ts-to-lean') {
     runCompile(command.opts);
+  } else if (command.cmd === 'roundtrip') {
+    if (!await runRoundtrip(command.opts)) process.exitCode = 1;
   } else {
     runLeanToTypeScriptCli(command.arguments);
   }
@@ -481,10 +660,8 @@ export function runTsleanCli(arguments_: readonly string[]): void {
 
 const entrypoint = process.argv[1];
 if (entrypoint !== undefined && import.meta.url === pathToFileURL(fs.realpathSync(entrypoint)).href) {
-  try {
-    runTsleanCli(process.argv.slice(2));
-  } catch (failure) {
+  runTsleanCli(process.argv.slice(2)).catch((failure: unknown) => {
     error(failure instanceof Error ? failure.message : String(failure));
     process.exitCode = 1;
-  }
+  });
 }

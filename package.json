@@ -17,6 +17,10 @@
     "./lean-to-typescript": {
       "types": "./dist/lean-to-typescript/index.d.ts",
       "import": "./dist/lean-to-typescript/index.js"
+    },
+    "./roundtrip": {
+      "types": "./dist/roundtrip/index.d.ts",
+      "import": "./dist/roundtrip/index.js"
     }
   },
   "bin": {
@@ -30,11 +34,13 @@
     "lean/lakefile.toml",
     "lean/lean-toolchain",
     "lean/lake-manifest.json",
+    "docs/roundtrip.md",
     "docs/lean-to-typescript.md",
     "docs/trust.md",
     "docs/architecture.md",
     "docs/limitations.md",
     "examples/lean-to-typescript/**",
+    "examples/roundtrip/**",
     "spec/lean-to-typescript/**",
     "spec/differential/**",
     "README.md",
@@ -118,10 +124,13 @@
     "evidence:baseline:generate": "bun scripts/generate-evidence-manifest.mjs --input evidence/baseline-input.json",
     "evidence:baseline:check": "bun scripts/generate-evidence-manifest.mjs --input evidence/baseline-input.json --check",
     "js:trust": "bun scripts/check-js-axioms.mjs --evidence evidence/phase5-emitted-tcb-input.json",
-    "verify": "bun run format:check:foundation && bun run differential:check && bun run js:trust && bun run evidence:check && bun run lint && bun run build && bun run lean-to-typescript:check && bun run lean-to-typescript:enforcement:check && bun run lean-to-typescript:package:check && bun run test && bun run lean:gate && cd lean && lake build",
+    "verify": "bun run format:check:foundation && bun run differential:check && bun run js:trust && bun run evidence:check && bun run lint && bun run build && bun run lean-to-typescript:check && bun run lean-to-typescript:enforcement:check && bun run lean-to-typescript:package:check && bun run roundtrip:examples:check && bun run roundtrip:check && bun run test && bun run lean:gate && cd lean && lake build",
     "prepublishOnly": "bun run verify",
     "lean-to-typescript:package:generate": "node dist/cli.js lean-to-ts --project-root lean --module TSLean.Examples.Package.Decision --source lean/TSLean/Examples/Package/Decision.lean --declaration TSLean.Examples.Package.decideAccess --declaration TSLean.Examples.Package.grantedCapability --declaration TSLean.Examples.Package.Policy.effective --out-dir examples/lean-to-typescript/package/generated --manifest examples/lean-to-typescript/package/generated/tslean.manifest.json",
-    "lean-to-typescript:package:check": "bun run lean-to-typescript:package:generate --check"
+    "lean-to-typescript:package:check": "bun run lean-to-typescript:package:generate --check",
+    "roundtrip:examples:generate": "node scripts/generate-roundtrip-examples.mjs",
+    "roundtrip:examples:check": "node scripts/generate-roundtrip-examples.mjs --check",
+    "roundtrip:check": "node scripts/check-roundtrip-examples.mjs"
   },
   "keywords": [
     "typescript",

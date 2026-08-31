@@ -4,8 +4,8 @@
   "baseRevision": "110c1296e1dce0f67601c13e5863e13ee9252eac",
   "counts": {
     "tests": {
-      "files": 50,
-      "passed": 1904,
+      "files": 52,
+      "passed": 2045,
       "failed": 0,
       "todo": 10
     },

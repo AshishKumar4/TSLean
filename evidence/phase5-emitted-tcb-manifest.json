@@ -5,16 +5,16 @@
     "bun": "1.4.0",
     "node": "v22.22.3",
     "typescript": "6.0.2",
-    "vitest": "vitest/4.1.11 linux-x64 node-v22.22.3",
+    "vitest": "vitest/4.1.2 linux-x64 node-v22.22.3",
     "prettier": "3.9.6",
-    "eslint": "v10.9.0",
+    "eslint": "v10.8.1",
     "lean": "Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)",
     "lake": "Lake version 5.0.0-src+819816b (Lean version 4.33.1)"
   },
   "counts": {
     "tests": {
-      "files": 50,
-      "passed": 1904,
+      "files": 52,
+      "passed": 2045,
       "failed": 0,
       "todo": 10
     },
@@ -171,12 +171,12 @@
     }
   ],
   "hashes": {
-    "source": "sha256:23da057c37aa179a8ffd68d855e453743d37a6d64bf59f73c012bee86d451437",
+    "source": "sha256:4688349f5f815e5a813c31bc130cab751e7e272c5815a898d3801ef0eb0f54e2",
     "jsRuntime": "sha256:03f43c01641fd7379f87e7e2a56ad4fc92528c129efa2c736e289e70a3283deb",
     "refinementRuntimeAndBarrel": "sha256:3c4badb33a92287e32a4156353ca3ac594fa575336a633ce98cdcd21e82e1ae2",
     "refinementTestsAuditRegistry": "sha256:442fe58d68dc9252b1622506eeecbcd9cb57f400ff4474f385f3bbb8cf9a311c",
     "corpus": "sha256:813ba0e3fa8d02912872c4451cf33773aa0fc627dac24f68f770e25506fa1903",
     "differentialSpecHarness": "sha256:a60e709b193d859da6521ab4179c645fd0c33cb50cfa9d1fba9f486a4feb6eb5",
-    "trustEvidenceInfrastructure": "sha256:770b52bc18322ab5168ef14a1da2e48ae8053a6fbd601383673626c33b1a50b8"
+    "trustEvidenceInfrastructure": "sha256:a18af1263396e9055d10485697921b7b58cae036bd183509e57c5e66b564161a"
   }
 }

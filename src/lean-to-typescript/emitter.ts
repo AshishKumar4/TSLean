@@ -142,9 +142,7 @@ export interface LeanToTypeScriptHelperBinding {
  * to emitted bytes resolves the name through here instead of guessing it. A role the program never
  * reaches is absent, because no declaration is printed for it.
  */
-export function leanToTypeScriptHelperBindings(
-  program: LeanSemanticProgram,
-): readonly LeanToTypeScriptHelperBinding[] {
+export function leanToTypeScriptHelperBindings(program: LeanSemanticProgram): readonly LeanToTypeScriptHelperBinding[] {
   const context = planProgram(program);
   const bindings: LeanToTypeScriptHelperBinding[] = [];
   for (const opcode of referencedRuntimeOpcodes(program)) {
@@ -659,9 +657,7 @@ const RESERVED_REPRESENTATION_MEMBERS: Readonly<Record<string, string>> = {
 const PROTOTYPE_KEY = '__proto__';
 
 function reservedMemberRole(name: string): string | undefined {
-  return Object.hasOwn(RESERVED_REPRESENTATION_MEMBERS, name)
-    ? RESERVED_REPRESENTATION_MEMBERS[name]
-    : undefined;
+  return Object.hasOwn(RESERVED_REPRESENTATION_MEMBERS, name) ? RESERVED_REPRESENTATION_MEMBERS[name] : undefined;
 }
 
 function refuseReservedMember(owner: string, what: string, name: string, role: string): never {
@@ -917,9 +913,7 @@ function emitDeclaration(declaration: LeanDeclaration, context: EmitContext): re
   const plan = requiredTypePlan(context, declaration.name);
   const scoped = withTypeParameters(context, plan.typeParameters);
   if (declaration.kind === 'enum') {
-    return plan.nominal
-      ? emitNominalEnum(plan, declaration, scoped)
-      : [emitStructuralEnum(plan, declaration, scoped)];
+    return plan.nominal ? emitNominalEnum(plan, declaration, scoped) : [emitStructuralEnum(plan, declaration, scoped)];
   }
   return plan.nominal
     ? emitNominalRecord(plan, declaration, scoped)
@@ -1416,9 +1410,7 @@ function emitNominalRecord(plan: TypePlan, declaration: LeanStructure, context: 
     );
   }
   return [
-    interfaceOfFields(plan.initName, plan.typeParameters, declaration.fields, (field) =>
-      emitType(field.type, context),
-    ),
+    interfaceOfFields(plan.initName, plan.typeParameters, declaration.fields, (field) => emitType(field.type, context)),
     ...(plan.ground
       ? [interfaceOfFields(plan.dataName, [], declaration.fields, (field) => dataType(field.type, context))]
       : []),
@@ -1704,11 +1696,7 @@ function decodeExpression(
     case 'function':
       throw new TypeError(`${renderType(type)} cannot be decoded at the package boundary`);
     case 'option':
-      return callPrelude(context, context.prelude.requireOption, [
-        value,
-        label,
-        elementDecoder(type.value, context),
-      ]);
+      return callPrelude(context, context.prelude.requireOption, [value, label, elementDecoder(type.value, context)]);
     case 'except':
       return callPrelude(context, context.prelude.requireExcept, [
         value,
@@ -1717,11 +1705,7 @@ function decodeExpression(
         elementDecoder(type.value, context),
       ]);
     case 'list':
-      return callPrelude(context, context.prelude.requireList, [
-        value,
-        label,
-        elementDecoder(type.element, context),
-      ]);
+      return callPrelude(context, context.prelude.requireList, [value, label, elementDecoder(type.element, context)]);
     case 'named': {
       const plan = requiredTypePlan(context, type.name);
       if (!plan.ground) {
@@ -2140,10 +2124,7 @@ function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
                 ts.SyntaxKind.ExclamationEqualsEqualsToken,
                 ts.factory.createNull(),
               ),
-              ts.factory.createPrefixUnaryExpression(
-                ts.SyntaxKind.ExclamationToken,
-                isArrayCall(value),
-              ),
+              ts.factory.createPrefixUnaryExpression(ts.SyntaxKind.ExclamationToken, isArrayCall(value)),
             ]),
           ),
         ),
@@ -2160,13 +2141,19 @@ function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
 
 /** Reads one UTF-16 code unit without widening a decoded string to an untyped value. */
 function charCodeAt(value: ts.Expression, index: ts.Expression): ts.Expression {
-  return ts.factory.createCallExpression(ts.factory.createPropertyAccessExpression(value, 'charCodeAt'), undefined, [index]);
+  return ts.factory.createCallExpression(ts.factory.createPropertyAccessExpression(value, 'charCodeAt'), undefined, [
+    index,
+  ]);
 }
 
 /** Whether one code-unit expression lies in one inclusive UTF-16 surrogate range. */
 function codeUnitInRange(value: ts.Expression, lower: number, upper: number): ts.Expression {
   return ts.factory.createBinaryExpression(
-    ts.factory.createBinaryExpression(value, ts.SyntaxKind.GreaterThanEqualsToken, ts.factory.createNumericLiteral(lower)),
+    ts.factory.createBinaryExpression(
+      value,
+      ts.SyntaxKind.GreaterThanEqualsToken,
+      ts.factory.createNumericLiteral(lower),
+    ),
     ts.SyntaxKind.AmpersandAmpersandToken,
     ts.factory.createBinaryExpression(value, ts.SyntaxKind.LessThanEqualsToken, ts.factory.createNumericLiteral(upper)),
   );
@@ -2277,10 +2264,7 @@ function emitListHeadHelper(context: EmitContext): ts.Statement {
     ],
     optionTypeNode(context, element),
     block(
-      ts.factory.createIfStatement(
-        isEmptyList(value),
-        block(ts.factory.createReturnStatement(noneLiteral())),
-      ),
+      ts.factory.createIfStatement(isEmptyList(value), block(ts.factory.createReturnStatement(noneLiteral()))),
       ts.factory.createReturnStatement(
         someLiteral(ts.factory.createElementAccessExpression(value, ts.factory.createNumericLiteral(0))),
       ),
@@ -2317,7 +2301,10 @@ function isEmptyList(value: ts.Expression): ts.Expression {
   );
 }
 
-function taggedLiteral(tag: string, payload?: { readonly field: string; readonly value: ts.Expression }): ts.Expression {
+function taggedLiteral(
+  tag: string,
+  payload?: { readonly field: string; readonly value: ts.Expression },
+): ts.Expression {
   return ts.factory.createObjectLiteralExpression(
     [
       ts.factory.createPropertyAssignment(propertyName('kind'), ts.factory.createStringLiteral(tag)),
@@ -2358,7 +2345,6 @@ function comparatorParameter(name: string, payload: ts.TypeNode): ts.ParameterDe
 function comparedParameter(name: string, type: ts.TypeNode): ts.ParameterDeclaration {
   return ts.factory.createParameterDeclaration(undefined, undefined, name, undefined, type);
 }
-
 
 /**
  * Compares two `Option` values. The payload is read inside this declaration, where each side is a
@@ -3001,7 +2987,13 @@ function emitReturn(
       const emittedName = allocator.allocate(expression.name);
       return [
         constantStatement(emittedName, emitExpression(expression.value, scope, allocator, context)),
-        ...emitReturn(expression.body, [{ kind: 'identifier', name: emittedName }, ...scope], allocator, liveness, context),
+        ...emitReturn(
+          expression.body,
+          [{ kind: 'identifier', name: emittedName }, ...scope],
+          allocator,
+          liveness,
+          context,
+        ),
       ];
     }
     case 'if':
@@ -3031,7 +3023,6 @@ function bindConstructorFields(
   body: LeanExpression,
   allocator: IdentifierAllocator,
   liveness: LeanExpressionLiveness,
-  context: EmitContext,
 ): { readonly statements: readonly ts.Statement[]; readonly bindings: readonly Binding[] } {
   const statements: ts.Statement[] = [];
   const bindings: Binding[] = [];
@@ -3042,7 +3033,7 @@ function bindConstructorFields(
       return;
     }
     const emittedName = allocator.allocate(field.name);
-    statements.push(constantStatement(emittedName, constructorFieldAccess(scrutinee, field.name, type, context)));
+    statements.push(constantStatement(emittedName, constructorFieldAccess(scrutinee, field.name, type)));
     bindings.push({ kind: 'identifier', name: emittedName });
   });
   return { statements, bindings: [...bindings].reverse() };
@@ -3053,12 +3044,7 @@ function bindConstructorFields(
  * `List` carries them as the first element and the rest of the array, which are the `list.first`
  * and `list.rest` runtime opcodes.
  */
-function constructorFieldAccess(
-  scrutinee: ts.Expression,
-  field: string,
-  type: LeanType,
-  context: EmitContext,
-): ts.Expression {
+function constructorFieldAccess(scrutinee: ts.Expression, field: string, type: LeanType): ts.Expression {
   if (type.kind !== 'list') return fieldAccess(scrutinee, field);
   if (field === 'head') {
     return ts.factory.createElementAccessExpression(scrutinee, ts.factory.createNumericLiteral(0));
@@ -3131,7 +3117,6 @@ function emitMatchStatements(
       entry.value,
       allocator,
       liveness,
-      context,
     );
     const armStatements = [
       ...bound.statements,
@@ -3237,7 +3222,10 @@ function emitExpression(
       const plan = requiredTypePlan(context, expression.type.name);
       const literal = ts.factory.createObjectLiteralExpression(
         expression.fields.map((field) =>
-          ts.factory.createPropertyAssignment(propertyName(field.name), emitExpression(field.value, scope, allocator, context)),
+          ts.factory.createPropertyAssignment(
+            propertyName(field.name),
+            emitExpression(field.value, scope, allocator, context),
+          ),
         ),
         true,
       );
@@ -3259,9 +3247,7 @@ function emitExpression(
       const receiver = expression.arguments[method.receiver.parameter];
       if (receiver === undefined) throw new TypeError(`method call ${expression.function} has no receiver`);
       const rest = expression.arguments.filter((_, index) => index !== method.receiver.parameter);
-      const own = expression.typeArguments.slice(
-        requiredTypePlan(context, method.receiver.type).typeParameters.length,
-      );
+      const own = expression.typeArguments.slice(requiredTypePlan(context, method.receiver.type).typeParameters.length);
       return ts.factory.createCallExpression(
         ts.factory.createPropertyAccessExpression(emitExpression(receiver, scope, allocator, context), method.name),
         own.length === 0 ? undefined : own.map((argument) => emitType(argument, context)),
@@ -3433,9 +3419,7 @@ function reversedCallback(
   return ts.factory.createArrowFunction(
     undefined,
     undefined,
-    [accumulator, element].map((parameter) =>
-      ts.factory.createParameterDeclaration(undefined, undefined, parameter),
-    ),
+    [accumulator, element].map((parameter) => ts.factory.createParameterDeclaration(undefined, undefined, parameter)),
     undefined,
     undefined,
     ts.factory.createCallExpression(step, undefined, [
@@ -3497,10 +3481,7 @@ function emitVariant(
       true,
     );
   }
-  const member = ts.factory.createPropertyAccessExpression(
-    ts.factory.createIdentifier(plan.typeName),
-    expression.name,
-  );
+  const member = ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier(plan.typeName), expression.name);
   if (constructor.fields.length === 0 && plan.ground) return member;
   return ts.factory.createCallExpression(
     member,
@@ -3541,12 +3522,10 @@ function emitMatchExpression(
   const arms = expression.cases.map((entry, index) => {
     const constructor = constructors[index];
     if (constructor === undefined) throw new TypeError(`${renderType(expression.type)} has no alternative ${index}`);
-    const bindings = [...constructor.fields]
-      .reverse()
-      .map((field): Binding => ({
-        kind: 'expression',
-        value: constructorFieldAccess(scrutinee, field.name, expression.type, context),
-      }));
+    const bindings = [...constructor.fields].reverse().map((field): Binding => ({
+      kind: 'expression',
+      value: constructorFieldAccess(scrutinee, field.name, expression.type),
+    }));
     return {
       constructor: constructor.name,
       value: emitExpression(entry.value, [...bindings, ...scope], allocator, context),
@@ -3706,7 +3685,6 @@ function callPrelude(context: EmitContext, name: string, argumentsList: readonly
     argumentsList,
   );
 }
-
 
 function conjunction(operands: readonly ts.Expression[]): ts.Expression {
   const [first, ...rest] = operands;

@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "file": "Bits.ts",
+  "sourceRoot": "",
+  "sources": [
+    "../../../../../../../../lean/TSLean/Examples/Roundtrip/Bits.lean"
+  ],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;AAEA"
+}

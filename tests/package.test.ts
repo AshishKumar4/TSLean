@@ -36,6 +36,10 @@ describe('package contents', () => {
         types: './dist/lean-to-typescript/index.d.ts',
         import: './dist/lean-to-typescript/index.js',
       },
+      './roundtrip': {
+        types: './dist/roundtrip/index.d.ts',
+        import: './dist/roundtrip/index.js',
+      },
     });
   });
 

@@ -33,7 +33,12 @@ import {
   TyTuple, TyFn, TyMap, TyRef, TyVar,
   litStr, litNat, litBool, litUnit, varExpr, holeExpr, defaultForIRType,
 } from '../ir/types.js';
-import { mapType, extractStructFields, extractTypeParams, detectDiscriminatedUnion } from '../typemap/index.js';
+import {
+  mapType, extractStructFields, extractTypeParams, detectDiscriminatedUnion,
+  describeStringEnumeration, expectedStringEnumeration, stringEnumerationMembers,
+  TAGGED_OPTION, taggedOptionElement,
+  type StringEnumeration,
+} from '../typemap/index.js';
 import { inferNodeEffect } from '../effects/index.js';
 import { hasDOPattern, CF_AMBIENT, makeAmbientHost, DO_LEAN_IMPORTS } from '../do-model/ambient.js';
 import { lookupGlobal } from '../stdlib/index.js';
@@ -136,6 +141,17 @@ function findProjectRoot(file: string): string {
 /** Files that mark the root of a TypeScript project, nearest one wins. */
 const PROJECT_MARKERS = ['tsconfig.json', 'package.json'] as const;
 
+/**
+ * The comparison operators that make each operand the other's expected type.
+ * `==`/`!=` are included because TypeScript applies the same comparability rule to them.
+ */
+const EQUALITY_TOKENS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+]);
+
 // ─── Parser context ────────────────────────────────────────────────────────────
 
 class ParserCtx {
@@ -172,6 +188,52 @@ class ParserCtx {
     return mapType(this.checker.getTypeAtLocation(node), this.checker);
   }
 
+  /**
+   * The enumeration a string literal has to name at this position, or `null` when the
+   * position expects a plain string.
+   *
+   * `getContextualType` answers wherever TypeScript propagates a type inward: a return
+   * expression, a conditional branch, a call argument, an initialiser. An equality
+   * comparison is the one position it does not answer for, because TypeScript types each
+   * operand on its own and only requires the two to be comparable; there the expected type
+   * is the other operand's. That operand is read at its declaration rather than at the
+   * comparison, because narrowing shrinks its type to a subset of the enumeration and drops
+   * the alias the constructors are named under.
+   */
+  private enumerationAt(node: ts.Expression): StringEnumeration | null {
+    const parent = node.parent;
+    if (ts.isBinaryExpression(parent) && EQUALITY_TOKENS.has(parent.operatorToken.kind)) {
+      const other = parent.left === node ? parent.right : parent.left;
+      const symbol = this.checker.getSymbolAtLocation(other);
+      const declaration = symbol?.valueDeclaration;
+      return expectedStringEnumeration(
+        declaration && symbol
+          ? this.checker.getTypeOfSymbolAtLocation(symbol, declaration)
+          : this.checker.getTypeAtLocation(other),
+        this.checker,
+      );
+    }
+    const contextual = this.checker.getContextualType(node);
+    return contextual === undefined ? null : expectedStringEnumeration(contextual, this.checker);
+  }
+
+  /**
+   * A string literal in a position that expects an enumeration denotes that
+   * enumeration's constructor; anywhere else it stays a string.
+   */
+  private parseStringLiteral(node: ts.StringLiteralLike): IRExpr {
+    const enumeration = this.enumerationAt(node);
+    if (enumeration === null || !enumeration.members.includes(node.text)) return litStr(node.text);
+    return {
+      tag: 'CtorApp',
+      ctor: `${enumeration.name}.${node.text}`,
+      args: [],
+      cases: enumeration.members,
+      type: TyRef(enumeration.name),
+      effect: Pure,
+    };
+  }
+
   parseModule(): IRModule {
     const name = fileToModuleName(this.sf.fileName);
     const decls: IRDecl[] = [];
@@ -196,9 +258,15 @@ class ParserCtx {
 
   // ─── Imports ──────────────────────────────────────────────────────────────
 
+  /**
+   * Record an import and every name it binds.
+   *
+   * TypeScript erases a type-only import; Lean does not. A Lean structure or inductive is a
+   * type, and the emitted module names it, so a type-only import still has to reach the Lean
+   * import list and its names still have to be known as coming from that module.
+   */
   private collectImport(node: ts.ImportDeclaration): void {
     const spec = (node.moduleSpecifier as ts.StringLiteral).text;
-    if (node.importClause?.isTypeOnly) return;  // type-only imports have no runtime value
     const lean = this.tsModToLean(spec);
 
     // Side-effect import: `import './setup'`
@@ -209,13 +277,13 @@ class ParserCtx {
 
     const names: string[] = [];
     const imp: IRImport = { module: lean };
+    if (spec.startsWith('.')) imp.isGenerated = true;
+    if (node.importClause.isTypeOnly) imp.isTypeOnly = true;
 
     if (node.importClause.name) names.push(node.importClause.name.text);
     if (node.importClause.namedBindings) {
       if (ts.isNamedImports(node.importClause.namedBindings)) {
-        for (const el of node.importClause.namedBindings.elements) {
-          if (!el.isTypeOnly) names.push(el.name.text);
-        }
+        for (const el of node.importClause.namedBindings.elements) names.push(el.name.text);
       } else if (ts.isNamespaceImport(node.importClause.namedBindings)) {
         imp.isNamespace = true;
         imp.namespaceAlias = node.importClause.namedBindings.name.text;
@@ -372,7 +440,56 @@ class ParserCtx {
 
   // ─── Class declarations ────────────────────────────────────────────────────
 
+  /**
+   * A class whose fields are all `readonly` and whose members never assign to `this`
+   * carries no state: it is a value, and its Lean image is a `structure` under the same
+   * name with one definition per method. A class that does mutate keeps the state model
+   * below, where the structure holds the state and the constructor initialises it.
+   */
+  private isValueObjectClass(node: ts.ClassDeclaration): boolean {
+    if ((node.heritageClauses?.length ?? 0) > 0) return false;
+    if (node.members.filter(ts.isConstructorDeclaration).length > 1) return false;
+    let fields = 0;
+    for (const member of node.members) {
+      if (ts.isSetAccessorDeclaration(member)) return false;
+      if (!ts.isPropertyDeclaration(member)) continue;
+      const modifiers = ts.getCombinedModifierFlags(member);
+      if ((modifiers & ts.ModifierFlags.Static) !== 0) return false;
+      if ((modifiers & ts.ModifierFlags.Readonly) === 0) return false;
+      fields++;
+    }
+    if (fields === 0) return false;
+    return !node.members.some(
+      (member) => !ts.isConstructorDeclaration(member) && assignsToThis(member),
+    );
+  }
+
+  /** The structure a value-object class denotes, and one definition per method. */
+  private parseValueObjectClass(node: ts.ClassDeclaration): IRDecl[] {
+    const name = node.name?.text ?? 'AnonClass';
+    const typeParams = extractTypeParams(node, this.checker);
+    const fields = node.members.filter(ts.isPropertyDeclaration).map((member) => ({
+      name: member.name.getText(member.getSourceFile()),
+      type: mapType(this.checker.getTypeAtLocation(member), this.checker),
+    }));
+    const decls: IRDecl[] = [{
+      tag: 'StructDef', name, typeParams, fields,
+      deriving: ['Repr', 'BEq'],
+      comment: leadingComment(node, this.sf),
+    }];
+    for (const member of node.members) {
+      const decl = ts.isMethodDeclaration(member)
+        ? this.parseMethod(member, name, name)
+        : ts.isGetAccessorDeclaration(member)
+          ? this.parseGetter(member, name, name)
+          : null;
+      if (decl) decls.push(decl);
+    }
+    return decls;
+  }
+
   private parseClassDecl(node: ts.ClassDeclaration): IRDecl[] {
+    if (this.isValueObjectClass(node)) return this.parseValueObjectClass(node);
     const name  = node.name?.text ?? 'AnonClass';
     const classTPs = extractTypeParams(node, this.checker);  // class type params (e.g. T from Stack<T>)
     const isDO  = this.isDOClass(node);
@@ -590,6 +707,9 @@ class ParserCtx {
     const ty   = this.checker.getTypeAtLocation(node);
 
     if (ty.isUnion()) {
+      // The generated tagged encoding of `Option A` is Lean's own `Option`, so the alias
+      // introduces no type. Declaring one here would shadow `Option` for the whole module.
+      if (taggedOptionElement(ty, this.checker) !== null) return [];
       const disc = detectDiscriminatedUnion(ty as ts.UnionType, this.checker);
       if (disc) {
         return {
@@ -601,12 +721,14 @@ class ParserCtx {
           comment: leadingComment(node, this.sf),
         };
       }
-      // String literal union → simple inductive
-      const members = (ty as ts.UnionType).types;
-      if (members.every(m => m.flags & ts.TypeFlags.StringLiteral)) {
+      // A union of string literals is an enumeration whose constructors are the
+      // literals. A union that cannot name its constructors falls through to the
+      // plain alias below, where the members stay strings.
+      const members = stringEnumerationMembers(ty);
+      if (members) {
         return {
           tag: 'InductiveDef', name, typeParams: tps,
-          ctors: members.map(m => ({ name: capitalize((m as ts.StringLiteralType).value), fields: [] })),
+          ctors: members.map(m => ({ name: m, fields: [] })),
           comment: leadingComment(node, this.sf),
         };
       }
@@ -1289,7 +1411,7 @@ class ParserCtx {
         : { tag: 'LitFloat', value: v, type: TyFloat, effect: Pure };
     }
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))
-      return litStr(node.text);
+      return this.parseStringLiteral(node);
     if (ts.isTemplateExpression(node)) return this.parseTemplate(node);
     if (node.kind === ts.SyntaxKind.TrueKeyword)  return litBool(true);
     if (node.kind === ts.SyntaxKind.FalseKeyword) return litBool(false);
@@ -1541,7 +1663,58 @@ class ParserCtx {
       return holeExpr(ty);  // new Promise(...) can't be directly expressed in Lean
     if (name === 'URL')
       return { tag: 'App', fn: varExpr('URL.parse'), args, type: ty, effect: Pure };
+    const valueObject = this.constructedValueObject(node);
+    if (valueObject !== null) return this.parseValueObjectLiteral(node, valueObject, ty);
     return { tag: 'CtorApp', ctor: name, args, type: ty, effect: combineEffects(args.map(a => a.effect)) };
+  }
+
+  /** The value-object class this `new` builds, or `null` when it builds something else. */
+  private constructedValueObject(node: ts.NewExpression): ts.ClassDeclaration | null {
+    const symbol = this.checker.getSymbolAtLocation(node.expression);
+    if (symbol === undefined) return null;
+    // An imported class reaches the site as an alias, so the class itself is one hop away.
+    const resolved = (symbol.flags & ts.SymbolFlags.Alias) === 0 ? symbol : this.checker.getAliasedSymbol(symbol);
+    const declaration = resolved.declarations?.find(ts.isClassDeclaration);
+    return declaration !== undefined && this.isValueObjectClass(declaration) ? declaration : null;
+  }
+
+  /**
+   * A value object has no constructor in Lean: its structure literal is the construction.
+   * The single initialiser argument supplies every field, either as an object literal
+   * written at the site or as a value the fields are read from.
+   */
+  private parseValueObjectLiteral(
+    node: ts.NewExpression,
+    declaration: ts.ClassDeclaration,
+    type: IRType,
+  ): IRExpr {
+    const typeName = declaration.name?.text ?? 'AnonClass';
+    const initialiser = (node.arguments ?? [])[0];
+    const written = initialiser !== undefined && ts.isObjectLiteralExpression(initialiser)
+      ? new Map(initialiser.properties.filter(ts.isPropertyAssignment)
+          .map((property) => [property.name.getText(this.sf), property.initializer]))
+      : null;
+    const source = written === null && initialiser !== undefined ? this.parseExpr(initialiser) : null;
+    // The class may be declared in another file, so each name is read from the file it is in.
+    const fields = declaration.members.filter(ts.isPropertyDeclaration).map((member) => {
+      const name = member.name.getText(member.getSourceFile());
+      const fieldType = mapType(this.checker.getTypeAtLocation(member), this.checker);
+      const value = written?.get(name);
+      if (value !== undefined) return { name, value: this.parseExpr(value) };
+      return {
+        name,
+        value: source === null
+          ? defaultForIRType(fieldType, this.spanOf(node))
+          : { tag: 'FieldAccess' as const, obj: source, field: name, type: fieldType, effect: source.effect },
+      };
+    });
+    return {
+      tag: 'StructLit',
+      typeName,
+      fields,
+      type,
+      effect: combineEffects(fields.map((field) => field.value.effect)),
+    };
   }
 
   private parseLambda(node: ts.ArrowFunction | ts.FunctionExpression): IRExpr {
@@ -1568,7 +1741,65 @@ class ParserCtx {
     const right = this.parseExpr(node.right);
     const irOp  = tsBinOp(op);
     if (!irOp) return holeExpr(ty);
+    if (irOp === 'Eq' || irOp === 'Ne') {
+      const decided = this.compareEnumerations(node, left, right, irOp === 'Eq');
+      if (decided !== null) return decided;
+    }
     return { tag: 'BinOp', op: irOp, left, right, type: ty, effect: combineEffects([left.effect, right.effect]) };
+  }
+
+  /**
+   * Compare two values of one enumeration by deciding both, or `null` when the comparison is
+   * not between two enumeration values.
+   *
+   * Lean's derived equality on an inductive compares constructor indices through `Nat.decEq`,
+   * which the Lean-to-TypeScript fragment does not admit, so an emitted `==` would leave the
+   * round trip. A pair of nested matches names only the constructors themselves. A literal
+   * operand is not handled here: it already denotes a constructor, and one match decides it.
+   */
+  private compareEnumerations(
+    node: ts.BinaryExpression,
+    left: IRExpr,
+    right: IRExpr,
+    wanted: boolean,
+  ): IRExpr | null {
+    if (ts.isStringLiteral(node.left) || ts.isStringLiteral(node.right)) return null;
+    const enumeration = describeStringEnumeration(this.declaredTypeOf(node.left));
+    if (enumeration === null) return null;
+    const other = describeStringEnumeration(this.declaredTypeOf(node.right));
+    if (other === null || other.name !== enumeration.name ||
+        other.members.length !== enumeration.members.length ||
+        other.members.some((member, index) => member !== enumeration.members[index])) return null;
+
+    const inner = (outerCase: string): IRExpr => ({
+      tag: 'Match',
+      scrutinee: right,
+      cases: enumeration.members.map((innerCase) => ({
+        pattern: { tag: 'PCtor', ctor: `${enumeration.name}.${innerCase}`, args: [] },
+        body: litBool((innerCase === outerCase) === wanted),
+      })),
+      type: TyBool,
+      effect: right.effect,
+    });
+    return {
+      tag: 'Match',
+      scrutinee: left,
+      cases: enumeration.members.map((outerCase) => ({
+        pattern: { tag: 'PCtor', ctor: `${enumeration.name}.${outerCase}`, args: [] },
+        body: inner(outerCase),
+      })),
+      type: TyBool,
+      effect: combineEffects([left.effect, right.effect]),
+    };
+  }
+
+  /** The type a name was declared with, which narrowing at a use site does not change. */
+  private declaredTypeOf(node: ts.Expression): ts.Type {
+    const symbol = this.checker.getSymbolAtLocation(node);
+    const declaration = symbol?.valueDeclaration;
+    return declaration !== undefined && symbol !== undefined
+      ? this.checker.getTypeOfSymbolAtLocation(symbol, declaration)
+      : this.checker.getTypeAtLocation(node);
   }
 
   private parsePrefix(node: ts.PrefixUnaryExpression): IRExpr {
@@ -1592,7 +1823,34 @@ class ParserCtx {
     return { tag: 'Assign', target: operand, value: mkBinOp('Sub', operand, litNat(1)), type: TyUnit, effect: stateEffect(TyUnit) };
   }
 
+  /**
+   * The option a literal denotes, when it is written in the generated tagged encoding.
+   *
+   * The absent case is Lean's `none`. The present case is its payload alone, because Lean
+   * coerces a value into `Option`, which is what the `A | undefined` spelling already
+   * produces. Both spellings therefore reach the same Lean term.
+   */
+  private taggedOption(node: ts.ObjectLiteralExpression): IRExpr | null {
+    const contextual = this.checker.getContextualType(node);
+    if (contextual === undefined) return null;
+    const element = taggedOptionElement(contextual, this.checker);
+    if (element === null) return null;
+    const assignments = node.properties.filter(ts.isPropertyAssignment);
+    const named = (field: string): ts.Expression | undefined => assignments
+      .find((entry) => ts.isIdentifier(entry.name) && entry.name.text === field)?.initializer;
+    const tag = named(TAGGED_OPTION.tag);
+    if (tag === undefined || !ts.isStringLiteralLike(tag)) return null;
+    if (tag.text === TAGGED_OPTION.absent) {
+      return { ...varExpr('none'), type: TyOption(mapType(element, this.checker)) };
+    }
+    if (tag.text !== TAGGED_OPTION.present) return null;
+    const value = named(TAGGED_OPTION.value);
+    return value === undefined ? null : this.parseExpr(value);
+  }
+
   private parseObjLit(node: ts.ObjectLiteralExpression): IRExpr {
+    const option = this.taggedOption(node);
+    if (option !== null) return option;
     const ty = this.typeOf(node);
     // Prefer contextual type name (e.g., function return type) over resolved anonymous type
     let typeName = ty.tag === 'TypeRef' ? ty.name : ty.tag === 'Structure' ? ty.name : 'AnonStruct';
@@ -1698,6 +1956,24 @@ class ParserCtx {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Whether any assignment inside this member writes a field of `this`. */
+function assignsToThis(node: ts.Node): boolean {
+  let writes = false;
+  const walk = (current: ts.Node): void => {
+    if (writes) return;
+    if (ts.isBinaryExpression(current) &&
+        (current.operatorToken.kind === ts.SyntaxKind.EqualsToken || isCompoundAssign(current.operatorToken.kind)) &&
+        ts.isPropertyAccessExpression(current.left) &&
+        current.left.expression.kind === ts.SyntaxKind.ThisKeyword) {
+      writes = true;
+      return;
+    }
+    ts.forEachChild(current, walk);
+  };
+  walk(node);
+  return writes;
+}
 
 function seq(a: IRExpr, b: IRExpr): IRExpr {
   if (b.tag === 'LitUnit') return a;

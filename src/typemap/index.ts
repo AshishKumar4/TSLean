@@ -31,7 +31,7 @@ import {
   TyOption, TyArray, TyTuple, TyFn, TyMap, TySet, TyPromise,
   TyRef, TyVar, TypeParam,
 } from '../ir/types.js';
-import { DISCRIMINANT_FIELDS } from '../utils.js';
+import { DISCRIMINANT_FIELDS, isLeanIdentifier } from '../utils.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────────
 
@@ -206,11 +206,17 @@ export function mapType(t: ts.Type, checker: ts.TypeChecker, depth = 0): IRType 
 function mapUnion(t: ts.UnionType, checker: ts.TypeChecker, depth: number): IRType {
   const types = t.types;
 
-  // T | undefined/null → Option T
+  // T | undefined/null → Option T. TypeScript flattens the union when T is itself a
+  // union, so the members no longer say which alias was written; rebuilding the
+  // non-nullable type recovers it, and recovers nothing when there was no alias.
   const withoutNil = types.filter(x => !(x.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)));
-  if (withoutNil.length === 1 && withoutNil.length < types.length)
-    return TyOption(mapType(withoutNil[0], checker, depth + 1));
+  if (withoutNil.length > 0 && withoutNil.length < types.length)
+    return TyOption(mapType(checker.getNonNullableType(t), checker, depth + 1));
 
+  // The generated tagged encoding of `Option A` denotes the same Lean type as `A | undefined`.
+  // Without this it would become a second, locally declared inductive that shadows Lean's own.
+  const element = taggedOptionElement(t, checker);
+  if (element !== null) return TyOption(mapType(element, checker, depth + 1));
   // All string literals → use the alias name if available
   if (types.every(x => x.flags & ts.TypeFlags.StringLiteral)) {
     const alias = getAliasName(t);
@@ -434,6 +440,101 @@ export function detectDiscriminatedUnion(
     if (info) return info;
   }
   return null;
+}
+
+// ─── String enumerations ────────────────────────────────────────────────────────
+
+/** A named union of string literals and the constructors it names. */
+export interface StringEnumeration {
+  /** The alias the union is declared under, which is also the Lean type name. */
+  readonly name: string;
+  /** The literals, in declaration order. Each one is also a Lean constructor name. */
+  readonly members: readonly string[];
+}
+
+/**
+ * The literals of a union of string literals, or `null` when the union is something else.
+ *
+ * The literals are the constructor names. TypeScript and Lean therefore name the same
+ * cases, and a value keeps its name through a compilation in either direction. A literal
+ * that is not a Lean identifier cannot name a constructor, so the whole union stops being
+ * an enumeration rather than getting a renamed case that no longer corresponds.
+ */
+export function stringEnumerationMembers(t: ts.Type): readonly string[] | null {
+  if (!t.isUnion()) return null;
+  const members: string[] = [];
+  for (const member of t.types) {
+    if ((member.flags & ts.TypeFlags.StringLiteral) === 0) return null;
+    const literal = (member as ts.StringLiteralType).value;
+    if (!isLeanIdentifier(literal)) return null;
+    members.push(literal);
+  }
+  return members.length > 0 ? members : null;
+}
+
+/**
+ * The enumeration a type denotes, when it is a union of string literals behind a
+ * name. An unnamed union has no Lean type to hang the constructors on, and a generic
+ * alias is not an enumeration, so both answer `null`.
+ */
+export function describeStringEnumeration(t: ts.Type): StringEnumeration | null {
+  const alias = getAliasSymbol(t);
+  if (alias === undefined || !isLeanIdentifier(alias.name)) return null;
+  if ((t.aliasTypeArguments?.length ?? 0) > 0) return null;
+  const members = stringEnumerationMembers(t);
+  return members === null ? null : { name: alias.name, members };
+}
+
+/** How the Lean-to-TypeScript emitter spells an `Option`: the one source of truth for it. */
+export const TAGGED_OPTION = Object.freeze({
+  tag: 'kind',
+  value: 'value',
+  absent: 'none',
+  present: 'some',
+});
+
+/**
+ * The element type of the generated option encoding, or `null` when the type is not one.
+ *
+ * The Lean-to-TypeScript emitter writes `Option A` as a tagged union rather than as
+ * `A | undefined`, so that a present `undefined` stays distinct from an absent value. Both
+ * spellings denote the same Lean `Option`, so this recognises the tagged one structurally
+ * and never by the name a module happened to give the alias.
+ */
+export function taggedOptionElement(t: ts.Type, checker: ts.TypeChecker): ts.Type | null {
+  if (!t.isUnion() || t.types.length !== 2) return null;
+  let absent = false;
+  let present: ts.Type | null = null;
+  for (const member of t.types) {
+    const tag = member.getProperty(TAGGED_OPTION.tag);
+    if (tag === undefined) return null;
+    const tagType = checker.getTypeOfSymbol(tag);
+    if (!tagType.isStringLiteral()) return null;
+    const properties = member.getProperties();
+    if (tagType.value === TAGGED_OPTION.absent && properties.length === 1) {
+      absent = true;
+      continue;
+    }
+    if (tagType.value !== TAGGED_OPTION.present || properties.length !== 2) return null;
+    const value = member.getProperty(TAGGED_OPTION.value);
+    if (value === undefined) return null;
+    present = checker.getTypeOfSymbol(value);
+  }
+  return absent && present !== null ? present : null;
+}
+
+/**
+ * The enumeration a value at this position may name, looking through an optional wrapper.
+ *
+ * A position typed `E | undefined` still expects one of `E`'s cases whenever it is filled,
+ * and TypeScript flattens that union so the members alone no longer name `E`. Rebuilding the
+ * non-nullable type recovers the name.
+ */
+export function expectedStringEnumeration(t: ts.Type, checker: ts.TypeChecker): StringEnumeration | null {
+  const direct = describeStringEnumeration(t);
+  if (direct !== null) return direct;
+  if (!t.isUnion() || !t.types.some((member) => (member.flags & ts.TypeFlags.Undefined) !== 0)) return null;
+  return describeStringEnumeration(checker.getNonNullableType(t));
 }
 
 function tryField(types: ts.ObjectType[], field: string, checker: ts.TypeChecker): DiscriminantInfo | null {

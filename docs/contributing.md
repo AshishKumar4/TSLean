@@ -73,7 +73,6 @@ TSLean/
 │   │   ├── module-resolver.ts  File → Lean module name (158 lines)
 │   │   ├── reader.ts           tsconfig.json reader (180 lines)
 │   │   └── lakefile-gen.ts     lakefile.toml generator (67 lines)
-│   ├── verification/         Proof obligation generator (112 lines)
 │   ├── errors.ts             Structured error codes (172 lines)
 │   ├── sorry-tracker.ts      Sorry/degradation tracking (75 lines)
 │   ├── timing.ts             Pipeline timing (59 lines)
@@ -89,7 +88,6 @@ TSLean/
 │       ├── Verification/       ProofObligation, Invariants, Tactics
 │       ├── Stubs/              Node.js API stubs (axiomatized)
 │       ├── External/           Third-party package stubs
-│       ├── Proofs/             Transpiler correctness proofs
 │       ├── Generated/          Auto-generated transpiler output
 │       └── Veil/               Veil DSL for DO specification
 ├── tests/                  Vitest test suite and semantic corpus obligations
@@ -281,7 +279,6 @@ bun vitest tests/codegen.test.ts
 | Stdlib | `stdlib.test.ts`, `stdlib-mapping.test.ts` | Method lookup tables, end-to-end mapping |
 | IR | `ir.test.ts`, `ir-v3.test.ts` | IR type constructors and helpers |
 | Rewrite | `rewrite.test.ts` | Discriminated union pattern normalization |
-| Verification | `verification.test.ts` | Proof obligation generation |
 | Integration | `integration.test.ts`, `pipeline-full.test.ts` | Full parse → rewrite → codegen |
 | Project | `project.test.ts`, `project-v3.test.ts`, `module-system.test.ts` | Multi-file, dependency graph, module resolver |
 | E2E | `e2e/cli.test.ts`, `e2e/cli-subcommands.test.ts`, `e2e/advanced.test.ts`, `e2e/project.test.ts`, `e2e-v3.test.ts` | CLI spawning, full pipeline |

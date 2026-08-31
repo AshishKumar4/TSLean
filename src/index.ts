@@ -34,3 +34,37 @@ export type {
   LeanToTypeScriptSemanticIdentity,
   LeanToTypeScriptSourceSpan,
 } from './lean-to-typescript/index.js';
+
+export { leanAccepts, leanRun, PACKAGED_LEAN_PROJECT, pinnedLeanToolchain } from './lean-check.js';
+export type { LeanAcceptance, LeanCheckOptions, LeanDiagnostic, LeanModuleSource, LeanRun } from './lean-check.js';
+
+export {
+  compareBehaviour,
+  DEFAULT_BEHAVIOUR_LIMIT,
+  domainSize,
+  enumerateTuples,
+  enumerateValues,
+  profileModule,
+  projectModule,
+  renderValue,
+  resolveProfileType,
+  verifyLeanToTypeScriptRoundtrip,
+  verifyTypeScriptToLeanRoundtrip,
+} from './roundtrip/index.js';
+export type {
+  BehaviourDisagreement,
+  BehaviourReport,
+  BehaviourRequest,
+  ModuleProfile,
+  ObservedFunction,
+  ProfileDeclaration,
+  ProfileField,
+  ProfileRefusal,
+  ProfileType,
+  ProfileValue,
+  ProjectedModule,
+  RoundtripCheck,
+  RoundtripCounterexample,
+  RoundtripOptions,
+  RoundtripReport,
+} from './roundtrip/index.js';

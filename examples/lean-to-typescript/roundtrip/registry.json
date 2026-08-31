@@ -1,0 +1,195 @@
+[
+  {
+    "name": "Parity",
+    "module": "TSLean.Examples.Roundtrip.Parity",
+    "source": "lean/TSLean/Examples/Roundtrip/Parity.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Parity.step"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Parity/generated"
+  },
+  {
+    "name": "Sign",
+    "module": "TSLean.Examples.Roundtrip.Sign",
+    "source": "lean/TSLean/Examples/Roundtrip/Sign.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Sign.negate"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Sign/generated"
+  },
+  {
+    "name": "Bits",
+    "module": "TSLean.Examples.Roundtrip.Bits",
+    "source": "lean/TSLean/Examples/Roundtrip/Bits.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Bits.Bits.exclusive",
+      "TSLean.Examples.Roundtrip.Bits.Bits.anySet"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Bits/generated"
+  },
+  {
+    "name": "Tribool",
+    "module": "TSLean.Examples.Roundtrip.Tribool",
+    "source": "lean/TSLean/Examples/Roundtrip/Tribool.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Tribool.notT",
+      "TSLean.Examples.Roundtrip.Tribool.andT"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Tribool/generated"
+  },
+  {
+    "name": "Severity",
+    "module": "TSLean.Examples.Roundtrip.Severity",
+    "source": "lean/TSLean/Examples/Roundtrip/Severity.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Severity.atLeast",
+      "TSLean.Examples.Roundtrip.Severity.worst"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Severity/generated"
+  },
+  {
+    "name": "Access",
+    "module": "TSLean.Examples.Roundtrip.Access",
+    "source": "lean/TSLean/Examples/Roundtrip/Access.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Access.Permissions.admits"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Access/generated"
+  },
+  {
+    "name": "Lifecycle",
+    "module": "TSLean.Examples.Roundtrip.Lifecycle",
+    "source": "lean/TSLean/Examples/Roundtrip/Lifecycle.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Lifecycle.advance",
+      "TSLean.Examples.Roundtrip.Lifecycle.terminal"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Lifecycle/generated"
+  },
+  {
+    "name": "Choice",
+    "module": "TSLean.Examples.Roundtrip.Choice",
+    "source": "lean/TSLean/Examples/Roundtrip/Choice.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Choice.choose"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Choice/generated"
+  },
+  {
+    "name": "Priority",
+    "module": "TSLean.Examples.Roundtrip.Priority",
+    "source": "lean/TSLean/Examples/Roundtrip/Priority.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Priority.before"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Priority/generated"
+  },
+  {
+    "name": "Flags",
+    "module": "TSLean.Examples.Roundtrip.Flags",
+    "source": "lean/TSLean/Examples/Roundtrip/Flags.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Flags.Flags.union",
+      "TSLean.Examples.Roundtrip.Flags.Flags.meet"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Flags/generated"
+  },
+  {
+    "name": "Direction",
+    "module": "TSLean.Examples.Roundtrip.Direction",
+    "source": "lean/TSLean/Examples/Roundtrip/Direction.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Direction.opposite",
+      "TSLean.Examples.Roundtrip.Direction.clockwise"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Direction/generated"
+  },
+  {
+    "name": "Suit",
+    "module": "TSLean.Examples.Roundtrip.Suit",
+    "source": "lean/TSLean/Examples/Roundtrip/Suit.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Suit.colourOf",
+      "TSLean.Examples.Roundtrip.Suit.sameColour"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Suit/generated"
+  },
+  {
+    "name": "Traffic",
+    "module": "TSLean.Examples.Roundtrip.Traffic",
+    "source": "lean/TSLean/Examples/Roundtrip/Traffic.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Traffic.next",
+      "TSLean.Examples.Roundtrip.Traffic.mayCross"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Traffic/generated"
+  },
+  {
+    "name": "Guard",
+    "module": "TSLean.Examples.Roundtrip.Guard",
+    "source": "lean/TSLean/Examples/Roundtrip/Guard.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Guard.verdictOf",
+      "TSLean.Examples.Roundtrip.Guard.admitted"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Guard/generated"
+  },
+  {
+    "name": "Window",
+    "module": "TSLean.Examples.Roundtrip.Window",
+    "source": "lean/TSLean/Examples/Roundtrip/Window.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Window.Window.fullyOpen",
+      "TSLean.Examples.Roundtrip.Window.Window.flip"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Window/generated"
+  },
+  {
+    "name": "Vote",
+    "module": "TSLean.Examples.Roundtrip.Vote",
+    "source": "lean/TSLean/Examples/Roundtrip/Vote.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Vote.pair",
+      "TSLean.Examples.Roundtrip.Vote.carried"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Vote/generated"
+  },
+  {
+    "name": "Route",
+    "module": "TSLean.Examples.Roundtrip.Route",
+    "source": "lean/TSLean/Examples/Roundtrip/Route.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Route.routeOf"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Route/generated"
+  },
+  {
+    "name": "Retry",
+    "module": "TSLean.Examples.Roundtrip.Retry",
+    "source": "lean/TSLean/Examples/Roundtrip/Retry.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Retry.recover"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Retry/generated"
+  },
+  {
+    "name": "Consent",
+    "module": "TSLean.Examples.Roundtrip.Consent",
+    "source": "lean/TSLean/Examples/Roundtrip/Consent.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Consent.granted"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Consent/generated"
+  },
+  {
+    "name": "Tier",
+    "module": "TSLean.Examples.Roundtrip.Tier",
+    "source": "lean/TSLean/Examples/Roundtrip/Tier.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Tier.floorOf",
+      "TSLean.Examples.Roundtrip.Tier.isDirect",
+      "TSLean.Examples.Roundtrip.Tier.honours"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Tier/generated"
+  }
+]

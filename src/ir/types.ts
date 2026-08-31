@@ -236,7 +236,9 @@ export type IRExpr =
   | ({ tag: 'Return';     value: IRExpr }                                  & IRNode)
   // Constructors and literals (compound)
   | ({ tag: 'StructLit'; typeName: string; fields: Array<{ name: string; value: IRExpr }> } & IRNode)
-  | ({ tag: 'CtorApp';   ctor: string; args: IRExpr[] }                    & IRNode)
+  // `cases` lists every constructor of the enumeration `ctor` belongs to, so a consumer can
+  // decide the constructor exhaustively instead of relying on a derived equality.
+  | ({ tag: 'CtorApp';   ctor: string; args: IRExpr[]; cases?: readonly string[] } & IRNode)
   | ({ tag: 'ArrayLit';  elems: IRExpr[] }                                 & IRNode)
   | ({ tag: 'TupleLit';  elems: IRExpr[] }                                 & IRNode)
   // Monadic / do-notation
@@ -362,6 +364,12 @@ export interface IRImport {
   isNamespace?: boolean;      // true for `import * as X from '...'`
   namespaceAlias?: string;    // the alias name for namespace imports
   isSideEffect?: boolean;     // true for `import './setup'` (no bindings)
+  /**
+   * True when the specifier was relative, so the imported module is one the compiler
+   * generates for a sibling source rather than a runtime or external module. Only a
+   * generated sibling can be opened, because a runtime module's namespace is not its path.
+   */
+  isGenerated?: boolean;
   isReExport?: boolean;       // true for `export { X } from '...'`
   isReExportAll?: boolean;    // true for `export * from '...'`
 }

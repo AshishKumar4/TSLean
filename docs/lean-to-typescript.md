@@ -2,7 +2,7 @@
 
 # Lean to TypeScript
 
-Lean to TypeScript is TSLean's primary compiler. It supports a proof-oriented workflow for software that must run in TypeScript environments:
+Lean to TypeScript supports a proof-oriented workflow for software that must run in TypeScript environments:
 
 1. define executable behavior in Lean;
 2. state and prove the properties that matter;

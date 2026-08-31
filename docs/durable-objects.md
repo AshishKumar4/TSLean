@@ -2,7 +2,7 @@
 
 # TypeScript-to-Lean Durable Object Support
 
-The secondary TypeScript-to-Lean compiler detects supported Durable Object patterns,
+The TypeScript-to-Lean compiler detects supported Durable Object patterns,
 injects typed ambient declarations, and maps admitted storage, WebSocket, alarm, and
 binding operations to the Lean runtime model.
 

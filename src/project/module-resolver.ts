@@ -3,14 +3,7 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
-import { capitalize } from '../utils.js';
-
-// Lean 4 reserved words that would collide with module/namespace names.
-const LEAN_RESERVED = new Set([
-  'String', 'Nat', 'Int', 'Float', 'Bool', 'Unit', 'IO', 'Type', 'Prop',
-  'Array', 'List', 'Option', 'Except', 'True', 'False', 'And', 'Or', 'Not',
-  'Set', 'Map', 'Monad', 'Functor', 'Pure', 'Bind',
-]);
+import { capitalize, LEAN_RESERVED } from '../utils.js';
 
 /** Convert a kebab-or-snake-cased path segment to PascalCase.
  *  `auth-service` → `AuthService`, `counter_do` → `CounterDo` */

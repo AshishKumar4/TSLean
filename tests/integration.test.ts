@@ -79,7 +79,10 @@ describe('Integration: generics/discriminated-unions.ts', () => {
   it('NO string literal in match',   () => { const idx = code.indexOf('def areaShape'); const fn = code.slice(idx, code.indexOf('\ndef ', idx + 1) || undefined); expect(fn).not.toContain('"circle"'); });
   it('dot constructor in match arm', () => { const idx = code.indexOf('def areaShape'); const fn = code.slice(idx, code.indexOf('\ndef ', idx + 1) || undefined); expect(fn).toMatch(/\.\s*Circle/); });
   it('Color inductive',              () => expect(code).toContain('inductive Color'));
-  it('Red constructor',              () => expect(code).toContain('| Red'));
+  // A constructor is named by the literal it came from, so TypeScript and Lean name the
+  // same case and a value survives a compilation in either direction.
+  it('red constructor',              () => expect(code).toContain('| red'));
+  it('no renamed constructor',       () => expect(code).not.toContain('| Red'));
   it('Tree inductive',               () => expect(code).toContain('inductive Tree'));
   it('no switch/case syntax',        () => expect(code).not.toContain('switch'));
   it('no break keyword',             () => expect(code).not.toContain('break'));

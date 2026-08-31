@@ -62,7 +62,9 @@ describe('V2 codegen: basic outputs', () => {
     expect(output).toContain('deriving Repr, BEq, Inhabited');
 
     expect(output).toContain('inductive Color where');
-    expect(output).toContain('| Red');
+    // Constructors are named by the literals they came from, not by a case change.
+    expect(output).toContain('| red');
+    expect(output).not.toContain('| Red');
 
     // Generic inductive
     expect(output).toContain('inductive Tree (T : Type) where');

@@ -80,11 +80,16 @@ describe('Parser: export default { method() {} }', () => {
 // ─── Type-only imports ────────────────────────────────────────────────────────
 
 describe('Parser: type-only imports', () => {
-  it('import type { X } does not add a names import', () => {
+  it('import type { X } keeps the module and the name it binds', () => {
     const mod = parsedInline(`import type { MyType } from './types.js';`);
-    // Type-only imports should not appear as named imports (just module reference or nothing)
+    // TypeScript erases a type-only import; Lean does not, because a Lean structure or
+    // inductive is a type the emitted module names. The import is kept, marked type-only,
+    // and its name is recorded so a reference resolves to the module it came from rather
+    // than to an implicit binder.
     const imp = mod.imports.find(i => i.module.includes('Types'));
-    if (imp) expect(imp.names ?? []).not.toContain('MyType');
+    expect(imp).toBeDefined();
+    expect(imp?.isTypeOnly).toBe(true);
+    expect(imp?.names ?? []).toContain('MyType');
   });
 
   it('regular import still works', () => {

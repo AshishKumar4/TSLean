@@ -125,6 +125,9 @@ import TSLean.Stubs.Console
 import TSLean.Stubs.Process
 import TSLean.Stubs.WebAPIs
 
+-- Round-trip examples
+import TSLean.Examples.Roundtrip
+
 -- Specification & Tests
 import TSLean.Specification
 import TSLean.Tests

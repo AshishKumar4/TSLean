@@ -390,8 +390,11 @@ function printExpr(e: LeanExpr, depth: number): string {
       return `${ind}modify ${parenIfCompound(e.fn)}`;
 
     case 'BinOp': {
-      const l = printExprInline(e.left);
-      const r = printExprInline(e.right);
+      // The block printer is used for top-level definition bodies. It needs the same
+      // precedence boundary as the inline printer: otherwise an `&&` or `||` follows only
+      // the final arm of a match expression.
+      const l = parenIfCompound(e.left);
+      const r = parenIfCompound(e.right);
       return `${ind}${l} ${e.op} ${r}`;
     }
 
@@ -498,12 +501,13 @@ function printExprInline(e: LeanExpr): string {
       return `if ${cond} then ${printExprInline(e.then_)} else ${printExprInline(e.else_)}`;
     }
     case 'Match': {
-      // Inline matches are rare — fall back to block form
       const scrut = printExprInline(e.scrutinee);
       const arms = e.arms.map(arm => {
         const pat = printPat(arm.pat);
         const guard = arm.guard ? ` if ${printExprInline(arm.guard)}` : '';
-        return `| ${pat}${guard} => ${printExprInline(arm.body)}`;
+        // An arm body written on the same line has to be bracketed when it is itself an
+        // alternation, or the next `|` reads as another arm of the inner match.
+        return `| ${pat}${guard} => ${parenIfAlternation(arm.body)}`;
       });
       return `match ${scrut} with ${arms.join(' ')}`;
     }
@@ -526,7 +530,9 @@ function printExprInline(e: LeanExpr): string {
     case 'Modify':
       return `modify ${parenIfCompound(e.fn)}`;
     case 'BinOp':
-      return `${printExprInline(e.left)} ${e.op} ${printExprInline(e.right)}`;
+      // A match is an expression, not a precedence boundary. Without parentheses a following
+      // `&&` or `||` attaches only to the final arm, changing every earlier arm's value.
+      return `${parenIfCompound(e.left)} ${e.op} ${parenIfCompound(e.right)}`;
     case 'UnOp':
       return `${e.op}${printExprInline(e.operand)}`;
     case 'FieldAccess': {
@@ -599,6 +605,15 @@ function printTyAtom(t: LeanTy): string {
     return `(${s})`;
   }
   return s;
+}
+
+/**
+ * Wrap an inline expression in parens when a following `|` would otherwise attach to it.
+ * Only an alternation needs this; anything else reads the same either way.
+ */
+function parenIfAlternation(e: LeanExpr): string {
+  const s = printExprInline(e);
+  return e.tag === 'Match' ? `(${s})` : s;
 }
 
 /** Wrap an inline expression in parens if it's compound (lambda, if, match, let, bind). */

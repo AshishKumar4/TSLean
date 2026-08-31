@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "file": "Window.ts",
+  "sourceRoot": "",
+  "sources": [
+    "../../../../../../../../lean/TSLean/Examples/Roundtrip/Window.lean"
+  ],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;AAEA"
+}
