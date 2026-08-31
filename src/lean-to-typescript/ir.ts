@@ -276,7 +276,9 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     leanSymbol: 'Nat.sub',
     runtimeForm: 'left < right ? 0n : left - right',
     modelTheorem: `${MODEL_NAMESPACE}.natSubtractModelsSub`,
-    assumptions: ['bigint.exact-arithmetic', 'conditional.truthy-selection'],
+    // Ordered to match the components above: the comparison decides, the conditional selects, and
+    // the subtraction runs only on the branch the comparison admitted.
+    assumptions: ['bigint.relational', 'conditional.truthy-selection', 'bigint.exact-arithmetic'],
     ...monomorphic([NAT, NAT], NAT),
   },
   'nat.multiply': {
@@ -487,7 +489,9 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     leanSymbol: 'List.head?',
     runtimeForm: 'value.length === 0 ? { kind: "none" } : { kind: "some", value: value[0] }',
     modelTheorem: `${MODEL_NAMESPACE}.listHeadModelsHead`,
-    assumptions: ['option.tagged-object'],
+    // Ordered to match the components above: the emptiness test reads the sequence, the conditional
+    // selects, and only the non-empty branch builds the tagged object over the first element.
+    assumptions: ['array.dense-element-sequence', 'conditional.truthy-selection', 'option.tagged-object'],
     typeParameters: 1,
     parameters: (args) => [{ kind: 'list', element: typeArgument(args, 0) }],
     result: (args) => ({ kind: 'option', value: typeArgument(args, 0) }),

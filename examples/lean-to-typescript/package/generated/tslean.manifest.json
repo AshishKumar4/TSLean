@@ -572,7 +572,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:ir",
-        "sha256": "sha256:ab1b1be287cc07e71c94aa0ca937652dc49dd57fce968ccfa8fd4e90fd35ad59"
+        "sha256": "sha256:f553e7b018b36b859516cf125241c4dc71d1088d2562779649056d22251bc733"
       },
       {
         "kind": "compiler-source",
@@ -660,12 +660,12 @@
         "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       }
     ],
-    "inputClosureSha256": "sha256:82cf63f4a161c9206c77dbd97a5eb01340a97fa3cd65550b54e3b7740d2f5164",
+    "inputClosureSha256": "sha256:6145c086e436cd83e8c496d617a38a016e910ab8f1fd0f68e5cf8dddaac44116",
     "semanticIrSha256": "sha256:81a40dc25bc7f5bea3a9b7a04cb7bd93415900e34a7cd758c4f744da7edf7354",
     "generatedBodySha256": "sha256:5245663fde919015cddbd169494008fad9a0a43ed4c200ec6679c169f92bad72"
   },
   "environment": {
-    "runtime": "node:v22.22.1",
+    "runtime": "node:v22.22.3",
     "typescriptVersion": "6.0.2",
     "platform": "linux-x64",
     "inputs": [
@@ -682,7 +682,7 @@
       {
         "kind": "compiler-runtime",
         "identity": "compiler:runtime",
-        "sha256": "sha256:d0efb6fcb9d023ba4e2b160ec2384dc28fe4f17732141ef47f676828fa960505"
+        "sha256": "sha256:e6ec2c188d83d813f81f2de8aea084d74dce603ac1abedd0a30ad941b10087b2"
       },
       {
         "kind": "lean-module",
@@ -1335,6 +1335,6 @@
         "sha256": "sha256:bb6ee7e709ae60426e30b8d393df4d939ee61407794b4f053ce6338d6eaa8c63"
       }
     ],
-    "inputClosureSha256": "sha256:de4e095ff8a864f1e531f737c5627df01015ac2ece09aed66ea01bfcb8151b11"
+    "inputClosureSha256": "sha256:c34a2a3c4f709649d356528ad78fa88245fba79cd8eaa992911ebcd5e53f463b"
   }
 }

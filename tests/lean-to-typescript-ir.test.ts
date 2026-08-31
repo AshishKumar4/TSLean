@@ -171,12 +171,23 @@ describe('Lean semantic IR runtime opcode registry', () => {
       'conditional:select',
       'primitive:bigint.subtract',
     ]);
+    // The closure order mirrors the composition order, so a reordered row fails here.
+    expect(LEAN_RUNTIME_OPCODES['nat.subtract'].assumptions).toEqual([
+      'bigint.relational',
+      'conditional.truthy-selection',
+      'bigint.exact-arithmetic',
+    ]);
     expect(LEAN_RUNTIME_OPCODES['list.head'].runtimeSymbol).toBe('helper:list-head-option');
     expect(LEAN_RUNTIME_OPCODES['list.head'].components).toEqual([
       'inline:list.isEmpty',
       'inline:list.first',
       'conditional:select',
       'representation:option.tagged-option',
+    ]);
+    expect(LEAN_RUNTIME_OPCODES['list.head'].assumptions).toEqual([
+      'array.dense-element-sequence',
+      'conditional.truthy-selection',
+      'option.tagged-object',
     ]);
     expect(LEAN_RUNTIME_OPCODES['bool.and'].runtimeSymbol).toBe('inline:bool.and');
     expect(LEAN_RUNTIME_OPCODES['bool.and'].components).toBeUndefined();
