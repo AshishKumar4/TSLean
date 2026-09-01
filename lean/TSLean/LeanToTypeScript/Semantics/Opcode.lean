@@ -1,16 +1,17 @@
 import TSLean.Refinement.Primitive
 import TSLean.Refinement.String
 import TSLean.LeanToTypeScript.Semantics.Assumption
+import TSLean.LeanToTypeScript.Semantics.Ir
 
 /-!
 # The runtime opcode registry, and its preservation theorems
 
-One row per runtime opcode the exporter spends. `Code.kind` is the wire spelling
-`src/lean-to-typescript/ir.ts` decodes, `Code.requires` is the ordered assumption closure the row's
-theorem consumes, and `Code.Preserves` is the theorem's statement: the source operation on the left,
+One row per runtime opcode the exporter spends. `Opcode.kind` is the wire spelling
+`src/lean-to-typescript/ir.ts` decodes, `Opcode.requires` is the ordered assumption closure the row's
+theorem consumes, and `Opcode.Preserves` is the theorem's statement: the source operation on the left,
 the runtime form on the right.
 
-`registry` is a total function on `Code`. Adding a constructor without a theorem does not compile, so
+`registry` is a total function on `Opcode`. Adding a constructor without a theorem does not compile, so
 an opcode cannot reach the compiler unproved, and the closure cannot be widened or narrowed without
 the proof failing.
 -/
@@ -19,70 +20,14 @@ namespace TSLean.LeanToTypeScript.Semantics
 
 open TSLean.JS
 
-namespace Opcode
+open Ir (Opcode)
 
-/-- Every runtime opcode the exporter admits. -/
-inductive Code where
-  | boolAnd
-  | boolOr
-  | boolNot
-  | boolEquals
-  | natAdd
-  | natSubtract
-  | natMultiply
-  | natLess
-  | natLessOrEqual
-  | natEquals
-  | natSuccessor
-  | stringAppend
-  | stringEquals
-  | listLength
-  | listIsEmpty
-  | listAppend
-  | listReverse
-  | listMap
-  | listFilter
-  | listFoldLeft
-  | listFoldRight
-  | listAny
-  | listAll
-  | listHead
-  | listFirst
-  | listRest
-  deriving DecidableEq, Repr
+namespace Ir.Opcode
 
-/-- The wire spelling the IR carries. -/
-def Code.kind : Code → String
-  | .boolAnd => "bool.and"
-  | .boolOr => "bool.or"
-  | .boolNot => "bool.not"
-  | .boolEquals => "bool.equals"
-  | .natAdd => "nat.add"
-  | .natSubtract => "nat.subtract"
-  | .natMultiply => "nat.multiply"
-  | .natLess => "nat.less"
-  | .natLessOrEqual => "nat.lessOrEqual"
-  | .natEquals => "nat.equals"
-  | .natSuccessor => "nat.successor"
-  | .stringAppend => "string.append"
-  | .stringEquals => "string.equals"
-  | .listLength => "list.length"
-  | .listIsEmpty => "list.isEmpty"
-  | .listAppend => "list.append"
-  | .listReverse => "list.reverse"
-  | .listMap => "list.map"
-  | .listFilter => "list.filter"
-  | .listFoldLeft => "list.foldLeft"
-  | .listFoldRight => "list.foldRight"
-  | .listAny => "list.any"
-  | .listAll => "list.all"
-  | .listHead => "list.head"
-  | .listFirst => "list.first"
-  | .listRest => "list.rest"
 
 /-- The TypeScript form `emitter.ts` emits for the opcode. Recorded so a catalog row can be checked
 against the emitter without reading the proof. -/
-def Code.emittedForm : Code → String
+def emittedForm : Opcode → String
   | .boolAnd => "left && right"
   | .boolOr => "left || right"
   | .boolNot => "!operand"
@@ -114,7 +59,7 @@ def Code.emittedForm : Code → String
 /-- The theorem that discharges the opcode, by name inside this namespace. `registry` pairs each
 opcode with that theorem, so a name recorded here and a clause naming a different theorem is a
 mismatch the gate reports. -/
-def Code.theoremName : Code → String
+def theoremName : Opcode → String
   | .boolAnd => "boolAndModelsAnd"
   | .boolOr => "boolOrModelsOr"
   | .boolNot => "boolNotModelsNot"
@@ -144,7 +89,7 @@ def Code.theoremName : Code → String
 
 /-- The fully named model constant the opcode's theorem constrains. Most are primitive Runtime
 fields; generated helpers such as natSubtract and listHead are derived Runtime definitions. -/
-def Code.modelField : Code → String
+def modelField : Opcode → String
   | .boolAnd => "boolAnd"
   | .boolOr => "boolOr"
   | .boolNot => "boolNot"
@@ -174,7 +119,7 @@ def Code.modelField : Code → String
 
 /-- The operator, method or generated-helper role the emitted form is built from, distinct from the
 exact TypeScript `emittedForm` records. -/
-def Code.runtimeSymbol : Code → String
+def runtimeSymbol : Opcode → String
   | .boolAnd => "&&"
   | .boolOr => "||"
   | .boolNot => "!"
@@ -205,28 +150,14 @@ def Code.runtimeSymbol : Code → String
 /-- The closed semantic components a generated helper reaches, in evaluation order. These are not
 runtime symbols and not assumption ids: Coverage binds helper bytes separately, while these names
 let the registry certify the helper's semantic composition. Ordinary one-form opcodes have none. -/
-def Code.components : Code → List String
+def components : Opcode → List String
   | .natSubtract => ["inline:nat.less", "conditional:select", "primitive:bigint.subtract"]
   | .listHead => ["inline:list.isEmpty", "inline:list.first", "conditional:select",
       "representation:option.tagged-option"]
   | _ => []
 
-/-- Every admitted opcode. -/
-def Code.all : List Code :=
-  [.boolAnd, .boolOr, .boolNot, .boolEquals, .natAdd, .natSubtract, .natMultiply, .natLess,
-    .natLessOrEqual, .natEquals, .natSuccessor, .stringAppend, .stringEquals, .listLength,
-    .listIsEmpty, .listAppend, .listReverse, .listMap, .listFilter, .listFoldLeft, .listFoldRight,
-    .listAny, .listAll, .listHead, .listFirst, .listRest]
-
-theorem Code.mem_all (code : Code) : code ∈ Code.all := by
-  cases code <;> simp [Code.all]
-
-/-- Distinct opcodes have distinct wire spellings, so the registry join is a bijection. -/
-theorem Code.kind_injective {left right : Code} (equal : left.kind = right.kind) : left = right := by
-  cases left <;> cases right <;> simp_all [Code.kind]
-
 /-- The ordered assumption closure the opcode's theorem consumes. -/
-def Code.requires : Code → List Assumption.Id
+def requires : Opcode → List Assumption.Id
   | .boolAnd | .boolOr | .boolNot => [.booleanLogicalOperators]
   | .boolEquals | .natEquals | .stringEquals => [.strictEqualitySameType]
   | .natAdd | .natMultiply | .natSuccessor => [.bigintExactArithmetic]
@@ -248,7 +179,7 @@ a higher-order opcode, the correspondence between the emitted callback and the L
 stands for. That correspondence is a hypothesis rather than an assumption: it is discharged by the
 caller's own preservation, not by the engine.
 -/
-def Code.Preserves (runtime : Runtime) : Code → Prop
+def Preserves (runtime : Runtime) : Opcode → Prop
   | .boolAnd => ∀ left right : Bool,
       Encode.bool (left && right) = runtime.boolAnd (Encode.bool left) (Encode.bool right)
   | .boolOr => ∀ left right : Bool,
@@ -325,8 +256,12 @@ def Code.Preserves (runtime : Runtime) : Code → Prop
       tail.map encode = runtime.listRest ((head :: tail).map encode)
 
 /-- The obligation one opcode carries: its ordered assumption closure entails its statement. -/
-def Code.Obligation (runtime : Runtime) (code : Code) : Prop :=
+def Obligation (runtime : Runtime) (code : Opcode) : Prop :=
   Assumption.Holds runtime code.requires → code.Preserves runtime
+
+end Ir.Opcode
+
+namespace Opcode
 
 /-! ## The theorems -/
 
@@ -334,32 +269,32 @@ def Code.Obligation (runtime : Runtime) (code : Code) : Prop :=
 operand: ECMAScript returns the left operand unevaluated-further when it is falsy, and `Bool.and`
 returns `false` there. -/
 theorem boolAndModelsAnd (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.boolAnd.requires) :
-    Code.boolAnd.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.boolAnd.requires) :
+    Opcode.boolAnd.Preserves runtime := by
   intro left right
   rw [holds.1.1 (Encode.bool left) (Encode.bool right)]
   cases left <;> simp [Encode.bool, Model.boolAnd, Value.toBoolean, Primitive.toBoolean]
 
 /-- `||` on two JavaScript booleans denotes `Bool.or`. -/
 theorem boolOrModelsOr (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.boolOr.requires) :
-    Code.boolOr.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.boolOr.requires) :
+    Opcode.boolOr.Preserves runtime := by
   intro left right
   rw [holds.1.2.1 (Encode.bool left) (Encode.bool right)]
   cases left <;> simp [Encode.bool, Model.boolOr, Value.toBoolean, Primitive.toBoolean]
 
 /-- `!` on a JavaScript boolean denotes `Bool.not`. -/
 theorem boolNotModelsNot (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.boolNot.requires) :
-    Code.boolNot.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.boolNot.requires) :
+    Opcode.boolNot.Preserves runtime := by
   intro operand
   rw [holds.1.2.2 (Encode.bool operand)]
   cases operand <;> simp [Encode.bool, Model.boolNot, Value.toBoolean, Primitive.toBoolean]
 
 /-- `===` on two JavaScript booleans denotes Lean `Bool` equality. -/
 theorem boolEqualsModelsBEq (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.boolEquals.requires) :
-    Code.boolEquals.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.boolEquals.requires) :
+    Opcode.boolEquals.Preserves runtime := by
   intro left right
   rw [holds.1.1 (Encode.bool left) (Encode.bool right)]
   unfold Model.strictEquals Encode.bool
@@ -376,8 +311,8 @@ private theorem beq_ofNat (left right : Nat) :
 /-- `+` on two bigints denotes `Nat.add`, because the embedding of `Nat` in the integers is
 additive. -/
 theorem natAddModelsAdd (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.natAdd.requires) :
-    Code.natAdd.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.natAdd.requires) :
+    Opcode.natAdd.Preserves runtime := by
   intro left right
   unfold Encode.nat
   rw [holds.1.1 (left : Int) (right : Int)]
@@ -387,8 +322,8 @@ theorem natAddModelsAdd (runtime : Runtime)
 /-- The truncated-subtraction helper denotes `Nat.sub`. Above the diagonal the bigint difference is
 the answer; below it the conditional yields zero, which is exactly where `Nat.sub` truncates. -/
 theorem natSubtractModelsSub (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.natSubtract.requires) :
-    Code.natSubtract.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.natSubtract.requires) :
+    Opcode.natSubtract.Preserves runtime := by
   intro left right
   rcases holds with ⟨relational, conditional, arithmetic⟩
   have difference : ∀ left right : Int, right ≤ left →
@@ -423,8 +358,8 @@ theorem natSubtractModelsSub (runtime : Runtime)
 
 /-- `*` on two bigints denotes `Nat.mul`. -/
 theorem natMultiplyModelsMul (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.natMultiply.requires) :
-    Code.natMultiply.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.natMultiply.requires) :
+    Opcode.natMultiply.Preserves runtime := by
   intro left right
   unfold Encode.nat
   rw [holds.1.2.1 (left : Int) (right : Int)]
@@ -433,8 +368,8 @@ theorem natMultiplyModelsMul (runtime : Runtime)
 
 /-- `<` on two bigints denotes `Nat.lt`. -/
 theorem natLessModelsLt (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.natLess.requires) :
-    Code.natLess.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.natLess.requires) :
+    Opcode.natLess.Preserves runtime := by
   intro left right
   unfold Encode.nat
   rw [holds.1.1 (left : Int) (right : Int)]
@@ -443,8 +378,8 @@ theorem natLessModelsLt (runtime : Runtime)
 
 /-- `<=` on two bigints denotes `Nat.le`. -/
 theorem natLessOrEqualModelsLe (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.natLessOrEqual.requires) :
-    Code.natLessOrEqual.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.natLessOrEqual.requires) :
+    Opcode.natLessOrEqual.Preserves runtime := by
   intro left right
   unfold Encode.nat
   rw [holds.1.2 (left : Int) (right : Int)]
@@ -453,8 +388,8 @@ theorem natLessOrEqualModelsLe (runtime : Runtime)
 
 /-- `===` on two bigints denotes `Nat` equality, because the embedding is injective. -/
 theorem natEqualsModelsBEq (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.natEquals.requires) :
-    Code.natEquals.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.natEquals.requires) :
+    Opcode.natEquals.Preserves runtime := by
   intro left right
   rw [holds.1.2.1 (Encode.nat left) (Encode.nat right)]
   unfold Model.strictEquals Encode.nat Encode.bigint
@@ -463,8 +398,8 @@ theorem natEqualsModelsBEq (runtime : Runtime)
 
 /-- `operand + 1n` denotes `Nat.succ`. -/
 theorem natSuccessorModelsSucc (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.natSuccessor.requires) :
-    Code.natSuccessor.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.natSuccessor.requires) :
+    Opcode.natSuccessor.Preserves runtime := by
   intro operand
   unfold Encode.nat
   rw [holds.1.2.2.1 (operand : Int)]
@@ -473,8 +408,8 @@ theorem natSuccessorModelsSucc (runtime : Runtime)
 
 /-- `+` on two strings denotes `String.append`, at the level of UTF-16 code units. -/
 theorem stringAppendModelsAppend (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.stringAppend.requires) :
-    Code.stringAppend.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.stringAppend.requires) :
+    Opcode.stringAppend.Preserves runtime := by
   intro left right
   unfold Encode.string
   rw [holds.1 (JSString.ofLeanString left) (JSString.ofLeanString right),
@@ -483,8 +418,8 @@ theorem stringAppendModelsAppend (runtime : Runtime)
 /-- `===` on two strings denotes Lean `String` equality, because the UTF-16 encoding is
 injective. -/
 theorem stringEqualsModelsBEq (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.stringEquals.requires) :
-    Code.stringEquals.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.stringEquals.requires) :
+    Opcode.stringEquals.Preserves runtime := by
   intro left right
   rw [holds.1.2.2 (Encode.string left) (Encode.string right)]
   unfold Model.strictEquals Encode.string Encode.jsString
@@ -493,37 +428,37 @@ theorem stringEqualsModelsBEq (runtime : Runtime)
 /-- `BigInt(value.length)` denotes `List.length`, because encoding the elements does not change how
 many there are. -/
 theorem listLengthModelsLength (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.listLength.requires) :
-    Code.listLength.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.listLength.requires) :
+    Opcode.listLength.Preserves runtime := by
   intro α encode values
   rw [holds.1 (values.map encode), List.length_map]
 
 /-- `value.length === 0` denotes `List.isEmpty`. -/
 theorem listIsEmptyModelsIsEmpty (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.listIsEmpty.requires) :
-    Code.listIsEmpty.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.listIsEmpty.requires) :
+    Opcode.listIsEmpty.Preserves runtime := by
   intro α encode values
   rw [holds.1.1 (values.map encode)]
   cases values <;> simp
 
 /-- `[...left, ...right]` denotes `List.append`. -/
 theorem listAppendModelsAppend (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.listAppend.requires) :
-    Code.listAppend.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.listAppend.requires) :
+    Opcode.listAppend.Preserves runtime := by
   intro α encode left right
   rw [holds.1.2.1 (left.map encode) (right.map encode), List.map_append]
 
 /-- `[...value].reverse()` denotes `List.reverse`. -/
 theorem listReverseModelsReverse (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.listReverse.requires) :
-    Code.listReverse.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.listReverse.requires) :
+    Opcode.listReverse.Preserves runtime := by
   intro α encode values
   rw [holds.1.2.2.1 (values.map encode), List.map_reverse]
 
 /-- `value.map(callback)` denotes `List.map`, given that the callback denotes the function. -/
 theorem listMapModelsMap (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.listMap.requires) :
-    Code.listMap.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.listMap.requires) :
+    Opcode.listMap.Preserves runtime := by
   intro α β source image transform function callback values
   rw [holds.1.2.2.2.1 transform (values.map source), List.map_map, List.map_map]
   exact List.map_congr_left fun value _ => (callback value).symm
@@ -531,8 +466,8 @@ theorem listMapModelsMap (runtime : Runtime)
 /-- `value.filter(callback)` denotes `List.filter`, given that the callback's truthiness denotes the
 decision. -/
 theorem listFilterModelsFilter (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.listFilter.requires) :
-    Code.listFilter.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.listFilter.requires) :
+    Opcode.listFilter.Preserves runtime := by
   intro α encode keep decision callback values
   rw [holds.1.2.2.2.2.1 keep (values.map encode)]
   induction values with
@@ -545,8 +480,8 @@ theorem listFilterModelsFilter (runtime : Runtime)
 /-- `value.reduce(callback, initial)` denotes `List.foldl`, given that the callback denotes the
 step. -/
 theorem listFoldLeftModelsFoldl (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.listFoldLeft.requires) :
-    Code.listFoldLeft.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.listFoldLeft.requires) :
+    Opcode.listFoldLeft.Preserves runtime := by
   intro α β element state step function callback initial values
   rw [holds.1.2.2.2.2.2.1 step (state initial) (values.map element)]
   induction values generalizing initial with
@@ -559,8 +494,8 @@ theorem listFoldLeftModelsFoldl (runtime : Runtime)
 step. The emitted callback takes the accumulator first and applies the step to the element first,
 which is exactly the argument order `List.foldr` uses. -/
 theorem listFoldRightModelsFoldr (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.listFoldRight.requires) :
-    Code.listFoldRight.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.listFoldRight.requires) :
+    Opcode.listFoldRight.Preserves runtime := by
   intro α β element state step function callback initial values
   rw [holds.1.2.2.2.2.2.2.1 step (state initial) (values.map element)]
   induction values with
@@ -571,8 +506,8 @@ theorem listFoldRightModelsFoldr (runtime : Runtime)
 
 /-- `value.some(callback)` denotes `List.any`. -/
 theorem listAnyModelsAny (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.listAny.requires) :
-    Code.listAny.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.listAny.requires) :
+    Opcode.listAny.Preserves runtime := by
   intro α encode holdsCallback decision callback values
   rw [holds.1.2.2.2.2.2.2.2.1 holdsCallback (values.map encode)]
   induction values with
@@ -586,8 +521,8 @@ theorem listAnyModelsAny (runtime : Runtime)
 
 /-- `value.every(callback)` denotes `List.all`. -/
 theorem listAllModelsAll (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.listAll.requires) :
-    Code.listAll.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.listAll.requires) :
+    Opcode.listAll.Preserves runtime := by
   intro α encode holdsCallback decision callback values
   rw [holds.1.2.2.2.2.2.2.2.2.1 holdsCallback (values.map encode)]
   induction values with
@@ -601,8 +536,8 @@ theorem listAllModelsAll (runtime : Runtime)
 
 /-- The head helper denotes `List.head?`. -/
 theorem listHeadModelsHead (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.listHead.requires) :
-    Code.listHead.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.listHead.requires) :
+    Opcode.listHead.Preserves runtime := by
   intro α encode values
   rcases holds with ⟨array, conditional, option⟩
   have optionNone : runtime.optionNone = OptionImage.absent := option.1.1
@@ -634,24 +569,24 @@ theorem listHeadModelsHead (runtime : Runtime)
 
 /-- `value[0]` under a nonempty guard denotes the head of a cons. -/
 theorem listFirstModelsHead (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.listFirst.requires) :
-    Code.listFirst.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.listFirst.requires) :
+    Opcode.listFirst.Preserves runtime := by
   intro α encode head tail
   rw [List.map_cons, holds.1.2.2.2.2.2.2.2.2.2.1 (encode head) (List.map encode tail)]
 
 /-- `value.slice(1)` under a nonempty guard denotes the tail of a cons. -/
 theorem listRestModelsTail (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.listRest.requires) :
-    Code.listRest.Preserves runtime := by
+    (holds : Assumption.Holds runtime Opcode.listRest.requires) :
+    Opcode.listRest.Preserves runtime := by
   intro α encode head tail
   rw [List.map_cons, holds.1.2.2.2.2.2.2.2.2.2.2 (encode head) (List.map encode tail)]
 
 /--
-The closure over the opcode registry. It is a total function on `Code`, so an opcode with no theorem
+The closure over the opcode registry. It is a total function on `Opcode`, so an opcode with no theorem
 is a build failure rather than an unproved row, and a theorem whose assumption closure differs from
 the row's `requires` does not typecheck here.
 -/
-theorem registry (runtime : Runtime) : (code : Code) → code.Obligation runtime
+theorem registry (runtime : Runtime) : (code : Opcode) → code.Obligation runtime
   | .boolAnd => boolAndModelsAnd runtime
   | .boolOr => boolOrModelsOr runtime
   | .boolNot => boolNotModelsNot runtime
@@ -680,7 +615,7 @@ theorem registry (runtime : Runtime) : (code : Code) → code.Obligation runtime
   | .listRest => listRestModelsTail runtime
 
 /-- Every admitted opcode is discharged from its own recorded assumption closure. -/
-theorem registry_total (runtime : Runtime) (code : Code)
+theorem registry_total (runtime : Runtime) (code : Opcode)
     (holds : Assumption.Holds runtime code.requires) : code.Preserves runtime :=
   registry runtime code holds
 

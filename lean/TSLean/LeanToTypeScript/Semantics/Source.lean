@@ -25,15 +25,17 @@ namespace TSLean.LeanToTypeScript.Semantics
 
 namespace Source
 
-/-- A value of the admitted fragment. -/
+/--
+A value of the admitted fragment. `Option`, `Except` and `List` values are `variant`s at their
+mapped type, exactly as `constructorsOf` says, so a source list is a `nil`/`cons` chain rather than
+a fourth kind of value.
+-/
 inductive Value where
   | boolean (value : Bool)
-  /-- `Option.none`. -/
-  | absent
-  /-- `Option.some`. -/
-  | present (value : Value)
-  | record (type : String) (fields : List (String × Value))
-  | variant (type name : String) (arguments : List Value)
+  | nat (value : Nat)
+  | string (value : String)
+  | record (type : Ir.Ty) (fields : List (String × Value))
+  | variant (type : Ir.Ty) (name : String) (arguments : List Value)
   /-- An inline arrow's captured scope, exact parameter list and exact body. The captured scope is
   innermost-first, as every de Bruijn scope is. -/
   | closure (captured : List Value) (parameters : List Ir.Field) (body : Ir.Expr)
@@ -54,6 +56,8 @@ program, and the preservation theorems prove that rather than assume it. -/
 inductive Fault where
   | unboundVariable (index : Nat)
   | notABoolean
+  | notANat
+  | notAString
   | notARecord
   | fieldAbsent (field : String)
   | notAVariant
@@ -62,6 +66,12 @@ inductive Fault where
   | arityMismatch (function : String) (expected actual : Nat)
   | notAClosure
   | closureArity (expected actual : Nat)
+  /-- A type the fragment cannot take apart, such as a `Nat` used as a match scrutinee. -/
+  | notDestructurable
+  /-- An opcode applied to the wrong number of operands. -/
+  | opcodeArity (opcode : Ir.Opcode) (actual : Nat)
+  /-- An operand whose shape the opcode does not accept, such as a non-list to `list.map`. -/
+  | opcodeOperand (opcode : Ir.Opcode)
   deriving DecidableEq, Repr
 
 /-- The result of evaluating one expression, carrying the trace in every case. -/
@@ -92,6 +102,95 @@ def lookup (scope : List Value) (index : Nat) : Option Value := scope[index]?
 def fieldValue? (fields : List (String × Value)) (name : String) : Option Value :=
   (fields.find? fun entry => entry.1 == name).map Prod.snd
 
+/-- The elements of a source list value, if it is a well-formed `nil`/`cons` chain. -/
+def listElements? : Value → Option (List Value)
+  | .variant _ "nil" [] => some []
+  | .variant _ "cons" [head, tail] =>
+      match listElements? tail with
+      | some rest => some (head :: rest)
+      | none => none
+  | _ => none
+termination_by value => sizeOf value
+
+/-- The source list value carrying these elements at an element type. -/
+def listValue (element : Ir.Ty) : List Value → Value
+  | [] => .variant (.list element) "nil" []
+  | head :: rest => .variant (.list element) "cons" [head, listValue element rest]
+
+/-- The element type an opcode's first type argument names. -/
+def elementType (typeArguments : List Ir.Ty) : Ir.Ty := (typeArguments[0]?).getD .boolean
+
+/-- The image type an opcode's second type argument names. -/
+def imageType (typeArguments : List Ir.Ty) : Ir.Ty := (typeArguments[1]?).getD .boolean
+
+/--
+The strict, first-order opcodes, as a total function on operand lists. Every shape the opcode does
+not accept is a typed fault rather than a silent default, so a mis-shaped operand is refused where
+it occurs instead of being coerced.
+
+`bool.and` and `bool.or` are absent on purpose: ECMAScript evaluates their right operand lazily, so
+they are decided in `evalOperation` where the unevaluated operand is still available. The six
+higher-order list opcodes are absent for the same structural reason: they enter a closure, which
+costs fuel and records an entry.
+-/
+def applyStrict (opcode : Ir.Opcode) (typeArguments : List Ir.Ty) :
+    List Value → Except Fault Value
+  | [.boolean operand] =>
+      match opcode with
+      | .boolNot => .ok (.boolean (!operand))
+      | _ => .error (.opcodeOperand opcode)
+  | [.boolean left, .boolean right] =>
+      match opcode with
+      | .boolEquals => .ok (.boolean (left == right))
+      | _ => .error (.opcodeOperand opcode)
+  | [.nat operand] =>
+      match opcode with
+      | .natSuccessor => .ok (.nat (operand + 1))
+      | _ => .error (.opcodeOperand opcode)
+  | [.nat left, .nat right] =>
+      match opcode with
+      | .natAdd => .ok (.nat (left + right))
+      | .natSubtract => .ok (.nat (left - right))
+      | .natMultiply => .ok (.nat (left * right))
+      | .natLess => .ok (.boolean (decide (left < right)))
+      | .natLessOrEqual => .ok (.boolean (decide (left ≤ right)))
+      | .natEquals => .ok (.boolean (left == right))
+      | _ => .error (.opcodeOperand opcode)
+  | [.string left, .string right] =>
+      match opcode with
+      | .stringAppend => .ok (.string (left ++ right))
+      | .stringEquals => .ok (.boolean (left == right))
+      | _ => .error (.opcodeOperand opcode)
+  | [values] =>
+      match listElements? values with
+      | none => .error (.opcodeOperand opcode)
+      | some elements =>
+          match opcode with
+          | .listLength => .ok (.nat elements.length)
+          | .listIsEmpty => .ok (.boolean elements.isEmpty)
+          | .listReverse => .ok (listValue (elementType typeArguments) elements.reverse)
+          | .listRest =>
+              match elements with
+              | [] => .error (.opcodeOperand opcode)
+              | _ :: rest => .ok (listValue (elementType typeArguments) rest)
+          | .listFirst =>
+              match elements with
+              | [] => .error (.opcodeOperand opcode)
+              | head :: _ => .ok head
+          | .listHead =>
+              let element := elementType typeArguments
+              match elements with
+              | [] => .ok (.variant (.option element) "none" [])
+              | head :: _ => .ok (.variant (.option element) "some" [head])
+          | _ => .error (.opcodeOperand opcode)
+  | [left, right] =>
+      match opcode, listElements? left, listElements? right with
+      | .listAppend, some first, some second =>
+          .ok (listValue (elementType typeArguments) (first ++ second))
+      | _, _, _ => .error (.opcodeOperand opcode)
+  | operands => .error (.opcodeArity opcode operands.length)
+
+
 mutual
 
 /--
@@ -105,6 +204,8 @@ def eval (program : Ir.Program) (fuel : Nat) (scope : List Value) (trace : Trace
       | some value => .value value trace
       | none => .fault (.unboundVariable index) trace
   | .boolLit value => .value (.boolean value) trace
+  | .natLit value => .value (.nat value) trace
+  | .stringLit value => .value (.string value) trace
   | .letBind _ value body =>
       match eval program fuel scope trace value with
       | .value bound next => eval program fuel (bound :: scope) next body
@@ -126,53 +227,37 @@ def eval (program : Ir.Program) (fuel : Nat) (scope : List Value) (trace : Trace
       | .value _ next => .fault .notABoolean next
       | .fault fault next => .fault fault next
       | .exhausted next => .exhausted next
-  | .boolEquals left right =>
-      match eval program fuel scope trace left with
-      | .value (.boolean first) next =>
-          match eval program fuel scope next right with
-          | .value (.boolean second) last => .value (.boolean (first == second)) last
-          | .value _ last => .fault .notABoolean last
-          | .fault fault last => .fault fault last
-          | .exhausted last => .exhausted last
-      | .value _ next => .fault .notABoolean next
-      | .fault fault next => .fault fault next
-      | .exhausted next => .exhausted next
-  | .boolAnd left right =>
-      match eval program fuel scope trace left with
-      | .value (.boolean false) next => .value (.boolean false) next
-      | .value (.boolean true) next =>
-          match eval program fuel scope next right with
-          | .value (.boolean second) last => .value (.boolean second) last
-          | .value _ last => .fault .notABoolean last
-          | .fault fault last => .fault fault last
-          | .exhausted last => .exhausted last
-      | .value _ next => .fault .notABoolean next
-      | .fault fault next => .fault fault next
-      | .exhausted next => .exhausted next
-  | .boolOr left right =>
-      match eval program fuel scope trace left with
-      | .value (.boolean true) next => .value (.boolean true) next
-      | .value (.boolean false) next =>
-          match eval program fuel scope next right with
-          | .value (.boolean second) last => .value (.boolean second) last
-          | .value _ last => .fault .notABoolean last
-          | .fault fault last => .fault fault last
-          | .exhausted last => .exhausted last
-      | .value _ next => .fault .notABoolean next
-      | .fault fault next => .fault fault next
-      | .exhausted next => .exhausted next
-  | .boolNot operand =>
-      match eval program fuel scope trace operand with
-      | .value (.boolean value) next => .value (.boolean (!value)) next
-      | .value _ next => .fault .notABoolean next
-      | .fault fault next => .fault fault next
-      | .exhausted next => .exhausted next
-  | .someValue value =>
-      match eval program fuel scope trace value with
-      | .value inner next => .value (.present inner) next
-      | .fault fault next => .fault fault next
-      | .exhausted next => .exhausted next
-  | .noneValue => .value .absent trace
+  | .operation opcode typeArguments arguments =>
+      match opcode, arguments with
+      | .boolAnd, [left, right] =>
+          match eval program fuel scope trace left with
+          | .value (.boolean false) next => .value (.boolean false) next
+          | .value (.boolean true) next =>
+              match eval program fuel scope next right with
+              | .value (.boolean value) last => .value (.boolean value) last
+              | .value _ last => .fault .notABoolean last
+              | .fault fault last => .fault fault last
+              | .exhausted last => .exhausted last
+          | .value _ next => .fault .notABoolean next
+          | .fault fault next => .fault fault next
+          | .exhausted next => .exhausted next
+      | .boolOr, [left, right] =>
+          match eval program fuel scope trace left with
+          | .value (.boolean true) next => .value (.boolean true) next
+          | .value (.boolean false) next =>
+              match eval program fuel scope next right with
+              | .value (.boolean value) last => .value (.boolean value) last
+              | .value _ last => .fault .notABoolean last
+              | .fault fault last => .fault fault last
+              | .exhausted last => .exhausted last
+          | .value _ next => .fault .notABoolean next
+          | .fault fault next => .fault fault next
+          | .exhausted next => .exhausted next
+      | opcode, arguments =>
+          match evalList program fuel scope trace arguments with
+          | .values values next => applyOperation program fuel next opcode typeArguments values
+          | .fault fault next => .fault fault next
+          | .exhausted next => .exhausted next
   | .variant type name arguments =>
       match evalList program fuel scope trace arguments with
       | .values values next => .value (.variant type name values) next
@@ -191,11 +276,6 @@ def eval (program : Ir.Program) (fuel : Nat) (scope : List Value) (trace : Trace
       | .value _ next => .fault .notAVariant next
       | .fault fault next => .fault fault next
       | .exhausted next => .exhausted next
-  | .call function arguments =>
-      match evalList program fuel scope trace arguments with
-      | .values values next => enter program fuel next function values
-      | .fault fault next => .fault fault next
-      | .exhausted next => .exhausted next
   | .lambda parameters body => .value (.closure scope parameters body) trace
   | .apply callee arguments =>
       match eval program fuel scope trace callee with
@@ -207,7 +287,61 @@ def eval (program : Ir.Program) (fuel : Nat) (scope : List Value) (trace : Trace
       | .value _ next => .fault .notAClosure next
       | .fault fault next => .fault fault next
       | .exhausted next => .exhausted next
-termination_by expression => (fuel, sizeOf expression)
+  | .call function _ arguments =>
+      match evalList program fuel scope trace arguments with
+      | .values values next => enter program fuel next function values
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+termination_by expression => (fuel, 3, sizeOf expression)
+
+/-- Applies one opcode to already evaluated operands, entering closures where the opcode is
+higher-order. The operand positions are Coverage v5's own: `map` and `filter` take the callback
+first, `any` and `all` take the subject first, and both folds take step, initial, subject. -/
+def applyOperation (program : Ir.Program) (fuel : Nat) (trace : Trace) (opcode : Ir.Opcode)
+    (typeArguments : List Ir.Ty) (values : List Value) : Outcome :=
+  match opcode, values with
+  | .listMap, [.closure captured parameters body, subject] =>
+      match listElements? subject with
+      | none => .fault (.opcodeOperand .listMap) trace
+      | some elements =>
+          match mapElements program fuel trace captured parameters body elements with
+          | .values images last => .value (listValue (imageType typeArguments) images) last
+          | .fault fault last => .fault fault last
+          | .exhausted last => .exhausted last
+  | .listFilter, [.closure captured parameters body, subject] =>
+      match listElements? subject with
+      | none => .fault (.opcodeOperand .listFilter) trace
+      | some elements =>
+          match filterElements program fuel trace captured parameters body elements with
+          | .values kept last => .value (listValue (elementType typeArguments) kept) last
+          | .fault fault last => .fault fault last
+          | .exhausted last => .exhausted last
+  | .listAny, [subject, .closure captured parameters body] =>
+      match listElements? subject with
+      | none => .fault (.opcodeOperand .listAny) trace
+      | some elements => anyElements program fuel trace captured parameters body elements
+  | .listAll, [subject, .closure captured parameters body] =>
+      match listElements? subject with
+      | none => .fault (.opcodeOperand .listAll) trace
+      | some elements => allElements program fuel trace captured parameters body elements
+  | .listFoldLeft, [.closure captured parameters body, initial, subject] =>
+      match listElements? subject with
+      | none => .fault (.opcodeOperand .listFoldLeft) trace
+      | some elements =>
+          foldLeftElements program fuel trace captured parameters body initial elements
+  | .listFoldRight, [.closure captured parameters body, initial, subject] =>
+      match listElements? subject with
+      | none => .fault (.opcodeOperand .listFoldRight) trace
+      | some elements =>
+          foldRightElements program fuel trace captured parameters body initial elements
+  | .listMap, [_, _] | .listFilter, [_, _] => .fault .notAClosure trace
+  | .listAny, [_, _] | .listAll, [_, _] => .fault .notAClosure trace
+  | .listFoldLeft, [_, _, _] | .listFoldRight, [_, _, _] => .fault .notAClosure trace
+  | opcode, values =>
+      match applyStrict opcode typeArguments values with
+      | .ok value => .value value trace
+      | .error fault => .fault fault trace
+termination_by (fuel, 2, 0)
 
 /-- Enters one declared function on already evaluated arguments. The callee's scope is the argument
 list reversed, so de Bruijn index `0` is its last parameter, and entry costs one unit of fuel. -/
@@ -222,7 +356,7 @@ def enter (program : Ir.Program) (fuel : Nat) (trace : Trace) (function : String
         | remaining + 1 =>
             eval program remaining values.reverse (trace ++ [.function function values]) body
       else .fault (.arityMismatch function parameters.length values.length) trace
-termination_by (fuel, 0)
+termination_by (fuel, 0, 0)
 
 /--
 Applies one inline closure to already evaluated arguments. The body sees the parameters at the
@@ -239,7 +373,92 @@ def applyClosure (program : Ir.Program) (fuel : Nat) (trace : Trace) (captured :
         eval program remaining (values.reverse ++ captured)
           (trace ++ [.application ⟨parameters, body⟩ values]) body
   else .fault (.closureArity parameters.length values.length) trace
-termination_by (fuel, 0)
+termination_by (fuel, 0, 0)
+
+/-- Applies a callback to every element in order, keeping the images. -/
+def mapElements (program : Ir.Program) (fuel : Nat) (trace : Trace) (captured : List Value)
+    (parameters : List Ir.Field) (body : Ir.Expr) : List Value → ListOutcome
+  | [] => .values [] trace
+  | head :: rest =>
+      match applyClosure program fuel trace captured parameters body [head] with
+      | .value produced next =>
+          match mapElements program fuel next captured parameters body rest with
+          | .values images last => .values (produced :: images) last
+          | .fault fault last => .fault fault last
+          | .exhausted last => .exhausted last
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+termination_by elements => (fuel, 1, sizeOf elements)
+
+/-- Applies a decision to every element in order, keeping the elements it accepts. -/
+def filterElements (program : Ir.Program) (fuel : Nat) (trace : Trace) (captured : List Value)
+    (parameters : List Ir.Field) (body : Ir.Expr) : List Value → ListOutcome
+  | [] => .values [] trace
+  | head :: rest =>
+      match applyClosure program fuel trace captured parameters body [head] with
+      | .value (.boolean keep) next =>
+          match filterElements program fuel next captured parameters body rest with
+          | .values kept last => .values (if keep then head :: kept else kept) last
+          | .fault fault last => .fault fault last
+          | .exhausted last => .exhausted last
+      | .value _ next => .fault .notABoolean next
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+termination_by elements => (fuel, 1, sizeOf elements)
+
+/-- Applies a decision to every element in order, answering whether one of them holds. Every element
+is entered, matching `Array.prototype.some` only where the emitted callback is total; a callback that
+faults stops the run exactly as it does in the emitted program. -/
+def anyElements (program : Ir.Program) (fuel : Nat) (trace : Trace) (captured : List Value)
+    (parameters : List Ir.Field) (body : Ir.Expr) : List Value → Outcome
+  | [] => .value (.boolean false) trace
+  | head :: rest =>
+      match applyClosure program fuel trace captured parameters body [head] with
+      | .value (.boolean true) next => .value (.boolean true) next
+      | .value (.boolean false) next =>
+          anyElements program fuel next captured parameters body rest
+      | .value _ next => .fault .notABoolean next
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+termination_by elements => (fuel, 1, sizeOf elements)
+
+/-- Applies a decision to every element in order, answering whether all of them hold. -/
+def allElements (program : Ir.Program) (fuel : Nat) (trace : Trace) (captured : List Value)
+    (parameters : List Ir.Field) (body : Ir.Expr) : List Value → Outcome
+  | [] => .value (.boolean true) trace
+  | head :: rest =>
+      match applyClosure program fuel trace captured parameters body [head] with
+      | .value (.boolean false) next => .value (.boolean false) next
+      | .value (.boolean true) next =>
+          allElements program fuel next captured parameters body rest
+      | .value _ next => .fault .notABoolean next
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+termination_by elements => (fuel, 1, sizeOf elements)
+
+/-- Folds a callback over the elements from the left, accumulator first. -/
+def foldLeftElements (program : Ir.Program) (fuel : Nat) (trace : Trace) (captured : List Value)
+    (parameters : List Ir.Field) (body : Ir.Expr) (accumulator : Value) : List Value → Outcome
+  | [] => .value accumulator trace
+  | head :: rest =>
+      match applyClosure program fuel trace captured parameters body [accumulator, head] with
+      | .value produced next =>
+          foldLeftElements program fuel next captured parameters body produced rest
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+termination_by elements => (fuel, 1, sizeOf elements)
+
+/-- Folds a callback over the elements from the right, element first, matching `reduceRight`. -/
+def foldRightElements (program : Ir.Program) (fuel : Nat) (trace : Trace) (captured : List Value)
+    (parameters : List Ir.Field) (body : Ir.Expr) (accumulator : Value) : List Value → Outcome
+  | [] => .value accumulator trace
+  | head :: rest =>
+      match foldRightElements program fuel trace captured parameters body accumulator rest with
+      | .value produced next =>
+          applyClosure program fuel next captured parameters body [head, produced]
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+termination_by elements => (fuel, 1, sizeOf elements)
 
 /-- Evaluates a list of expressions left to right. -/
 def evalList (program : Ir.Program) (fuel : Nat) (scope : List Value) (trace : Trace) :
@@ -254,7 +473,7 @@ def evalList (program : Ir.Program) (fuel : Nat) (scope : List Value) (trace : T
           | .exhausted last => .exhausted last
       | .fault fault next => .fault fault next
       | .exhausted next => .exhausted next
-termination_by expressions => (fuel, sizeOf expressions)
+termination_by expressions => (fuel, 3, sizeOf expressions)
 
 /-- Evaluates a named field list left to right, keeping declaration order. -/
 def evalFields (program : Ir.Program) (fuel : Nat) (scope : List Value) (trace : Trace) :
@@ -269,7 +488,7 @@ def evalFields (program : Ir.Program) (fuel : Nat) (scope : List Value) (trace :
           | .exhausted last => .exhausted last
       | .fault fault next => .fault fault next
       | .exhausted next => .exhausted next
-termination_by fields => (fuel, sizeOf fields)
+termination_by fields => (fuel, 3, sizeOf fields)
 
 /-- Selects the arm deciding a constructor and evaluates it with the constructor's fields bound,
 innermost field last. -/
@@ -279,9 +498,10 @@ def evalCases (program : Ir.Program) (fuel : Nat) (scope : List Value) (trace : 
   | (constructor, arm) :: rest =>
       if constructor = name then eval program fuel (arguments.reverse ++ scope) trace arm
       else evalCases program fuel scope trace name arguments rest
-termination_by cases => (fuel, sizeOf cases)
+termination_by cases => (fuel, 3, sizeOf cases)
 
 end
+
 
 end Source
 
