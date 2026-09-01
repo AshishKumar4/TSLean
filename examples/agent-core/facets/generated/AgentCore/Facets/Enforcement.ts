@@ -4,8 +4,8 @@
  * Lean module: AgentCore.Facets.Enforcement
  * Generated module: AgentCore/Facets/Enforcement.ts
  * Package entry module: AgentCore.Facets.Enforcement
- * Semantic identity: sha256:812e54545aee5aff6abab45b30eb2811fa21c86c3719ebd94a6af0b1828e1b1e
- * Input closure: sha256:3b38ec0f1ac3f612271777d2fdcb59e3642721ec6dc97324225f82bc6ad97fe6
+ * Semantic identity: sha256:39b21e2b5999ce9ea026c7c7af5e57be6ef5ec84ad75c9a28aea6d598cf336f5
+ * Input closure: sha256:6f5d7da8334496e6629c7acf26085c11a56d89e09d342298eaecfa99bff86ea9
  * Semantic IR: sha256:872c162314e80dbb1ec5be9d1b6a16e820807b4a7ad69f9961d349402539d8c6
  * Generated module body: sha256:642f7253eda14f9e5d6c7100a322851ed82fe96676e46e7b44beae96e46b4d15
  * Generated package body: sha256:bb381859492b50649ded64207fe79e82ff891f5233583a563148bfec3eabf3d0
