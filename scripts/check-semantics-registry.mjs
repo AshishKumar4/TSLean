@@ -112,22 +112,79 @@ function decoderKinds() {
 }
 
 /**
- * The runtime opcode table `ir.ts` declares, as `kind -> { modelTheorem, assumptions }`.
+ * The literal string constants a module declares, as `name -> value`.
  *
- * The table is the only place the compiler names a primitive operation, so it is the only thing the
- * opcode half of the Lean registry can be joined against. Its absence is reported rather than
- * skipped: an unjoined opcode registry is a registry nothing checks.
+ * The opcode table spells each theorem name as `${MODEL_NAMESPACE}.<name>`, so the reader resolves
+ * that constant instead of comparing the template's source text. Only a constant of the same module
+ * with a literal string initialiser is resolvable; `literalText` refuses everything else rather than
+ * guessing.
  */
-function declaredOpcodes() {
-  const file = join(root, 'src/lean-to-typescript/ir.ts');
-  const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.ESNext, true);
-  let table;
+function literalConstants(source) {
+  const constants = new Map();
   const visit = (node) => {
     if (
       ts.isVariableDeclaration(node) &&
       ts.isIdentifier(node.name) &&
-      node.name.text === 'LEAN_RUNTIME_OPCODES'
+      node.initializer !== undefined &&
+      (ts.isStringLiteral(node.initializer) || ts.isNoSubstitutionTemplateLiteral(node.initializer))
     ) {
+      constants.set(node.name.text, node.initializer.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return constants;
+}
+
+/**
+ * One recorded string of the opcode table, with the single sanctioned interpolation resolved.
+ *
+ * A plain literal is its own text. A template is admitted in exactly one form — `${CONSTANT}rest`,
+ * where `CONSTANT` is a literal string constant of the same module — because that is the one form
+ * `ir.ts` writes, and resolving it is what lets a theorem name be joined against Lean rather than
+ * compared as template source text. Every other shape is a refusal: a value this reader cannot
+ * resolve would be joined against nothing, which is the failure mode the join exists to prevent.
+ */
+function literalText(node, label, constants) {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  if (!ts.isTemplateExpression(node)) {
+    fail(`ir.ts ${label} is neither a string nor a template, so the gate cannot join it`);
+  }
+  if (node.head.text !== '') {
+    fail(`ir.ts ${label} interpolates after leading text, which this reader does not resolve`);
+  }
+  if (node.templateSpans.length !== 1) {
+    fail(`ir.ts ${label} interpolates ${node.templateSpans.length} values; exactly one is admitted`);
+  }
+  const [span] = node.templateSpans;
+  if (!ts.isIdentifier(span.expression)) {
+    fail(`ir.ts ${label} interpolates an expression rather than a declared constant`);
+  }
+  const value = constants.get(span.expression.text);
+  if (value === undefined) {
+    fail(
+      `ir.ts ${label} interpolates ${span.expression.text}, which the module declares no literal ` +
+        'string constant for',
+    );
+  }
+  return `${value}${span.literal.text}`;
+}
+
+/**
+ * The runtime opcode table a module declares, as `kind -> { modelTheorem, runtimeSymbol,
+ * assumptions, components }`.
+ *
+ * The table is the only place the compiler names a primitive operation, so it is the only thing the
+ * opcode half of the Lean registry can be joined against. Its absence is reported rather than
+ * skipped: an unjoined opcode registry is a registry nothing checks. Taking the text as an argument
+ * is what lets `--self-test` exercise this reader on a source of its own.
+ */
+export function readDeclaredOpcodes(file, text) {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, true);
+  const constants = literalConstants(source);
+  let table;
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'LEAN_RUNTIME_OPCODES') {
       table = node.initializer;
       return;
     }
@@ -158,21 +215,19 @@ function declaredOpcodes() {
     for (const field of property.initializer.properties) {
       if (!ts.isPropertyAssignment(field) || !ts.isIdentifier(field.name)) continue;
       if (field.name.text === 'modelTheorem') {
-        modelTheorem = ts.isStringLiteral(field.initializer)
-          ? field.initializer.text
-          : field.initializer.getText(source);
+        modelTheorem = literalText(field.initializer, `opcode row ${kind} modelTheorem`, constants);
       }
-      if (field.name.text === 'runtimeSymbol' && ts.isStringLiteral(field.initializer)) {
-        runtimeSymbol = field.initializer.text;
+      if (field.name.text === 'runtimeSymbol') {
+        runtimeSymbol = literalText(field.initializer, `opcode row ${kind} runtimeSymbol`, constants);
       }
       if (field.name.text === 'assumptions' && ts.isArrayLiteralExpression(field.initializer)) {
-        assumptions = field.initializer.elements.map((element) =>
-          ts.isStringLiteral(element) ? element.text : element.getText(source),
+        assumptions = field.initializer.elements.map((element, index) =>
+          literalText(element, `opcode row ${kind} assumption ${index}`, constants),
         );
       }
       if (field.name.text === 'components' && ts.isArrayLiteralExpression(field.initializer)) {
-        components = field.initializer.elements.map((element) =>
-          ts.isStringLiteral(element) ? element.text : element.getText(source),
+        components = field.initializer.elements.map((element, index) =>
+          literalText(element, `opcode row ${kind} component ${index}`, constants),
         );
       }
     }
@@ -182,6 +237,12 @@ function declaredOpcodes() {
     rows.set(kind, { modelTheorem, assumptions, runtimeSymbol, components });
   }
   return rows;
+}
+
+/** The runtime opcode table the live `ir.ts` declares. */
+function declaredOpcodes() {
+  const file = join(root, 'src/lean-to-typescript/ir.ts');
+  return readDeclaredOpcodes(file, readFileSync(file, 'utf8'));
 }
 
 /**
@@ -335,7 +396,10 @@ export function joinRegistries(registry, kinds, emitted, groups) {
     registry.declarationFamilies.map((entry) => entry.kind),
     'Lean declaration registry',
   );
-  const leanTypes = sortedUnique(registry.typeForms.map((entry) => entry.kind), 'Lean type registry');
+  const leanTypes = sortedUnique(
+    registry.typeForms.map((entry) => entry.kind),
+    'Lean type registry',
+  );
   requireSameSet(
     'expression operations',
     sortedUnique(kinds.expressions, 'ir.ts decodeExpression'),
@@ -362,7 +426,15 @@ export function joinRegistries(registry, kinds, emitted, groups) {
   const declared = new Set(registry.assumptions.map((assumption) => assumption.id));
   if (declared.size !== registry.assumptions.length) fail('the assumption plane repeats a name');
   for (const assumption of registry.assumptions) {
-    for (const field of ['id', 'sourceUrl', 'sourceArtifact', 'sourceDigest', 'statement', 'oracle', 'canonicalWording']) {
+    for (const field of [
+      'id',
+      'sourceUrl',
+      'sourceArtifact',
+      'sourceDigest',
+      'statement',
+      'oracle',
+      'canonicalWording',
+    ]) {
       if (typeof assumption[field] !== 'string' || assumption[field].length === 0) {
         fail(`assumption ${assumption.id} records no ${field}`);
       }
@@ -381,16 +453,22 @@ export function joinRegistries(registry, kinds, emitted, groups) {
     }
     const group = groups.get(assumption.oracle.slice(oraclePrefix.length));
     if (group === undefined) {
-      fail(`assumption ${assumption.id} names probe group ${assumption.oracle}, which spec/semantics/probes.json does not declare`);
+      fail(
+        `assumption ${assumption.id} names probe group ${assumption.oracle}, which spec/semantics/probes.json does not declare`,
+      );
     }
     for (const family of assumption.coverage) {
       if (!group.has(family)) {
-        fail(`assumption ${assumption.id} requires coverage family ${family}, which no probe in ${assumption.oracle} measures`);
+        fail(
+          `assumption ${assumption.id} requires coverage family ${family}, which no probe in ${assumption.oracle} measures`,
+        );
       }
     }
     for (const family of group) {
       if (!assumption.coverage.includes(family)) {
-        fail(`probe group ${assumption.oracle} measures family ${family}, which assumption ${assumption.id} does not require`);
+        fail(
+          `probe group ${assumption.oracle} measures family ${family}, which assumption ${assumption.id} does not require`,
+        );
       }
     }
   }
@@ -432,7 +510,7 @@ export function joinRegistries(registry, kinds, emitted, groups) {
           `${opcode.runtimeSymbol} names a different opcode`,
       );
     }
-    if ((opcode.components.length > 0) !== (tag === 'helper:')) {
+    if (opcode.components.length > 0 !== (tag === 'helper:')) {
       fail(
         tag === 'helper:'
           ? `opcode ${opcode.opcode} reaches the target as a generated helper but certifies no components`
@@ -452,7 +530,8 @@ export function joinRegistries(registry, kinds, emitted, groups) {
     if (!used.has(name)) fail(`assumption ${name} is declared but no opcode requires it`);
   }
   const artifacts = new Set(registry.assumptions.map((assumption) => assumption.sourceArtifact));
-  if (artifacts.size !== 1) fail(`the assumptions cite ${artifacts.size} frozen artifacts; one page, one digest, one join`);
+  if (artifacts.size !== 1)
+    fail(`the assumptions cite ${artifacts.size} frozen artifacts; one page, one digest, one join`);
   const theorems = registry.opcodes.map((opcode) => opcode.theorem);
   if (new Set(theorems).size !== theorems.length) fail('two opcodes name the same theorem');
   return {
@@ -572,7 +651,9 @@ export function checkFrozenSource(registry, read = (path) => readFileSync(join(r
   try {
     bytes = read(path);
   } catch {
-    fail(`the frozen specification page is absent: ${path} is not in the tree, so the declared digest ${assumption.sourceDigest} is unverified`);
+    fail(
+      `the frozen specification page is absent: ${path} is not in the tree, so the declared digest ${assumption.sourceDigest} is unverified`,
+    );
   }
   const prefix = 'sha256:';
   if (!assumption.sourceDigest.startsWith(prefix)) {
@@ -580,7 +661,9 @@ export function checkFrozenSource(registry, read = (path) => readFileSync(join(r
   }
   const observed = `${prefix}${createHash('sha256').update(bytes).digest('hex')}`;
   if (observed !== assumption.sourceDigest) {
-    fail(`the frozen specification page ${path} hashes to ${observed} but the registry declares ${assumption.sourceDigest}`);
+    fail(
+      `the frozen specification page ${path} hashes to ${observed} but the registry declares ${assumption.sourceDigest}`,
+    );
   }
   // Every cited clause has to resolve inside that edition. Clauses are anchor ids, not section
   // numbers, because TC39 renumbers sections far more often than it renames anchors.
@@ -657,9 +740,22 @@ function selfTest() {
   expectLeanFailure('semantics-map-reverses-event-order.lean', 'unsolved goals');
 
   const withoutAssumption = structuredClone(registry);
-  const multiple = withoutAssumption.opcodes.find((opcode) => opcode.requires.length > 1);
-  if (multiple === undefined) fail('no opcode carries more than one assumption to drop');
-  const dropped = multiple.requires.pop();
+  // The dropped assumption has to be one no other opcode requires, or the plane still has a requirer
+  // and the refusal this fixture exists to provoke never fires. Taking the first multi-assumption row
+  // and popping its last entry does not guarantee that, so the pair is searched for and its absence
+  // is itself a failure: a fixture that silently stops discriminating is worse than no fixture.
+  const orphanable = withoutAssumption.opcodes.flatMap((opcode) =>
+    opcode.requires.length > 1
+      ? opcode.requires
+          .filter((id) => withoutAssumption.opcodes.every((other) => other === opcode || !other.requires.includes(id)))
+          .map((id) => ({ opcode, id }))
+      : [],
+  );
+  if (orphanable.length === 0) {
+    fail('no opcode carries an assumption that dropping it would leave unrequired');
+  }
+  const [{ opcode: donor, id: dropped }] = orphanable;
+  donor.requires = donor.requires.filter((id) => id !== dropped);
   expectJoinFailure(
     'a missing assumption',
     withoutAssumption,
@@ -718,9 +814,7 @@ function selfTest() {
   // here rather than passing quietly with fifteen rows.
   for (const kind of ['lambda', 'apply']) {
     const withoutKind = structuredClone(registry);
-    withoutKind.expressionOperations = withoutKind.expressionOperations.filter(
-      (entry) => entry.kind !== kind,
-    );
+    withoutKind.expressionOperations = withoutKind.expressionOperations.filter((entry) => entry.kind !== kind);
     if (withoutKind.expressionOperations.length === registry.expressionOperations.length) {
       fail(`the Lean expression registry proves no ${kind} operation`);
     }
@@ -793,6 +887,34 @@ function selfTest() {
     if (!(error instanceof Error) || !error.message.includes('is not joined')) throw error;
   }
 
+  // `ir.ts` spells each theorem name as `${MODEL_NAMESPACE}.<name>`. The reader has to resolve that
+  // one interpolation, because comparing the template's source text against Lean's resolved name
+  // joins nothing and fails every row. It also has to refuse an interpolation it cannot resolve,
+  // rather than fall back to source text and start passing again.
+  const templateTable = [
+    "const MODEL_NAMESPACE = 'Fixture.Namespace';",
+    'export const LEAN_RUNTIME_OPCODES = {',
+    "  'bool.and': {",
+    "    runtimeSymbol: 'inline:bool.and',",
+    '    modelTheorem: `${MODEL_NAMESPACE}.boolAndModelsAnd`,',
+    "    assumptions: ['boolean.logical-operators'],",
+    '  },',
+    '};',
+  ].join('\n');
+  const resolvedRow = readDeclaredOpcodes('fixture.ts', templateTable).get('bool.and');
+  if (resolvedRow === undefined) fail('the opcode reader read no row from the template fixture');
+  if (resolvedRow.modelTheorem !== 'Fixture.Namespace.boolAndModelsAnd') {
+    fail('the opcode reader did not resolve the sanctioned interpolation: it read ' + `${resolvedRow.modelTheorem}`);
+  }
+  try {
+    readDeclaredOpcodes('fixture.ts', templateTable.replace('MODEL_NAMESPACE}', 'INVENTED}'));
+    fail('an unresolvable interpolation in the opcode table was accepted');
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes('declares no literal string constant')) {
+      throw error;
+    }
+  }
+
   try {
     checkFrozenSource(registry, () => {
       throw new Error('absent');
@@ -818,9 +940,7 @@ function selfTest() {
   const unresolvedClause = structuredClone(registry);
   unresolvedClause.assumptions[0].clauses = ['sec-not-a-clause'];
   const clausePage = Buffer.from('<span id="sec-binary-logical-operators"></span>');
-  unresolvedClause.assumptions[0].sourceDigest = `sha256:${createHash('sha256')
-    .update(clausePage)
-    .digest('hex')}`;
+  unresolvedClause.assumptions[0].sourceDigest = `sha256:${createHash('sha256').update(clausePage).digest('hex')}`;
   try {
     checkFrozenSource(unresolvedClause, () => clausePage);
     fail('a clause that does not resolve in the frozen page was accepted');
@@ -863,14 +983,12 @@ function selfTest() {
     { label: 'clean', source: '/-- A comment mentioning sorry and axiom. -/\ntheorem clean : True := trivial\n' },
   ]);
   if (cleanScan.length > 0) fail(`the token scan reported a clean module: ${cleanScan.join(', ')}`);
-  const dirtyScan = forbiddenTokenViolations([
-    { label: 'dirty', source: 'theorem broken : True := by sorry\n' },
-  ]);
+  const dirtyScan = forbiddenTokenViolations([{ label: 'dirty', source: 'theorem broken : True := by sorry\n' }]);
   if (dirtyScan.length !== 1) fail('the token scan accepted a sorry');
   stdout.write(
     'semantics registry self-test passed: 9 join fixtures, 4 opcode-join fixtures, ' +
-      '4 frozen-source fixtures, 1 lock fixture, 1 probe fixture, 10 Lean fixtures, ' +
-      '2 token scans\n',
+      '2 opcode-reader fixtures, 4 frozen-source fixtures, 1 lock fixture, 1 probe fixture, ' +
+      '10 Lean fixtures, 2 token scans\n',
   );
 }
 
