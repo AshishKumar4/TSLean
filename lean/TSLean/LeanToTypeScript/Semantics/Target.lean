@@ -2,6 +2,7 @@ import TSLean.JS.Conversion
 import TSLean.JS.Equality
 import TSLean.JS.Heap
 import TSLean.Refinement.Heap
+import TSLean.LeanToTypeScript.Semantics.Assumption
 import TSLean.LeanToTypeScript.Semantics.Ir
 
 /-!
@@ -66,6 +67,13 @@ inductive Expr where
   | objectLiteral (properties : List (String × Expr))
   /-- `name(argument, …)`. -/
   | callFunction (name : String) (arguments : List Expr)
+  /-- A bigint literal, which is how a `Nat` reaches the target exactly at every magnitude. -/
+  | bigintLit (value : Nat)
+  /-- One runtime opcode applied to its emitted operands. The first-order opcodes denote the engine
+  operation the `Runtime` model names. The six higher-order list opcodes do not: their callback is a
+  real function object, so the emitted `value.map((element) => transform(element))` enters it once
+  per element, and the target semantics runs that entry rather than applying a Lean function. -/
+  | operation (opcode : Ir.Opcode) (arguments : List Expr)
   /-- An inline arrow. `code` is semantic provenance for its anonymous trace event; `body` is the
   executable emitted body stored by the function object itself. -/
   | arrow (code : Ir.LambdaCode) (body : Body)
@@ -150,6 +158,10 @@ inductive Fault where
   | notAnArrow
   /-- The heap properties an arrow call read differ from the closure payload that allocated them. -/
   | capturedScopeMismatch (ref : RefId)
+  /-- An operand an opcode requires to be a dense array, and which is not. -/
+  | notAnArray
+  /-- An opcode applied to the wrong number of emitted operands. -/
+  | operandCount (opcode : Ir.Opcode) (actual : Nat)
   deriving DecidableEq
 
 /-- The result of running one emitted expression. -/
@@ -342,10 +354,46 @@ def bindArguments (parameters : Nat) (arguments : List Value) : List Value :=
       | [] => .primitive .undefined :: bindArguments count []
       | value :: rest => value :: bindArguments count rest
 
+
+/-- Reads the dense elements of an emitted array object, in index order. An absent index is a hole,
+which the emitted fragment never produces and which is refused rather than read as `undefined`. -/
+def readIndices (heap : Heap) (ref : RefId) : Nat → Nat → Except Fault (List Value)
+  | _, 0 => .ok []
+  | index, remaining + 1 =>
+      match heap.getOwnProperty ref (.string (PropertyKey.arrayIndexString index)) with
+      | .error fault => .error (.heap fault)
+      | .ok (some (.data descriptor)) =>
+          match readIndices heap ref (index + 1) remaining with
+          | .ok rest => .ok (descriptor.value :: rest)
+          | .error fault => .error fault
+      | .ok _ => .error .notAnArray
+
+/-- The elements an emitted array value carries, in index order. -/
+def readArray (state : State) : Value → Except Fault (List Value)
+  | .object ref =>
+      match state.heap.arrayLength ref with
+      | .error fault => .error (.heap fault)
+      | .ok length => readIndices state.heap ref 0 length
+  | .primitive _ => .error .notAnArray
+
+/-- Allocates an emitted array carrying these elements, in order. -/
+def allocateArray (state : State) (elements : List Value) : Result :=
+  match state.heap.allocateArray (elements.map some) with
+  | .error fault => .fault (.property fault) state
+  | .ok (ref, heap) => .ok (.object ref) (state.withHeap heap)
+
+/-- Builds the emitted tagged object one `Option` image denotes. -/
+def optionValue (state : State) : OptionImage → Result
+  | .absent =>
+      allocateLiteral state [("kind", .primitive (.string (JSString.ofLeanString "none")))]
+  | .present value =>
+      allocateLiteral state
+        [("kind", .primitive (.string (JSString.ofLeanString "some"))), ("value", value)]
+
 mutual
 
 /-- Runs one emitted expression. -/
-def eval (program : Program) (fuel : Nat) (scope : List Value) (state : State) : Expr → Result
+def eval (program : Program) (runtime : Runtime) (fuel : Nat) (scope : List Value) (state : State) : Expr → Result
   | .binding index =>
       match lookup scope index with
       | some value => .ok value state
@@ -353,60 +401,241 @@ def eval (program : Program) (fuel : Nat) (scope : List Value) (state : State) :
   | .boolLit value => .ok (.primitive (.boolean value)) state
   | .undefinedLit => .ok (.primitive .undefined) state
   | .stringLit value => .ok (.primitive (.string (JSString.ofLeanString value))) state
+  | .bigintLit value => .ok (.primitive (.bigint value)) state
+  | .operation opcode arguments =>
+      match evalList program runtime fuel scope state arguments with
+      | .ok operands next => runOperation program runtime fuel next opcode operands
+      | .thrown error next => .thrown error next
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
   | .member target name =>
-      match eval program fuel scope state target with
+      match eval program runtime fuel scope state target with
       | .ok value next => readMember next name value
       | other => other
   | .conditional condition consequent alternate =>
-      match eval program fuel scope state condition with
-      | .ok value next => if value.toBoolean then eval program fuel scope next consequent
-          else eval program fuel scope next alternate
+      match eval program runtime fuel scope state condition with
+      | .ok value next => if value.toBoolean then eval program runtime fuel scope next consequent
+          else eval program runtime fuel scope next alternate
       | other => other
   | .strictEquals left right =>
-      match eval program fuel scope state left with
+      match eval program runtime fuel scope state left with
       | .ok first next =>
-          match eval program fuel scope next right with
+          match eval program runtime fuel scope next right with
           | .ok second last => .ok (.primitive (.boolean (strictEqual first second))) last
           | other => other
       | other => other
   | .logicalAnd left right =>
-      match eval program fuel scope state left with
-      | .ok first next => if first.toBoolean then eval program fuel scope next right else .ok first next
+      match eval program runtime fuel scope state left with
+      | .ok first next => if first.toBoolean then eval program runtime fuel scope next right else .ok first next
       | other => other
   | .logicalOr left right =>
-      match eval program fuel scope state left with
-      | .ok first next => if first.toBoolean then .ok first next else eval program fuel scope next right
+      match eval program runtime fuel scope state left with
+      | .ok first next => if first.toBoolean then .ok first next else eval program runtime fuel scope next right
       | other => other
   | .logicalNot operand =>
-      match eval program fuel scope state operand with
+      match eval program runtime fuel scope state operand with
       | .ok value next => .ok (.primitive (.boolean (!value.toBoolean))) next
       | other => other
   | .objectLiteral properties =>
-      match evalProperties program fuel scope state properties with
+      match evalProperties program runtime fuel scope state properties with
       | .ok values next => allocateLiteral next values
       | .thrown error next => .thrown error next
       | .fault fault next => .fault fault next
       | .exhausted next => .exhausted next
   | .callFunction name arguments =>
-      match evalList program fuel scope state arguments with
-      | .ok values next => enter program fuel next name values
+      match evalList program runtime fuel scope state arguments with
+      | .ok values next => enter program runtime fuel next name values
       | .thrown error next => .thrown error next
       | .fault fault next => .fault fault next
       | .exhausted next => .exhausted next
   | .arrow code body => allocateClosure state code body scope
   | .callValue callee arguments =>
-      match eval program fuel scope state callee with
+      match eval program runtime fuel scope state callee with
       | .ok value next =>
-          match evalList program fuel scope next arguments with
-          | .ok values last => invoke program fuel last value values
+          match evalList program runtime fuel scope next arguments with
+          | .ok values last => invoke program runtime fuel last value values
           | .thrown error last => .thrown error last
           | .fault fault last => .fault fault last
           | .exhausted last => .exhausted last
       | other => other
-termination_by expression => (fuel, sizeOf expression)
+termination_by expression => (fuel, 3, sizeOf expression)
+
+/--
+Runs one runtime opcode on already evaluated operands.
+
+The first-order opcodes denote the engine operation the `Runtime` model names, and cost neither fuel
+nor a trace entry. The six higher-order list opcodes are different in kind: their callback operand
+is a live function object, so the emitted `value.map((element) => transform(element))` enters it once
+per element. This runs those entries, which is why they spend fuel and record their own application
+entries, in element order.
+-/
+def runOperation (program : Program) (runtime : Runtime) (fuel : Nat) (state : State)
+    (opcode : Ir.Opcode) (operands : List Value) : Result :=
+  match opcode, operands with
+  | .boolAnd, [left, right] => .ok (runtime.boolAnd left right) state
+  | .boolOr, [left, right] => .ok (runtime.boolOr left right) state
+  | .boolNot, [operand] => .ok (runtime.boolNot operand) state
+  | .boolEquals, [left, right] => .ok (runtime.boolEquals left right) state
+  | .natAdd, [left, right] => .ok (runtime.natAdd left right) state
+  | .natSubtract, [left, right] => .ok (runtime.natSubtract left right) state
+  | .natMultiply, [left, right] => .ok (runtime.natMultiply left right) state
+  | .natLess, [left, right] => .ok (runtime.natLess left right) state
+  | .natLessOrEqual, [left, right] => .ok (runtime.natLessOrEqual left right) state
+  | .natEquals, [left, right] => .ok (runtime.natEquals left right) state
+  | .natSuccessor, [operand] => .ok (runtime.natSuccessor operand) state
+  | .stringAppend, [left, right] => .ok (runtime.stringAppend left right) state
+  | .stringEquals, [left, right] => .ok (runtime.stringEquals left right) state
+  | .listLength, [subject] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => .ok (runtime.listLength elements) state
+  | .listIsEmpty, [subject] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => .ok (runtime.listIsEmpty elements) state
+  | .listFirst, [subject] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => .ok (runtime.listFirst elements) state
+  | .listRest, [subject] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => allocateArray state (runtime.listRest elements)
+  | .listReverse, [subject] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => allocateArray state (runtime.listReverse elements)
+  | .listAppend, [left, right] =>
+      match readArray state left, readArray state right with
+      | .ok first, .ok second => allocateArray state (runtime.listAppend first second)
+      | .error fault, _ => .fault fault state
+      | _, .error fault => .fault fault state
+  | .listHead, [subject] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => optionValue state (runtime.listHead elements)
+  | .listMap, [callback, subject] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements =>
+          match mapCalls program runtime fuel state callback elements with
+          | .ok images next => allocateArray next images
+          | .thrown error next => .thrown error next
+          | .fault fault next => .fault fault next
+          | .exhausted next => .exhausted next
+  | .listFilter, [callback, subject] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements =>
+          match filterCalls program runtime fuel state callback elements with
+          | .ok kept next => allocateArray next kept
+          | .thrown error next => .thrown error next
+          | .fault fault next => .fault fault next
+          | .exhausted next => .exhausted next
+  | .listAny, [subject, callback] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => anyCalls program runtime fuel state callback elements
+  | .listAll, [subject, callback] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => allCalls program runtime fuel state callback elements
+  | .listFoldLeft, [callback, initial, subject] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => foldLeftCalls program runtime fuel state callback initial elements
+  | .listFoldRight, [callback, initial, subject] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => foldRightCalls program runtime fuel state callback initial elements
+  | opcode, operands => .fault (.operandCount opcode operands.length) state
+termination_by (fuel, 2, 0)
+
+
+/-- Enters the callback once per element, in order, keeping the images. -/
+def mapCalls (program : Program) (runtime : Runtime) (fuel : Nat) (state : State) (callback : Value) :
+    List Value → ListResult
+  | [] => .ok [] state
+  | head :: rest =>
+      match invoke program runtime fuel state callback [head] with
+      | .ok produced next =>
+          match mapCalls program runtime fuel next callback rest with
+          | .ok images last => .ok (produced :: images) last
+          | other => other
+      | .thrown error next => .thrown error next
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+termination_by elements => (fuel, 1, sizeOf elements)
+
+/-- Enters the callback once per element, in order, keeping the elements it accepts. -/
+def filterCalls (program : Program) (runtime : Runtime) (fuel : Nat) (state : State)
+    (callback : Value) : List Value → ListResult
+  | [] => .ok [] state
+  | head :: rest =>
+      match invoke program runtime fuel state callback [head] with
+      | .ok decision next =>
+          match filterCalls program runtime fuel next callback rest with
+          | .ok kept last => .ok (if decision.toBoolean then head :: kept else kept) last
+          | other => other
+      | .thrown error next => .thrown error next
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+termination_by elements => (fuel, 1, sizeOf elements)
+
+/-- Enters the callback once per element until one accepts. -/
+def anyCalls (program : Program) (runtime : Runtime) (fuel : Nat) (state : State) (callback : Value) :
+    List Value → Result
+  | [] => .ok (Encode.bool false) state
+  | head :: rest =>
+      match invoke program runtime fuel state callback [head] with
+      | .ok decision next =>
+          if decision.toBoolean then .ok (Encode.bool true) next
+          else anyCalls program runtime fuel next callback rest
+      | .thrown error next => .thrown error next
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+termination_by elements => (fuel, 1, sizeOf elements)
+
+/-- Enters the callback once per element until one refuses. -/
+def allCalls (program : Program) (runtime : Runtime) (fuel : Nat) (state : State) (callback : Value) :
+    List Value → Result
+  | [] => .ok (Encode.bool true) state
+  | head :: rest =>
+      match invoke program runtime fuel state callback [head] with
+      | .ok decision next =>
+          if decision.toBoolean then allCalls program runtime fuel next callback rest
+          else .ok (Encode.bool false) next
+      | .thrown error next => .thrown error next
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+termination_by elements => (fuel, 1, sizeOf elements)
+
+/-- Folds the callback over the elements from the left, accumulator first. -/
+def foldLeftCalls (program : Program) (runtime : Runtime) (fuel : Nat) (state : State)
+    (callback accumulator : Value) : List Value → Result
+  | [] => .ok accumulator state
+  | head :: rest =>
+      match invoke program runtime fuel state callback [accumulator, head] with
+      | .ok produced next => foldLeftCalls program runtime fuel next callback produced rest
+      | .thrown error next => .thrown error next
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+termination_by elements => (fuel, 1, sizeOf elements)
+
+/-- Folds the callback over the elements from the right, element first, matching `reduceRight`. -/
+def foldRightCalls (program : Program) (runtime : Runtime) (fuel : Nat) (state : State)
+    (callback accumulator : Value) : List Value → Result
+  | [] => .ok accumulator state
+  | head :: rest =>
+      match foldRightCalls program runtime fuel state callback accumulator rest with
+      | .ok produced next => invoke program runtime fuel next callback [head, produced]
+      | .thrown error next => .thrown error next
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+termination_by elements => (fuel, 1, sizeOf elements)
 
 /-- Enters one declared function on already evaluated arguments. -/
-def enter (program : Program) (fuel : Nat) (state : State) (name : String)
+def enter (program : Program) (runtime : Runtime) (fuel : Nat) (state : State) (name : String)
     (arguments : List Value) : Result :=
   match program.find? name with
   | none => .fault (.undeclaredFunction name) state
@@ -414,14 +643,14 @@ def enter (program : Program) (fuel : Nat) (state : State) (name : String)
       match fuel with
       | 0 => .exhausted state
       | remaining + 1 =>
-          evalBody program remaining (bindArguments declaration.parameters arguments).reverse
+          evalBody program runtime remaining (bindArguments declaration.parameters arguments).reverse
             (state.record (.function name arguments)) declaration.body
-termination_by (fuel, 0)
+termination_by (fuel, 0, 0)
 
 /-- Invokes the callable payload held by a real arrow object. The payload's body is authoritative;
 the heap's captured properties are read and checked before use so an inconsistent object is a model
 fault, never a silently different closure. -/
-def invoke (program : Program) (fuel : Nat) (state : State) (callee : Value)
+def invoke (program : Program) (runtime : Runtime) (fuel : Nat) (state : State) (callee : Value)
     (arguments : List Value) : Result :=
   match callee with
   | .primitive _ => .fault .notAnArrow state
@@ -435,32 +664,32 @@ def invoke (program : Program) (fuel : Nat) (state : State) (callee : Value)
                 match fuel with
                 | 0 => .exhausted next
                 | remaining + 1 =>
-                    evalBody program remaining
+                    evalBody program runtime remaining
                       ((bindArguments closure.code.parameters.length arguments).reverse ++ captured)
                       (next.record (.application closure.code arguments)) closure.body
               else .fault (.capturedScopeMismatch ref) next
           | .thrown error next => .thrown error next
           | .fault fault next => .fault fault next
           | .exhausted next => .exhausted next
-termination_by (fuel, 0)
+termination_by (fuel, 0, 0)
 
 /-- Runs one emitted function body: the `const` run, then the `return`. -/
-def evalBody (program : Program) (fuel : Nat) (scope : List Value) (state : State) : Body → Result
-  | .ret value => eval program fuel scope state value
+def evalBody (program : Program) (runtime : Runtime) (fuel : Nat) (scope : List Value) (state : State) : Body → Result
+  | .ret value => eval program runtime fuel scope state value
   | .constBind _ value rest =>
-      match eval program fuel scope state value with
-      | .ok bound next => evalBody program fuel (bound :: scope) next rest
+      match eval program runtime fuel scope state value with
+      | .ok bound next => evalBody program runtime fuel (bound :: scope) next rest
       | other => other
-termination_by body => (fuel, sizeOf body)
+termination_by body => (fuel, 3, sizeOf body)
 
 /-- Runs a list of emitted expressions left to right. -/
-def evalList (program : Program) (fuel : Nat) (scope : List Value) (state : State) :
+def evalList (program : Program) (runtime : Runtime) (fuel : Nat) (scope : List Value) (state : State) :
     List Expr → ListResult
   | [] => .ok [] state
   | expression :: rest =>
-      match eval program fuel scope state expression with
+      match eval program runtime fuel scope state expression with
       | .ok value next =>
-          match evalList program fuel scope next rest with
+          match evalList program runtime fuel scope next rest with
           | .ok values last => .ok (value :: values) last
           | .thrown error last => .thrown error last
           | .fault fault last => .fault fault last
@@ -468,16 +697,16 @@ def evalList (program : Program) (fuel : Nat) (scope : List Value) (state : Stat
       | .thrown error next => .thrown error next
       | .fault fault next => .fault fault next
       | .exhausted next => .exhausted next
-termination_by expressions => (fuel, sizeOf expressions)
+termination_by expressions => (fuel, 3, sizeOf expressions)
 
 /-- Runs an object literal's property values left to right, keeping the listed order. -/
-def evalProperties (program : Program) (fuel : Nat) (scope : List Value) (state : State) :
+def evalProperties (program : Program) (runtime : Runtime) (fuel : Nat) (scope : List Value) (state : State) :
     List (String × Expr) → NamedListResult
   | [] => .ok [] state
   | (name, expression) :: rest =>
-      match eval program fuel scope state expression with
+      match eval program runtime fuel scope state expression with
       | .ok value next =>
-          match evalProperties program fuel scope next rest with
+          match evalProperties program runtime fuel scope next rest with
           | .ok values last => .ok ((name, value) :: values) last
           | .thrown error last => .thrown error last
           | .fault fault last => .fault fault last
@@ -485,7 +714,7 @@ def evalProperties (program : Program) (fuel : Nat) (scope : List Value) (state 
       | .thrown error next => .thrown error next
       | .fault fault next => .fault fault next
       | .exhausted next => .exhausted next
-termination_by properties => (fuel, sizeOf properties)
+termination_by properties => (fuel, 3, sizeOf properties)
 
 end
 
