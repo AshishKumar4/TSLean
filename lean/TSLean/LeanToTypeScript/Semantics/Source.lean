@@ -74,10 +74,8 @@ inductive Fault where
   | closureArity (expected actual : Nat)
   /-- A type the fragment cannot take apart, such as a `Nat` used as a match scrutinee. -/
   | notDestructurable
-  /-- An opcode applied to the wrong number of operands. -/
-  | opcodeArity (opcode : Ir.Opcode) (actual : Nat)
-  /-- An operand whose shape the opcode does not accept, such as a non-list to `list.map`. -/
-  | opcodeOperand (opcode : Ir.Opcode)
+  /-- An opcode reached with operands it does not accept, and how many there were. -/
+  | opcodeOperands (opcode : Ir.Opcode) (operands : Nat)
   deriving DecidableEq, Repr
 
 /-- The result of evaluating one expression, carrying the trace in every case. -/
@@ -115,65 +113,39 @@ def elementType (typeArguments : List Ir.Ty) : Ir.Ty := (typeArguments[0]?).getD
 def imageType (typeArguments : List Ir.Ty) : Ir.Ty := (typeArguments[1]?).getD .boolean
 
 /--
-The strict, first-order opcodes, as a total function on operand lists. Every shape the opcode does
-not accept is a typed fault rather than a silent default, so a mis-shaped operand is refused where
-it occurs instead of being coerced.
+The strict, first-order opcodes, as a total function on operand lists: one clause per opcode and
+accepted operand shape, and one refusal carrying the opcode and the number of operands it was
+reached with. Every shape an opcode does not accept is that typed fault rather than a silent
+default, so a mis-shaped operand is refused where it occurs instead of being coerced.
 
 `bool.and` and `bool.or` are absent on purpose: ECMAScript evaluates their right operand lazily, so
-they are decided in `evalOperation` where the unevaluated operand is still available. The six
-higher-order list opcodes are absent for the same structural reason: they enter a closure, which
-costs fuel and records an entry.
+they are decided in `eval`, where the unevaluated operand is still available. The six higher-order
+list opcodes are absent for the same structural reason: they enter a closure, which costs fuel and
+records an entry.
 -/
-def applyStrict (opcode : Ir.Opcode) : List Value → Except Fault Value
-  | [.boolean operand] =>
-      match opcode with
-      | .boolNot => .ok (.boolean (!operand))
-      | _ => .error (.opcodeOperand opcode)
-  | [.boolean left, .boolean right] =>
-      match opcode with
-      | .boolEquals => .ok (.boolean (left == right))
-      | _ => .error (.opcodeOperand opcode)
-  | [.nat operand] =>
-      match opcode with
-      | .natSuccessor => .ok (.nat (operand + 1))
-      | _ => .error (.opcodeOperand opcode)
-  | [.nat left, .nat right] =>
-      match opcode with
-      | .natAdd => .ok (.nat (left + right))
-      | .natSubtract => .ok (.nat (left - right))
-      | .natMultiply => .ok (.nat (left * right))
-      | .natLess => .ok (.boolean (decide (left < right)))
-      | .natLessOrEqual => .ok (.boolean (decide (left ≤ right)))
-      | .natEquals => .ok (.boolean (left == right))
-      | _ => .error (.opcodeOperand opcode)
-  | [.string left, .string right] =>
-      match opcode with
-      | .stringAppend => .ok (.string (left ++ right))
-      | .stringEquals => .ok (.boolean (left == right))
-      | _ => .error (.opcodeOperand opcode)
-  | [.array element elements] =>
-      match opcode with
-      | .listLength => .ok (.nat elements.length)
-      | .listIsEmpty => .ok (.boolean elements.isEmpty)
-      | .listReverse => .ok (.array element elements.reverse)
-      | .listRest =>
-          match elements with
-          | [] => .error (.opcodeOperand opcode)
-          | _ :: rest => .ok (.array element rest)
-      | .listFirst =>
-          match elements with
-          | [] => .error (.opcodeOperand opcode)
-          | head :: _ => .ok head
-      | .listHead =>
-          match elements with
-          | [] => .ok (.variant (.option element) "none" [])
-          | head :: _ => .ok (.variant (.option element) "some" [head])
-      | _ => .error (.opcodeOperand opcode)
-  | [.array element first, .array _ second] =>
-      match opcode with
-      | .listAppend => .ok (.array element (first ++ second))
-      | _ => .error (.opcodeOperand opcode)
-  | operands => .error (.opcodeArity opcode operands.length)
+def applyStrict (opcode : Ir.Opcode) (values : List Value) : Except Fault Value :=
+  match opcode, values with
+  | .boolNot, [.boolean operand] => .ok (.boolean (!operand))
+  | .boolEquals, [.boolean left, .boolean right] => .ok (.boolean (left == right))
+  | .natSuccessor, [.nat operand] => .ok (.nat (operand + 1))
+  | .natAdd, [.nat left, .nat right] => .ok (.nat (left + right))
+  | .natSubtract, [.nat left, .nat right] => .ok (.nat (left - right))
+  | .natMultiply, [.nat left, .nat right] => .ok (.nat (left * right))
+  | .natLess, [.nat left, .nat right] => .ok (.boolean (decide (left < right)))
+  | .natLessOrEqual, [.nat left, .nat right] => .ok (.boolean (decide (left ≤ right)))
+  | .natEquals, [.nat left, .nat right] => .ok (.boolean (left == right))
+  | .stringAppend, [.string left, .string right] => .ok (.string (left ++ right))
+  | .stringEquals, [.string left, .string right] => .ok (.boolean (left == right))
+  | .listLength, [.array _ elements] => .ok (.nat elements.length)
+  | .listIsEmpty, [.array _ elements] => .ok (.boolean elements.isEmpty)
+  | .listReverse, [.array element elements] => .ok (.array element elements.reverse)
+  | .listRest, [.array element (_ :: rest)] => .ok (.array element rest)
+  | .listFirst, [.array _ (head :: _)] => .ok head
+  | .listHead, [.array element []] => .ok (.variant (.option element) "none" [])
+  | .listHead, [.array element (head :: _)] => .ok (.variant (.option element) "some" [head])
+  | .listAppend, [.array element first, .array _ second] =>
+      .ok (.array element (first ++ second))
+  | opcode, values => .error (.opcodeOperands opcode values.length)
 
 
 mutual

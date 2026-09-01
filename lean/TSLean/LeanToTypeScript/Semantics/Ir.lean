@@ -313,6 +313,21 @@ theorem Opcode.eq_boolEquals_of_operator? {code : Opcode}
     (spelled : code.operator? = some .strictEquals) : code = .boolEquals := by
   cases code <;> simp_all [Opcode.operator?]
 
+/--
+Whether the opcode carries a callback operand the emitted form enters once per element.
+
+The six higher-order list opcodes do: `value.map((element) => transform(element))` enters a real
+function object, which costs fuel and records an entry. Every other opcode is first-order and
+denotes one engine operation at no fuel and no trace cost. The two kinds are proved differently, so
+the registry names the distinction rather than leaving it to be read off a proof.
+-/
+def Opcode.callback : Opcode → Bool
+  | .listMap | .listFilter | .listFoldLeft | .listFoldRight | .listAny | .listAll => true
+  | .boolAnd | .boolOr | .boolNot | .boolEquals | .natAdd | .natSubtract | .natMultiply
+  | .natLess | .natLessOrEqual | .natEquals | .natSuccessor | .stringAppend | .stringEquals
+  | .listLength | .listIsEmpty | .listAppend | .listReverse | .listHead | .listFirst
+  | .listRest => false
+
 
 /-- One declared field: its emitted property key and its type. -/
 structure Field where
