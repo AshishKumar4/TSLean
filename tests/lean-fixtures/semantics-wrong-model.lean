@@ -12,10 +12,10 @@ the elaborator has to refuse the proof.
 
 namespace TSLean.LeanToTypeScript.Semantics.SemanticsFixture
 
-open Opcode TSLean.JS
+open TSLean.JS
 
 theorem boolAndModelsOr (runtime : Runtime)
-    (holds : Assumption.Holds runtime Code.boolAnd.requires) :
+    (holds : Assumption.Holds runtime Ir.Opcode.boolAnd.requires) :
     ∀ left right : Bool,
       Encode.bool (left || right) = runtime.boolAnd (Encode.bool left) (Encode.bool right) := by
   intro left right

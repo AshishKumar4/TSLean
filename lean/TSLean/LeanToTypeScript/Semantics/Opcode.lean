@@ -120,39 +120,20 @@ def modelField : Opcode → String
 /--
 The emitted role the opcode's form is built from, tagged by how it reaches the target.
 
-`inline:` is an operator, method or index the emitter writes at the use site; `helper:` is a
-generated helper function the emitter declares once and calls. The tag is what lets a catalog row be
-joined against the emitted bytes without reading the proof: a `helper:` row has a helper to bind and
-`components` to certify, and an `inline:` row has neither. It is distinct from `emittedForm`, which
-records the exact TypeScript, and from `modelField`, which names the `Runtime` constant.
+`inline:<opcode>` is a form the emitter writes at the use site, and names the opcode it is the form
+of; `helper:<role>` is a generated helper the emitter declares once and calls, and names the role
+that helper fills. The tag is what lets a catalog row be joined against the emitted bytes without
+reading the proof: a `helper:` row has a helper to bind and `components` to certify, and an
+`inline:` row has neither. `LeanRuntimeSymbol` in `src/lean-to-typescript/ir.ts` is the same two
+spellings, so the two sides join on this field exactly.
+
+It is distinct from `emittedForm`, which records the exact TypeScript, and from `modelField`, which
+names the `Runtime` constant.
 -/
 def runtimeSymbol : Opcode → String
-  | .boolAnd => "inline:&&"
-  | .boolOr => "inline:||"
-  | .boolNot => "inline:!"
-  | .boolEquals => "inline:==="
-  | .natAdd => "inline:+"
   | .natSubtract => "helper:nat-truncated-subtraction"
-  | .natMultiply => "inline:*"
-  | .natLess => "inline:<"
-  | .natLessOrEqual => "inline:<="
-  | .natEquals => "inline:==="
-  | .natSuccessor => "inline:+"
-  | .stringAppend => "inline:+"
-  | .stringEquals => "inline:==="
-  | .listLength => "inline:BigInt"
-  | .listIsEmpty => "inline:length"
-  | .listAppend => "inline:spread"
-  | .listReverse => "inline:reverse"
-  | .listMap => "inline:map"
-  | .listFilter => "inline:filter"
-  | .listFoldLeft => "inline:reduce"
-  | .listFoldRight => "inline:reduceRight"
-  | .listAny => "inline:some"
-  | .listAll => "inline:every"
   | .listHead => "helper:list-head-option"
-  | .listFirst => "inline:index"
-  | .listRest => "inline:slice"
+  | code => "inline:" ++ code.kind
 
 /-- The tag every runtime symbol carries: `inline:` for a form written at the use site, `helper:`
 for a generated helper the emitter declares. -/
@@ -173,6 +154,12 @@ that helper composes. -/
 theorem components_iff_helper (code : Opcode) :
     code.components ≠ [] ↔ code.runtimeSymbolTag = "helper:" := by
   cases code <;> simp [components, runtimeSymbolTag, runtimeSymbol]
+
+/-- An inline runtime symbol names the opcode it is the emitted form of, so the join between this
+registry and `LEAN_RUNTIME_OPCODES` in `ir.ts` is a bijection rather than a lookup. -/
+theorem runtimeSymbol_inline (code : Opcode) (inline : code.runtimeSymbolTag = "inline:") :
+    code.runtimeSymbol = "inline:" ++ code.kind := by
+  cases code <;> first | rfl | simp [runtimeSymbolTag, runtimeSymbol] at inline
 
 
 /-- The ordered assumption closure the opcode's theorem consumes. -/

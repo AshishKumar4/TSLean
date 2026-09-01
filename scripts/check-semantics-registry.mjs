@@ -153,6 +153,8 @@ function declaredOpcodes() {
     }
     let modelTheorem;
     let assumptions;
+    let runtimeSymbol;
+    let components = [];
     for (const field of property.initializer.properties) {
       if (!ts.isPropertyAssignment(field) || !ts.isIdentifier(field.name)) continue;
       if (field.name.text === 'modelTheorem') {
@@ -160,15 +162,24 @@ function declaredOpcodes() {
           ? field.initializer.text
           : field.initializer.getText(source);
       }
+      if (field.name.text === 'runtimeSymbol' && ts.isStringLiteral(field.initializer)) {
+        runtimeSymbol = field.initializer.text;
+      }
       if (field.name.text === 'assumptions' && ts.isArrayLiteralExpression(field.initializer)) {
         assumptions = field.initializer.elements.map((element) =>
+          ts.isStringLiteral(element) ? element.text : element.getText(source),
+        );
+      }
+      if (field.name.text === 'components' && ts.isArrayLiteralExpression(field.initializer)) {
+        components = field.initializer.elements.map((element) =>
           ts.isStringLiteral(element) ? element.text : element.getText(source),
         );
       }
     }
     if (modelTheorem === undefined) fail(`ir.ts opcode row ${kind} names no modelTheorem`);
     if (assumptions === undefined) fail(`ir.ts opcode row ${kind} names no assumptions`);
-    rows.set(kind, { modelTheorem, assumptions });
+    if (runtimeSymbol === undefined) fail(`ir.ts opcode row ${kind} names no runtimeSymbol`);
+    rows.set(kind, { modelTheorem, assumptions, runtimeSymbol, components });
   }
   return rows;
 }
@@ -197,6 +208,21 @@ export function joinOpcodes(registry, declared) {
       fail(
         `opcode ${opcode.opcode} names closure ${JSON.stringify(row.assumptions)} in ir.ts but ` +
           `${JSON.stringify(opcode.requires)} in Lean`,
+      );
+    }
+    // The tagged runtime symbol is the same spelling on both sides, so the emitted role each opcode
+    // reaches the target as is joined rather than restated: an opcode the emitter inlines and the
+    // semantics proves as a helper, or the reverse, differs here.
+    if (row.runtimeSymbol !== opcode.runtimeSymbol) {
+      fail(
+        `opcode ${opcode.opcode} names runtime symbol ${row.runtimeSymbol} in ir.ts but ` +
+          `${opcode.runtimeSymbol} in Lean`,
+      );
+    }
+    if (JSON.stringify(row.components) !== JSON.stringify(opcode.components)) {
+      fail(
+        `opcode ${opcode.opcode} composes ${JSON.stringify(row.components)} in ir.ts but ` +
+          `${JSON.stringify(opcode.components)} in Lean`,
       );
     }
   }
@@ -382,6 +408,36 @@ export function joinRegistries(registry, kinds, emitted, groups) {
     }
     if (typeof opcode.theorem !== 'string' || opcode.theorem.length === 0) {
       fail(`opcode ${opcode.opcode} records no theorem`);
+    }
+    if (!Array.isArray(opcode.components)) {
+      fail(`opcode ${opcode.opcode} records no components list`);
+    }
+    // Every runtime symbol says how the opcode reaches the target, not only what it is spelled as.
+    // `inline:` is a form the emitter writes at the use site and has no body to bind; `helper:` is a
+    // generated helper, which does, and which certifies the semantic components it composes. A row
+    // that claimed neither could not be joined against the emitted bytes at all.
+    const tag = ['inline:', 'helper:'].find((prefix) => opcode.runtimeSymbol.startsWith(prefix));
+    if (tag === undefined) {
+      fail(
+        `opcode ${opcode.opcode} records runtime symbol ${opcode.runtimeSymbol}, which names no ` +
+          'emitted role; write it as inline:<form> or helper:<name>',
+      );
+    }
+    if (opcode.runtimeSymbol.length === tag.length) {
+      fail(`opcode ${opcode.opcode} records the bare tag ${tag} and no emitted role`);
+    }
+    if (tag === 'inline:' && opcode.runtimeSymbol !== `inline:${opcode.opcode}`) {
+      fail(
+        `opcode ${opcode.opcode} is emitted inline but its runtime symbol ` +
+          `${opcode.runtimeSymbol} names a different opcode`,
+      );
+    }
+    if ((opcode.components.length > 0) !== (tag === 'helper:')) {
+      fail(
+        tag === 'helper:'
+          ? `opcode ${opcode.opcode} reaches the target as a generated helper but certifies no components`
+          : `opcode ${opcode.opcode} is emitted inline but certifies helper components`,
+      );
     }
     if (opcode.requires.length === 0) fail(`opcode ${opcode.opcode} names no assumption`);
     if (new Set(opcode.requires).size !== opcode.requires.length) {
@@ -593,6 +649,12 @@ function selfTest() {
   expectLeanFailure('semantics-arrow-drops-trace.lean', 'unsolved goals');
   expectLeanFailure('semantics-arrow-free-fuel.lean', 'unsolved goals');
   expectLeanFailure('semantics-arrow-wrong-theorem.lean', 'Type mismatch');
+  // The v5 kinds: the dense-array representation, the lazy boolean operators, the dense array read
+  // and the element order the higher-order opcodes enter their callback in.
+  expectLeanFailure('semantics-list-as-tagged-object.lean', 'Type mismatch');
+  expectLeanFailure('semantics-eager-boolean-and.lean', 'unsolved goals');
+  expectLeanFailure('semantics-array-hole-reads-undefined.lean', 'unsolved goals');
+  expectLeanFailure('semantics-map-reverses-event-order.lean', 'unsolved goals');
 
   const withoutAssumption = structuredClone(registry);
   const multiple = withoutAssumption.opcodes.find((opcode) => opcode.requires.length > 1);
@@ -678,6 +740,8 @@ function selfTest() {
       {
         modelTheorem: opcode.theorem,
         assumptions: [...opcode.requires],
+        runtimeSymbol: opcode.runtimeSymbol,
+        components: [...opcode.components],
       },
     ]),
   );
@@ -687,6 +751,8 @@ function selfTest() {
   withDriftedClosure.set(firstKind, {
     modelTheorem: declared.get(firstKind).modelTheorem,
     assumptions: [...declared.get(firstKind).assumptions, 'bigint.relational'],
+    runtimeSymbol: declared.get(firstKind).runtimeSymbol,
+    components: [...declared.get(firstKind).components],
   });
   try {
     joinOpcodes(registry, withDriftedClosure);
@@ -698,12 +764,27 @@ function selfTest() {
   withDriftedTheorem.set(firstKind, {
     modelTheorem: 'Elsewhere.wrongTheorem',
     assumptions: [...declared.get(firstKind).assumptions],
+    runtimeSymbol: declared.get(firstKind).runtimeSymbol,
+    components: [...declared.get(firstKind).components],
   });
   try {
     joinOpcodes(registry, withDriftedTheorem);
     fail('an opcode theorem drifted from ir.ts was accepted');
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes('names theorem')) throw error;
+  }
+  const withDriftedSymbol = new Map(declared);
+  withDriftedSymbol.set(firstKind, {
+    modelTheorem: declared.get(firstKind).modelTheorem,
+    assumptions: [...declared.get(firstKind).assumptions],
+    runtimeSymbol: 'helper:invented-role',
+    components: [...declared.get(firstKind).components],
+  });
+  try {
+    joinOpcodes(registry, withDriftedSymbol);
+    fail('an opcode runtime symbol drifted from ir.ts was accepted');
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes('names runtime symbol')) throw error;
   }
   try {
     joinOpcodes(registry, undefined);
@@ -756,6 +837,17 @@ function selfTest() {
     if (!(error instanceof Error) || !error.message.includes('but the model predicts')) throw error;
   }
 
+  const withUntaggedSymbol = structuredClone(registry);
+  withUntaggedSymbol.opcodes[0].runtimeSymbol = '&&';
+  expectJoinFailure(
+    'an untagged runtime symbol',
+    withUntaggedSymbol,
+    kinds,
+    emitted,
+    scenarios,
+    'which names no emitted role',
+  );
+
   const withDriftedDigest = structuredClone(registry);
   withDriftedDigest.assumptions[0].statement = 'something else';
   expectJoinFailure(
@@ -776,8 +868,8 @@ function selfTest() {
   ]);
   if (dirtyScan.length !== 1) fail('the token scan accepted a sorry');
   stdout.write(
-    'semantics registry self-test passed: 8 join fixtures, 3 opcode-join fixtures, ' +
-      '4 frozen-source fixtures, 1 lock fixture, 1 probe fixture, 6 Lean fixtures, ' +
+    'semantics registry self-test passed: 9 join fixtures, 4 opcode-join fixtures, ' +
+      '4 frozen-source fixtures, 1 lock fixture, 1 probe fixture, 10 Lean fixtures, ' +
       '2 token scans\n',
   );
 }

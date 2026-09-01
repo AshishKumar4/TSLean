@@ -112,6 +112,11 @@ open Ir Assumption
 #guard (Opcode.all.filter fun code => code.runtimeSymbolTag == "helper:").map Opcode.kind =
   ["nat.subtract", "list.head"]
 
+-- An inline symbol names the opcode it is the emitted form of, which is what makes the join against
+-- `LEAN_RUNTIME_OPCODES` in `src/lean-to-typescript/ir.ts` a bijection rather than a lookup.
+#guard Opcode.all.all fun code =>
+  code.runtimeSymbolTag != "inline:" || code.runtimeSymbol == "inline:" ++ code.kind
+
 -- Exactly four opcodes reach the target as operators, so exactly four are refused as operation
 -- calls, and each records the operand count its operator form takes.
 #guard (Opcode.all.filter fun code => code.operator?.isSome).map Opcode.kind =

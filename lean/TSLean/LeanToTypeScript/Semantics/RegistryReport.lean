@@ -15,7 +15,7 @@ here without anyone editing this file.
 
 namespace TSLean.LeanToTypeScript.Semantics
 
-open Lean Ir Opcode Assumption
+open Lean Ir Assumption
 
 private def kindEntry (constructor kind : String) : Json :=
   Json.mkObj [("constructor", .str constructor), ("kind", .str kind)]
@@ -24,7 +24,7 @@ private def opcodeNamespace : String := "TSLean.LeanToTypeScript.Semantics.Opcod
 
 private def modelNamespace : String := "TSLean.LeanToTypeScript.Semantics.Runtime"
 
-private def opcodeEntry (code : Code) : Json :=
+private def opcodeEntry (code : Ir.Opcode) : Json :=
   Json.mkObj [
     ("opcode", .str code.kind),
     ("emittedForm", .str code.emittedForm),
@@ -59,7 +59,7 @@ def registryReport : Json :=
       kindEntry (toString (repr family)) family.kind).toArray)),
     ("typeForms", .arr ((TyKind.all.map fun form =>
       kindEntry (toString (repr form)) form.kind).toArray)),
-    ("opcodes", .arr ((Code.all.map opcodeEntry).toArray)),
+    ("opcodes", .arr ((Ir.Opcode.all.map opcodeEntry).toArray)),
     ("assumptions", .arr ((Id.all.map assumptionEntry).toArray))
   ]
 

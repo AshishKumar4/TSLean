@@ -13,6 +13,7 @@ have. The elaborator has to refuse it.
 
 namespace TSLean.LeanToTypeScript.Semantics.SemanticsFixture
 
-theorem applyFromLambda : Preservation.Op.Preserves .apply := Preservation.lambda
+theorem applyFromLambda (runtime : Runtime) : Preservation.Op.Preserves runtime .apply :=
+  Preservation.lambda
 
 end TSLean.LeanToTypeScript.Semantics.SemanticsFixture
