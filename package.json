@@ -42,6 +42,7 @@
     "examples/lean-to-typescript/**",
     "examples/roundtrip/**",
     "spec/lean-to-typescript/**",
+    "spec/semantics/**",
     "spec/differential/**",
     "README.md",
     "LICENSE"

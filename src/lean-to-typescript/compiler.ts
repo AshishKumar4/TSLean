@@ -26,9 +26,10 @@ import {
   type LeanToTypeScriptInput,
   type LeanToTypeScriptPackage,
 } from './artifact.js';
+import { assertRuntimeOpcodeCertificates, loadRuntimeCertificateRegistry } from './certificates.js';
 import { emitTypeScriptPackage } from './emitter.js';
 import { UnsupportedLeanFragmentError } from './fragment.js';
-import { decodeLeanSemanticProgram, isLeanModuleName } from './ir.js';
+import { decodeLeanSemanticProgram, isLeanModuleName, referencedRuntimeOpcodes } from './ir.js';
 import { compareCodePoints } from './ordering.js';
 import {
   assertLeanToTypeScriptPlatform,
@@ -153,6 +154,7 @@ function compileNormalized(
 ): LeanToTypeScriptCompilation {
   const targetRequest = stagedTargetRequest(normalized, layout);
   prepareLeanModules(targetRequest, layout, compilerToolchain, targetToolchain);
+  assertRequestedSourceMatchesModule(targetRequest, targetToolchain);
   const moduleFiles = collectModuleFiles(targetRequest, layout, compilerToolchain, targetToolchain);
   const targetModules = collectTargetModuleNames(targetRequest, targetToolchain);
   assertTargetSource(moduleFiles, normalized.moduleName, layout.targetSourcePath);
@@ -217,7 +219,11 @@ function compileNormalized(
   const environmentInputs = inputs.filter((input) => LEAN_TO_TYPESCRIPT_INPUT_PLANES[input.kind] === 'environment');
   const outputDirectory = normalized.outputDirectory;
   if (outputDirectory === undefined) throw new TypeError('normalized generated output directory is missing');
+  // Before anything is built: every opcode this program spends must carry a proved certificate.
+  const { catalog } = loadRuntimeCertificateRegistry();
+  assertRuntimeOpcodeCertificates([...referencedRuntimeOpcodes(program)].sort(compareCodePoints), catalog);
   const emitted = emitTypeScriptPackage(program, {
+    certificates: catalog,
     semantic: {
       fragmentVersion: program.fragmentVersion,
       entryModule: normalized.moduleName,
@@ -817,6 +823,18 @@ function moduleArtifact(toolchain: LeanToolchain, projectRoot: string, moduleNam
   return artifact;
 }
 
+/**
+ * `sourcePath` is a provenance identity, not a hint. Resolve the requested Lake module through
+ * the configured source roots before traversing dependencies, so a path for another module is
+ * rejected without accidentally treating its imports as the target program.
+ */
+function assertRequestedSourceMatchesModule(request: LeanToTypeScriptRequest, toolchain: LeanToolchain): void {
+  const source = moduleSource(projectSourceRoots(toolchain, request.projectRoot), request.moduleName);
+  if (source === undefined || source !== realpathSync(request.sourcePath)) {
+    throw new TypeError(`Lean source path does not define module ${request.moduleName}`);
+  }
+}
+
 /** The source Lake would compile for a module, or `undefined` when the project does not own it. */
 function moduleSource(sourceRoots: readonly string[], moduleName: string): string | undefined {
   const relativePath = `${moduleName.split('.').join(sep)}.lean`;
@@ -837,10 +855,7 @@ function moduleNameFromArtifact(searchRoots: readonly string[], path: string): s
   if (root === undefined) {
     throw new TypeError(`Lean module artifact is outside every Lake search root: ${path}`);
   }
-  return relative(root, path)
-    .slice(0, -'.olean'.length)
-    .split(sep)
-    .join('.');
+  return relative(root, path).slice(0, -'.olean'.length).split(sep).join('.');
 }
 
 function exportDriver(request: LeanToTypeScriptRequest, targetModules: readonly string[]): string {
@@ -965,6 +980,7 @@ function hostEnvironmentAttestation(inputs: readonly LeanToTypeScriptInput[]): L
     platform: `${process.platform}-${process.arch}`,
     inputs,
     inputClosureSha256: sha256(JSON.stringify(inputs)),
+    runtimeConformance: [],
   };
 }
 

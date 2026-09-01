@@ -303,17 +303,33 @@ function assertOutputRootIsIsolated(outputDirectory: string, compilerInputs: rea
 /**
  * Files the previous manifest explicitly owned. A manifest is the authority for deleting generated
  * source: an arbitrary `.ts` sibling is somebody else's file even if it happens to live below the
- * output root.
+ * output root. A manifest written at a superseded schema is still the authority for what it wrote,
+ * so its module list is read for ownership alone and never for any semantic claim.
  */
 function priorOwnedGeneratedFiles(outputDirectory: string, manifestPath: string): ReadonlySet<string> {
   if (!existsSync(manifestPath)) return new Set();
-  const manifest = readManifest(manifestPath);
+  const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
   return new Set(
-    manifest.semantic.modules.flatMap((module) => [
+    priorModulePaths(parsed).flatMap((module) => [
       resolve(outputDirectory, module.path),
       ...(module.sourceMapSha256 === '' ? [] : [resolve(outputDirectory, `${module.path}.map`)]),
     ]),
   );
+}
+
+function priorModulePaths(parsed: unknown): readonly { readonly path: string; readonly sourceMapSha256: string }[] {
+  if (typeof parsed !== 'object' || parsed === null || !('semantic' in parsed)) return [];
+  const semantic = parsed.semantic;
+  if (typeof semantic !== 'object' || semantic === null || !('modules' in semantic)) return [];
+  const modules = semantic.modules;
+  if (!Array.isArray(modules)) return [];
+  return modules.flatMap((module: unknown) => {
+    if (typeof module !== 'object' || module === null || !('path' in module)) return [];
+    const path = module.path;
+    if (typeof path !== 'string' || path.length === 0) return [];
+    const recorded = 'sourceMapSha256' in module ? module.sourceMapSha256 : '';
+    return [{ path, sourceMapSha256: typeof recorded === 'string' ? recorded : '' }];
+  });
 }
 
 /** Every TypeScript source or source-map file physically present below the output root. */

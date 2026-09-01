@@ -4,16 +4,17 @@
  * Lean module: TSLean.Examples.Package.Capability
  * Generated module: TSLean/Examples/Package/Capability.ts
  * Package entry module: TSLean.Examples.Package.Decision
- * Semantic identity: sha256:a4bd8da473cd3a6b9bf21d7adff68f0ee5844e31fdba855c44e2922e4ab58849
- * Input closure: sha256:79a62868a02735b3fb0cddffbabd662358b3c1012af64e26b72fbf31fac987c6
+ * Semantic identity: sha256:56061cff2268432cdd4a44b22c0102f0bdc2e40578a3f0864df7bc9ca110e320
+ * Input closure: sha256:a9850e7a3471f52f712f17720419b04a44d4de49a77f7e97728491775bd9c858
  * Semantic IR: sha256:81a40dc25bc7f5bea3a9b7a04cb7bd93415900e34a7cd758c4f744da7edf7354
  * Generated module body: sha256:370265ceb3d935296fafc4bf6914a040ce4917a8ce5bdcdf1414623a8599bab3
  * Generated package body: sha256:5245663fde919015cddbd169494008fad9a0a43ed4c200ec6679c169f92bad72
  * Lean toolchain: leanprover/lean4:v4.33.1
  * Lean: Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)
  * Lake: Lake version 5.0.0-src+819816b (Lean version 4.33.1)
+ * Runtime certificates: sha256:cdfe1c19c5d522c74a23029794202e6f09fcdc12ae80fd10d1b3fe83faf19dba
  * Environment attestation: recorded in the manifest sidecar; it does not affect these bytes.
- * Evidence boundary: generation is checked and differential tests are empirical; no refinement theorem is claimed.
+ * Evidence boundary: Lean certificates prove source-to-model refinement conditionally; engine conformance remains an explicit obligation.
  */
 import { type GeneratedData, dataFields, requireBoolean } from "../../../tslean-runtime.js";
 

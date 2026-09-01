@@ -8,6 +8,13 @@ import type {
   LeanToTypeScriptPackage,
   LeanToTypeScriptSemanticIdentity,
 } from './artifact.js';
+import {
+  bindRuntimeSymbol,
+  certificateForOpcode,
+  type RuntimeCertificateBinding,
+  type RuntimeCertificateCatalog,
+} from './certificates.js';
+import { attestRuntimeConformance } from './runtime-conformance.js';
 import type {
   LeanDeclaration,
   LeanEnumConstructor,
@@ -57,9 +64,11 @@ import {
 export interface LeanToTypeScriptProvenance {
   readonly semantic: Omit<
     LeanToTypeScriptSemanticIdentity,
-    'generatedBodySha256' | 'modules' | 'closure' | 'leanProjectPath'
+    'generatedBodySha256' | 'modules' | 'closure' | 'leanProjectPath' | 'certificates'
   >;
-  readonly environment: LeanToTypeScriptEnvironmentAttestation;
+  readonly environment: Omit<LeanToTypeScriptEnvironmentAttestation, 'runtimeConformance'>;
+  /** The Lean-owned registry every spent opcode is certified against. */
+  readonly certificates: RuntimeCertificateCatalog;
   /** Each Lean module's source path, relative to the target project root. */
   readonly sources: ReadonlyMap<string, string>;
   /**
@@ -103,6 +112,7 @@ export function emitTypeScriptPackage(
     compareGeneratedPaths(left.path, right.path),
   );
   const printed = printPackage(ordered, program, context, provenance);
+  const certificates = emittedRuntimeCertificates(program, provenance.certificates, printed);
   const manifest = canonicalManifest({
     schemaVersion: LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION,
     semantic: {
@@ -110,10 +120,20 @@ export function emitTypeScriptPackage(
       leanProjectPath: provenance.leanProjectPath,
       modules: printed.map((module) => module.identity),
       closure: program.closure,
+      certificates,
       generatedBodySha256: generatedPackageDigest(printed.map((module) => module.identity)),
     },
-    environment: provenance.environment,
+    environment: {
+      ...provenance.environment,
+      runtimeConformance: attestRuntimeConformance(
+        provenance.certificates,
+        certificates,
+        provenance.semantic.inputs,
+        provenance.environment.inputs,
+      ),
+    },
   });
+
   const emitted: LeanToTypeScriptPackage = {
     modules: printed.map((module): LeanToTypeScriptModuleArtifact => {
       const header = provenanceHeader(manifest, module.identity.path);
@@ -123,6 +143,33 @@ export function emitTypeScriptPackage(
   };
   verifyLeanToTypeScriptPackage(emitted);
   return emitted;
+}
+
+/**
+ * Certificates the emitted package actually relies on, bound to the bytes just printed. A helper
+ * resolves through the declaration the allocator gave its role; an inline opcode has no
+ * declaration and binds to the one emitted form the registry gives it.
+ */
+function emittedRuntimeCertificates(
+  program: LeanSemanticProgram,
+  catalog: RuntimeCertificateCatalog,
+  printed: readonly { readonly body: string }[],
+): readonly RuntimeCertificateBinding[] {
+  const helperDeclarations = new Map(
+    leanToTypeScriptHelperBindings(program).map((helper) => [helper.role, helper.declaration]),
+  );
+  const inlineForms = new Map(catalog.certificates.map((certificate) => [certificate.opcode, certificate.emittedForm]));
+  const bodies = printed.map((module) => module.body);
+  return [...referencedRuntimeOpcodes(program)].sort(compareCodePoints).map((opcode) => {
+    const certificate = certificateForOpcode(catalog, opcode);
+    const binding = bindRuntimeSymbol(certificate.runtimeSymbol, { helperDeclarations, inlineForms, bodies });
+    return {
+      opcode: certificate.opcode,
+      runtimeSymbol: certificate.runtimeSymbol,
+      declaration: binding.kind === 'declaration' ? binding.declaration : '',
+      runtimeBodySha256: binding.digest,
+    };
+  });
 }
 
 /**

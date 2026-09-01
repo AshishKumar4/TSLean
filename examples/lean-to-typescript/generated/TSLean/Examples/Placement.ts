@@ -4,16 +4,17 @@
  * Lean module: TSLean.Examples.Placement
  * Generated module: TSLean/Examples/Placement.ts
  * Package entry module: TSLean.Examples.Placement
- * Semantic identity: sha256:10a14c163dca17472518c5d7670206e30f56a692db14c200b09145aa55a986ed
- * Input closure: sha256:9f796ed791f61a7a219bceaa0b4eba097853d38908fe4001add7ca34e5b59ee8
+ * Semantic identity: sha256:8d1db6e2901aaea285f41a0cb2f321283dc9e886d35e5f27b424339be2feefa8
+ * Input closure: sha256:3850472dbe8a41229380ac0d79a0d737644b53fafe78476bc71e956640c36337
  * Semantic IR: sha256:2d7d55bcff52b5967d2f1faaac2f3bc3a68583d4ecc74f9936c75b93386a81dd
  * Generated module body: sha256:b7a95e8f4caf392c731ff923718e1fc7fca7e63c9d7d6601b122866ede33077c
  * Generated package body: sha256:72b6e26e675733935398b9c1b849a8b9ed1d3482d5228fe443372ef1d9aad551
  * Lean toolchain: leanprover/lean4:v4.33.1
  * Lean: Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)
  * Lake: Lake version 5.0.0-src+819816b (Lean version 4.33.1)
+ * Runtime certificates: sha256:cdfe1c19c5d522c74a23029794202e6f09fcdc12ae80fd10d1b3fe83faf19dba
  * Environment attestation: recorded in the manifest sidecar; it does not affect these bytes.
- * Evidence boundary: generation is checked and differential tests are empirical; no refinement theorem is claimed.
+ * Evidence boundary: Lean certificates prove source-to-model refinement conditionally; engine conformance remains an explicit obligation.
  */
 export type Placement = "bundled" | "provider" | "dynamic";
 

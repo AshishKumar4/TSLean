@@ -1,3 +1,5 @@
+import type { RuntimeCertificateBinding, RuntimeConformanceAttestation } from './certificates.js';
+
 /**
  * Which plane an input belongs to. A semantic input is a versioned source that decides what
  * the compiler emits; an environment input is a binary that happened to run the compiler.
@@ -100,6 +102,8 @@ export interface LeanToTypeScriptSemanticIdentity {
   readonly inputs: readonly LeanToTypeScriptInput[];
   readonly inputClosureSha256: string;
   readonly semanticIrSha256: string;
+  /** Every used opcode certificate, bound to its emitted runtime body. */
+  readonly certificates: readonly RuntimeCertificateBinding[];
   /** One digest over every generated module body, in path order. */
   readonly generatedBodySha256: string;
 }
@@ -111,10 +115,12 @@ export interface LeanToTypeScriptEnvironmentAttestation {
   readonly platform: string;
   readonly inputs: readonly LeanToTypeScriptInput[];
   readonly inputClosureSha256: string;
+  /** Observed supported-engine evidence for the conditional certificates this package uses. */
+  readonly runtimeConformance: readonly RuntimeConformanceAttestation[];
 }
 
 export interface LeanToTypeScriptManifest {
-  readonly schemaVersion: 3;
+  readonly schemaVersion: 4;
   readonly semantic: LeanToTypeScriptSemanticIdentity;
   readonly environment: LeanToTypeScriptEnvironmentAttestation;
 }

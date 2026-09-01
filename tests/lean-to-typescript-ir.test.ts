@@ -9,6 +9,7 @@ import {
 } from '../src/lean-to-typescript/ir.js';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
+import { loadRuntimeCertificateRegistry, loadRuntimeProbeCorpus } from '../src/lean-to-typescript/certificates.js';
 import { emitTypeScriptPackage, leanToTypeScriptHelperBindings } from '../src/lean-to-typescript/emitter.js';
 import { declaredNames, moduleImports } from '../src/lean-to-typescript/package-layout.js';
 
@@ -119,13 +120,22 @@ function recursionProgram(declaration: object = depthDeclaration): object {
 /** Provenance is not under test in the emitter cases below; only the emitted names are. */
 const inputClosure = (inputs: readonly { kind: string; identity: string; sha256: string }[]): string =>
   `sha256:${createHash('sha256').update(JSON.stringify(inputs)).digest('hex')}`;
+// A package that spends a certified opcode must carry the probe corpus it rests on and the engine
+// binary that ran it, and every input list is read in canonical identity order.
 const semanticInputs = [
+  {
+    kind: 'compiler-source' as const,
+    identity: 'compiler:spec:semantics/probes.json',
+    sha256: loadRuntimeProbeCorpus().sha256,
+  },
   { kind: 'lean-source' as const, identity: 'source:Example', sha256: `sha256:${'0'.repeat(64)}` },
 ];
 const environmentInputs = [
+  { kind: 'compiler-runtime' as const, identity: 'compiler:runtime', sha256: `sha256:${'1'.repeat(64)}` },
   { kind: 'lean-module' as const, identity: 'module:Example', sha256: `sha256:${'0'.repeat(64)}` },
 ];
 const provenance = {
+  certificates: loadRuntimeCertificateRegistry().catalog,
   semantic: {
     fragmentVersion: LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION,
     entryModule: 'Example',
@@ -367,6 +377,7 @@ describe('emitted binder names survive a hostile semantic program', () => {
       ),
     );
     const emitted = emitTypeScriptPackage(decoded, {
+      certificates: provenance.certificates,
       ...provenance,
       semantic: { ...provenance.semantic, declarations: ['Example.Foo.read'] },
     });
@@ -418,6 +429,7 @@ describe('emitted binder names survive a hostile semantic program', () => {
         ),
       );
       const emitted = emitTypeScriptPackage(decoded, {
+        certificates: provenance.certificates,
         ...provenance,
         semantic: { ...provenance.semantic, declarations: [`${recordName}.read`] },
       });
@@ -480,6 +492,7 @@ describe('emitted binder names survive a hostile semantic program', () => {
       ),
     );
     const emitted = emitTypeScriptPackage(decoded, {
+      certificates: provenance.certificates,
       ...provenance,
       semantic: { ...provenance.semantic, declarations: ['Example.kind.read'] },
     });
@@ -510,7 +523,13 @@ describe('lexical module reference discovery', () => {
     const ownerStatements = [
       exportedConst('left'),
       exportedConst('right'),
-      ts.factory.createClassDeclaration([ts.factory.createModifier(ts.SyntaxKind.ExportKeyword)], 'A', undefined, undefined, []),
+      ts.factory.createClassDeclaration(
+        [ts.factory.createModifier(ts.SyntaxKind.ExportKeyword)],
+        'A',
+        undefined,
+        undefined,
+        [],
+      ),
       exportedConst('codeUnit'),
     ];
     const owners = new Map(declaredNames(ownerStatements).map((name) => [name, 'Owner.ts']));
@@ -522,8 +541,20 @@ describe('lexical module reference discovery', () => {
       'equalList',
       [ts.factory.createTypeParameterDeclaration(undefined, 'A')],
       [
-        ts.factory.createParameterDeclaration(undefined, undefined, 'left', undefined, ts.factory.createTypeReferenceNode('A')),
-        ts.factory.createParameterDeclaration(undefined, undefined, 'right', undefined, ts.factory.createTypeReferenceNode('A')),
+        ts.factory.createParameterDeclaration(
+          undefined,
+          undefined,
+          'left',
+          undefined,
+          ts.factory.createTypeReferenceNode('A'),
+        ),
+        ts.factory.createParameterDeclaration(
+          undefined,
+          undefined,
+          'right',
+          undefined,
+          ts.factory.createTypeReferenceNode('A'),
+        ),
       ],
       ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
       ts.factory.createBlock(
@@ -531,7 +562,14 @@ describe('lexical module reference discovery', () => {
           ts.factory.createVariableStatement(
             undefined,
             ts.factory.createVariableDeclarationList(
-              [ts.factory.createVariableDeclaration('codeUnit', undefined, undefined, ts.factory.createNumericLiteral(0))],
+              [
+                ts.factory.createVariableDeclaration(
+                  'codeUnit',
+                  undefined,
+                  undefined,
+                  ts.factory.createNumericLiteral(0),
+                ),
+              ],
               ts.NodeFlags.Const,
             ),
           ),
@@ -689,6 +727,7 @@ describe('Lean semantic IR generated helper bindings', () => {
     expect(referencedRuntimeOpcodes(decoded)).toEqual([]);
     expect(leanToTypeScriptHelperBindings(decoded)).toEqual([]);
     const emitted = emitTypeScriptPackage(decoded, {
+      certificates: provenance.certificates,
       ...provenance,
       semantic: { ...provenance.semantic, declarations: ['Example.ignoredSubtraction'] },
     });
@@ -742,6 +781,7 @@ describe('Lean semantic IR generated helper bindings', () => {
     expect(referencedRuntimeOpcodes(decoded)).toEqual([]);
     expect(leanToTypeScriptHelperBindings(decoded)).toEqual([]);
     const emitted = emitTypeScriptPackage(decoded, {
+      certificates: provenance.certificates,
       ...provenance,
       semantic: { ...provenance.semantic, declarations: ['Example.deepIgnoredSubtraction'] },
     });
@@ -822,7 +862,11 @@ describe('Lean semantic IR trust boundary', () => {
         ],
       },
     });
-    const declarations = [treeDeclaration, member('Example.even', 'Example.odd'), member('Example.odd', 'Example.even')];
+    const declarations = [
+      treeDeclaration,
+      member('Example.even', 'Example.odd'),
+      member('Example.odd', 'Example.even'),
+    ];
     const closure = [
       { declaration: 'Example.Tree', module: 'Example', role: 'emitted', reason: '' },
       { declaration: 'Example.even', module: 'Example', role: 'emitted', reason: '' },
@@ -1195,9 +1239,7 @@ describe('Lean semantic IR dot-notation evidence', () => {
 
   test('accepts a receiver whose namespace, module and parameter type all agree', () => {
     expect(() =>
-      decodeLeanSemanticProgram(
-        program([configDeclaration, methodDeclaration], closure, ['Example.Config.read']),
-      ),
+      decodeLeanSemanticProgram(program([configDeclaration, methodDeclaration], closure, ['Example.Config.read'])),
     ).not.toThrow();
   });
 
@@ -1205,12 +1247,19 @@ describe('Lean semantic IR dot-notation evidence', () => {
     [
       'a receiver the declaration does not live under',
       { ...methodDeclaration, name: 'Example.read', namespace: 'Example' },
-      [{ declaration: 'Example.Config', module: 'Example', role: 'emitted', reason: '' }, { declaration: 'Example.read', module: 'Example', role: 'emitted', reason: '' }],
+      [
+        { declaration: 'Example.Config', module: 'Example', role: 'emitted', reason: '' },
+        { declaration: 'Example.read', module: 'Example', role: 'emitted', reason: '' },
+      ],
       /claims Example\.Config as its receiver but is owned by namespace Example/u,
     ],
     [
       'a receiver parameter that carries another type',
-      { ...methodDeclaration, parameters: [{ name: 'config', type: { kind: 'boolean' } }], body: { kind: 'variable', index: 0 } },
+      {
+        ...methodDeclaration,
+        parameters: [{ name: 'config', type: { kind: 'boolean' } }],
+        body: { kind: 'variable', index: 0 },
+      },
       closure,
       /receiver parameter has type Bool; dot notation requires Example\.Config/u,
     ],
@@ -1230,9 +1279,9 @@ describe('Lean semantic IR dot-notation evidence', () => {
       /claims a receiver Example\.Missing that is not an exported data type/u,
     ],
   ])('refuses %s', (_label, declaration, entries, diagnostic) => {
-    expect(() =>
-      decodeLeanSemanticProgram(program([configDeclaration, declaration], entries, [])),
-    ).toThrowError(diagnostic);
+    expect(() => decodeLeanSemanticProgram(program([configDeclaration, declaration], entries, []))).toThrowError(
+      diagnostic,
+    );
   });
 });
 
@@ -1270,8 +1319,17 @@ describe('Lean semantic IR boundary', () => {
       program([
         {
           ...identityDeclaration,
-          parameters: [{ name: 'step', type: { kind: 'function', parameters: [{ kind: 'boolean' }], result: { kind: 'boolean' } } }],
-          body: { kind: 'apply', target: { kind: 'variable', index: 0 }, arguments: [{ kind: 'boolean', value: true }] },
+          parameters: [
+            {
+              name: 'step',
+              type: { kind: 'function', parameters: [{ kind: 'boolean' }], result: { kind: 'boolean' } },
+            },
+          ],
+          body: {
+            kind: 'apply',
+            target: { kind: 'variable', index: 0 },
+            arguments: [{ kind: 'boolean', value: true }],
+          },
         },
       ]),
       /parameter 0: an arrow has no serialized form/u,
@@ -1350,23 +1408,26 @@ describe('Lean semantic IR refusals with no representation', () => {
     ],
     [
       'a generic type applied at the wrong arity',
-      program([
-        {
-          kind: 'record',
-          name: 'Example.Box',
-          module: 'Example',
-          namespace: 'Example',
-          typeParameters: ['payload'],
-          span: identitySpan,
-          constructor: 'mk',
-          fields: [{ name: 'held', type: { kind: 'parameter', index: 0 } }],
-        },
-        {
-          ...identityDeclaration,
-          parameters: [{ name: 'box', type: { kind: 'named', name: 'Example.Box', arguments: [] } }],
-          body: { kind: 'boolean', value: true },
-        },
-      ], [{ declaration: 'Example.Box', module: 'Example', role: 'emitted', reason: '' }, identityClosure]),
+      program(
+        [
+          {
+            kind: 'record',
+            name: 'Example.Box',
+            module: 'Example',
+            namespace: 'Example',
+            typeParameters: ['payload'],
+            span: identitySpan,
+            constructor: 'mk',
+            fields: [{ name: 'held', type: { kind: 'parameter', index: 0 } }],
+          },
+          {
+            ...identityDeclaration,
+            parameters: [{ name: 'box', type: { kind: 'named', name: 'Example.Box', arguments: [] } }],
+            body: { kind: 'boolean', value: true },
+          },
+        ],
+        [{ declaration: 'Example.Box', module: 'Example', role: 'emitted', reason: '' }, identityClosure],
+      ),
       /applies Example\.Box to 0 type arguments; it declares 1/u,
     ],
     [

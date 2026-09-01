@@ -4,16 +4,17 @@
  * Lean module: AgentCore.Facets.Enforcement
  * Generated module: AgentCore/Facets/Enforcement.ts
  * Package entry module: AgentCore.Facets.Enforcement
- * Semantic identity: sha256:346bf2236fa639c5c731e4ec843ad4ab580ae86af397a61d54a682884d45ff8d
- * Input closure: sha256:edb696255989ed793d0798d5aaaab35cad6d1eda565b28971b13c46a259d3493
+ * Semantic identity: sha256:b9fe658792de416bfa7dc0d5e0dde873fd8a47a5dc60c1c9d08275ad0a200ec7
+ * Input closure: sha256:d03a246f7929b0bf6e182bf8e38dcb3e139ab809bd7324a1653499231565c7e6
  * Semantic IR: sha256:872c162314e80dbb1ec5be9d1b6a16e820807b4a7ad69f9961d349402539d8c6
  * Generated module body: sha256:642f7253eda14f9e5d6c7100a322851ed82fe96676e46e7b44beae96e46b4d15
  * Generated package body: sha256:bb381859492b50649ded64207fe79e82ff891f5233583a563148bfec3eabf3d0
  * Lean toolchain: leanprover/lean4:v4.33.1
  * Lean: Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)
  * Lake: Lake version 5.0.0-src+819816b (Lean version 4.33.1)
+ * Runtime certificates: sha256:41abb02d25ec814cf4a133d27a59509bbff9a8627a7f805c3615356877ad21c2
  * Environment attestation: recorded in the manifest sidecar; it does not affect these bytes.
- * Evidence boundary: generation is checked and differential tests are empirical; no refinement theorem is claimed.
+ * Evidence boundary: Lean certificates prove source-to-model refinement conditionally; engine conformance remains an explicit obligation.
  */
 /**
  * Which enforcement tier serves a call (SPEC §7.2). Only `mediated` carries evidence: a

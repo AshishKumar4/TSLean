@@ -33,6 +33,13 @@ export const runtimeInputSnapshots: readonly RuntimeInputSnapshot[] = capture([
       identity: `compiler:spec:${entry.name}`,
       path: realpathSync(join(specificationDirectory, entry.name)),
     })),
+  // The Lean-owned declaration registry and the probe corpus its gate executes: a certificate the
+  // artifact records is only as good as the exact bytes it was read from.
+  ...['registry.json', 'probes.json'].map((name) => ({
+    kind: 'compiler-source' as const,
+    identity: `compiler:spec:semantics/${name}`,
+    path: realpathSync(join(packageRoot, 'spec', 'semantics', name)),
+  })),
   { kind: 'compiler-runtime', identity: 'compiler:runtime', path: realpathSync(process.execPath) },
   { kind: 'compiler-runtime', identity: 'typescript:compiler', path: typescriptPath },
   {

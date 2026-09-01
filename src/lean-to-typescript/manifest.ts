@@ -14,9 +14,18 @@ import {
   type LeanToTypeScriptSemanticIdentity,
   type LeanToTypeScriptSourceSpan,
 } from './artifact.js';
+import {
+  assertRuntimeCertificateBindings,
+  loadRuntimeCertificateRegistry,
+  taggedRuntimeSymbol,
+  RUNTIME_BINARY_INPUT,
+  RUNTIME_EVIDENCE_INPUT,
+  type RuntimeCertificateBinding,
+  type RuntimeConformanceAttestation,
+} from './certificates.js';
 import { compareCodePoints } from './ordering.js';
 
-export const LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION = 3;
+export const LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION = 4;
 
 /**
  * How many lines the provenance header occupies. The header is a fixed template of one line per
@@ -24,7 +33,7 @@ export const LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION = 3;
  * before the manifest exists, to place each declaration's generated line, and
  * `provenanceHeader` asserts the rendered header still matches, so it cannot drift.
  */
-export const PROVENANCE_HEADER_LINES = 17;
+export const PROVENANCE_HEADER_LINES = 18;
 
 /**
  * The provenance header carries the semantic identity only. Nothing about the machine that
@@ -53,8 +62,9 @@ export function provenanceHeader(manifest: LeanToTypeScriptManifest, path: strin
     ` * Lean toolchain: ${semantic.leanToolchain.identity}`,
     ` * Lean: ${semantic.leanToolchain.leanVersion}`,
     ` * Lake: ${semantic.leanToolchain.lakeVersion}`,
+    ` * Runtime certificates: ${runtimeCertificateDigest(semantic.certificates)}`,
     ' * Environment attestation: recorded in the manifest sidecar; it does not affect these bytes.',
-    ' * Evidence boundary: generation is checked and differential tests are empirical; no refinement theorem is claimed.',
+    ' * Evidence boundary: Lean certificates prove source-to-model refinement conditionally; engine conformance remains an explicit obligation.',
     ' */',
     '',
   ];
@@ -71,6 +81,11 @@ export function generatedPackageDigest(
   return sha256(JSON.stringify(modules.map((module) => [module.path, module.bodySha256])));
 }
 
+/** One digest over the exact proof records the generated package actually uses. */
+export function runtimeCertificateDigest(certificates: readonly RuntimeCertificateBinding[]): string {
+  return sha256(JSON.stringify(certificates));
+}
+
 export function semanticIdentityDigest(semantic: LeanToTypeScriptSemanticIdentity): string {
   return sha256(JSON.stringify(canonicalSemanticIdentity(semantic)));
 }
@@ -80,10 +95,13 @@ export function environmentAttestationDigest(environment: LeanToTypeScriptEnviro
 }
 
 export function canonicalManifest(manifest: LeanToTypeScriptManifest): LeanToTypeScriptManifest {
+  const semantic = canonicalSemanticIdentity(manifest.semantic);
+  const environment = canonicalEnvironmentAttestation(manifest.environment);
+  assertCertificateConformance(semantic, environment);
   return {
     schemaVersion: LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION,
-    semantic: canonicalSemanticIdentity(manifest.semantic),
-    environment: canonicalEnvironmentAttestation(manifest.environment),
+    semantic,
+    environment,
   };
 }
 
@@ -116,9 +134,23 @@ export function verifyLeanToTypeScriptPackage(value: unknown): asserts value is 
       throw new TypeError(`generated source map does not match its manifest: ${module.path}`);
     }
   }
+  assertCertificateBodies(emitted);
   if (generatedPackageDigest(recorded) !== emitted.manifest.semantic.generatedBodySha256) {
     throw new TypeError('generated package digest does not match its module bodies');
   }
+}
+
+/**
+ * A certificate may only claim what the package actually emits: a helper symbol must resolve to
+ * exactly one declaration in the generated tree and hash to the recorded digest, and an inline
+ * opcode must hash to the one emitted form the registry gives it.
+ */
+function assertCertificateBodies(emitted: LeanToTypeScriptPackage): void {
+  assertRuntimeCertificateBindings(
+    loadRuntimeCertificateRegistry().catalog,
+    emitted.manifest.semantic.certificates,
+    emitted.modules.map((module) => module.code),
+  );
 }
 
 function requiredModuleIdentity(
@@ -150,6 +182,9 @@ export function environmentAttestationDrift(
   const recordedInputs = new Set(recorded.inputs.map((input) => input.identity));
   for (const input of observed.inputs) {
     if (!recordedInputs.has(input.identity)) drift.push(`added ${input.identity}`);
+  }
+  if (JSON.stringify(recorded.runtimeConformance) !== JSON.stringify(observed.runtimeConformance)) {
+    drift.push('runtime certificate conformance changed');
   }
   return drift.sort(compareCodePoints);
 }
@@ -193,8 +228,69 @@ function canonicalSemanticIdentity(semantic: LeanToTypeScriptSemanticIdentity): 
     inputs: semantic.inputs,
     inputClosureSha256: semantic.inputClosureSha256,
     semanticIrSha256: semantic.semanticIrSha256,
+    certificates: semantic.certificates.map((certificate) => ({
+      opcode: certificate.opcode,
+      runtimeSymbol: certificate.runtimeSymbol,
+      declaration: certificate.declaration,
+      runtimeBodySha256: certificate.runtimeBodySha256,
+    })),
     generatedBodySha256: semantic.generatedBodySha256,
   };
+}
+/**
+ * Joins the artifact against the one registry on disk. A recorded certificate must name an opcode
+ * the registry certifies, with the runtime symbol the registry gives it, and the attestations must
+ * cover exactly that opcode's assumption closure. Drift between artifact and proof is a refusal,
+ * not a discrepancy the reader has to notice.
+ */
+function assertCertificateConformance(
+  semantic: LeanToTypeScriptSemanticIdentity,
+  environment: LeanToTypeScriptEnvironmentAttestation,
+): void {
+  const { catalog } = loadRuntimeCertificateRegistry();
+  const expected = semantic.certificates.flatMap((binding) => {
+    const certificate = catalog.certificates.find((entry) => entry.opcode === binding.opcode);
+    if (certificate === undefined) {
+      throw new TypeError(`recorded certificate names an opcode the registry does not certify: ${binding.opcode}`);
+    }
+    if (certificate.runtimeSymbol !== binding.runtimeSymbol) {
+      throw new TypeError(`recorded certificate drifts from the registry runtime symbol: ${binding.opcode}`);
+    }
+    return certificate.assumptions.map((id) => {
+      const assumption = catalog.assumptions.find((entry) => entry.id === id);
+      if (assumption === undefined) {
+        throw new TypeError(`registry certificate ${binding.opcode} names unknown assumption ${id}`);
+      }
+      return { binding, assumption };
+    });
+  });
+  if (environment.runtimeConformance.length !== expected.length) {
+    throw new TypeError('runtime conformance does not exactly cover the certified assumption closure');
+  }
+  const semanticInputs = new Map(semantic.inputs.map((input) => [input.identity, input.sha256]));
+  const environmentInputs = new Map(environment.inputs.map((input) => [input.identity, input.sha256]));
+  const seen = new Set<string>();
+  for (const attestation of environment.runtimeConformance) {
+    const key = `${attestation.certificate}:${attestation.assumption}`;
+    if (seen.has(key)) throw new TypeError(`duplicate runtime conformance attestation: ${key}`);
+    seen.add(key);
+    const matched = expected.find(
+      ({ binding, assumption }) =>
+        binding.opcode === attestation.certificate && assumption.id === attestation.assumption,
+    );
+    if (matched === undefined) throw new TypeError(`unknown runtime conformance attestation: ${key}`);
+    if (
+      attestation.binaryInput !== RUNTIME_BINARY_INPUT ||
+      attestation.evidenceInput !== RUNTIME_EVIDENCE_INPUT ||
+      attestation.oracle !== matched.assumption.oracle ||
+      attestation.runtimeSymbol !== matched.binding.runtimeSymbol ||
+      attestation.runtimeBodySha256 !== matched.binding.runtimeBodySha256 ||
+      environmentInputs.get(RUNTIME_BINARY_INPUT) !== attestation.binarySha256 ||
+      semanticInputs.get(RUNTIME_EVIDENCE_INPUT) !== attestation.oracleSha256
+    ) {
+      throw new TypeError(`runtime conformance attestation does not match certificate: ${key}`);
+    }
+  }
 }
 
 function canonicalEnvironmentAttestation(
@@ -206,6 +302,7 @@ function canonicalEnvironmentAttestation(
     platform: environment.platform,
     inputs: environment.inputs,
     inputClosureSha256: environment.inputClosureSha256,
+    runtimeConformance: environment.runtimeConformance.map((attestation) => ({ ...attestation })),
   };
 }
 
@@ -275,6 +372,7 @@ function decodeSemanticIdentity(value: unknown): LeanToTypeScriptSemanticIdentit
       'inputs',
       'inputClosureSha256',
       'semanticIrSha256',
+      'certificates',
       'generatedBodySha256',
     ],
     location,
@@ -312,6 +410,7 @@ function decodeSemanticIdentity(value: unknown): LeanToTypeScriptSemanticIdentit
     closure,
     ...decodeInputClosure(semantic, 'semantic', location),
     semanticIrSha256: digest(semantic['semanticIrSha256'], `${location} semantic IR`),
+    certificates: decodeCertificateBindings(semantic['certificates'], `${location} certificates`),
     generatedBodySha256: digest(semantic['generatedBodySha256'], `${location} generated body`),
   };
 }
@@ -391,13 +490,76 @@ function declarationRole(value: unknown, location: string): LeanToTypeScriptDecl
 function decodeEnvironmentAttestation(value: unknown): LeanToTypeScriptEnvironmentAttestation {
   const location = 'Lean to TypeScript manifest environment attestation';
   const environment = record(value, location);
-  exactKeys(environment, ['runtime', 'typescriptVersion', 'platform', 'inputs', 'inputClosureSha256'], location);
+  exactKeys(
+    environment,
+    ['runtime', 'typescriptVersion', 'platform', 'inputs', 'inputClosureSha256', 'runtimeConformance'],
+    location,
+  );
   return {
     runtime: string(environment['runtime'], `${location} runtime`),
     typescriptVersion: string(environment['typescriptVersion'], `${location} TypeScript version`),
     platform: string(environment['platform'], `${location} platform`),
     ...decodeInputClosure(environment, 'environment', location),
+    runtimeConformance: decodeRuntimeConformance(environment['runtimeConformance'], `${location} runtime conformance`),
   };
+}
+function decodeCertificateBindings(value: unknown, location: string): readonly RuntimeCertificateBinding[] {
+  const bindings = array(value, location).map((entry, index): RuntimeCertificateBinding => {
+    const bindingLocation = `${location}[${index}]`;
+    const binding = record(entry, bindingLocation);
+    exactKeys(binding, ['opcode', 'runtimeSymbol', 'declaration', 'runtimeBodySha256'], bindingLocation);
+    const declaration = binding['declaration'];
+    if (typeof declaration !== 'string') throw new TypeError(`${bindingLocation}.declaration must be a string`);
+    return {
+      opcode: certificateOpcode(binding['opcode'], `${bindingLocation}.opcode`),
+      runtimeSymbol: taggedRuntimeSymbol(binding['runtimeSymbol'], `${bindingLocation}.runtimeSymbol`),
+      declaration: declaration === '' ? '' : bindingName(declaration, `${bindingLocation}.declaration`),
+      runtimeBodySha256: digest(binding['runtimeBodySha256'], `${bindingLocation}.runtimeBodySha256`),
+    };
+  });
+  requireCanonicalOrder(
+    bindings.map((binding) => binding.opcode),
+    location,
+  );
+  return bindings;
+}
+
+function decodeRuntimeConformance(value: unknown, location: string): readonly RuntimeConformanceAttestation[] {
+  const attestations = array(value, location).map((entry, index): RuntimeConformanceAttestation => {
+    const attestationLocation = `${location}[${index}]`;
+    const attestation = record(entry, attestationLocation);
+    exactKeys(
+      attestation,
+      [
+        'certificate',
+        'assumption',
+        'oracle',
+        'binaryInput',
+        'binarySha256',
+        'evidenceInput',
+        'oracleSha256',
+        'runtimeSymbol',
+        'runtimeBodySha256',
+      ],
+      attestationLocation,
+    );
+    return {
+      certificate: certificateOpcode(attestation['certificate'], `${attestationLocation}.certificate`),
+      assumption: string(attestation['assumption'], `${attestationLocation}.assumption`),
+      oracle: string(attestation['oracle'], `${attestationLocation}.oracle`),
+      binaryInput: string(attestation['binaryInput'], `${attestationLocation}.binaryInput`),
+      binarySha256: digest(attestation['binarySha256'], `${attestationLocation}.binarySha256`),
+      evidenceInput: string(attestation['evidenceInput'], `${attestationLocation}.evidenceInput`),
+      oracleSha256: digest(attestation['oracleSha256'], `${attestationLocation}.oracleSha256`),
+      runtimeSymbol: taggedRuntimeSymbol(attestation['runtimeSymbol'], `${attestationLocation}.runtimeSymbol`),
+      runtimeBodySha256: digest(attestation['runtimeBodySha256'], `${attestationLocation}.runtimeBodySha256`),
+    };
+  });
+  requireCanonicalOrder(
+    attestations.map((attestation) => `${attestation.certificate}:${attestation.assumption}`),
+    location,
+  );
+  return attestations;
 }
 
 function decodeInputClosure(
@@ -433,6 +595,22 @@ function decodeInput(value: unknown, location: string): LeanToTypeScriptInput {
     identity: string(input['identity'], `${location} identity`),
     sha256: digest(input['sha256'], `${location} digest`),
   };
+}
+
+function certificateOpcode(value: unknown, location: string): string {
+  const decoded = string(value, location);
+  if (!/^[a-z][A-Za-z0-9]*(?:[.-][a-zA-Z0-9]+)*$/u.test(decoded)) {
+    throw new TypeError(`${location} is not a canonical runtime opcode`);
+  }
+  return decoded;
+}
+
+function bindingName(value: unknown, location: string): string {
+  const decoded = string(value, location);
+  if (!/^[$A-Z_a-z][$\w]*$/u.test(decoded) || decoded === 'arguments' || decoded === 'eval') {
+    throw new TypeError(`${location} is not a safe TypeScript binding name`);
+  }
+  return decoded;
 }
 
 function record(value: unknown, location: string): Record<string, unknown> {

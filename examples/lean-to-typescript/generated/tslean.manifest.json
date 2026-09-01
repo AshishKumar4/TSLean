@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "semantic": {
     "fragmentVersion": "tslean-semantic-typed-v5",
     "entryModule": "TSLean.Examples.Placement",
@@ -21,7 +21,7 @@
           {
             "declaration": "TSLean.Examples.Placement.Placement",
             "emitted": "Placement",
-            "line": 18,
+            "line": 19,
             "span": {
               "source": "TSLean/Examples/Placement.lean",
               "startLine": 3,
@@ -33,7 +33,7 @@
           {
             "declaration": "TSLean.Examples.Placement.PlacementSet",
             "emitted": "PlacementSet",
-            "line": 20,
+            "line": 21,
             "span": {
               "source": "TSLean/Examples/Placement.lean",
               "startLine": 9,
@@ -45,7 +45,7 @@
           {
             "declaration": "TSLean.Examples.Placement.PlacementSet.intersect",
             "emitted": "intersect",
-            "line": 20,
+            "line": 21,
             "span": {
               "source": "TSLean/Examples/Placement.lean",
               "startLine": 15,
@@ -57,7 +57,7 @@
           {
             "declaration": "TSLean.Examples.Placement.choosePlacement",
             "emitted": "choosePlacement",
-            "line": 69,
+            "line": 70,
             "span": {
               "source": "TSLean/Examples/Placement.lean",
               "startLine": 22,
@@ -68,7 +68,7 @@
           }
         ],
         "bodySha256": "sha256:b7a95e8f4caf392c731ff923718e1fc7fca7e63c9d7d6601b122866ede33077c",
-        "sourceMapSha256": "sha256:46e79d4c9e300218770759d53ddedaf1d98d7114af8908efa577c8e432d43444"
+        "sourceMapSha256": "sha256:838e6657a5b9900c67d65556b4106d042737bbd52d0f36186486410d7275dd1f"
       }
     ],
     "closure": [
@@ -365,18 +365,23 @@
       },
       {
         "kind": "compiler-source",
+        "identity": "compiler:certificates",
+        "sha256": "sha256:d1ea221722db0c8cec6cb08eacce63cc340a25aad095775cc163b5fbcc675bc2"
+      },
+      {
+        "kind": "compiler-source",
         "identity": "compiler:cli",
-        "sha256": "sha256:35daa34373db5ad31d05d68f3a0ff6a85d929bf342490a8e733af8ed2ab33887"
+        "sha256": "sha256:50c877c22f48b3eb7e407ca580eae0f206f6f6452dc385ed0f79b109174021b8"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:compiler",
-        "sha256": "sha256:049d95ddbcac5184b88b27416a886e6ef4c6f9509be40176c216b3e53ebdce0c"
+        "sha256": "sha256:477deadf5ab32d049bf67e02c37d199e251eed03134f395f8c036c6bb4b21775"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:emitter",
-        "sha256": "sha256:225f6b2ff5546af751651ef63296b14a5aa9bb1716fe8362fe78ff86a4b23893"
+        "sha256": "sha256:05e8a253243efd5c767facd4d48302c808c00bf99a238d5f1c0ea6cd6b0d2afd"
       },
       {
         "kind": "compiler-source",
@@ -386,7 +391,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:index",
-        "sha256": "sha256:1edac2effc7bd77748f0991c248cec4b78cd2a759354d43d19f4bbe6df6d357e"
+        "sha256": "sha256:912c8f5b07a0e3c134618c429928ea768555f4225a92218f46e0fe60379cb8c9"
       },
       {
         "kind": "compiler-source",
@@ -471,7 +476,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:manifest",
-        "sha256": "sha256:f79fe54f1cab595a69b1c1f00f256d93af997ac9b1000ab0c5a9893aaccd7a12"
+        "sha256": "sha256:e26a46bb2c3cbe42bf54dc97d27bb77f8a5d1448bf38b12b3e657e9a44b8e9ca"
       },
       {
         "kind": "compiler-source",
@@ -481,7 +486,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:package",
-        "sha256": "sha256:e594120b1ef0ab75a592594e0ba04cc74877433fe6264c36a7cb402af3a002a6"
+        "sha256": "sha256:f87c4d44b538f901091c0e2613a6d8eb0efcca88f202a7d3ddad30e481aa9112"
       },
       {
         "kind": "compiler-source",
@@ -495,8 +500,13 @@
       },
       {
         "kind": "compiler-source",
+        "identity": "compiler:runtime-conformance",
+        "sha256": "sha256:3fa75ea450f6f7912315bcac18d3ae5f4293dbb37555b8fb6d11972a6ae1d377"
+      },
+      {
+        "kind": "compiler-source",
         "identity": "compiler:runtime-provenance",
-        "sha256": "sha256:15a042632db7ee97a700eee116424de3350e80b28b5d99a3a5aa2e6d75188514"
+        "sha256": "sha256:3608cdb9a616a613e755adc199a45b7c79400c7d834e501ae5133254a4aa01fc"
       },
       {
         "kind": "compiler-source",
@@ -512,6 +522,16 @@
         "kind": "compiler-source",
         "identity": "compiler:spec:placement.bounds.json",
         "sha256": "sha256:435d9687952de671f6a01c7376b6284c3615fa0125ed02d0367ff41e915c4ce8"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:spec:semantics/probes.json",
+        "sha256": "sha256:c11937b8fc42448014dcdc0d69d9f18a04dce7ddd27622f8b2b419f0c9bbbb90"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:spec:semantics/registry.json",
+        "sha256": "sha256:8d9256f1838221474b5133c154abd333730d857fa2454d51af6140d84fd70fab"
       },
       {
         "kind": "lean-source",
@@ -539,8 +559,16 @@
         "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       }
     ],
-    "inputClosureSha256": "sha256:9f796ed791f61a7a219bceaa0b4eba097853d38908fe4001add7ca34e5b59ee8",
+    "inputClosureSha256": "sha256:3850472dbe8a41229380ac0d79a0d737644b53fafe78476bc71e956640c36337",
     "semanticIrSha256": "sha256:2d7d55bcff52b5967d2f1faaac2f3bc3a68583d4ecc74f9936c75b93386a81dd",
+    "certificates": [
+      {
+        "opcode": "bool.and",
+        "runtimeSymbol": "inline:bool.and",
+        "declaration": "",
+        "runtimeBodySha256": "sha256:a49e38c6129365a77d76f9a5e546048e0d6ddd9a6de787cdf52df7b2a315f6d0"
+      }
+    ],
     "generatedBodySha256": "sha256:72b6e26e675733935398b9c1b849a8b9ed1d3482d5228fe443372ef1d9aad551"
   },
   "environment": {
@@ -1204,6 +1232,19 @@
         "sha256": "sha256:bb6ee7e709ae60426e30b8d393df4d939ee61407794b4f053ce6338d6eaa8c63"
       }
     ],
-    "inputClosureSha256": "sha256:cacde4e5ae4f5af9ceed26d87bcbf3af4b48cac4f4cd0ec435fcd0f7a20637db"
+    "inputClosureSha256": "sha256:cacde4e5ae4f5af9ceed26d87bcbf3af4b48cac4f4cd0ec435fcd0f7a20637db",
+    "runtimeConformance": [
+      {
+        "certificate": "bool.and",
+        "assumption": "boolean.logical-operators",
+        "oracle": "semantics-probes/boolean.logical-operators",
+        "binaryInput": "compiler:runtime",
+        "binarySha256": "sha256:e6ec2c188d83d813f81f2de8aea084d74dce603ac1abedd0a30ad941b10087b2",
+        "evidenceInput": "compiler:spec:semantics/probes.json",
+        "oracleSha256": "sha256:c11937b8fc42448014dcdc0d69d9f18a04dce7ddd27622f8b2b419f0c9bbbb90",
+        "runtimeSymbol": "inline:bool.and",
+        "runtimeBodySha256": "sha256:a49e38c6129365a77d76f9a5e546048e0d6ddd9a6de787cdf52df7b2a315f6d0"
+      }
+    ]
   }
 }
