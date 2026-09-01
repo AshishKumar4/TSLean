@@ -75,19 +75,33 @@ theorem HasOwnFields.stable {old next : Heap} {ref : RefId} {entries : List (Str
     rw [extension.preserves_getOwnProperty ref object found (Ir.propertyKey name)]
     exact shape.read name
 
+/-- The heap object at `ref` is a dense array carrying exactly these images, in order. It is stated
+through `Target.readArray`, the very function the target semantics reads arrays with, so the relation
+and the semantics cannot drift apart. -/
+def HasDenseElements (state : Target.State) (ref : RefId) (images : List Value) : Prop :=
+  Target.readArray state (.object ref) = .ok images
+
 mutual
 
 /-- How one source value is represented in the target state. -/
 def Represents (program : Ir.Program) (state : Target.State) : Source.Value → Value → Prop
   | .boolean value, target => target = .primitive (.boolean value)
-  | .absent, target => target = .primitive .undefined
-  | .present inner, target => Represents program state inner target
+  | .nat value, target => target = .primitive (.bigint value)
+  | .string value, target => target = .primitive (.string (JSString.ofLeanString value))
   | .record _ fields, target =>
       ∃ (ref : RefId) (entries : List (String × Value)),
         target = .object ref ∧ RepresentsFields program state fields entries ∧
           HasOwnFields state.heap ref entries
+  | .variant (.list _) "nil" [], target =>
+      ∃ ref : RefId, target = .object ref ∧ HasDenseElements state ref []
+  | .variant (.list _) "cons" [head, tail], target =>
+      ∃ (ref tailRef : RefId) (headImage : Value) (rest : List Value),
+        target = .object ref ∧ Represents program state head headImage ∧
+          Represents program state tail (.object tailRef) ∧
+          HasDenseElements state tailRef rest ∧
+          HasDenseElements state ref (headImage :: rest)
   | .variant type name arguments, target =>
-      ∃ constructors, program.enum? type = some constructors ∧
+      ∃ constructors, program.constructorsOf type = some constructors ∧
         ∃ constructor, Ir.constructor? constructors name = some constructor ∧
           (if Ir.allNullary constructors = true then
               arguments = [] ∧ target = .primitive (.string (JSString.ofLeanString name))
@@ -159,6 +173,56 @@ def RefinesTrace (program : Ir.Program) (state : Target.State) : Source.Trace �
 
 mutual
 
+/-- A dense-array read only touches an object that already exists, so an exact extension answers it
+identically. -/
+theorem readIndices_stable {old next : Heap} (extension : TSLean.Refinement.Heap.ExactExtension old next)
+    {ref : RefId} {object : ObjectRecord} (found : old.get? ref = .ok object) :
+    ∀ (count index : Nat) (images : List Value),
+      Target.readIndices old ref index count = .ok images →
+      Target.readIndices next ref index count = .ok images
+  | 0, _, _, read => by simpa [Target.readIndices] using read
+  | count + 1, index, images, read => by
+      simp only [Target.readIndices] at read ⊢
+      rw [extension.preserves_getOwnProperty ref object found
+        (.string (PropertyKey.arrayIndexString index))]
+      cases descriptor : old.getOwnProperty ref (.string (PropertyKey.arrayIndexString index)) with
+      | error _ => rw [descriptor] at read; simp at read
+      | ok slot =>
+          rw [descriptor] at read
+          match slot with
+          | some (.data value) =>
+              cases rest : Target.readIndices old ref (index + 1) count with
+              | error _ => rw [rest] at read; simp at read
+              | ok tail =>
+                  rw [rest] at read
+                  rw [readIndices_stable extension found count (index + 1) tail rest]
+                  exact read
+          | some (.accessor _) => simp at read
+          | none => simp at read
+
+/-- Dense-array representation survives an exact state extension. -/
+theorem HasDenseElements.stable {old next : Target.State}
+    (extension : Target.State.Extension old next) {ref : RefId} {images : List Value}
+    (dense : HasDenseElements old ref images) : HasDenseElements next ref images := by
+  simp only [HasDenseElements, Target.readArray] at dense ⊢
+  cases found : old.heap.get? ref with
+  | error fault =>
+      have refused : old.heap.arrayLength ref = .error fault := by
+        simp only [Heap.arrayLength, found]
+        rfl
+      rw [refused] at dense
+      simp at dense
+  | ok object =>
+      have carried := extension.heap.get_eq ref object found
+      have lengths : next.heap.arrayLength ref = old.heap.arrayLength ref := by
+        simp only [Heap.arrayLength, found, carried]
+      rw [lengths]
+      cases length : old.heap.arrayLength ref with
+      | error _ => rw [length] at dense; simp at dense
+      | ok count =>
+          rw [length] at dense
+          exact readIndices_stable extension.heap found count 0 images dense
+
 /-- Representation survives an exact state extension. -/
 theorem Represents.stable {program : Ir.Program} {old next : Target.State}
     (extension : Target.State.Extension old next)
@@ -166,16 +230,30 @@ theorem Represents.stable {program : Ir.Program} {old next : Target.State}
     (related : Represents program old value target) : Represents program next value target := by
   match value with
   | .boolean _ => unfold Represents at related ⊢; exact related
-  | .absent => unfold Represents at related ⊢; exact related
-  | .present inner =>
-      unfold Represents at related ⊢
-      exact Represents.stable extension inner target related
+  | .nat _ => unfold Represents at related ⊢; exact related
+  | .string _ => unfold Represents at related ⊢; exact related
   | .record type fields =>
       unfold Represents at related ⊢
       obtain ⟨ref, entries, targetEq, fieldsRelated, shape⟩ := related
       exact ⟨ref, entries, targetEq,
         RepresentsFields.stable extension fields entries fieldsRelated, shape.stable extension.heap⟩
-  | .variant type name arguments =>
+  | .variant (.list _) "nil" [] =>
+      unfold Represents at related ⊢
+      obtain ⟨ref, targetEq, dense⟩ := related
+      exact ⟨ref, targetEq, dense.stable extension⟩
+  | .variant (.list element) "cons" [head, tail] =>
+      unfold Represents at related ⊢
+      obtain ⟨ref, tailRef, headImage, rest, targetEq, headRelated, tailRelated, tailDense,
+        dense⟩ := related
+      exact ⟨ref, tailRef, headImage, rest, targetEq,
+        Represents.stable extension head headImage headRelated,
+        Represents.stable extension tail (.object tailRef) tailRelated,
+        tailDense.stable extension, dense.stable extension⟩
+  | .variant (.list _) _ _
+  | .variant (.boolean) name arguments | .variant (.nat) name arguments
+  | .variant (.string) name arguments | .variant (.parameter _) name arguments
+  | .variant (.named _ _) name arguments | .variant (.option _) name arguments
+  | .variant (.except _ _) name arguments | .variant (.function _ _) name arguments =>
       unfold Represents at related ⊢
       obtain ⟨constructors, declared, constructor, selected, body⟩ := related
       refine ⟨constructors, declared, constructor, selected, ?_⟩
