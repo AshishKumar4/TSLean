@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 4001,
   "semantic": {
     "fragmentVersion": "tslean-semantic-typed-v5",
     "entryModule": "AgentCore.Facets.Enforcement",
@@ -537,7 +537,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:manifest",
-        "sha256": "sha256:e26a46bb2c3cbe42bf54dc97d27bb77f8a5d1448bf38b12b3e657e9a44b8e9ca"
+        "sha256": "sha256:3f57ada8a11130046dc9b2d1f8dd946cb743a09de7277e54c8a19eb4d5431e40"
       },
       {
         "kind": "compiler-source",
@@ -620,7 +620,7 @@
         "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       }
     ],
-    "inputClosureSha256": "sha256:d03a246f7929b0bf6e182bf8e38dcb3e139ab809bd7324a1653499231565c7e6",
+    "inputClosureSha256": "sha256:3b38ec0f1ac3f612271777d2fdcb59e3642721ec6dc97324225f82bc6ad97fe6",
     "semanticIrSha256": "sha256:872c162314e80dbb1ec5be9d1b6a16e820807b4a7ad69f9961d349402539d8c6",
     "certificates": [
       {

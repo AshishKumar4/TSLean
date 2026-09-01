@@ -4,16 +4,17 @@
  * Lean module: TSLean.Examples.Roundtrip.Window
  * Generated module: TSLean/Examples/Roundtrip/Window.ts
  * Package entry module: TSLean.Examples.Roundtrip.Window
- * Semantic identity: sha256:d9dfc36beeb84c23a8f01840b2be4755a9a07df1bbefe8cb4a5a4e1626d0bbfa
- * Input closure: sha256:e441c92fbc32656fc949e3ab836f356a250036fb2fbb7d88c3def1c0b1e90df2
+ * Semantic identity: sha256:a015c8412f1fd80448c732e5245edb88fd8e7010a2e1d2f7f10229f11a426827
+ * Input closure: sha256:d04cfb55bb9ee490861ff47b7623b075c1f5d99e4eaced340168cdb304c49f6e
  * Semantic IR: sha256:7d657614ffd57c7b7bd40aedb76ed127a5153c2fd0e23688ad9b30a00fdb06b4
  * Generated module body: sha256:5dfbae9714ab4fffce35c49cff49c970ce65a6f2e65788eb950d827c57d365bc
  * Generated package body: sha256:a91130c1a5a3ad30cda7ef1647d1cac0fe58cb03ac6ce54cccc09566fb838205
  * Lean toolchain: leanprover/lean4:v4.33.1
  * Lean: Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)
  * Lake: Lake version 5.0.0-src+819816b (Lean version 4.33.1)
+ * Runtime certificates: sha256:cdfe1c19c5d522c74a23029794202e6f09fcdc12ae80fd10d1b3fe83faf19dba
  * Environment attestation: recorded in the manifest sidecar; it does not affect these bytes.
- * Evidence boundary: generation is checked and differential tests are empirical; no refinement theorem is claimed.
+ * Evidence boundary: Lean certificates prove source-to-model refinement conditionally; engine conformance remains an explicit obligation.
  */
 export interface WindowInit {
     readonly lowerOpen: boolean;

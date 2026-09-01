@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4001,
   "semantic": {
     "fragmentVersion": "tslean-semantic-typed-v5",
     "entryModule": "TSLean.Examples.Roundtrip.Vote",
@@ -22,7 +22,7 @@
           {
             "declaration": "TSLean.Examples.Roundtrip.Vote.Ballot",
             "emitted": "Ballot",
-            "line": 18,
+            "line": 19,
             "span": {
               "source": "TSLean/Examples/Roundtrip/Vote.lean",
               "startLine": 3,
@@ -34,7 +34,7 @@
           {
             "declaration": "TSLean.Examples.Roundtrip.Vote.Outcome",
             "emitted": "Outcome",
-            "line": 23,
+            "line": 24,
             "span": {
               "source": "TSLean/Examples/Roundtrip/Vote.lean",
               "startLine": 10,
@@ -46,7 +46,7 @@
           {
             "declaration": "TSLean.Examples.Roundtrip.Vote.carried",
             "emitted": "carried",
-            "line": 28,
+            "line": 29,
             "span": {
               "source": "TSLean/Examples/Roundtrip/Vote.lean",
               "startLine": 36,
@@ -58,7 +58,7 @@
           {
             "declaration": "TSLean.Examples.Roundtrip.Vote.pair",
             "emitted": "pair",
-            "line": 41,
+            "line": 42,
             "span": {
               "source": "TSLean/Examples/Roundtrip/Vote.lean",
               "startLine": 17,
@@ -69,7 +69,7 @@
           }
         ],
         "bodySha256": "sha256:29ac8fbb2389e5b6af3bcee738b30d26376fd5d3e74db93dd61a33bcacfe61c7",
-        "sourceMapSha256": "sha256:1e0a71617efecfc6eacebe043db6b818d35541d382dab64c303a2ba366a2c94c"
+        "sourceMapSha256": "sha256:818e185c5ba2774c3213253333f0a6791626be76178bd4b60e0e3aa1b16c771d"
       }
     ],
     "closure": [
@@ -246,18 +246,23 @@
       },
       {
         "kind": "compiler-source",
+        "identity": "compiler:certificates",
+        "sha256": "sha256:d1ea221722db0c8cec6cb08eacce63cc340a25aad095775cc163b5fbcc675bc2"
+      },
+      {
+        "kind": "compiler-source",
         "identity": "compiler:cli",
-        "sha256": "sha256:35daa34373db5ad31d05d68f3a0ff6a85d929bf342490a8e733af8ed2ab33887"
+        "sha256": "sha256:50c877c22f48b3eb7e407ca580eae0f206f6f6452dc385ed0f79b109174021b8"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:compiler",
-        "sha256": "sha256:049d95ddbcac5184b88b27416a886e6ef4c6f9509be40176c216b3e53ebdce0c"
+        "sha256": "sha256:477deadf5ab32d049bf67e02c37d199e251eed03134f395f8c036c6bb4b21775"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:emitter",
-        "sha256": "sha256:225f6b2ff5546af751651ef63296b14a5aa9bb1716fe8362fe78ff86a4b23893"
+        "sha256": "sha256:05e8a253243efd5c767facd4d48302c808c00bf99a238d5f1c0ea6cd6b0d2afd"
       },
       {
         "kind": "compiler-source",
@@ -267,7 +272,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:index",
-        "sha256": "sha256:1edac2effc7bd77748f0991c248cec4b78cd2a759354d43d19f4bbe6df6d357e"
+        "sha256": "sha256:912c8f5b07a0e3c134618c429928ea768555f4225a92218f46e0fe60379cb8c9"
       },
       {
         "kind": "compiler-source",
@@ -352,7 +357,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:manifest",
-        "sha256": "sha256:f79fe54f1cab595a69b1c1f00f256d93af997ac9b1000ab0c5a9893aaccd7a12"
+        "sha256": "sha256:3f57ada8a11130046dc9b2d1f8dd946cb743a09de7277e54c8a19eb4d5431e40"
       },
       {
         "kind": "compiler-source",
@@ -362,7 +367,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:package",
-        "sha256": "sha256:e594120b1ef0ab75a592594e0ba04cc74877433fe6264c36a7cb402af3a002a6"
+        "sha256": "sha256:f87c4d44b538f901091c0e2613a6d8eb0efcca88f202a7d3ddad30e481aa9112"
       },
       {
         "kind": "compiler-source",
@@ -376,8 +381,13 @@
       },
       {
         "kind": "compiler-source",
+        "identity": "compiler:runtime-conformance",
+        "sha256": "sha256:3fa75ea450f6f7912315bcac18d3ae5f4293dbb37555b8fb6d11972a6ae1d377"
+      },
+      {
+        "kind": "compiler-source",
         "identity": "compiler:runtime-provenance",
-        "sha256": "sha256:15a042632db7ee97a700eee116424de3350e80b28b5d99a3a5aa2e6d75188514"
+        "sha256": "sha256:3608cdb9a616a613e755adc199a45b7c79400c7d834e501ae5133254a4aa01fc"
       },
       {
         "kind": "compiler-source",
@@ -393,6 +403,16 @@
         "kind": "compiler-source",
         "identity": "compiler:spec:placement.bounds.json",
         "sha256": "sha256:435d9687952de671f6a01c7376b6284c3615fa0125ed02d0367ff41e915c4ce8"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:spec:semantics/probes.json",
+        "sha256": "sha256:c11937b8fc42448014dcdc0d69d9f18a04dce7ddd27622f8b2b419f0c9bbbb90"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:spec:semantics/registry.json",
+        "sha256": "sha256:8d9256f1838221474b5133c154abd333730d857fa2454d51af6140d84fd70fab"
       },
       {
         "kind": "lean-source",
@@ -420,8 +440,9 @@
         "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       }
     ],
-    "inputClosureSha256": "sha256:e2439a30064210a9688b4126e99e562db1c1e8976b7eae603850adbbcec68a0b",
+    "inputClosureSha256": "sha256:bc8700e77ad124fca680364b6e3d6b0569d8aef63a8b781e950fd97634d184dc",
     "semanticIrSha256": "sha256:2422796610c417562cd7648e82bb74f025a141d79eb851ea9c845fae0964f37e",
+    "certificates": [],
     "generatedBodySha256": "sha256:961d61f07bcda8fca718df85c9d6700fb490f1f3f373636bbe870af22a9fcbd9"
   },
   "environment": {
@@ -1085,6 +1106,7 @@
         "sha256": "sha256:bb6ee7e709ae60426e30b8d393df4d939ee61407794b4f053ce6338d6eaa8c63"
       }
     ],
-    "inputClosureSha256": "sha256:0f04162b6b499b586f8343dd29ee308cad89dd39c3e8addcbe8d43e31e7ecd46"
+    "inputClosureSha256": "sha256:0f04162b6b499b586f8343dd29ee308cad89dd39c3e8addcbe8d43e31e7ecd46",
+    "runtimeConformance": []
   }
 }

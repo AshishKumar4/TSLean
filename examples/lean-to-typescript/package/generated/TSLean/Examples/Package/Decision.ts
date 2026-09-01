@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Package.Decision
  * Generated module: TSLean/Examples/Package/Decision.ts
  * Package entry module: TSLean.Examples.Package.Decision
- * Semantic identity: sha256:56061cff2268432cdd4a44b22c0102f0bdc2e40578a3f0864df7bc9ca110e320
- * Input closure: sha256:a9850e7a3471f52f712f17720419b04a44d4de49a77f7e97728491775bd9c858
+ * Semantic identity: sha256:de48f9ff366dda8d97163f1d4a13aca257d3fc6977305f86fee6de7a618a4850
+ * Input closure: sha256:bf00c08684e65293d3adfd51bd45ec97639bd92301662a6eee815eace7e39f79
  * Semantic IR: sha256:81a40dc25bc7f5bea3a9b7a04cb7bd93415900e34a7cd758c4f744da7edf7354
  * Generated module body: sha256:7a761fafa25543bafe67824ba2af0f94bcf5f96724812d55ab79bc7781d0787c
  * Generated package body: sha256:5245663fde919015cddbd169494008fad9a0a43ed4c200ec6679c169f92bad72

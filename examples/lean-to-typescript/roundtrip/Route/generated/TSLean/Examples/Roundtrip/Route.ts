@@ -4,16 +4,17 @@
  * Lean module: TSLean.Examples.Roundtrip.Route
  * Generated module: TSLean/Examples/Roundtrip/Route.ts
  * Package entry module: TSLean.Examples.Roundtrip.Route
- * Semantic identity: sha256:aef3b7576bbc132faa470cc7431446eb1415aa86e73d1326d139e06dd86bfb46
- * Input closure: sha256:d8fc869db8f6e6d61c11391f53fd6471699383da0d55b608a16e4a1f8b8ecf41
+ * Semantic identity: sha256:c4ece628b6baf2c37ab57f55b5d4e0f6d4741fcba13ef086c1c061c47f9987c5
+ * Input closure: sha256:e87d54609d89317e0d4a5a824059daa3861b5d3d81310c12ba9522bba134d374
  * Semantic IR: sha256:2a6fdfaa492dc684d9dd5a0c8012e35515ae2606379d72a128300ca11984f555
  * Generated module body: sha256:7001c655bf59554525b628a92ed7995c3754992e3bc96fa9ee6f66a999f8d75f
  * Generated package body: sha256:cd2b87bf760719828462e358df4808c8bec89e852fd8be1081e672c37256aded
  * Lean toolchain: leanprover/lean4:v4.33.1
  * Lean: Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)
  * Lake: Lake version 5.0.0-src+819816b (Lean version 4.33.1)
+ * Runtime certificates: sha256:617080426d1b40b3c94411bfc68ec67484a86fed35f1922fad0e3971304d961d
  * Environment attestation: recorded in the manifest sidecar; it does not affect these bytes.
- * Evidence boundary: generation is checked and differential tests are empirical; no refinement theorem is claimed.
+ * Evidence boundary: Lean certificates prove source-to-model refinement conditionally; engine conformance remains an explicit obligation.
  */
 /**
  * Where a request is sent.

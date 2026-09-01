@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 4001,
   "semantic": {
     "fragmentVersion": "tslean-semantic-typed-v5",
     "entryModule": "TSLean.Examples.Package.Decision",
@@ -657,7 +657,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:manifest",
-        "sha256": "sha256:e26a46bb2c3cbe42bf54dc97d27bb77f8a5d1448bf38b12b3e657e9a44b8e9ca"
+        "sha256": "sha256:3f57ada8a11130046dc9b2d1f8dd946cb743a09de7277e54c8a19eb4d5431e40"
       },
       {
         "kind": "compiler-source",
@@ -750,7 +750,7 @@
         "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       }
     ],
-    "inputClosureSha256": "sha256:a9850e7a3471f52f712f17720419b04a44d4de49a77f7e97728491775bd9c858",
+    "inputClosureSha256": "sha256:bf00c08684e65293d3adfd51bd45ec97639bd92301662a6eee815eace7e39f79",
     "semanticIrSha256": "sha256:81a40dc25bc7f5bea3a9b7a04cb7bd93415900e34a7cd758c4f744da7edf7354",
     "certificates": [
       {

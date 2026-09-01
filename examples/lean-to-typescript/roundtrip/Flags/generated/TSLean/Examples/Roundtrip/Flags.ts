@@ -4,16 +4,17 @@
  * Lean module: TSLean.Examples.Roundtrip.Flags
  * Generated module: TSLean/Examples/Roundtrip/Flags.ts
  * Package entry module: TSLean.Examples.Roundtrip.Flags
- * Semantic identity: sha256:a5a34c483828af2f6cb3d6664289dd8f3dff9181282390b2bf3f09b062943dde
- * Input closure: sha256:d5c2b59a9b4310837668ece74a881b0759364e04aee5df4c93f262d65b8b5418
+ * Semantic identity: sha256:3b3231bdeb0a4cfcab6b0efa8cfac1615dd7973c0354a94e8c09dfd29dc24462
+ * Input closure: sha256:49c4d875455e91801a9cb2f180235f4eca4b95f554c379594794e634be5e06a4
  * Semantic IR: sha256:c7254134b9903ee300adcdab9ad3611d2d78f56881b76a093276bd95bcdb4451
  * Generated module body: sha256:8346f981ff1f2e9c60c8f71b57b5928ebb1b3c63c24ed132c49a9e3ef90e9483
  * Generated package body: sha256:7152816467974f0792d97b078d1e64808fb95a3ad9dc72cc5656b8780beba5da
  * Lean toolchain: leanprover/lean4:v4.33.1
  * Lean: Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)
  * Lake: Lake version 5.0.0-src+819816b (Lean version 4.33.1)
+ * Runtime certificates: sha256:ae5bddad3e3bc2f92054fb4764d7bdc92b1a34306a01c452236eb597ad785c38
  * Environment attestation: recorded in the manifest sidecar; it does not affect these bytes.
- * Evidence boundary: generation is checked and differential tests are empirical; no refinement theorem is claimed.
+ * Evidence boundary: Lean certificates prove source-to-model refinement conditionally; engine conformance remains an explicit obligation.
  */
 export interface FlagsInit {
     readonly alpha: boolean;

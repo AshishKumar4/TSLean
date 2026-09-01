@@ -4,16 +4,17 @@
  * Lean module: TSLean.Examples.Roundtrip.Direction
  * Generated module: TSLean/Examples/Roundtrip/Direction.ts
  * Package entry module: TSLean.Examples.Roundtrip.Direction
- * Semantic identity: sha256:82b6124655f4664572c6b86281b27e8e20d19ebeb0bd41185e1861078b6ef775
- * Input closure: sha256:01dbbdcd5f1b53d38f436913c05c57ed315cafa7f3357b8a7b5907b191b383f5
+ * Semantic identity: sha256:8ac88f2a9869b49c6df15096699bb19bec4777ed7cf68496dad50607435c9a11
+ * Input closure: sha256:a30ac2d8e4d2f679e07b2c68d23757b90918ab2b809593278427db0ef604d876
  * Semantic IR: sha256:a5af2196a748078fea9164b952f93622f67c5455f1a382bcec65490f36a2687f
  * Generated module body: sha256:0bdcdea9694b0d07472019511b89740c7fc6153327ddcd5212b53b664099e303
  * Generated package body: sha256:fc612d11b27a8258af878d1eef6798b92d63fa0149739dcee6a243ae2dc3f178
  * Lean toolchain: leanprover/lean4:v4.33.1
  * Lean: Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)
  * Lake: Lake version 5.0.0-src+819816b (Lean version 4.33.1)
+ * Runtime certificates: sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
  * Environment attestation: recorded in the manifest sidecar; it does not affect these bytes.
- * Evidence boundary: generation is checked and differential tests are empirical; no refinement theorem is claimed.
+ * Evidence boundary: Lean certificates prove source-to-model refinement conditionally; engine conformance remains an explicit obligation.
  */
 /**
  * One of the four compass directions.

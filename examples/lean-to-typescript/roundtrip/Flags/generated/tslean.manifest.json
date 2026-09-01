@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4001,
   "semantic": {
     "fragmentVersion": "tslean-semantic-typed-v5",
     "entryModule": "TSLean.Examples.Roundtrip.Flags",
@@ -22,7 +22,7 @@
           {
             "declaration": "TSLean.Examples.Roundtrip.Flags.Flags",
             "emitted": "Flags",
-            "line": 18,
+            "line": 19,
             "span": {
               "source": "TSLean/Examples/Roundtrip/Flags.lean",
               "startLine": 3,
@@ -34,7 +34,7 @@
           {
             "declaration": "TSLean.Examples.Roundtrip.Flags.Flags.meet",
             "emitted": "meet",
-            "line": 18,
+            "line": 19,
             "span": {
               "source": "TSLean/Examples/Roundtrip/Flags.lean",
               "startLine": 16,
@@ -46,7 +46,7 @@
           {
             "declaration": "TSLean.Examples.Roundtrip.Flags.Flags.union",
             "emitted": "union",
-            "line": 18,
+            "line": 19,
             "span": {
               "source": "TSLean/Examples/Roundtrip/Flags.lean",
               "startLine": 10,
@@ -57,7 +57,7 @@
           }
         ],
         "bodySha256": "sha256:8346f981ff1f2e9c60c8f71b57b5928ebb1b3c63c24ed132c49a9e3ef90e9483",
-        "sourceMapSha256": "sha256:0c490f0724627ff3a1f6806e45f5c4784523f8d8bd40f33d5c857696f07576a4"
+        "sourceMapSha256": "sha256:28fb6dfdcbb7f38ec9fc547e1dcdf998bede55bd8754c619665672dbc87d631f"
       }
     ],
     "closure": [
@@ -210,18 +210,23 @@
       },
       {
         "kind": "compiler-source",
+        "identity": "compiler:certificates",
+        "sha256": "sha256:d1ea221722db0c8cec6cb08eacce63cc340a25aad095775cc163b5fbcc675bc2"
+      },
+      {
+        "kind": "compiler-source",
         "identity": "compiler:cli",
-        "sha256": "sha256:35daa34373db5ad31d05d68f3a0ff6a85d929bf342490a8e733af8ed2ab33887"
+        "sha256": "sha256:50c877c22f48b3eb7e407ca580eae0f206f6f6452dc385ed0f79b109174021b8"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:compiler",
-        "sha256": "sha256:049d95ddbcac5184b88b27416a886e6ef4c6f9509be40176c216b3e53ebdce0c"
+        "sha256": "sha256:477deadf5ab32d049bf67e02c37d199e251eed03134f395f8c036c6bb4b21775"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:emitter",
-        "sha256": "sha256:225f6b2ff5546af751651ef63296b14a5aa9bb1716fe8362fe78ff86a4b23893"
+        "sha256": "sha256:05e8a253243efd5c767facd4d48302c808c00bf99a238d5f1c0ea6cd6b0d2afd"
       },
       {
         "kind": "compiler-source",
@@ -231,7 +236,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:index",
-        "sha256": "sha256:1edac2effc7bd77748f0991c248cec4b78cd2a759354d43d19f4bbe6df6d357e"
+        "sha256": "sha256:912c8f5b07a0e3c134618c429928ea768555f4225a92218f46e0fe60379cb8c9"
       },
       {
         "kind": "compiler-source",
@@ -316,7 +321,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:manifest",
-        "sha256": "sha256:f79fe54f1cab595a69b1c1f00f256d93af997ac9b1000ab0c5a9893aaccd7a12"
+        "sha256": "sha256:3f57ada8a11130046dc9b2d1f8dd946cb743a09de7277e54c8a19eb4d5431e40"
       },
       {
         "kind": "compiler-source",
@@ -326,7 +331,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:package",
-        "sha256": "sha256:e594120b1ef0ab75a592594e0ba04cc74877433fe6264c36a7cb402af3a002a6"
+        "sha256": "sha256:f87c4d44b538f901091c0e2613a6d8eb0efcca88f202a7d3ddad30e481aa9112"
       },
       {
         "kind": "compiler-source",
@@ -340,8 +345,13 @@
       },
       {
         "kind": "compiler-source",
+        "identity": "compiler:runtime-conformance",
+        "sha256": "sha256:3fa75ea450f6f7912315bcac18d3ae5f4293dbb37555b8fb6d11972a6ae1d377"
+      },
+      {
+        "kind": "compiler-source",
         "identity": "compiler:runtime-provenance",
-        "sha256": "sha256:15a042632db7ee97a700eee116424de3350e80b28b5d99a3a5aa2e6d75188514"
+        "sha256": "sha256:3608cdb9a616a613e755adc199a45b7c79400c7d834e501ae5133254a4aa01fc"
       },
       {
         "kind": "compiler-source",
@@ -357,6 +367,16 @@
         "kind": "compiler-source",
         "identity": "compiler:spec:placement.bounds.json",
         "sha256": "sha256:435d9687952de671f6a01c7376b6284c3615fa0125ed02d0367ff41e915c4ce8"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:spec:semantics/probes.json",
+        "sha256": "sha256:c11937b8fc42448014dcdc0d69d9f18a04dce7ddd27622f8b2b419f0c9bbbb90"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:spec:semantics/registry.json",
+        "sha256": "sha256:8d9256f1838221474b5133c154abd333730d857fa2454d51af6140d84fd70fab"
       },
       {
         "kind": "lean-source",
@@ -384,8 +404,22 @@
         "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       }
     ],
-    "inputClosureSha256": "sha256:d5c2b59a9b4310837668ece74a881b0759364e04aee5df4c93f262d65b8b5418",
+    "inputClosureSha256": "sha256:49c4d875455e91801a9cb2f180235f4eca4b95f554c379594794e634be5e06a4",
     "semanticIrSha256": "sha256:c7254134b9903ee300adcdab9ad3611d2d78f56881b76a093276bd95bcdb4451",
+    "certificates": [
+      {
+        "opcode": "bool.and",
+        "runtimeSymbol": "inline:bool.and",
+        "declaration": "",
+        "runtimeBodySha256": "sha256:a49e38c6129365a77d76f9a5e546048e0d6ddd9a6de787cdf52df7b2a315f6d0"
+      },
+      {
+        "opcode": "bool.or",
+        "runtimeSymbol": "inline:bool.or",
+        "declaration": "",
+        "runtimeBodySha256": "sha256:b402415bd37926df9a461c939277b5ba4e0ad1440ec560f4835c2ef290ccde8b"
+      }
+    ],
     "generatedBodySha256": "sha256:7152816467974f0792d97b078d1e64808fb95a3ad9dc72cc5656b8780beba5da"
   },
   "environment": {
@@ -1049,6 +1083,30 @@
         "sha256": "sha256:bb6ee7e709ae60426e30b8d393df4d939ee61407794b4f053ce6338d6eaa8c63"
       }
     ],
-    "inputClosureSha256": "sha256:4059e7d97f54f149b7615759747438affef0115652dc3428648e5eb6884576a9"
+    "inputClosureSha256": "sha256:4059e7d97f54f149b7615759747438affef0115652dc3428648e5eb6884576a9",
+    "runtimeConformance": [
+      {
+        "certificate": "bool.and",
+        "assumption": "boolean.logical-operators",
+        "oracle": "semantics-probes/boolean.logical-operators",
+        "binaryInput": "compiler:runtime",
+        "binarySha256": "sha256:e6ec2c188d83d813f81f2de8aea084d74dce603ac1abedd0a30ad941b10087b2",
+        "evidenceInput": "compiler:spec:semantics/probes.json",
+        "oracleSha256": "sha256:c11937b8fc42448014dcdc0d69d9f18a04dce7ddd27622f8b2b419f0c9bbbb90",
+        "runtimeSymbol": "inline:bool.and",
+        "runtimeBodySha256": "sha256:a49e38c6129365a77d76f9a5e546048e0d6ddd9a6de787cdf52df7b2a315f6d0"
+      },
+      {
+        "certificate": "bool.or",
+        "assumption": "boolean.logical-operators",
+        "oracle": "semantics-probes/boolean.logical-operators",
+        "binaryInput": "compiler:runtime",
+        "binarySha256": "sha256:e6ec2c188d83d813f81f2de8aea084d74dce603ac1abedd0a30ad941b10087b2",
+        "evidenceInput": "compiler:spec:semantics/probes.json",
+        "oracleSha256": "sha256:c11937b8fc42448014dcdc0d69d9f18a04dce7ddd27622f8b2b419f0c9bbbb90",
+        "runtimeSymbol": "inline:bool.or",
+        "runtimeBodySha256": "sha256:b402415bd37926df9a461c939277b5ba4e0ad1440ec560f4835c2ef290ccde8b"
+      }
+    ]
   }
 }

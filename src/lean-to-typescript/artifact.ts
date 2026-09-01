@@ -120,7 +120,7 @@ export interface LeanToTypeScriptEnvironmentAttestation {
 }
 
 export interface LeanToTypeScriptManifest {
-  readonly schemaVersion: 4;
+  readonly schemaVersion: 4001;
   readonly semantic: LeanToTypeScriptSemanticIdentity;
   readonly environment: LeanToTypeScriptEnvironmentAttestation;
 }

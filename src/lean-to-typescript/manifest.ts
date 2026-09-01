@@ -25,7 +25,12 @@ import {
 } from './certificates.js';
 import { compareCodePoints } from './ordering.js';
 
-export const LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION = 4;
+/**
+ * One shared manifest schema version, split as major.minor. A minor bump adds an optional field
+ * and every reader in the major accepts it; only a major bump may remove or reinterpret a field,
+ * and that is the only change that strands an older reader.
+ */
+export const LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION = 4_001;
 
 /**
  * How many lines the provenance header occupies. The header is a fixed template of one line per
@@ -343,10 +348,19 @@ export function decodePackage(value: unknown): LeanToTypeScriptPackage {
   };
 }
 
+/**
+ * One shared major. Every decoder — generation, verification, roundtrip — reads the same constant
+ * and accepts any minor revision within it, so a schema bump that adds a field does not strand
+ * the other readers at a refusal until each one is updated.
+ */
 export function decodeManifest(value: unknown): LeanToTypeScriptManifest {
   const manifest = record(value, 'Lean to TypeScript manifest');
-  exactKeys(manifest, ['schemaVersion', 'semantic', 'environment'], 'Lean to TypeScript manifest');
-  if (manifest['schemaVersion'] !== LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION) {
+  const schemaVersion = manifest['schemaVersion'];
+  if (
+    typeof schemaVersion !== 'number' ||
+    !Number.isSafeInteger(schemaVersion) ||
+    Math.floor(schemaVersion / 1000) !== Math.floor(LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION / 1000)
+  ) {
     throw new TypeError('unsupported Lean to TypeScript manifest schema');
   }
   return canonicalManifest({

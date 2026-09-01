@@ -7,9 +7,10 @@
 // The cases that elaborate Lean are grouped at the end so a failure in the cheap structural
 // checks reports before the expensive ones run.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir as home, tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import ts from 'typescript';
 import { leanAccepts, leanRun } from '../src/lean-check.js';
 import { generateLean } from '../src/codegen/index.js';
@@ -24,6 +25,7 @@ import {
 } from '../src/roundtrip/index.js';
 import { domainSize, enumerateTuples, enumerateValues, renderValue, valueAt } from '../src/roundtrip/values.js';
 import { transpileProject } from '../src/project/index.js';
+import { decodeManifest } from '../src/lean-to-typescript/manifest.js';
 
 const OPTIONS: ts.CompilerOptions = {
   target: ts.ScriptTarget.ES2022,
@@ -272,10 +274,19 @@ describe('value domains', () => {
   it('truncates a tuple domain to the limit without changing the order', () => {
     const boolean = { kind: 'boolean' as const };
     const full = enumerateTuples([boolean, boolean, boolean], 8).map((row) => row.map(renderValue).join(''));
-    expect(full).toEqual(['falsefalsefalse', 'falsefalsetrue', 'falsetruefalse', 'falsetruetrue',
-      'truefalsefalse', 'truefalsetrue', 'truetruefalse', 'truetruetrue']);
-    expect(enumerateTuples([boolean, boolean, boolean], 3).map((row) => row.map(renderValue).join('')))
-      .toEqual(full.slice(0, 3));
+    expect(full).toEqual([
+      'falsefalsefalse',
+      'falsefalsetrue',
+      'falsetruefalse',
+      'falsetruetrue',
+      'truefalsefalse',
+      'truefalsetrue',
+      'truetruefalse',
+      'truetruetrue',
+    ]);
+    expect(enumerateTuples([boolean, boolean, boolean], 3).map((row) => row.map(renderValue).join(''))).toEqual(
+      full.slice(0, 3),
+    );
   });
 });
 
@@ -300,13 +311,17 @@ describe('fixed point', () => {
 describe('modules and effects', () => {
   it('opens a sibling module so an imported type resolves rather than binding implicitly', () => {
     const shared = '/shared.ts';
-    const lean = generateLean(rewriteModule(parseFile({
-      fileName: '/consumer.ts',
-      sourceText:
-        'import { type Level } from "./shared.js";\n' +
-        'export function loud(level: Level): boolean { return level === "high"; }\n',
-      extraFiles: new Map([[shared, 'export type Level = "low" | "high";\n']]),
-    })));
+    const lean = generateLean(
+      rewriteModule(
+        parseFile({
+          fileName: '/consumer.ts',
+          sourceText:
+            'import { type Level } from "./shared.js";\n' +
+            'export function loud(level: Level): boolean { return level === "high"; }\n',
+          extraFiles: new Map([[shared, 'export type Level = "low" | "high";\n']]),
+        }),
+      ),
+    );
     expect(lean).toContain('import TSLean.Generated.Shared');
     expect(lean).toMatch(/^open .*TSLean\.Generated\.Shared/mu);
   });
@@ -337,11 +352,13 @@ describe('Lean acceptance', () => {
   });
 
   it('reports the Lean errors an ill-typed lowering produces rather than passing', () => {
-    const acceptance = leanAccepts([{
-      module: 'TSLeanRoundtrip.RejectionCase',
-      code: 'inductive Tier where\n  | direct\n  | mediated\n\ndef broken : Tier := "direct"\n',
-      imports: [],
-    }]);
+    const acceptance = leanAccepts([
+      {
+        module: 'TSLeanRoundtrip.RejectionCase',
+        code: 'inductive Tier where\n  | direct\n  | mediated\n\ndef broken : Tier := "direct"\n',
+        imports: [],
+      },
+    ]);
     expect(acceptance.accepted).toBe(false);
     expect(acceptance.diagnostics.some((entry) => entry.message.includes('Tier'))).toBe(true);
   });
@@ -349,13 +366,17 @@ describe('Lean acceptance', () => {
 
 describe('names that must not be substituted', () => {
   it('keeps a renamed import bound to the module it came from', () => {
-    const lean = generateLean(rewriteModule(parseFile({
-      fileName: '/consumer.ts',
-      sourceText:
-        'import { type Level as Loudness } from "./shared.js";\n' +
-        'export function loud(level: Loudness): boolean { return level === "high"; }\n',
-      extraFiles: new Map([['/shared.ts', 'export type Level = "low" | "high";\n']]),
-    })));
+    const lean = generateLean(
+      rewriteModule(
+        parseFile({
+          fileName: '/consumer.ts',
+          sourceText:
+            'import { type Level as Loudness } from "./shared.js";\n' +
+            'export function loud(level: Loudness): boolean { return level === "high"; }\n',
+          extraFiles: new Map([['/shared.ts', 'export type Level = "low" | "high";\n']]),
+        }),
+      ),
+    );
     // The alias is a local name for the same type, so the constructors stay the declared ones.
     expect(lean).toContain('| .high => true');
     expect(lean).not.toContain('Loudness');
@@ -376,19 +397,27 @@ describe('names that must not be substituted', () => {
   });
 
   it('reads a cross-file field name from the file that declares it', () => {
-    const lean = generateLean(rewriteModule(parseFile({
-      fileName: '/user.ts',
-      sourceText:
-        'import { Grant, type GrantInit } from "./grant.js";\n' +
-        'export function frozen(grant: Grant): Grant { return new Grant({ read: grant.read, write: false }); }\n',
-      extraFiles: new Map([['/grant.ts',
-        'export interface GrantInit { readonly read: boolean; readonly write: boolean; }\n' +
-        'export class Grant {\n' +
-        '  public readonly read: boolean;\n' +
-        '  public readonly write: boolean;\n' +
-        '  public constructor(init: GrantInit) { this.read = init.read; this.write = init.write; Object.freeze(this); }\n' +
-        '}\n']]),
-    })));
+    const lean = generateLean(
+      rewriteModule(
+        parseFile({
+          fileName: '/user.ts',
+          sourceText:
+            'import { Grant, type GrantInit } from "./grant.js";\n' +
+            'export function frozen(grant: Grant): Grant { return new Grant({ read: grant.read, write: false }); }\n',
+          extraFiles: new Map([
+            [
+              '/grant.ts',
+              'export interface GrantInit { readonly read: boolean; readonly write: boolean; }\n' +
+                'export class Grant {\n' +
+                '  public readonly read: boolean;\n' +
+                '  public readonly write: boolean;\n' +
+                '  public constructor(init: GrantInit) { this.read = init.read; this.write = init.write; Object.freeze(this); }\n' +
+                '}\n',
+            ],
+          ]),
+        }),
+      ),
+    );
     expect(lean).toContain('{ read := grant.read, write := false }');
   });
 
@@ -424,20 +453,17 @@ describe('what the round trip must refuse or bound', () => {
     // not only the last one Lean's parser happens to accept.
     expect(lean).toContain('=> (match right with');
     expect(lean).toContain('(match left with');
-    const run = leanRun(
-      [{ module: 'TSLeanRoundtrip.NestedMatchCase', code: lean, imports: [] }],
-      {
-        module: 'TSLeanRoundtrip.NestedMatchDriver',
-        imports: ['TSLeanRoundtrip.NestedMatchCase'],
-        code: [
-          'import TSLeanRoundtrip.NestedMatchCase',
-          'def main : IO Unit := do',
-          '  IO.println (if TSLean.Generated.Roundtrip.agree .read .read false then "true" else "false")',
-          '  IO.println (if TSLean.Generated.Roundtrip.agree .write .write true then "true" else "false")',
-          '',
-        ].join('\n'),
-      },
-    );
+    const run = leanRun([{ module: 'TSLeanRoundtrip.NestedMatchCase', code: lean, imports: [] }], {
+      module: 'TSLeanRoundtrip.NestedMatchDriver',
+      imports: ['TSLeanRoundtrip.NestedMatchCase'],
+      code: [
+        'import TSLeanRoundtrip.NestedMatchCase',
+        'def main : IO Unit := do',
+        '  IO.println (if TSLean.Generated.Roundtrip.agree .read .read false then "true" else "false")',
+        '  IO.println (if TSLean.Generated.Roundtrip.agree .write .write true then "true" else "false")',
+        '',
+      ].join('\n'),
+    });
     expect(run.accepted).toBe(true);
     expect(run.output.trim().split('\n')).toEqual(['false', 'true']);
   });
@@ -494,7 +520,8 @@ describe('what the round trip must refuse or bound', () => {
   it('refuses two sources whose base names collide instead of losing one', async () => {
     const root = mkdtempSync(join(tmpdir(), 'tslean-collision-'));
     try {
-      const body = 'export type Mode = "on" | "off";\nexport function on(mode: Mode): boolean { return mode === "on"; }\n';
+      const body =
+        'export type Mode = "on" | "off";\nexport function on(mode: Mode): boolean { return mode === "on"; }\n';
       mkdirSync(join(root, 'nested'), { recursive: true });
       writeFileSync(join(root, 'Mode.ts'), body, 'utf8');
       writeFileSync(join(root, 'nested', 'Mode.ts'), body, 'utf8');
@@ -566,7 +593,7 @@ describe('what the round trip must refuse or bound', () => {
     const rows = enumerateTuples([wide, wide], 4);
     expect(rows).toHaveLength(4);
     // Indexing reaches a value without materialising the product it sits in.
-    expect(renderValue(valueAt(wide, (2 ** 20) - 1))).toBe(`{${Array(20).fill('true').join(',')}}`);
+    expect(renderValue(valueAt(wide, 2 ** 20 - 1))).toBe(`{${Array(20).fill('true').join(',')}}`);
   });
 
   it('refuses a domain too large to index rather than sampling a wrapped index', () => {
@@ -605,9 +632,37 @@ describe('source identity boundaries', () => {
     // Window exports generated `toData` and `equals`, but its Lean manifest names only
     // fullyOpen and flip. Those two, not the generated helpers, are source observations.
     expect(report.sourceBehaviour?.coverage.map((entry) => entry.function)).toHaveLength(2);
-    expect(report.checks.find(
-      (entry) => entry.name === 'the generated typescript computes what its Lean source does',
-    )?.detail).toContain('2/2 manifest callable(s) observed');
+    expect(
+      report.checks.find((entry) => entry.name === 'the generated typescript computes what its Lean source does')
+        ?.detail,
+    ).toContain('2/2 manifest callable(s) observed');
+  });
+  it('verifies a certificate-bearing manifest end to end', async () => {
+    // The observation driver needs the module's compiled olean, which the project's default
+    // targets do not build; a cached build is a no-op when the tree is warm.
+    const lake = resolve(home(), '.elan', 'bin', 'lake');
+    const build = spawnSync(lake, ['build', 'TSLean.Examples.Placement'], {
+      cwd: join(process.cwd(), 'lean'),
+      encoding: 'utf8',
+    });
+    if (build.status !== 0) throw new TypeError(`Placement olean build failed: ${build.stdout}${build.stderr}`);
+    const manifestPath = join(process.cwd(), 'examples/lean-to-typescript/generated/tslean.manifest.json');
+    const report = await verifyLeanToTypeScriptRoundtrip(manifestPath, {
+      leanProjectRoot: join(process.cwd(), 'lean'),
+    });
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { semantic?: { certificates?: unknown } };
+    const certificates = manifest.semantic?.certificates;
+    expect(Array.isArray(certificates) && certificates.length > 0).toBe(true);
+    expect(report.checks.every((entry) => entry.holds)).toBe(true);
+  });
+
+  it('reads a manifest one minor revision ahead within the same major', () => {
+    const manifestPath = join(process.cwd(), 'examples/lean-to-typescript/generated/tslean.manifest.json');
+    const parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+    const tolerated = { ...parsed, schemaVersion: 4002 };
+    expect(() => decodeManifest(tolerated)).not.toThrow();
+    const refused = { ...parsed, schemaVersion: 5001 };
+    expect(() => decodeManifest(refused)).toThrowError('unsupported Lean to TypeScript manifest schema');
   });
 
   it('rejects same-named types from different modules before renderer or constructor maps choose one', async () => {
@@ -620,10 +675,7 @@ describe('source identity boundaries', () => {
         `export function ${name}(state: State): boolean { return state === "raised"; }\n`;
       writeFileSync(join(root, 'alpha.ts'), source('alpha'), 'utf8');
       writeFileSync(join(root, 'beta.ts'), source('beta'), 'utf8');
-      const report = await verifyTypeScriptToLeanRoundtrip([
-        join(root, 'alpha.ts'),
-        join(root, 'beta.ts'),
-      ]);
+      const report = await verifyTypeScriptToLeanRoundtrip([join(root, 'alpha.ts'), join(root, 'beta.ts')]);
       expect(report.holds).toBe(false);
       expect(report.counterexamples.some((entry) => entry.actual.includes('qualify the type identity'))).toBe(true);
     } finally {
@@ -649,10 +701,9 @@ describe('what a report has to contain', () => {
   });
 
   it('executes both sides in the TypeScript-to-Lean direction too', async () => {
-    const report = await verifyTypeScriptToLeanRoundtrip(
-      [join(process.cwd(), 'examples/roundtrip/tier.ts')],
-      { leanProjectRoot: join(process.cwd(), 'lean') },
-    );
+    const report = await verifyTypeScriptToLeanRoundtrip([join(process.cwd(), 'examples/roundtrip/tier.ts')], {
+      leanProjectRoot: join(process.cwd(), 'lean'),
+    });
     const compute = report.checks.find((check) => check.name === 'both sides compute the same function');
     expect(compute).toBeDefined();
     expect(compute?.holds).toBe(true);

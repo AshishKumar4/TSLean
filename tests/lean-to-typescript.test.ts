@@ -116,7 +116,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     expect(code).toContain('export type Placement = "bundled" | "provider" | "dynamic";');
     expect(code).toContain('export class PlacementSet {');
     expect(code).toContain('export function choosePlacement(');
-    expect(first.manifest.schemaVersion).toBe(4);
+    expect(first.manifest.schemaVersion).toBe(4001);
     expect(first.manifest.semantic.entryModule).toBe('TSLean.Examples.Placement');
     expect(first.manifest.semantic.modules.map((module) => module.path)).toEqual(['TSLean/Examples/Placement.ts']);
     expect(first.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.33.1');
