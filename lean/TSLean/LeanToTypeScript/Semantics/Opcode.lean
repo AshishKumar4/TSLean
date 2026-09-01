@@ -117,35 +117,47 @@ def modelField : Opcode → String
   | .listFirst => "listFirst"
   | .listRest => "listRest"
 
-/-- The operator, method or generated-helper role the emitted form is built from, distinct from the
-exact TypeScript `emittedForm` records. -/
+/--
+The emitted role the opcode's form is built from, tagged by how it reaches the target.
+
+`inline:` is an operator, method or index the emitter writes at the use site; `helper:` is a
+generated helper function the emitter declares once and calls. The tag is what lets a catalog row be
+joined against the emitted bytes without reading the proof: a `helper:` row has a helper to bind and
+`components` to certify, and an `inline:` row has neither. It is distinct from `emittedForm`, which
+records the exact TypeScript, and from `modelField`, which names the `Runtime` constant.
+-/
 def runtimeSymbol : Opcode → String
-  | .boolAnd => "&&"
-  | .boolOr => "||"
-  | .boolNot => "!"
-  | .boolEquals => "==="
-  | .natAdd => "+"
+  | .boolAnd => "inline:&&"
+  | .boolOr => "inline:||"
+  | .boolNot => "inline:!"
+  | .boolEquals => "inline:==="
+  | .natAdd => "inline:+"
   | .natSubtract => "helper:nat-truncated-subtraction"
-  | .natMultiply => "*"
-  | .natLess => "<"
-  | .natLessOrEqual => "<="
-  | .natEquals => "==="
-  | .natSuccessor => "+"
-  | .stringAppend => "+"
-  | .stringEquals => "==="
-  | .listLength => "BigInt"
-  | .listIsEmpty => "length"
-  | .listAppend => "spread"
-  | .listReverse => "reverse"
-  | .listMap => "map"
-  | .listFilter => "filter"
-  | .listFoldLeft => "reduce"
-  | .listFoldRight => "reduceRight"
-  | .listAny => "some"
-  | .listAll => "every"
+  | .natMultiply => "inline:*"
+  | .natLess => "inline:<"
+  | .natLessOrEqual => "inline:<="
+  | .natEquals => "inline:==="
+  | .natSuccessor => "inline:+"
+  | .stringAppend => "inline:+"
+  | .stringEquals => "inline:==="
+  | .listLength => "inline:BigInt"
+  | .listIsEmpty => "inline:length"
+  | .listAppend => "inline:spread"
+  | .listReverse => "inline:reverse"
+  | .listMap => "inline:map"
+  | .listFilter => "inline:filter"
+  | .listFoldLeft => "inline:reduce"
+  | .listFoldRight => "inline:reduceRight"
+  | .listAny => "inline:some"
+  | .listAll => "inline:every"
   | .listHead => "helper:list-head-option"
-  | .listFirst => "index"
-  | .listRest => "slice"
+  | .listFirst => "inline:index"
+  | .listRest => "inline:slice"
+
+/-- The tag every runtime symbol carries: `inline:` for a form written at the use site, `helper:`
+for a generated helper the emitter declares. -/
+def runtimeSymbolTag : Opcode → String
+  | code => if (code.runtimeSymbol).startsWith "helper:" then "helper:" else "inline:"
 
 /-- The closed semantic components a generated helper reaches, in evaluation order. These are not
 runtime symbols and not assumption ids: Coverage binds helper bytes separately, while these names
@@ -155,6 +167,13 @@ def components : Opcode → List String
   | .listHead => ["inline:list.isEmpty", "inline:list.first", "conditional:select",
       "representation:option.tagged-option"]
   | _ => []
+
+/-- Exactly the opcodes that reach the target as a generated helper record the semantic components
+that helper composes. -/
+theorem components_iff_helper (code : Opcode) :
+    code.components ≠ [] ↔ code.runtimeSymbolTag = "helper:" := by
+  cases code <;> simp [components, runtimeSymbolTag, runtimeSymbol]
+
 
 /-- The ordered assumption closure the opcode's theorem consumes. -/
 def requires : Opcode → List Assumption.Id
