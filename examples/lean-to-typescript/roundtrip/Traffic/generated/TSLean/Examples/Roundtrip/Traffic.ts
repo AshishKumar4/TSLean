@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Traffic
  * Generated module: TSLean/Examples/Roundtrip/Traffic.ts
  * Package entry module: TSLean.Examples.Roundtrip.Traffic
- * Semantic identity: sha256:9f5521439b11aeae519c513b30b0f6514cdc02a89daa1dbec5e1bd32d14b71b8
- * Input closure: sha256:03725597f831773afdf939943b2eea0c5d14b894a868e09b25c13e91b523e352
+ * Semantic identity: sha256:4caef0c06cff0d0bc7a7e7979c7e6c938a72ac0cafd6eaa2da54b3234d7af3c6
+ * Input closure: sha256:80d90de2035781856f11be952fce743b26fae587cb2fbfbbba5c2e5991cbb1b4
  * Semantic IR: sha256:2bcd20a525510bb66c5a490a8158c94e0bb2deef1ebe01ac400cc94cebd8484d
  * Generated module body: sha256:3b06ae769d05074113b899033af6624e3219359822b26069f84e4be6403e9bd7
  * Generated package body: sha256:50dc6d475ff90a18fb8b9111ce4939e58f08518f5a9b381c727b5d9a85cc1b84

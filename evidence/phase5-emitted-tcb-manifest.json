@@ -5,9 +5,9 @@
     "bun": "1.4.0",
     "node": "v22.22.3",
     "typescript": "6.0.2",
-    "vitest": "vitest/4.1.2 linux-x64 node-v22.22.3",
+    "vitest": "vitest/4.1.11 linux-x64 node-v22.22.3",
     "prettier": "3.9.6",
-    "eslint": "v10.8.1",
+    "eslint": "v10.9.0",
     "lean": "Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)",
     "lake": "Lake version 5.0.0-src+819816b (Lean version 4.33.1)"
   },
@@ -177,6 +177,6 @@
     "refinementTestsAuditRegistry": "sha256:442fe58d68dc9252b1622506eeecbcd9cb57f400ff4474f385f3bbb8cf9a311c",
     "corpus": "sha256:813ba0e3fa8d02912872c4451cf33773aa0fc627dac24f68f770e25506fa1903",
     "differentialSpecHarness": "sha256:a60e709b193d859da6521ab4179c645fd0c33cb50cfa9d1fba9f486a4feb6eb5",
-    "trustEvidenceInfrastructure": "sha256:a18af1263396e9055d10485697921b7b58cae036bd183509e57c5e66b564161a"
+    "trustEvidenceInfrastructure": "sha256:9457df8c8845303a04ace43f7a198b11810217915b38eba647f780a9c606c139"
   }
 }

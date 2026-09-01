@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
@@ -37,6 +38,11 @@ const forbiddenTokens = /\b(sorry|admit|axiom|opaque|partial|unsafe|noncomputabl
 
 function fail(message) {
   throw new Error(`semantics registry gate failed: ${message}`);
+}
+
+/** Self-test tables are plain JSON, so a parse of their serialization is an exact copy. */
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function parseArgs(args) {
@@ -739,7 +745,7 @@ function selfTest() {
   expectLeanFailure('semantics-array-hole-reads-undefined.lean', 'unsolved goals');
   expectLeanFailure('semantics-map-reverses-event-order.lean', 'unsolved goals');
 
-  const withoutAssumption = structuredClone(registry);
+  const withoutAssumption = cloneJson(registry);
   // The dropped assumption has to be one no other opcode requires, or the plane still has a requirer
   // and the refusal this fixture exists to provoke never fires. Taking the first multi-assumption row
   // and popping its last entry does not guarantee that, so the pair is searched for and its absence
@@ -765,7 +771,7 @@ function selfTest() {
     `assumption ${dropped} is declared but no opcode requires it`,
   );
 
-  const withUndeclaredAssumption = structuredClone(registry);
+  const withUndeclaredAssumption = cloneJson(registry);
   withUndeclaredAssumption.opcodes[0].requires.push('boolean.two-valued');
   expectJoinFailure(
     'an undeclared assumption',
@@ -778,7 +784,7 @@ function selfTest() {
 
   const locked = readFileSync(lockedRegistryPath, 'utf8');
   compareWithLocked(registry, locked);
-  const withExtraAssumption = structuredClone(registry);
+  const withExtraAssumption = cloneJson(registry);
   withExtraAssumption.opcodes[0].requires.push('bigint.relational');
   joinRegistries(withExtraAssumption, kinds, emitted, scenarios);
   try {
@@ -788,7 +794,7 @@ function selfTest() {
     if (!(error instanceof Error) || !error.message.includes('is stale')) throw error;
   }
 
-  const withWrongOperation = structuredClone(registry);
+  const withWrongOperation = cloneJson(registry);
   withWrongOperation.expressionOperations.push({ constructor: 'Fixture.bogus', kind: 'variables' });
   expectJoinFailure(
     'an operation the decoder does not admit',
@@ -799,7 +805,7 @@ function selfTest() {
     'the Lean semantics admits variables but ir.ts does not',
   );
 
-  const withMissingOperation = structuredClone(registry);
+  const withMissingOperation = cloneJson(registry);
   const droppedOperation = withMissingOperation.expressionOperations.pop().kind;
   expectJoinFailure(
     'a dropped operation',
@@ -813,7 +819,7 @@ function selfTest() {
   // The v5 arrow kinds are named, not sampled: a registry that stopped proving either one fails
   // here rather than passing quietly with fifteen rows.
   for (const kind of ['lambda', 'apply']) {
-    const withoutKind = structuredClone(registry);
+    const withoutKind = cloneJson(registry);
     withoutKind.expressionOperations = withoutKind.expressionOperations.filter((entry) => entry.kind !== kind);
     if (withoutKind.expressionOperations.length === registry.expressionOperations.length) {
       fail(`the Lean expression registry proves no ${kind} operation`);
@@ -929,7 +935,7 @@ function selfTest() {
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes('hashes to')) throw error;
   }
-  const bareDigest = structuredClone(registry);
+  const bareDigest = cloneJson(registry);
   bareDigest.assumptions[0].sourceDigest = bareDigest.assumptions[0].sourceDigest.slice(7);
   try {
     checkFrozenSource(bareDigest, () => Buffer.from('anything'));
@@ -937,7 +943,7 @@ function selfTest() {
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes('does not name its hash')) throw error;
   }
-  const unresolvedClause = structuredClone(registry);
+  const unresolvedClause = cloneJson(registry);
   unresolvedClause.assumptions[0].clauses = ['sec-not-a-clause'];
   const clausePage = Buffer.from('<span id="sec-binary-logical-operators"></span>');
   unresolvedClause.assumptions[0].sourceDigest = `sha256:${createHash('sha256').update(clausePage).digest('hex')}`;
@@ -948,7 +954,7 @@ function selfTest() {
     if (!(error instanceof Error) || !error.message.includes('does not resolve')) throw error;
   }
 
-  const brokenProbe = structuredClone(suite);
+  const brokenProbe = cloneJson(suite);
   brokenProbe.groups[0].probes[0].expect = { boolean: true };
   try {
     runProbes(brokenProbe);
@@ -957,7 +963,7 @@ function selfTest() {
     if (!(error instanceof Error) || !error.message.includes('but the model predicts')) throw error;
   }
 
-  const withUntaggedSymbol = structuredClone(registry);
+  const withUntaggedSymbol = cloneJson(registry);
   withUntaggedSymbol.opcodes[0].runtimeSymbol = '&&';
   expectJoinFailure(
     'an untagged runtime symbol',
@@ -968,7 +974,7 @@ function selfTest() {
     'which names no emitted role',
   );
 
-  const withDriftedDigest = structuredClone(registry);
+  const withDriftedDigest = cloneJson(registry);
   withDriftedDigest.assumptions[0].statement = 'something else';
   expectJoinFailure(
     'a drifted canonical wording',

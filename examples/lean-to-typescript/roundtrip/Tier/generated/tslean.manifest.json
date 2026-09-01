@@ -366,7 +366,7 @@
       {
         "kind": "lean-project",
         "identity": "compiler-project:lakefile.toml",
-        "sha256": "sha256:4915dbe492a0f3143f402a4590cdfff4965f6f81f2c356aa9d96ea32c5a64178"
+        "sha256": "sha256:374caa2ac9bf32d4aea72dd7b6c2b5c3328ce2d85eff2948b612f1c41c8c35df"
       },
       {
         "kind": "lean-project",
@@ -420,6 +420,76 @@
       },
       {
         "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics.lean",
+        "sha256": "sha256:3b3f56ae98f444fab1599d0f4d7bcde4973864c95cb67f43e672e0309c2f27ce"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Allocation.lean",
+        "sha256": "sha256:664708276157af008356444e2379462c8c77379c7c7d62b9856ef57f4a9a53e0"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Assumption.lean",
+        "sha256": "sha256:069aa8ff5260b8214b158a7a33e0a5aab67dc4b303cc0c806c9900090725b14b"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Closure.lean",
+        "sha256": "sha256:68dba45a507fa26dd9c1d8dd2d2f9579e6f02d6255e88e0eecd008649c8f6fb3"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Compile.lean",
+        "sha256": "sha256:bc19fddbb7a69001131a01b0871b45d50f1a67d71eb756c6a1ad444f6d6e7233"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Ir.lean",
+        "sha256": "sha256:e524d4ef32ab9b6196bc811419c475c7ea639f17730b2307273790b95e07ae1a"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Opcode.lean",
+        "sha256": "sha256:1c36afab55aa469447cfbf9383366dcee4a2caef909f3ee0060ceea33bcf0909"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Preservation.lean",
+        "sha256": "sha256:55e86fbef9c6209162d867afc1d14f81330f4f32cb9b0ff377afbf82fd4b3bc2"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Program.lean",
+        "sha256": "sha256:e44e67d700d86e87b700ce1e659aef0cff6ffccea650ceece0f9f2e18e450ba1"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/RegistryReport.lean",
+        "sha256": "sha256:84ba71230ccca5e28bb684a295ce12fe77c8b9d620ebfc49e01a77c7052c8128"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Relation.lean",
+        "sha256": "sha256:fa39e400caf1c955b516707207cc1bd2e6cdeba374e0018aa3cc085294d006fa"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Source.lean",
+        "sha256": "sha256:3d12b7e3004f2545c6449ad1078671c7cd7feee611034d1e969848e24dfc8dd8"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Target.lean",
+        "sha256": "sha256:d92973f7bbb97ecf90475f901e607c812ad9dbffab7c3e4c43ee2c5a46be2396"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Tests/Registry.lean",
+        "sha256": "sha256:3c29b2a4353dd444cfd44f84f44caccabd6abdc5768e32ff122a81e6cc7cdf41"
+      },
+      {
+        "kind": "compiler-source",
         "identity": "compiler:manifest",
         "sha256": "sha256:f79fe54f1cab595a69b1c1f00f256d93af997ac9b1000ab0c5a9893aaccd7a12"
       },
@@ -431,7 +501,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:package",
-        "sha256": "sha256:ec88237f8e9ee364a975d501c142b4fa7b1f5e6cf08eb292937dba0524ab62c6"
+        "sha256": "sha256:e594120b1ef0ab75a592594e0ba04cc74877433fe6264c36a7cb402af3a002a6"
       },
       {
         "kind": "compiler-source",
@@ -481,7 +551,7 @@
       {
         "kind": "lean-project",
         "identity": "target-project:lakefile.toml",
-        "sha256": "sha256:4915dbe492a0f3143f402a4590cdfff4965f6f81f2c356aa9d96ea32c5a64178"
+        "sha256": "sha256:374caa2ac9bf32d4aea72dd7b6c2b5c3328ce2d85eff2948b612f1c41c8c35df"
       },
       {
         "kind": "lean-project",
@@ -489,7 +559,7 @@
         "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       }
     ],
-    "inputClosureSha256": "sha256:5f3aa24f5e0efb021533f6ca75b5d15962190d2038335f6771ed577df14a6d02",
+    "inputClosureSha256": "sha256:68866ea91e9de263cab2aa514e1551a7509fc945a0d46fc7e4f5b92d1a779a37",
     "semanticIrSha256": "sha256:f1bf6311e5b02205d86cfb3f9d6ed08e0dc87ffd996d920d8bcb082ff164baac",
     "generatedBodySha256": "sha256:6bd990c730cacabe3d79c98b8da282675261ffc570c70f10bcd57de74c6e3ead"
   },

@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Bits
  * Generated module: TSLean/Examples/Roundtrip/Bits.ts
  * Package entry module: TSLean.Examples.Roundtrip.Bits
- * Semantic identity: sha256:3848b7c27b5ee2d80cb39e5eec5b90b247e5ff0cf9bcab578416df9b4a7343c9
- * Input closure: sha256:55054c68c8abdf947a698c162f510400acc5f915883bce9a250f8c55f696d8a9
+ * Semantic identity: sha256:e90109802c66ea013d6b7094ab2bd45460e9dbf694036f4f5c1165f47ca9ff86
+ * Input closure: sha256:5305230889ae0b89408c2102250aee0d8f4bb0b831c0f41c7021b037642f872a
  * Semantic IR: sha256:1eca28fc5cc32e6964dd41960bbba36ff528afbf0c2e901b4c735126f49b6fac
  * Generated module body: sha256:0c5b4d7ad8bc770c3b69861047d67d2cece78e2396faf36de125b8a037bd9a8a
  * Generated package body: sha256:0a33011386f717b3632558b1c75f7516f2a16d6b639c90e8a5b3b49cba77d920
