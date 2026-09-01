@@ -303,6 +303,16 @@ def Opcode.operator? : Opcode → Option OperatorForm
   | .listReverse | .listMap | .listFilter | .listFoldLeft | .listFoldRight | .listAny | .listAll
   | .listHead | .listFirst | .listRest => none
 
+/-- Exactly `bool.and` is spelled `&&`. -/
+theorem Opcode.eq_boolAnd_of_operator? {code : Opcode}
+    (spelled : code.operator? = some .logicalAnd) : code = .boolAnd := by
+  cases code <;> simp_all [Opcode.operator?]
+
+/-- Exactly `bool.or` is spelled `||`. -/
+theorem Opcode.eq_boolOr_of_operator? {code : Opcode}
+    (spelled : code.operator? = some .logicalOr) : code = .boolOr := by
+  cases code <;> simp_all [Opcode.operator?]
+
 /-- Exactly `bool.not` is spelled `!`. -/
 theorem Opcode.eq_boolNot_of_operator? {code : Opcode}
     (spelled : code.operator? = some .logicalNot) : code = .boolNot := by

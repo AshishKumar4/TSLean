@@ -112,9 +112,9 @@ producing a longer array, and a Lean `List` has no such cap, so this is a bounda
 representation rather than a claim about it. Every list-producing row names it as a premise the
 caller owes, instead of quietly assuming the allocation succeeds.
 -/
-def ListsFit (program : Ir.Program) (fuel : Nat) : Prop :=
-  ∀ (scope : List Source.Value) (trace : Source.Trace) (expression : Ir.Expr) (element : Ir.Ty)
-    (elements : List Source.Value) (next : Source.Trace),
+def ListsFit (program : Ir.Program) : Prop :=
+  ∀ (fuel : Nat) (scope : List Source.Value) (trace : Source.Trace) (expression : Ir.Expr)
+    (element : Ir.Ty) (elements : List Source.Value) (next : Source.Trace),
     Source.eval program fuel scope trace expression = .value (.array element elements) next →
     elements.length ≤ Heap.maxArrayLength
 
@@ -517,7 +517,7 @@ def Op.Preserves (runtime : Runtime) : Ir.Op → Prop
           (emittedArguments : List Target.Expr),
           (∀ form, opcode.operator? = some form → arguments.length ≠ form.operands) →
           opcode.Preserves runtime →
-          ListsFit program fuel →
+          ListsFit program →
           EverywhereList program target runtime fuel arguments emittedArguments →
           (∀ smaller, smaller + 1 = fuel → ∀ (inner : Ir.Expr) (emitted : Target.Body),
             Compile.body program inner = .ok emitted →
@@ -547,7 +547,7 @@ def Op.Preserves (runtime : Runtime) : Ir.Op → Prop
           Everywhere program target runtime fuel (.variant (.list element) "nil" [])
             .arrayEmpty) ∧
         (∀ (element : Ir.Ty) (head tail : Ir.Expr) (emittedHead emittedTail : Target.Expr),
-          ListsFit program fuel →
+          ListsFit program →
           Everywhere program target runtime fuel head emittedHead →
           Everywhere program target runtime fuel tail emittedTail →
           Everywhere program target runtime fuel (.variant (.list element) "cons" [head, tail])
@@ -2976,8 +2976,8 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
               = .value (.array element elements) last →
             elements.length ≤ Heap.maxArrayLength := by
           intro element elements last outcome
-          refine listsFit sourceScope trace (.operation opcode typeArguments arguments) element
-            elements last ?_
+          refine listsFit fuel sourceScope trace (.operation opcode typeArguments arguments)
+            element elements last ?_
           rw [eval_operation_strict (by
             intro lazy
             rcases lazy with spelled | spelled
@@ -2993,3 +2993,648 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
           intro form spelled
           rw [counted]
           exact notOperator form spelled
+
+/-! ## Support for the constructor operations -/
+
+/-- A named property list whose values are an argument list evaluates to those arguments' values,
+paired with the names in order. -/
+theorem evalProperties_zip_ok {target : Target.Program} {runtime : Runtime} {fuel : Nat}
+    {targetScope : List Value} :
+    ∀ (names : List String) (expressions : List Target.Expr) (state : Target.State)
+      (targets : List Value) (next : Target.State),
+      names.length = expressions.length →
+      Target.evalList target runtime fuel targetScope state expressions = .ok targets next →
+      Target.evalProperties target runtime fuel targetScope state (names.zip expressions)
+        = .ok (names.zip targets) next
+  | [], [], state, targets, next, _, run => by
+      simp only [Target.evalList] at run
+      injection run with targetsEq nextEq
+      subst targetsEq
+      subst nextEq
+      simp only [List.zip_nil_left, Target.evalProperties]
+  | [], _ :: _, _, _, _, lengths, _ => by simp at lengths
+  | _ :: _, [], _, _, _, lengths, _ => by simp at lengths
+  | name :: restNames, expression :: restExpressions, state, targets, next, lengths, run => by
+      simp only [Target.evalList] at run
+      cases headRun : Target.eval target runtime fuel targetScope state expression with
+      | thrown error middle => rw [headRun] at run; simp at run
+      | fault fault middle => rw [headRun] at run; simp at run
+      | exhausted middle => rw [headRun] at run; simp at run
+      | ok value middle =>
+          rw [headRun] at run
+          dsimp only at run
+          cases tailRun :
+              Target.evalList target runtime fuel targetScope middle restExpressions with
+          | thrown error last => rw [tailRun] at run; simp at run
+          | fault fault last => rw [tailRun] at run; simp at run
+          | exhausted last => rw [tailRun] at run; simp at run
+          | ok values last =>
+              rw [tailRun] at run
+              injection run with targetsEq nextEq
+              subst targetsEq
+              subst nextEq
+              simp only [List.zip_cons_cons, Target.evalProperties, headRun]
+              rw [evalProperties_zip_ok restNames restExpressions middle values last
+                (by simpa using lengths) tailRun]
+
+/-- A named property list whose values run out of fuel runs out of fuel in the same state. -/
+theorem evalProperties_zip_exhausted {target : Target.Program} {runtime : Runtime} {fuel : Nat}
+    {targetScope : List Value} :
+    ∀ (names : List String) (expressions : List Target.Expr) (state : Target.State)
+      (next : Target.State),
+      names.length = expressions.length →
+      Target.evalList target runtime fuel targetScope state expressions = .exhausted next →
+      Target.evalProperties target runtime fuel targetScope state (names.zip expressions)
+        = .exhausted next
+  | [], [], state, next, _, run => by
+      simp only [Target.evalList] at run
+      exact absurd run (by simp)
+  | [], _ :: _, _, _, lengths, _ => by simp at lengths
+  | _ :: _, [], _, _, lengths, _ => by simp at lengths
+  | name :: restNames, expression :: restExpressions, state, next, lengths, run => by
+      simp only [Target.evalList] at run
+      cases headRun : Target.eval target runtime fuel targetScope state expression with
+      | thrown error middle => rw [headRun] at run; simp at run
+      | fault fault middle => rw [headRun] at run; simp at run
+      | exhausted middle =>
+          rw [headRun] at run
+          injection run with nextEq
+          subst nextEq
+          simp only [List.zip_cons_cons, Target.evalProperties, headRun]
+      | ok value middle =>
+          rw [headRun] at run
+          dsimp only at run
+          cases tailRun :
+              Target.evalList target runtime fuel targetScope middle restExpressions with
+          | thrown error last => rw [tailRun] at run; simp at run
+          | fault fault last => rw [tailRun] at run; simp at run
+          | ok values last => rw [tailRun] at run; simp at run
+          | exhausted last =>
+              rw [tailRun] at run
+              injection run with nextEq
+              subst nextEq
+              simp only [List.zip_cons_cons, Target.evalProperties, headRun]
+              rw [evalProperties_zip_exhausted restNames restExpressions middle last
+                (by simpa using lengths) tailRun]
+
+/-- A constructor's declared fields paired with represented argument values. -/
+theorem representsArguments_zip {program : Ir.Program} {state : Target.State} :
+    ∀ (fields : List Ir.Field) (values : List Source.Value) (targets : List Value),
+      fields.length = values.length →
+      Relation.RepresentsList program state values targets →
+      Relation.RepresentsArguments program state fields values
+        ((fields.map Ir.Field.name).zip targets)
+  | fields, [], targets, lengths, related => by
+      unfold Relation.RepresentsList at related
+      subst related
+      unfold Relation.RepresentsArguments
+      cases fields with
+      | nil => exact ⟨rfl, rfl⟩
+      | cons field rest => simp at lengths
+  | fields, value :: rest, targets, lengths, related => by
+      unfold Relation.RepresentsList at related
+      obtain ⟨image, restTargets, targetsEq, headRelated, tailRelated⟩ := related
+      subst targetsEq
+      cases fields with
+      | nil => simp at lengths
+      | cons field remaining =>
+          unfold Relation.RepresentsArguments
+          refine ⟨field, remaining, image, (remaining.map Ir.Field.name).zip restTargets, rfl, ?_,
+            headRelated, ?_⟩
+          · simp only [List.map_cons, List.zip_cons_cons]
+          · exact representsArguments_zip remaining rest restTargets (by simpa using lengths)
+              tailRelated
+
+/-- An enum with no payload anywhere declares only nullary constructors. -/
+theorem nullary_fields {constructors : List Ir.Constructor} {name : String}
+    {constructor : Ir.Constructor} (nullary : Ir.allNullary constructors = true)
+    (selected : Ir.constructor? constructors name = some constructor) : constructor.fields = [] := by
+  unfold Ir.allNullary at nullary
+  have member : constructor ∈ constructors := List.mem_of_find?_eq_some selected
+  have empty := (List.all_eq_true.mp nullary) constructor member
+  exact List.isEmpty_iff.mp empty
+
+/-- A type that holds no element type builds a tagged value from its evaluated arguments. -/
+theorem eval_variant_tagged {program : Ir.Program} {fuel : Nat} {scope : List Source.Value}
+    {trace : Source.Trace} {type : Ir.Ty} {name : String} {arguments : List Ir.Expr}
+    (notList : type.element? = none) :
+    Source.eval program fuel scope trace (.variant type name arguments)
+      = match Source.evalList program fuel scope trace arguments with
+        | .values values next => .value (.variant type name values) next
+        | .fault fault next => .fault fault next
+        | .exhausted next => .exhausted next := by
+  rw [Source.eval.eq_def]
+  simp only [notList]
+  rfl
+
+/-- The empty list is the empty array. -/
+theorem eval_variant_nil {program : Ir.Program} {fuel : Nat} {scope : List Source.Value}
+    {trace : Source.Trace} {element : Ir.Ty} :
+    Source.eval program fuel scope trace (.variant (.list element) "nil" [])
+      = .value (.array element []) trace := by
+  rw [Source.eval.eq_def]
+  simp only [Ir.Ty.element?, Source.evalList]
+
+/--
+A constructor value.
+
+A type that carries an element type is a `List`, and reaches the target as a dense array: `nil` is
+`[]` and `cons` is `[head, ...tail]`. Every other type reaches the target as the emitter's structural
+representation: an enum with no payload anywhere becomes its own tag string, and every other type
+becomes an object carrying `kind` and then the constructor's declared fields.
+-/
+theorem variant {runtime : Runtime} : Op.Preserves runtime .variant := by
+  intro program target fuel
+  refine ⟨?_, ?_, ?_⟩
+  · intro type name constructors constructor arguments emittedArguments notList declared selected
+      keys distinct arity emittedArity argumentsStep
+    refine ⟨?_, ?_⟩
+    · intro nullary sourceScope targetScope trace state aligned
+      have noFields := nullary_fields nullary selected
+      have noArguments : arguments = [] := by
+        rw [noFields] at arity
+        exact List.eq_nil_of_length_eq_zero arity.symm
+      subst noArguments
+      rw [eval_variant_tagged notList]
+      simp only [Source.evalList, Target.eval]
+      refine refines_value (Target.State.Extension.refl state aligned.heapValid)
+        aligned.closuresValid ?_ aligned.trace
+      unfold Relation.Represents
+      refine ⟨constructors, declared, constructor, selected, ?_⟩
+      rw [if_pos nullary]
+      exact ⟨rfl, rfl⟩
+    · intro carries sourceScope targetScope trace state aligned
+      rw [eval_variant_tagged notList]
+      simp only [Target.eval, Target.evalProperties]
+      cases sourceRun : Source.evalList program fuel sourceScope trace arguments with
+      | fault fault next => exact refines_fault
+      | exhausted next =>
+          obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+            refinesList_exhausted_inv
+              (sourceRun ▸ argumentsStep sourceScope targetScope trace state aligned)
+          rw [evalProperties_zip_exhausted (constructor.fields.map Ir.Field.name) emittedArguments
+            state targetState (by simp [arity, emittedArity]) targetRun]
+          exact refines_exhausted extension closuresValid traceRefines
+      | values produced next =>
+          obtain ⟨targets, targetState, targetRun, extension, closuresValid, listRelated,
+            traceRefines⟩ :=
+            refinesList_inv (sourceRun ▸ argumentsStep sourceScope targetScope trace state aligned)
+          rw [evalProperties_zip_ok (constructor.fields.map Ir.Field.name) emittedArguments state
+            targets targetState (by simp [arity, emittedArity]) targetRun]
+          dsimp only
+          have names : ((constructor.fields.map Ir.Field.name).zip targets).map Prod.fst
+              = constructor.fields.map Ir.Field.name := by
+            refine List.map_fst_zip ?_
+            simp only [List.length_map]
+            rw [arity, ← evalList_length arguments trace produced next sourceRun,
+              representsList_length produced targets listRelated]
+            exact Nat.le_refl _
+          obtain ⟨ref, final, allocated, traceEq, _, finalExtension, finalValid, _, shape⟩ :=
+            Allocation.allocateLiteral_shape targetState
+              (("kind", Value.primitive (.string (JSString.ofLeanString name)))
+                :: (constructor.fields.map Ir.Field.name).zip targets)
+              extension.nextWellFormed closuresValid
+              (by
+                intro entry member
+                rcases List.mem_cons.mp member with rfl | tail
+                · show Ir.ValidKey "kind"
+                  decide
+                · have nameMember : entry.1 ∈ constructor.fields.map Ir.Field.name := by
+                    rw [← names]
+                    exact List.mem_map_of_mem tail
+                  obtain ⟨field, fieldMember, fieldEq⟩ := List.mem_map.mp nameMember
+                  exact fieldEq ▸ (keys field fieldMember).1)
+              (by
+                simp only [List.map_cons, names]
+                refine List.nodup_cons.mpr ⟨?_, distinct⟩
+                intro member
+                obtain ⟨field, fieldMember, fieldEq⟩ := List.mem_map.mp member
+                exact (keys field fieldMember).2 fieldEq)
+              (by
+                intro entry member
+                rcases List.mem_cons.mp member with rfl | tail
+                · rfl
+                · have valueMember : entry.2 ∈ targets := (List.of_mem_zip tail).2
+                  exact representsList_valuesValid produced targets listRelated entry.2 valueMember)
+          rw [allocated]
+          refine refines_value (extension.trans finalExtension) finalValid ?_ ?_
+          · unfold Relation.Represents
+            refine ⟨constructors, declared, constructor, selected, ?_⟩
+            rw [if_neg (by simp [carries])]
+            exact ⟨ref, (constructor.fields.map Ir.Field.name).zip targets, rfl,
+              Relation.RepresentsArguments.stable finalExtension constructor.fields produced _
+                (representsArguments_zip constructor.fields produced targets
+                  (by rw [arity, ← evalList_length arguments trace produced next sourceRun])
+                  listRelated),
+              shape⟩
+          · rw [traceEq]
+            exact Relation.RefinesTrace.stable finalExtension next targetState.trace traceRefines
+  · intro element sourceScope targetScope trace state aligned
+    rw [eval_variant_nil]
+    simp only [Target.eval]
+    obtain ⟨ref, final, allocated, traceEq, _, extension, finalValid, dense⟩ :=
+      Allocation.allocateArray_shape state [] aligned.heapValid aligned.closuresValid
+        (by intro value member; exact absurd member (by simp)) (by simp)
+    rw [allocated]
+    refine refines_value extension finalValid ?_ ?_
+    · unfold Relation.Represents
+      exact ⟨ref, [], rfl, represents_nil, dense⟩
+    · rw [traceEq]
+      exact Relation.RefinesTrace.stable extension trace state.trace aligned.trace
+  · intro element head tail emittedHead emittedTail listsFit headStep tailStep
+      sourceScope targetScope trace state aligned
+    rw [Source.eval.eq_def]
+    simp only [Ir.Ty.element?, Target.eval]
+    rw [evalList_two]
+    cases headRun : Source.eval program fuel sourceScope trace head with
+    | fault fault next => exact refines_fault
+    | exhausted next =>
+        obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+          refines_exhausted_inv (headRun ▸ headStep sourceScope targetScope trace state aligned)
+        rw [targetRun]
+        exact refines_exhausted extension closuresValid traceRefines
+    | value headValue next =>
+        obtain ⟨headImage, targetState, targetRun, extension, closuresValid, headRelated,
+          traceRefines⟩ :=
+          refines_value_inv (headRun ▸ headStep sourceScope targetScope trace state aligned)
+        rw [targetRun]
+        dsimp only
+        have nextAligned := aligned.step extension closuresValid traceRefines
+        cases tailRun : Source.eval program fuel sourceScope next tail with
+        | fault fault last => exact refines_fault
+        | exhausted last =>
+            obtain ⟨lastState, lastRun, lastExtension, lastValid, lastTrace⟩ :=
+              refines_exhausted_inv
+                (tailRun ▸ tailStep sourceScope targetScope next targetState nextAligned)
+            rw [lastRun]
+            exact refines_exhausted (extension.trans lastExtension) lastValid lastTrace
+        | value tailValue last =>
+            obtain ⟨tailImage, lastState, lastRun, lastExtension, lastValid, tailRelated,
+              lastTrace⟩ :=
+              refines_value_inv
+                (tailRun ▸ tailStep sourceScope targetScope next targetState nextAligned)
+            rw [lastRun]
+            dsimp only
+            cases tailValue with
+            | array tailElement rest =>
+                obtain ⟨images, read, listRelated⟩ := readArray_of_represents tailRelated
+                rw [read]
+                have sourceOutcome : Source.eval program fuel sourceScope trace
+                    (.variant (.list element) "cons" [head, tail])
+                    = .value (.array element (headValue :: rest)) last := by
+                  rw [Source.eval.eq_def]
+                  simp only [Ir.Ty.element?, evalList_two, headRun, tailRun]
+                have bound := listsFit fuel sourceScope trace
+                  (.variant (.list element) "cons" [head, tail]) element (headValue :: rest) last
+                  sourceOutcome
+                refine refines_widen (extension.trans lastExtension) ?_
+                exact refines_allocateArray (extension.trans lastExtension).nextWellFormed
+                  lastValid
+                  (by
+                    unfold Relation.RepresentsList
+                    exact ⟨headImage, images, rfl,
+                      Relation.Represents.stable lastExtension headValue headImage headRelated,
+                      listRelated⟩)
+                  lastTrace bound
+            | boolean _ | nat _ | string _ | record _ _ | variant _ _ _ | closure _ _ _ =>
+                all_goals exact refines_fault
+
+/-! ## The tag chain -/
+
+/-- A represented tag is the constructor's own name as a JavaScript string. -/
+theorem tag_of_represents {program : Ir.Program} {state : Target.State} {type : Ir.Ty}
+    {name : String} {arguments : List Source.Value} {image : Value}
+    {constructors : List Ir.Constructor}
+    (declared : program.constructorsOf type = some constructors)
+    (nullary : Ir.allNullary constructors = true)
+    (related : Relation.Represents program state (.variant type name arguments) image) :
+    image = .primitive (.string (JSString.ofLeanString name)) := by
+  unfold Relation.Represents at related
+  obtain ⟨found, foundEq, constructor, selected, body⟩ := related
+  rw [declared] at foundEq
+  injection foundEq with constructorsEq
+  subst constructorsEq
+  rw [if_pos nullary] at body
+  exact body.2
+
+/-- An enum with no payload anywhere is not a `List`: `cons` carries a head and a tail. -/
+theorem element?_none_of_nullary {program : Ir.Program} {type : Ir.Ty}
+    {constructors : List Ir.Constructor}
+    (declared : program.constructorsOf type = some constructors)
+    (nullary : Ir.allNullary constructors = true) : type.element? = none := by
+  cases type with
+  | list element =>
+      rw [show program.constructorsOf (.list element)
+        = some [⟨"nil", []⟩, ⟨"cons", [⟨"head", element⟩, ⟨"tail", .list element⟩]⟩] from rfl]
+        at declared
+      injection declared with constructorsEq
+      subst constructorsEq
+      exact absurd nullary (by simp [Ir.allNullary])
+  | boolean | nat | string | parameter _ | named _ _ | option _ | except _ _ | function _ _ =>
+      all_goals rfl
+
+/-- The tag chain decides the arm whose tag the scrutinee carries, reading the scrutinee once per
+comparison without that repetition being observable. -/
+theorem tagChain_refines {program : Ir.Program} {target : Target.Program} {runtime : Runtime}
+    {fuel : Nat} {emittedScrutinee : Target.Expr}
+    (stable : StateStable target runtime fuel emittedScrutinee) :
+    ∀ (cases : List (String × Ir.Expr)) (emittedCases : List (String × Target.Expr))
+      (chain : Target.Expr) (tagName : String) (sourceScope : List Source.Value)
+      (targetScope : List Value) (trace : Source.Trace) (state : Target.State),
+      EverywhereCases program target runtime fuel cases emittedCases →
+      Compile.tagChain emittedScrutinee emittedCases = some chain →
+      Aligned program sourceScope targetScope trace state →
+      Target.eval target runtime fuel targetScope state emittedScrutinee
+        = .ok (.primitive (.string (JSString.ofLeanString tagName))) state →
+      Relation.Refines program state
+        (Source.evalCases program fuel sourceScope trace tagName [] cases)
+        (Target.eval target runtime fuel targetScope state chain)
+  | [], emittedCases, chain, tagName, sourceScope, targetScope, trace, state, armsStep, built,
+      aligned, scrutineeRun => by
+      unfold EverywhereCases at armsStep
+      subst armsStep
+      simp only [Compile.tagChain] at built
+      exact absurd built (by simp)
+  | [(tag, arm)], emittedCases, chain, tagName, sourceScope, targetScope, trace, state, armsStep,
+      built, aligned, scrutineeRun => by
+      unfold EverywhereCases at armsStep
+      obtain ⟨emittedArm, restEmitted, emittedEq, armStep, restStep⟩ := armsStep
+      unfold EverywhereCases at restStep
+      subst restStep
+      subst emittedEq
+      simp only [Compile.tagChain, Option.some.injEq] at built
+      subst built
+      simp only [Source.evalCases]
+      by_cases matched : tag = tagName
+      · rw [if_pos matched]
+        exact armStep sourceScope targetScope trace state aligned
+      · rw [if_neg matched]
+        exact refines_fault
+  | (tag, arm) :: (secondTag, secondArm) :: rest, emittedCases, chain, tagName, sourceScope,
+      targetScope, trace, state, armsStep, built, aligned, scrutineeRun => by
+      unfold EverywhereCases at armsStep
+      obtain ⟨emittedArm, restEmitted, emittedEq, armStep, restStep⟩ := armsStep
+      subst emittedEq
+      have restShape := restStep
+      unfold EverywhereCases at restShape
+      obtain ⟨emittedSecond, tailEmitted, restEq, _, _⟩ := restShape
+      subst restEq
+      simp only [Compile.tagChain] at built
+      cases alternateBuilt :
+          Compile.tagChain emittedScrutinee ((secondTag, emittedSecond) :: tailEmitted) with
+      | none => rw [alternateBuilt] at built; simp at built
+      | some alternate =>
+          rw [alternateBuilt] at built
+          simp only [Option.map_some, Option.some.injEq] at built
+          subst built
+          simp only [Target.eval, scrutineeRun]
+          rw [TSLean.Refinement.String.strictEqual_commutes tagName tag]
+          by_cases matched : tag = tagName
+          · subst matched
+            simpa only [Source.evalCases, if_pos, beq_self_eq_true, Value.toBoolean,
+              Primitive.toBoolean, List.reverse_nil, List.nil_append] using
+              armStep sourceScope targetScope trace state aligned
+          · have different : (tagName == tag) = false :=
+              beq_eq_false_iff_ne.mpr fun same => matched same.symm
+            simpa only [Source.evalCases, if_neg matched, different, Value.toBoolean,
+              Primitive.toBoolean, Bool.false_eq_true, if_false] using
+              tagChain_refines stable ((secondTag, secondArm) :: rest)
+                ((secondTag, emittedSecond) :: tailEmitted) alternate tagName sourceScope targetScope
+                trace state restStep alternateBuilt aligned scrutineeRun
+
+/--
+A total case analysis over an enum with no payload anywhere becomes a chain of tag comparisons, in
+declaration order, with the final arm unconditional.
+-/
+theorem matchOn {runtime : Runtime} : Op.Preserves runtime .matchOn := by
+  intro program target fuel type scrutinee cases emittedScrutinee emittedCases chain constructors
+    declared nullary readable armsStep built sourceScope targetScope trace state aligned
+  simp only [Source.eval]
+  rcases readable.sourcePure sourceScope trace with ⟨value, pure⟩ | ⟨fault, pure⟩
+  · rw [pure]
+    obtain ⟨image, targetState, targetRun, extension, _, related, traceRefines⟩ :=
+      refines_value_inv (pure ▸ readable.refines sourceScope targetScope trace state aligned)
+    have sameState : targetState = state := readable.targetStable targetScope state image
+      targetState targetRun
+    rw [sameState] at targetRun related
+    cases value with
+    | variant valueType valueName valueArguments =>
+        dsimp only
+        by_cases sameType : valueType = type
+        case neg => rw [if_neg sameType]; exact refines_fault
+        rw [if_pos sameType]
+        subst sameType
+        have tagged := tag_of_represents declared nullary related
+        subst tagged
+        have noArguments : valueArguments = [] := by
+          unfold Relation.Represents at related
+          obtain ⟨found, foundEq, constructor, selected, body⟩ := related
+          rw [declared] at foundEq
+          injection foundEq with constructorsEq
+          subst constructorsEq
+          rw [if_pos nullary] at body
+          exact body.1
+        subst noArguments
+        exact tagChain_refines readable.targetStable cases emittedCases chain valueName sourceScope
+          targetScope trace state armsStep built aligned targetRun
+    | array valueElement valueElements =>
+        dsimp only
+        rw [if_neg (by
+          intro listType
+          have notList := element?_none_of_nullary declared nullary
+          rw [← listType] at notList
+          exact absurd notList (by simp [Ir.Ty.element?]))]
+        exact refines_fault
+    | boolean _ => exact refines_fault
+    | nat _ => exact refines_fault
+    | string _ => exact refines_fault
+    | record _ _ => exact refines_fault
+    | closure _ _ _ => exact refines_fault
+  · rw [pure]
+    exact refines_fault
+
+/-! ## Property reads are own data-property reads -/
+
+/--
+Every property read a compiled program performs resolves to an own data property of an object the
+same program built, and answers exactly the value it stored there.
+
+This is what makes the null prototype `Target.allocateLiteral` uses unobservable inside the emitted
+fragment: a read that always finds an own data property never consults a prototype, so the link the
+model omits could not change any answer.
+-/
+theorem member_reads_own_data_property {program : Ir.Program} {target : Target.Program}
+    {runtime : Runtime} {fuel : Nat} {subject : Ir.Expr} {field : String}
+    {emittedSubject : Target.Expr}
+    (subjectStep : Everywhere program target runtime fuel subject emittedSubject)
+    {sourceScope : List Source.Value} {targetScope : List Value} {trace : Source.Trace}
+    {state : Target.State} (aligned : Aligned program sourceScope targetScope trace state)
+    {value : Source.Value} {next : Source.Trace}
+    (sourceRun : Source.eval program fuel sourceScope trace (.fieldGet subject field)
+      = .value value next) :
+    ∃ ref image final,
+      Target.eval target runtime fuel targetScope state emittedSubject
+          = .ok (.object ref) final ∧
+        final.heap.getOwnProperty ref (Ir.propertyKey field)
+          = .ok (some (.data ⟨image, true, true, true⟩)) ∧
+        Target.eval target runtime fuel targetScope state (.member emittedSubject field)
+          = .ok image final ∧
+        Relation.Represents program final value image := by
+  simp only [Source.eval] at sourceRun
+  cases subjectRun : Source.eval program fuel sourceScope trace subject with
+  | fault fault middle => rw [subjectRun] at sourceRun; simp at sourceRun
+  | exhausted middle => rw [subjectRun] at sourceRun; simp at sourceRun
+  | value produced middle =>
+      rw [subjectRun] at sourceRun
+      obtain ⟨image, targetState, targetRun, extension, _, related, traceRefines⟩ :=
+        refines_value_inv (subjectRun ▸ subjectStep sourceScope targetScope trace state aligned)
+      cases produced with
+      | boolean _ => simp at sourceRun
+      | nat _ => simp at sourceRun
+      | string _ => simp at sourceRun
+      | array _ _ => simp at sourceRun
+      | variant _ _ _ => simp at sourceRun
+      | closure _ _ _ => simp at sourceRun
+      | record type fields =>
+          dsimp only at sourceRun
+          unfold Relation.Represents at related
+          obtain ⟨ref, entries, imageEq, fieldsRelated, shape⟩ := related
+          subst imageEq
+          cases lookup : Source.fieldValue? fields field with
+          | none => rw [lookup] at sourceRun; simp at sourceRun
+          | some found =>
+              rw [lookup] at sourceRun
+              injection sourceRun with valueEq _
+              subst valueEq
+              obtain ⟨fieldImage, entryFound, fieldRelated⟩ :=
+                fields_lookup fields entries fieldsRelated field found lookup
+              refine ⟨ref, fieldImage, targetState, targetRun, ?_, ?_, fieldRelated⟩
+              · rw [shape.read field, entryFound]
+                rfl
+              · simp only [Target.eval, targetRun]
+                exact readMember_of_shape targetState shape field fieldImage entryFound
+
+/-! ## The declaration families -/
+
+/--
+What one admitted declaration family owes.
+
+A record and an enum have no runtime image — `emitter.ts` gives them an interface or a type alias,
+and both erase — so what they owe is that they contribute no runtime declaration *and* that the
+representation they induce is exactly the one the refinement relation names. A function owes its
+calling convention: the emitted function carries the declared name and arity, and entering it
+records one event, spends one unit of fuel, and binds the arguments unchanged in the reversed
+positional scope the emitter's parameter list produces.
+-/
+def Family.Preserves (runtime : Runtime) : Ir.Family → Prop
+  | .enum => ∀ (program : Ir.Program) (name : String) (constructors : List Ir.Constructor),
+      Compile.declaration program (.enum name constructors) = .ok none ∧
+      ∀ (state : Target.State) (type : Ir.Ty) (constructorName : String)
+        (arguments : List Source.Value) (image : Value),
+        program.constructorsOf type = some constructors →
+        Relation.Represents program state (.variant type constructorName arguments) image →
+        (Ir.allNullary constructors = true ∧ arguments = [] ∧
+            image = .primitive (.string (JSString.ofLeanString constructorName))) ∨
+          (Ir.allNullary constructors = false ∧ ∃ ref entries, image = .object ref ∧
+            Relation.HasOwnFields state.heap ref
+              (("kind", .primitive (.string (JSString.ofLeanString constructorName)))
+                :: entries))
+  | .record => ∀ (program : Ir.Program) (name constructor : String) (fields : List Ir.Field),
+      Compile.declaration program (.record name constructor fields) = .ok none ∧
+      ∀ (state : Target.State) (type : Ir.Ty) (values : List (String × Source.Value))
+        (image : Value),
+        Relation.Represents program state (.record type values) image →
+        ∃ ref entries, image = .object ref ∧
+          Relation.HasOwnFields state.heap ref entries ∧
+          entries.map Prod.fst = values.map Prod.fst ∧
+          state.heap.ownPropertyKeys ref = .ok ((values.map Prod.fst).map Ir.propertyKey)
+  | .function => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat) (name : String)
+      (parameters : List Ir.Field) (result : Ir.Ty) (recursion : Option Nat) (body : Ir.Expr)
+      (emittedBody : Target.Body) (emitted : Target.Function),
+      Compile.body program body = .ok emittedBody →
+      Compile.declaration program (.function name parameters result recursion body)
+        = .ok (some emitted) →
+      emitted.name = name ∧ emitted.parameters = parameters.length ∧
+        emitted.body = emittedBody ∧
+        ∀ (arguments : List Value) (state : Target.State) (declaration : Target.Function),
+          target.find? name = some declaration →
+          declaration.parameters = arguments.length →
+          Target.enter target runtime (fuel + 1) state name arguments
+            = Target.evalBody target runtime fuel arguments.reverse
+                (state.record (.function name arguments)) declaration.body
+
+/-- An enum contributes no runtime declaration, and its values are the tag or the tagged object. -/
+theorem familyEnum {runtime : Runtime} : Family.Preserves runtime .enum := by
+  intro program name constructors
+  refine ⟨rfl, ?_⟩
+  intro state type constructorName arguments image declared related
+  unfold Relation.Represents at related
+  obtain ⟨found, foundEq, constructor, selected, body⟩ := related
+  rw [declared] at foundEq
+  injection foundEq with constructorsEq
+  subst constructorsEq
+  by_cases nullary : Ir.allNullary constructors = true
+  · rw [if_pos nullary] at body
+    exact Or.inl ⟨nullary, body.1, body.2⟩
+  · rw [if_neg nullary] at body
+    obtain ⟨ref, entries, imageEq, _, shape⟩ := body
+    exact Or.inr ⟨by simpa using nullary, ref, entries, imageEq, shape⟩
+
+/-- A record contributes no runtime declaration, and its values are objects whose own keys are the
+declared field keys in declaration order. -/
+theorem familyRecord {runtime : Runtime} : Family.Preserves runtime .record := by
+  intro program name constructor fields
+  refine ⟨rfl, ?_⟩
+  intro state type values image related
+  unfold Relation.Represents at related
+  obtain ⟨ref, entries, imageEq, fieldsRelated, shape⟩ := related
+  refine ⟨ref, entries, imageEq, shape, representsFields_names values entries fieldsRelated, ?_⟩
+  rw [shape.keys, ← representsFields_names values entries fieldsRelated, List.map_map]
+  rfl
+
+/-- A function contributes exactly one emitted function with its declared name and arity, and
+entering it records one event, spends one unit of fuel, and binds its arguments in reverse. -/
+theorem familyFunction {runtime : Runtime} : Family.Preserves runtime .function := by
+  intro program target fuel name parameters result recursion body emittedBody emitted lowered
+    declared
+  simp only [Compile.declaration, lowered] at declared
+  injection declared with emittedEq
+  injection emittedEq with emittedEq
+  subst emittedEq
+  refine ⟨rfl, rfl, rfl, ?_⟩
+  intro arguments state emittedDeclaration found arity
+  simp only [Target.enter, found]
+  rw [bindArguments_exact arguments emittedDeclaration.parameters arity]
+
+/-! ## Closure -/
+
+/--
+The closure over the IR expression registry. It is a total function on `Ir.Op`, so an operation with
+no theorem does not compile, and a theorem whose statement drifts from the operation's lowering does
+not typecheck here.
+-/
+theorem registry (runtime : Runtime) : (op : Ir.Op) → Op.Preserves runtime op
+  | .varRef => varRef
+  | .boolLit => boolLit
+  | .natLit => natLit
+  | .stringLit => stringLit
+  | .letBind => letBind
+  | .fieldGet => fieldGet
+  | .ifThenElse => ifThenElse
+  | .operation => operation
+  | .variant => variant
+  | .record => record
+  | .matchOn => matchOn
+  | .lambda => lambda
+  | .apply => apply
+  | .call => call
+
+/-- The closure over the declaration-family registry, total on `Ir.Family`. -/
+theorem familyRegistry (runtime : Runtime) : (family : Ir.Family) → Family.Preserves runtime family
+  | .enum => familyEnum
+  | .record => familyRecord
+  | .function => familyFunction
+
+end Preservation
+
+end TSLean.LeanToTypeScript.Semantics
