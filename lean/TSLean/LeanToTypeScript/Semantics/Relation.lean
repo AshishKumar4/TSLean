@@ -92,14 +92,10 @@ def Represents (program : Ir.Program) (state : Target.State) : Source.Value → 
       ∃ (ref : RefId) (entries : List (String × Value)),
         target = .object ref ∧ RepresentsFields program state fields entries ∧
           HasOwnFields state.heap ref entries
-  | .variant (.list _) "nil" [], target =>
-      ∃ ref : RefId, target = .object ref ∧ HasDenseElements state ref []
-  | .variant (.list _) "cons" [head, tail], target =>
-      ∃ (ref tailRef : RefId) (headImage : Value) (rest : List Value),
-        target = .object ref ∧ Represents program state head headImage ∧
-          Represents program state tail (.object tailRef) ∧
-          HasDenseElements state tailRef rest ∧
-          HasDenseElements state ref (headImage :: rest)
+  | .array _ elements, target =>
+      ∃ (ref : RefId) (images : List Value),
+        target = .object ref ∧ RepresentsList program state elements images ∧
+          HasDenseElements state ref images
   | .variant type name arguments, target =>
       ∃ constructors, program.constructorsOf type = some constructors ∧
         ∃ constructor, Ir.constructor? constructors name = some constructor ∧
@@ -237,23 +233,12 @@ theorem Represents.stable {program : Ir.Program} {old next : Target.State}
       obtain ⟨ref, entries, targetEq, fieldsRelated, shape⟩ := related
       exact ⟨ref, entries, targetEq,
         RepresentsFields.stable extension fields entries fieldsRelated, shape.stable extension.heap⟩
-  | .variant (.list _) "nil" [] =>
+  | .array _ elements =>
       unfold Represents at related ⊢
-      obtain ⟨ref, targetEq, dense⟩ := related
-      exact ⟨ref, targetEq, dense.stable extension⟩
-  | .variant (.list element) "cons" [head, tail] =>
-      unfold Represents at related ⊢
-      obtain ⟨ref, tailRef, headImage, rest, targetEq, headRelated, tailRelated, tailDense,
-        dense⟩ := related
-      exact ⟨ref, tailRef, headImage, rest, targetEq,
-        Represents.stable extension head headImage headRelated,
-        Represents.stable extension tail (.object tailRef) tailRelated,
-        tailDense.stable extension, dense.stable extension⟩
-  | .variant (.list _) _ _
-  | .variant (.boolean) name arguments | .variant (.nat) name arguments
-  | .variant (.string) name arguments | .variant (.parameter _) name arguments
-  | .variant (.named _ _) name arguments | .variant (.option _) name arguments
-  | .variant (.except _ _) name arguments | .variant (.function _ _) name arguments =>
+      obtain ⟨ref, images, targetEq, elementsRelated, dense⟩ := related
+      exact ⟨ref, images, targetEq,
+        RepresentsList.stable extension elements images elementsRelated, dense.stable extension⟩
+  | .variant type name arguments =>
       unfold Represents at related ⊢
       obtain ⟨constructors, declared, constructor, selected, body⟩ := related
       refine ⟨constructors, declared, constructor, selected, ?_⟩

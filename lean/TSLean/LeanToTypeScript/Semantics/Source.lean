@@ -35,6 +35,10 @@ inductive Value where
   | nat (value : Nat)
   | string (value : String)
   | record (type : Ir.Ty) (fields : List (String × Value))
+  /-- A `List`, holding its elements directly. `constructorsOf` gives a list `nil`/`cons`
+  constructors so a match can take one apart, but that is how it is *decided*, not how it is
+  *held*: the target holds a dense array, and so does this. -/
+  | array (element : Ir.Ty) (elements : List Value)
   | variant (type : Ir.Ty) (name : String) (arguments : List Value)
   /-- An inline arrow's captured scope, exact parameter list and exact body. The captured scope is
   innermost-first, as every de Bruijn scope is. -/
@@ -63,6 +67,8 @@ inductive Fault where
   | notAVariant
   | armAbsent (constructor : String)
   | undeclaredFunction (function : String)
+  /-- A constructor the scrutinised type does not declare. -/
+  | undeclaredConstructor (name : String)
   | arityMismatch (function : String) (expected actual : Nat)
   | notAClosure
   | closureArity (expected actual : Nat)
@@ -101,21 +107,6 @@ def lookup (scope : List Value) (index : Nat) : Option Value := scope[index]?
 /-- The value stored at a declared field of a record value. -/
 def fieldValue? (fields : List (String × Value)) (name : String) : Option Value :=
   (fields.find? fun entry => entry.1 == name).map Prod.snd
-
-/-- The elements of a source list value, if it is a well-formed `nil`/`cons` chain. -/
-def listElements? : Value → Option (List Value)
-  | .variant _ "nil" [] => some []
-  | .variant _ "cons" [head, tail] =>
-      match listElements? tail with
-      | some rest => some (head :: rest)
-      | none => none
-  | _ => none
-termination_by value => sizeOf value
-
-/-- The source list value carrying these elements at an element type. -/
-def listValue (element : Ir.Ty) : List Value → Value
-  | [] => .variant (.list element) "nil" []
-  | head :: rest => .variant (.list element) "cons" [head, listValue element rest]
 
 /-- The element type an opcode's first type argument names. -/
 def elementType (typeArguments : List Ir.Ty) : Ir.Ty := (typeArguments[0]?).getD .boolean
@@ -161,33 +152,28 @@ def applyStrict (opcode : Ir.Opcode) (typeArguments : List Ir.Ty) :
       | .stringAppend => .ok (.string (left ++ right))
       | .stringEquals => .ok (.boolean (left == right))
       | _ => .error (.opcodeOperand opcode)
-  | [values] =>
-      match listElements? values with
-      | none => .error (.opcodeOperand opcode)
-      | some elements =>
-          match opcode with
-          | .listLength => .ok (.nat elements.length)
-          | .listIsEmpty => .ok (.boolean elements.isEmpty)
-          | .listReverse => .ok (listValue (elementType typeArguments) elements.reverse)
-          | .listRest =>
-              match elements with
-              | [] => .error (.opcodeOperand opcode)
-              | _ :: rest => .ok (listValue (elementType typeArguments) rest)
-          | .listFirst =>
-              match elements with
-              | [] => .error (.opcodeOperand opcode)
-              | head :: _ => .ok head
-          | .listHead =>
-              let element := elementType typeArguments
-              match elements with
-              | [] => .ok (.variant (.option element) "none" [])
-              | head :: _ => .ok (.variant (.option element) "some" [head])
-          | _ => .error (.opcodeOperand opcode)
-  | [left, right] =>
-      match opcode, listElements? left, listElements? right with
-      | .listAppend, some first, some second =>
-          .ok (listValue (elementType typeArguments) (first ++ second))
-      | _, _, _ => .error (.opcodeOperand opcode)
+  | [.array element elements] =>
+      match opcode with
+      | .listLength => .ok (.nat elements.length)
+      | .listIsEmpty => .ok (.boolean elements.isEmpty)
+      | .listReverse => .ok (.array element elements.reverse)
+      | .listRest =>
+          match elements with
+          | [] => .error (.opcodeOperand opcode)
+          | _ :: rest => .ok (.array element rest)
+      | .listFirst =>
+          match elements with
+          | [] => .error (.opcodeOperand opcode)
+          | head :: _ => .ok head
+      | .listHead =>
+          match elements with
+          | [] => .ok (.variant (.option element) "none" [])
+          | head :: _ => .ok (.variant (.option element) "some" [head])
+      | _ => .error (.opcodeOperand opcode)
+  | [.array element first, .array _ second] =>
+      match opcode with
+      | .listAppend => .ok (.array element (first ++ second))
+      | _ => .error (.opcodeOperand opcode)
   | operands => .error (.opcodeArity opcode operands.length)
 
 
@@ -258,6 +244,15 @@ def eval (program : Ir.Program) (fuel : Nat) (scope : List Value) (trace : Trace
           | .values values next => applyOperation program fuel next opcode typeArguments values
           | .fault fault next => .fault fault next
           | .exhausted next => .exhausted next
+  | .variant (.list element) name arguments =>
+      match evalList program fuel scope trace arguments with
+      | .values values next =>
+          match name, values with
+          | "nil", [] => .value (.array element []) next
+          | "cons", [head, .array _ rest] => .value (.array element (head :: rest)) next
+          | name, _ => .fault (.undeclaredConstructor name) next
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
   | .variant type name arguments =>
       match evalList program fuel scope trace arguments with
       | .values values next => .value (.variant type name values) next
@@ -270,6 +265,13 @@ def eval (program : Ir.Program) (fuel : Nat) (scope : List Value) (trace : Trace
       | .exhausted next => .exhausted next
   | .matchOn type scrutinee cases =>
       match eval program fuel scope trace scrutinee with
+      | .value (.array element elements) next =>
+          if .list element = type then
+            match elements with
+            | [] => evalCases program fuel scope next "nil" [] cases
+            | head :: rest =>
+                evalCases program fuel scope next "cons" [head, .array element rest] cases
+          else .fault .notAVariant next
       | .value (.variant valueType name arguments) next =>
           if valueType = type then evalCases program fuel scope next name arguments cases
           else .fault .notAVariant next
@@ -300,39 +302,21 @@ first, `any` and `all` take the subject first, and both folds take step, initial
 def applyOperation (program : Ir.Program) (fuel : Nat) (trace : Trace) (opcode : Ir.Opcode)
     (typeArguments : List Ir.Ty) (values : List Value) : Outcome :=
   match opcode, values with
-  | .listMap, [.closure captured parameters body, subject] =>
-      match listElements? subject with
-      | none => .fault (.opcodeOperand .listMap) trace
-      | some elements =>
+  | .listMap, [.closure captured parameters body, .array _ elements] =>
           match mapElements program fuel trace captured parameters body elements with
-          | .values images last => .value (listValue (imageType typeArguments) images) last
+          | .values images last => .value (.array (imageType typeArguments) images) last
           | .fault fault last => .fault fault last
           | .exhausted last => .exhausted last
-  | .listFilter, [.closure captured parameters body, subject] =>
-      match listElements? subject with
-      | none => .fault (.opcodeOperand .listFilter) trace
-      | some elements =>
+  | .listFilter, [.closure captured parameters body, .array _ elements] =>
           match filterElements program fuel trace captured parameters body elements with
-          | .values kept last => .value (listValue (elementType typeArguments) kept) last
+          | .values kept last => .value (.array (elementType typeArguments) kept) last
           | .fault fault last => .fault fault last
           | .exhausted last => .exhausted last
-  | .listAny, [subject, .closure captured parameters body] =>
-      match listElements? subject with
-      | none => .fault (.opcodeOperand .listAny) trace
-      | some elements => anyElements program fuel trace captured parameters body elements
-  | .listAll, [subject, .closure captured parameters body] =>
-      match listElements? subject with
-      | none => .fault (.opcodeOperand .listAll) trace
-      | some elements => allElements program fuel trace captured parameters body elements
-  | .listFoldLeft, [.closure captured parameters body, initial, subject] =>
-      match listElements? subject with
-      | none => .fault (.opcodeOperand .listFoldLeft) trace
-      | some elements =>
+  | .listAny, [.array _ elements, .closure captured parameters body] => anyElements program fuel trace captured parameters body elements
+  | .listAll, [.array _ elements, .closure captured parameters body] => allElements program fuel trace captured parameters body elements
+  | .listFoldLeft, [.closure captured parameters body, initial, .array _ elements] =>
           foldLeftElements program fuel trace captured parameters body initial elements
-  | .listFoldRight, [.closure captured parameters body, initial, subject] =>
-      match listElements? subject with
-      | none => .fault (.opcodeOperand .listFoldRight) trace
-      | some elements =>
+  | .listFoldRight, [.closure captured parameters body, initial, .array _ elements] =>
           foldRightElements program fuel trace captured parameters body initial elements
   | .listMap, [_, _] | .listFilter, [_, _] => .fault .notAClosure trace
   | .listAny, [_, _] | .listAll, [_, _] => .fault .notAClosure trace
