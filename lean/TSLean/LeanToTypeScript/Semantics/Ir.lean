@@ -161,6 +161,24 @@ def Ty.kind : Ty → TyKind
   | .list _ => .list
   | .function _ _ => .function
 
+/--
+The element type a `List` holds, and `none` for every other form.
+
+A `List` is the one admitted type whose values reach the target as a dense array rather than as a
+tag or a tagged object, so the lowering and the source semantics both decide that representation
+here. Deciding it through one accessor rather than through a syntactic case in each of them is what
+keeps the two from drifting.
+-/
+def Ty.element? : Ty → Option Ty
+  | .list element => some element
+  | .boolean | .nat | .string | .parameter _ | .named _ _ | .option _ | .except _ _
+  | .function _ _ => none
+
+/-- Exactly the `list` form holds an element type. -/
+theorem Ty.eq_list_of_element? {type element : Ty} (held : type.element? = some element) :
+    type = .list element := by
+  cases type <;> simp_all [Ty.element?]
+
 /-! ## The runtime opcode registry
 
 The closed set of runtime opcodes the `operation` expression form carries. The registry lives
@@ -242,6 +260,58 @@ theorem Opcode.mem_all (code : Opcode) : code ∈ Opcode.all := by
 /-- Distinct opcodes have distinct wire spellings, so the registry join is a bijection. -/
 theorem Opcode.kind_injective {left right : Opcode} (equal : left.kind = right.kind) : left = right := by
   cases left <;> cases right <;> simp_all [Opcode.kind]
+
+/-!
+### The four opcodes the target spells as operators
+
+`emitter.ts` writes `left && right`, `left || right`, `!operand` and `left === right` rather than a
+call to a runtime operation. That is one meaning per operator, and it is not the operation form's:
+`&&` and `||` evaluate their right operand only when it decides the answer, so routing them through
+an operation call would evaluate it eagerly and make the two sides disagree about whether its calls
+happen. `Target.runOperation` therefore refuses all four as operation calls.
+
+`operator?` is the one place that decision lives. The lowering and the source semantics both consult
+it, so an opcode cannot be lazy on one side and strict on the other.
+-/
+
+/-- An emitted operator, as opposed to a call to a runtime operation. -/
+inductive OperatorForm where
+  /-- `left && right`, lazy in its right operand. -/
+  | logicalAnd
+  /-- `left || right`, lazy in its right operand. -/
+  | logicalOr
+  /-- `!operand`. -/
+  | logicalNot
+  /-- `left === right`. -/
+  | strictEquals
+  deriving DecidableEq, Repr
+
+/-- The number of operands the operator form takes. An opcode reached with any other number of
+operands has no operator form and lowers to the operation form, which the target refuses. -/
+def OperatorForm.operands : OperatorForm → Nat
+  | .logicalAnd | .logicalOr | .strictEquals => 2
+  | .logicalNot => 1
+
+/-- The operator the target spells the opcode as, and `none` for an opcode it calls. -/
+def Opcode.operator? : Opcode → Option OperatorForm
+  | .boolAnd => some .logicalAnd
+  | .boolOr => some .logicalOr
+  | .boolNot => some .logicalNot
+  | .boolEquals => some .strictEquals
+  | .natAdd | .natSubtract | .natMultiply | .natLess | .natLessOrEqual | .natEquals
+  | .natSuccessor | .stringAppend | .stringEquals | .listLength | .listIsEmpty | .listAppend
+  | .listReverse | .listMap | .listFilter | .listFoldLeft | .listFoldRight | .listAny | .listAll
+  | .listHead | .listFirst | .listRest => none
+
+/-- Exactly `bool.not` is spelled `!`. -/
+theorem Opcode.eq_boolNot_of_operator? {code : Opcode}
+    (spelled : code.operator? = some .logicalNot) : code = .boolNot := by
+  cases code <;> simp_all [Opcode.operator?]
+
+/-- Exactly `bool.equals` is spelled `===`. -/
+theorem Opcode.eq_boolEquals_of_operator? {code : Opcode}
+    (spelled : code.operator? = some .strictEquals) : code = .boolEquals := by
+  cases code <;> simp_all [Opcode.operator?]
 
 
 /-- One declared field: its emitted property key and its type. -/

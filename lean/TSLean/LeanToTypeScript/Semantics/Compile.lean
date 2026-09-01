@@ -142,41 +142,43 @@ def expr (program : Ir.Program) : Ir.Expr → Except Fault Target.Expr
   | .natLit value => pure (.bigintLit value)
   | .stringLit value => pure (.stringLit value)
   | .operation opcode _ arguments => do
-      match opcode, arguments with
-      | .boolAnd, [left, right] =>
+      match opcode.operator?, arguments with
+      | some .logicalAnd, [left, right] =>
           pure (.logicalAnd (← expr program left) (← expr program right))
-      | .boolOr, [left, right] =>
+      | some .logicalOr, [left, right] =>
           pure (.logicalOr (← expr program left) (← expr program right))
-      | .boolNot, [operand] => pure (.logicalNot (← expr program operand))
-      | .boolEquals, [left, right] =>
+      | some .logicalNot, [operand] => pure (.logicalNot (← expr program operand))
+      | some .strictEquals, [left, right] =>
           if right.isTrueLiteral then expr program left
           else if left.isTrueLiteral then expr program right
           else pure (.strictEquals (← expr program left) (← expr program right))
-      | opcode, arguments => pure (.operation opcode (← exprList program arguments))
-  | .variant (.list element) name arguments => do
-      match name, arguments with
-      | "nil", [] => pure .arrayEmpty
-      | "cons", [head, tail] => pure (.arrayCons (← expr program head) (← expr program tail))
-      | name, _ => throw (.undeclaredConstructor (.list element) name)
+      | _, arguments => pure (.operation opcode (← exprList program arguments))
   | .variant type name arguments => do
-      match program.constructorsOf type with
-      | none => throw (.undeclaredType type)
-      | some constructors =>
-          match Ir.constructor? constructors name with
-          | none => throw (.undeclaredConstructor type name)
-          | some constructor =>
-              let values ← exprList program arguments
-              if constructor.fields.length ≠ values.length then
-                throw (.constructorArity type name constructor.fields.length values.length)
-              else if presentableKeys (constructor.fields.map Ir.Field.name) = false then
-                throw (.unpresentableFields type)
-              else if (constructor.fields.map Ir.Field.name).all (· != "kind") = false then
-                throw (.reservedTagField type name)
-              else if Ir.allNullary constructors && constructor.fields.isEmpty then
-                pure (.stringLit name)
-              else
-                pure (.objectLiteral (("kind", .stringLit name) ::
-                  (constructor.fields.map Ir.Field.name).zip values))
+      match type.element? with
+      | some element =>
+          match name, arguments with
+          | "nil", [] => pure .arrayEmpty
+          | "cons", [head, tail] => pure (.arrayCons (← expr program head) (← expr program tail))
+          | name, _ => throw (.undeclaredConstructor (.list element) name)
+      | none =>
+          match program.constructorsOf type with
+          | none => throw (.undeclaredType type)
+          | some constructors =>
+              match Ir.constructor? constructors name with
+              | none => throw (.undeclaredConstructor type name)
+              | some constructor =>
+                  let values ← exprList program arguments
+                  if constructor.fields.length ≠ values.length then
+                    throw (.constructorArity type name constructor.fields.length values.length)
+                  else if presentableKeys (constructor.fields.map Ir.Field.name) = false then
+                    throw (.unpresentableFields type)
+                  else if (constructor.fields.map Ir.Field.name).all (· != "kind") = false then
+                    throw (.reservedTagField type name)
+                  else if Ir.allNullary constructors && constructor.fields.isEmpty then
+                    pure (.stringLit name)
+                  else
+                    pure (.objectLiteral (("kind", .stringLit name) ::
+                      (constructor.fields.map Ir.Field.name).zip values))
   | .record type fields => do
       match program.constructorsOf type with
       | some [constructor] =>

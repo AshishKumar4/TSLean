@@ -124,8 +124,7 @@ they are decided in `evalOperation` where the unevaluated operand is still avail
 higher-order list opcodes are absent for the same structural reason: they enter a closure, which
 costs fuel and records an entry.
 -/
-def applyStrict (opcode : Ir.Opcode) (typeArguments : List Ir.Ty) :
-    List Value → Except Fault Value
+def applyStrict (opcode : Ir.Opcode) : List Value → Except Fault Value
   | [.boolean operand] =>
       match opcode with
       | .boolNot => .ok (.boolean (!operand))
@@ -214,8 +213,8 @@ def eval (program : Ir.Program) (fuel : Nat) (scope : List Value) (trace : Trace
       | .fault fault next => .fault fault next
       | .exhausted next => .exhausted next
   | .operation opcode typeArguments arguments =>
-      match opcode, arguments with
-      | .boolAnd, [left, right] =>
+      match opcode.operator?, arguments with
+      | some .logicalAnd, [left, right] =>
           match eval program fuel scope trace left with
           | .value (.boolean false) next => .value (.boolean false) next
           | .value (.boolean true) next =>
@@ -227,7 +226,7 @@ def eval (program : Ir.Program) (fuel : Nat) (scope : List Value) (trace : Trace
           | .value _ next => .fault .notABoolean next
           | .fault fault next => .fault fault next
           | .exhausted next => .exhausted next
-      | .boolOr, [left, right] =>
+      | some .logicalOr, [left, right] =>
           match eval program fuel scope trace left with
           | .value (.boolean true) next => .value (.boolean true) next
           | .value (.boolean false) next =>
@@ -239,23 +238,20 @@ def eval (program : Ir.Program) (fuel : Nat) (scope : List Value) (trace : Trace
           | .value _ next => .fault .notABoolean next
           | .fault fault next => .fault fault next
           | .exhausted next => .exhausted next
-      | opcode, arguments =>
+      | _, arguments =>
           match evalList program fuel scope trace arguments with
           | .values values next => applyOperation program fuel next opcode typeArguments values
           | .fault fault next => .fault fault next
           | .exhausted next => .exhausted next
-  | .variant (.list element) name arguments =>
-      match evalList program fuel scope trace arguments with
-      | .values values next =>
-          match name, values with
-          | "nil", [] => .value (.array element []) next
-          | "cons", [head, .array _ rest] => .value (.array element (head :: rest)) next
-          | name, _ => .fault (.undeclaredConstructor name) next
-      | .fault fault next => .fault fault next
-      | .exhausted next => .exhausted next
   | .variant type name arguments =>
       match evalList program fuel scope trace arguments with
-      | .values values next => .value (.variant type name values) next
+      | .values values next =>
+          match type.element?, name, values with
+          | some element, "nil", [] => .value (.array element []) next
+          | some element, "cons", [head, .array _ rest] =>
+              .value (.array element (head :: rest)) next
+          | some _, name, _ => .fault (.undeclaredConstructor name) next
+          | none, name, values => .value (.variant type name values) next
       | .fault fault next => .fault fault next
       | .exhausted next => .exhausted next
   | .record type fields =>
@@ -322,7 +318,7 @@ def applyOperation (program : Ir.Program) (fuel : Nat) (trace : Trace) (opcode :
   | .listAny, [_, _] | .listAll, [_, _] => .fault .notAClosure trace
   | .listFoldLeft, [_, _, _] | .listFoldRight, [_, _, _] => .fault .notAClosure trace
   | opcode, values =>
-      match applyStrict opcode typeArguments values with
+      match applyStrict opcode values with
       | .ok value => .value value trace
       | .error fault => .fault fault trace
 termination_by (fuel, 2, 0)

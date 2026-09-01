@@ -81,6 +81,23 @@ and the semantics cannot drift apart. -/
 def HasDenseElements (state : Target.State) (ref : RefId) (images : List Value) : Prop :=
   Target.readArray state (.object ref) = .ok images
 
+/-- An emitted array's reference denotes a live object, so it may be stored in a fresh one. -/
+theorem valueValid_of_denseElements {state : Target.State} {ref : RefId} {images : List Value}
+    (dense : HasDenseElements state ref images) :
+    state.heap.valueValid (.object ref) = true := by
+  simp only [HasDenseElements, Target.readArray] at dense
+  cases found : state.heap.get? ref with
+  | error fault =>
+      have refused : state.heap.arrayLength ref = .error fault := by
+        simp only [Heap.arrayLength, found]
+        rfl
+      rw [refused] at dense
+      simp at dense
+  | ok object =>
+      have valid := Heap.get?_ok_valid state.heap ref object found
+      unfold Heap.valueValid
+      exact decide_eq_true valid
+
 mutual
 
 /-- How one source value is represented in the target state. -/

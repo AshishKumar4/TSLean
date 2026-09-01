@@ -180,6 +180,88 @@ theorem allocateLiteral_shape (state : Target.State) (entries : List (String × 
     exact ran
   · simpa using finalBuilding.shape
 
+/-! ## The emitted array
+
+A `List` reaches the target as a real dense array object, so the second construction lemma is about
+`Heap.allocateArray` rather than about property definition. `Heap.allocateArrayFromArray_dense` is
+the only public bridge from a successful allocation to the observations the allocated object answers,
+and `Target.readArray` is the only way the target semantics and the refinement relation read an
+array, so this lemma joins exactly those two.
+-/
+
+/-- Reading an array back answers the elements its allocation stored, from any starting index. -/
+private theorem readIndices_dense {heap : Heap} {ref : RefId} :
+    ∀ (start : Nat) (rest : List Value),
+      (∀ (offset : Nat) (value : Value), rest[offset]? = some value →
+        heap.getOwnProperty ref (.string (PropertyKey.arrayIndexString (start + offset)))
+          = .ok (some (.data ⟨value, true, true, true⟩))) →
+      Target.readIndices heap ref start rest.length = .ok rest
+  | _, [], _ => rfl
+  | start, value :: rest, read => by
+      have head : heap.getOwnProperty ref (.string (PropertyKey.arrayIndexString start))
+          = .ok (some (.data ⟨value, true, true, true⟩)) := by
+        simpa using read 0 value rfl
+      have tail := readIndices_dense (start + 1) rest (by
+        intro offset element found
+        have step := read (offset + 1) element (by simpa using found)
+        have position : start + (offset + 1) = start + 1 + offset := by omega
+        rw [position] at step
+        exact step)
+      simp only [List.length_cons, Target.readIndices, head, tail]
+
+/--
+The emitted array allocates a fresh object carrying exactly these elements at exactly the ascending
+index keys, and touches nothing that already existed. Its length premise is ECMAScript's own: an
+array literal or spread beyond `maxArrayLength` raises a `RangeError` rather than producing a longer
+array, so a caller owes the bound rather than receiving it.
+-/
+theorem allocateArray_shape (state : Target.State) (elements : List Value)
+    (valid : state.heap.WellFormed) (closuresValid : state.ClosuresWellFormed)
+    (valuesValid : ∀ value ∈ elements, state.heap.valueValid value = true)
+    (bound : elements.length ≤ Heap.maxArrayLength) :
+    ∃ ref final, Target.allocateArray state elements = .ok (.object ref) final ∧
+      final.trace = state.trace ∧ final.closures = state.closures ∧
+        Target.State.Extension state final ∧ final.ClosuresWellFormed ∧
+          Relation.HasDenseElements final ref elements := by
+  have slots : (elements.map some).toArray = elements.toArray.map some := by simp
+  obtain ⟨ref, heap, allocated⟩ :=
+    Heap.allocateArrayFromArray_ok state.heap (elements.map some).toArray (by simpa using bound)
+      (by
+        have every : ∀ element ∈ elements.map some,
+            element.all state.heap.valueValid = true := by
+          intro element member
+          obtain ⟨value, valueMember, elementEq⟩ := List.mem_map.mp member
+          subst elementEq
+          simpa using valuesValid value valueMember
+        simpa using List.all_eq_true.mpr every)
+  have listAllocated : state.heap.allocateArray (elements.map some) none = .ok (ref, heap) :=
+    allocated
+  obtain ⟨⟨object, found, _, _, kind⟩, _, indexed⟩ :=
+    Heap.allocateArrayFromArray_dense state.heap heap elements.toArray none ref (by
+      rw [← slots]; exact allocated)
+  have extension := TSLean.Refinement.Heap.allocateArray_exactExtension state.heap heap
+    (elements.map some) none ref valid listAllocated
+  refine ⟨ref, state.withHeap heap, ?_, rfl, rfl, ⟨extension, fun _ _ found => found⟩, ?_, ?_⟩
+  · unfold Target.allocateArray
+    rw [listAllocated]
+  · intro oldRef closure oldFound
+    obtain ⟨refValid, capturedValid⟩ := closuresValid oldRef closure oldFound
+    refine ⟨extension.preserves_valueValid (.object oldRef) refValid, ?_⟩
+    intro value member
+    exact extension.preserves_valueValid value (capturedValid value member)
+  · have length : (state.withHeap heap).heap.arrayLength ref = .ok elements.length := by
+      simp [Target.State.withHeap, Heap.arrayLength, found, Bind.bind, Except.bind, kind,
+        Pure.pure, Except.pure]
+    have reads : ∀ (offset : Nat) (value : Value), elements[offset]? = some value →
+        heap.getOwnProperty ref (.string (PropertyKey.arrayIndexString (0 + offset)))
+          = .ok (some (.data ⟨value, true, true, true⟩)) := by
+      intro offset value member
+      obtain ⟨inBounds, valueEq⟩ := List.getElem?_eq_some_iff.mp member
+      have read := indexed offset (by simpa using inBounds)
+      simpa [valueEq] using read
+    simp only [Relation.HasDenseElements, Target.readArray, length]
+    exact readIndices_dense 0 elements reads
+
 end Allocation
 
 end TSLean.LeanToTypeScript.Semantics
