@@ -42,27 +42,27 @@ inductive Fault where
   | nestedLet (name : String)
   /-- A declared type carrying dot-notation behaviour, which this model does not lower. -/
   | behaviouralType (type : String)
-  /-- A named type the program does not declare. -/
-  | undeclaredType (type : String)
+  /-- A type the program does not declare, or one that carries no constructors. -/
+  | undeclaredType (type : Ir.Ty)
   /-- A constructor the named enum does not declare. -/
-  | undeclaredConstructor (type name : String)
+  | undeclaredConstructor (type : Ir.Ty) (name : String)
   /-- A constructor applied to a different number of arguments than it declares fields. -/
-  | constructorArity (type name : String) (expected actual : Nat)
+  | constructorArity (type : Ir.Ty) (name : String) (expected actual : Nat)
   /-- A `match` on an enum that carries a payload, which has no tag-comparison lowering. -/
-  | payloadMatch (type : String)
+  | payloadMatch (type : Ir.Ty)
   /-- A `match` whose scrutinee computes, which the tag chain would re-evaluate per arm. -/
-  | computedScrutinee (type : String)
+  | computedScrutinee (type : Ir.Ty)
   /-- A `match` with no arms. -/
-  | emptyMatch (type : String)
+  | emptyMatch (type : Ir.Ty)
   /-- A call to a function the program does not declare. -/
   | undeclaredFunction (name : String)
   /-- Field names that cannot be an own-key sequence in declaration order: one of them spells an
   array index, or two of them are the same. -/
-  | unpresentableFields (type : String)
+  | unpresentableFields (type : Ir.Ty)
   /-- A constructor field named `kind`, which the emitted tag occupies. -/
-  | reservedTagField (type name : String)
+  | reservedTagField (type : Ir.Ty) (name : String)
   /-- A record expression whose fields are not the declared fields in declaration order. -/
-  | fieldsMismatch (type : String)
+  | fieldsMismatch (type : Ir.Ty)
   /-- An application whose callee computes. `src/lean-to-typescript/ir.ts` admits an application
   target that is a bound variable and nothing else, so an application of anything else is refused
   here rather than given a lowering the decoder cannot produce. -/
@@ -93,7 +93,10 @@ def isDotNotationMethod (typeName : String) : Ir.Decl → Bool
       name.startsWith (typeName ++ ".") &&
         !(name.drop (typeName.length + 1)).contains '.' &&
         (match parameters with
-          | receiver :: _ => receiver.type == .named typeName
+          | receiver :: _ =>
+              match receiver.type with
+              | .named name _ => name == typeName
+              | _ => false
           | [] => false)
   | _ => false
 
@@ -136,17 +139,27 @@ def expr (program : Ir.Program) : Ir.Expr → Except Fault Target.Expr
   | .ifThenElse condition consequent alternate => do
       pure (.conditional (← expr program condition) (← expr program consequent)
         (← expr program alternate))
-  | .boolEquals left right =>
-      if right.isTrueLiteral then expr program left
-      else if left.isTrueLiteral then expr program right
-      else do pure (.strictEquals (← expr program left) (← expr program right))
-  | .boolAnd left right => do pure (.logicalAnd (← expr program left) (← expr program right))
-  | .boolOr left right => do pure (.logicalOr (← expr program left) (← expr program right))
-  | .boolNot operand => do pure (.logicalNot (← expr program operand))
-  | .someValue value => expr program value
-  | .noneValue => pure .undefinedLit
+  | .natLit value => pure (.bigintLit value)
+  | .stringLit value => pure (.stringLit value)
+  | .operation opcode _ arguments => do
+      match opcode, arguments with
+      | .boolAnd, [left, right] =>
+          pure (.logicalAnd (← expr program left) (← expr program right))
+      | .boolOr, [left, right] =>
+          pure (.logicalOr (← expr program left) (← expr program right))
+      | .boolNot, [operand] => pure (.logicalNot (← expr program operand))
+      | .boolEquals, [left, right] =>
+          if right.isTrueLiteral then expr program left
+          else if left.isTrueLiteral then expr program right
+          else pure (.strictEquals (← expr program left) (← expr program right))
+      | opcode, arguments => pure (.operation opcode (← exprList program arguments))
+  | .variant (.list element) name arguments => do
+      match name, arguments with
+      | "nil", [] => pure .arrayEmpty
+      | "cons", [head, tail] => pure (.arrayCons (← expr program head) (← expr program tail))
+      | name, _ => throw (.undeclaredConstructor (.list element) name)
   | .variant type name arguments => do
-      match program.enum? type with
+      match program.constructorsOf type with
       | none => throw (.undeclaredType type)
       | some constructors =>
           match Ir.constructor? constructors name with
@@ -165,16 +178,16 @@ def expr (program : Ir.Program) : Ir.Expr → Except Fault Target.Expr
                 pure (.objectLiteral (("kind", .stringLit name) ::
                   (constructor.fields.map Ir.Field.name).zip values))
   | .record type fields => do
-      match program.record? type with
-      | none => throw (.undeclaredType type)
-      | some declared =>
-          if (fields.map Prod.fst) ≠ (declared.map Ir.Field.name) then
+      match program.constructorsOf type with
+      | some [constructor] =>
+          if (fields.map Prod.fst) ≠ (constructor.fields.map Ir.Field.name) then
             throw (.fieldsMismatch type)
           else if presentableKeys (fields.map Prod.fst) = false then
             throw (.unpresentableFields type)
           else pure (.objectLiteral (← exprFields program fields))
+      | _ => throw (.undeclaredType type)
   | .matchOn type scrutinee cases => do
-      match program.enum? type with
+      match program.constructorsOf type with
       | none => throw (.undeclaredType type)
       | some constructors =>
           if Ir.allNullary constructors = false then throw (.payloadMatch type)
@@ -185,7 +198,7 @@ def expr (program : Ir.Program) : Ir.Expr → Except Fault Target.Expr
             match tagChain target arms with
             | none => throw (.emptyMatch type)
             | some chain => pure chain
-  | .call function arguments => do
+  | .call function _ arguments => do
       match program.function? function with
       | none => throw (.undeclaredFunction function)
       | some _ => pure (.callFunction function (← exprList program arguments))
@@ -234,7 +247,7 @@ end
 /-- Lowers one declaration. A record or an enum has no runtime image: `emitter.ts` gives it an
 interface or a type alias, and both erase. -/
 def declaration (program : Ir.Program) : Ir.Decl → Except Fault (Option Target.Function)
-  | .enum _ _ | .record _ _ => pure none
+  | .enum _ _ | .record _ _ _ => pure none
   | .function name parameters _ _ bodyExpr => do
       pure (some ⟨name, parameters.length, ← body program bodyExpr⟩)
 

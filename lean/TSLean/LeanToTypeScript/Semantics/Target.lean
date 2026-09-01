@@ -69,6 +69,10 @@ inductive Expr where
   | callFunction (name : String) (arguments : List Expr)
   /-- A bigint literal, which is how a `Nat` reaches the target exactly at every magnitude. -/
   | bigintLit (value : Nat)
+  /-- `[]`. A `List` reaches the target as a dense array, not as a tagged object. -/
+  | arrayEmpty
+  /-- `[head, ...tail]`, the emitted form of a `cons`. -/
+  | arrayCons (head tail : Expr)
   /-- One runtime opcode applied to its emitted operands. The first-order opcodes denote the engine
   operation the `Runtime` model names. The six higher-order list opcodes do not: their callback is a
   real function object, so the emitted `value.map((element) => transform(element))` enters it once
@@ -162,6 +166,10 @@ inductive Fault where
   | notAnArray
   /-- An opcode applied to the wrong number of emitted operands. -/
   | operandCount (opcode : Ir.Opcode) (actual : Nat)
+  /-- An opcode reached as an operation call although the emitter gives it a syntactic form. `&&`,
+  `||`, `!` and `===` are emitted as operators, so they have exactly one target meaning and it is
+  not this one. -/
+  | structuralOpcode (opcode : Ir.Opcode)
   deriving DecidableEq
 
 /-- The result of running one emitted expression. -/
@@ -402,6 +410,17 @@ def eval (program : Program) (runtime : Runtime) (fuel : Nat) (scope : List Valu
   | .undefinedLit => .ok (.primitive .undefined) state
   | .stringLit value => .ok (.primitive (.string (JSString.ofLeanString value))) state
   | .bigintLit value => .ok (.primitive (.bigint value)) state
+  | .arrayEmpty => allocateArray state []
+  | .arrayCons head tail =>
+      match eval program runtime fuel scope state head with
+      | .ok headValue next =>
+          match eval program runtime fuel scope next tail with
+          | .ok tailValue last =>
+              match readArray last tailValue with
+              | .error fault => .fault fault last
+              | .ok elements => allocateArray last (headValue :: elements)
+          | other => other
+      | other => other
   | .operation opcode arguments =>
       match evalList program runtime fuel scope state arguments with
       | .ok operands next => runOperation program runtime fuel next opcode operands
@@ -472,10 +491,6 @@ entries, in element order.
 def runOperation (program : Program) (runtime : Runtime) (fuel : Nat) (state : State)
     (opcode : Ir.Opcode) (operands : List Value) : Result :=
   match opcode, operands with
-  | .boolAnd, [left, right] => .ok (runtime.boolAnd left right) state
-  | .boolOr, [left, right] => .ok (runtime.boolOr left right) state
-  | .boolNot, [operand] => .ok (runtime.boolNot operand) state
-  | .boolEquals, [left, right] => .ok (runtime.boolEquals left right) state
   | .natAdd, [left, right] => .ok (runtime.natAdd left right) state
   | .natSubtract, [left, right] => .ok (runtime.natSubtract left right) state
   | .natMultiply, [left, right] => .ok (runtime.natMultiply left right) state
@@ -548,6 +563,8 @@ def runOperation (program : Program) (runtime : Runtime) (fuel : Nat) (state : S
       match readArray state subject with
       | .error fault => .fault fault state
       | .ok elements => foldRightCalls program runtime fuel state callback initial elements
+  | .boolAnd, _ | .boolOr, _ | .boolNot, _ | .boolEquals, _ =>
+      .fault (.structuralOpcode opcode) state
   | opcode, operands => .fault (.operandCount opcode operands.length) state
 termination_by (fuel, 2, 0)
 
