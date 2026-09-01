@@ -463,7 +463,7 @@
     },
     {
       "components": [],
-      "emittedForm": "value.map((element) => transform(element))",
+      "emittedForm": "value.map(element => transform(element))",
       "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listMap",
       "opcode": "list.map",
       "relation": "source = model",
@@ -475,7 +475,7 @@
     },
     {
       "components": [],
-      "emittedForm": "value.filter((element) => keep(element))",
+      "emittedForm": "value.filter(element => keep(element))",
       "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listFilter",
       "opcode": "list.filter",
       "relation": "source = model",
@@ -511,7 +511,7 @@
     },
     {
       "components": [],
-      "emittedForm": "value.some((element) => holds(element))",
+      "emittedForm": "value.some(element => holds(element))",
       "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listAny",
       "opcode": "list.any",
       "relation": "source = model",
@@ -523,7 +523,7 @@
     },
     {
       "components": [],
-      "emittedForm": "value.every((element) => holds(element))",
+      "emittedForm": "value.every(element => holds(element))",
       "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listAll",
       "opcode": "list.all",
       "relation": "source = model",

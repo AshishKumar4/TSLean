@@ -42,6 +42,14 @@
       "imports": 22,
       "modules": 2362,
       "declarations": 6168
+    },
+    "semanticsGate": {
+      "expressionOperations": 14,
+      "declarationFamilies": 3,
+      "typeForms": 9,
+      "opcodes": 26,
+      "assumptions": 9,
+      "probeGroups": 9
     }
   },
   "refinementProofs": {
@@ -282,12 +290,58 @@
         "jsonPath": "bounds.aggregateDenseArrayCells",
         "countPath": "differential.aggregateFixtureBudget",
         "measure": "value"
+      },
+      {
+        "path": "spec/semantics/registry.json",
+        "jsonPath": "expressionOperations",
+        "countPath": "semanticsGate.expressionOperations",
+        "measure": "length"
+      },
+      {
+        "path": "spec/semantics/registry.json",
+        "jsonPath": "declarationFamilies",
+        "countPath": "semanticsGate.declarationFamilies",
+        "measure": "length"
+      },
+      {
+        "path": "spec/semantics/registry.json",
+        "jsonPath": "typeForms",
+        "countPath": "semanticsGate.typeForms",
+        "measure": "length"
+      },
+      {
+        "path": "spec/semantics/registry.json",
+        "jsonPath": "opcodes",
+        "countPath": "semanticsGate.opcodes",
+        "measure": "length"
+      },
+      {
+        "path": "spec/semantics/registry.json",
+        "jsonPath": "assumptions",
+        "countPath": "semanticsGate.assumptions",
+        "measure": "length"
+      },
+      {
+        "path": "spec/semantics/probes.json",
+        "jsonPath": "groups",
+        "countPath": "semanticsGate.probeGroups",
+        "measure": "length"
       }
     ]
   },
   "hashGroups": {
     "source": {
       "paths": ["src"]
+    },
+    "semanticsGate": {
+      "paths": [
+        "scripts/check-semantics-registry.mjs",
+        "spec/semantics/registry.json",
+        "spec/semantics/probes.json",
+        "lean/TSLean/LeanToTypeScript/Semantics",
+        "lean/audit/LeanToTypeScriptSemantics.lean",
+        "tests/lean-to-typescript-certificates.test.ts"
+      ]
     },
     "jsRuntime": {
       "paths": ["lean/TSLean/JS", "lean/TSLean/JS.lean"]

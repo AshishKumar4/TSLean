@@ -25,8 +25,10 @@ open Ir (Opcode)
 namespace Ir.Opcode
 
 
-/-- The TypeScript form `emitter.ts` emits for the opcode. Recorded so a catalog row can be checked
-against the emitter without reading the proof. -/
+/-- The TypeScript form `emitter.ts` emits for the opcode, byte for byte over the operand names the
+row is written in. `inlineOperationForms` in `emitter.ts` prints what that emitter builds for every
+inline opcode and the semantics gate compares the two strings exactly, so a form recorded here that
+the emitter does not print is a refusal rather than prose. -/
 def emittedForm : Opcode → String
   | .boolAnd => "left && right"
   | .boolOr => "left || right"
@@ -45,13 +47,13 @@ def emittedForm : Opcode → String
   | .listIsEmpty => "value.length === 0"
   | .listAppend => "[...left, ...right]"
   | .listReverse => "[...value].reverse()"
-  | .listMap => "value.map((element) => transform(element))"
-  | .listFilter => "value.filter((element) => keep(element))"
+  | .listMap => "value.map(element => transform(element))"
+  | .listFilter => "value.filter(element => keep(element))"
   | .listFoldLeft => "value.reduce((accumulator, element) => step(accumulator, element), initial)"
   | .listFoldRight =>
       "value.reduceRight((accumulator, element) => step(element, accumulator), initial)"
-  | .listAny => "value.some((element) => holds(element))"
-  | .listAll => "value.every((element) => holds(element))"
+  | .listAny => "value.some(element => holds(element))"
+  | .listAll => "value.every(element => holds(element))"
   | .listHead => "value.length === 0 ? { kind: \"none\" } : { kind: \"some\", value: value[0] }"
   | .listFirst => "value[0]"
   | .listRest => "value.slice(1)"

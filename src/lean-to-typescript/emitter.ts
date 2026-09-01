@@ -147,8 +147,9 @@ export function emitTypeScriptPackage(
 
 /**
  * Certificates the emitted package actually relies on, bound to the bytes just printed. A helper
- * resolves through the declaration the allocator gave its role; an inline opcode has no
- * declaration and binds to the one emitted form the registry gives it.
+ * resolves through the declaration the allocator gave its role; an inline opcode has no declaration
+ * and binds to the canonical print of the form this emitter builds for it, which
+ * `assertRuntimeCertificateBindings` then compares against the form the Lean registry states.
  */
 function emittedRuntimeCertificates(
   program: LeanSemanticProgram,
@@ -158,7 +159,7 @@ function emittedRuntimeCertificates(
   const helperDeclarations = new Map(
     leanToTypeScriptHelperBindings(program).map((helper) => [helper.role, helper.declaration]),
   );
-  const inlineForms = new Map(catalog.certificates.map((certificate) => [certificate.opcode, certificate.emittedForm]));
+  const inlineForms = inlineOperationForms();
   const bodies = printed.map((module) => module.body);
   return [...referencedRuntimeOpcodes(program)].sort(compareCodePoints).map((opcode) => {
     const certificate = certificateForOpcode(catalog, opcode);
@@ -3137,6 +3138,13 @@ function alternativeTest(
 /**
  * A `match` in return position. The scrutinee is bound once, every alternative but the last is a
  * test that returns, and the last alternative falls through to the narrowed remainder.
+ *
+ * `Target.Body` in the semantics is a `const` run ending in one `return`, so this statement form is
+ * outside the shapes `Compile` produces: the model lowers every match to the tag chain that
+ * `emitMatchExpression` builds and refuses a scrutinee it cannot name, while a `const` names the
+ * scrutinee here and evaluates it exactly once. The refinement theorem therefore covers the
+ * conditional form, and a declaration whose body branches through statements is bound by the
+ * artifact's digests and its type check rather than by that theorem.
  */
 function emitMatchStatements(
   expression: Extract<LeanExpression, { readonly kind: 'match' }>,
@@ -3311,18 +3319,50 @@ function emitOperation(
   allocator: IdentifierAllocator,
   context: EmitContext,
 ): ts.Expression {
-  const operands = expression.arguments.map((argument) => emitExpression(argument, scope, allocator, context));
+  return operationForm(
+    expression.opcode,
+    expression.arguments.map((argument) => emitExpression(argument, scope, allocator, context)),
+    {
+      allocator,
+      binders: { accumulator: context.locals.value, element: context.locals.element },
+      helper: (opcode, operands) => callPrelude(context, requiredOpcodeHelper(context, opcode), operands),
+    },
+  );
+}
+
+/**
+ * What building one operation's form needs besides its operands: the allocator that names a binder
+ * the form introduces, the hints those binders take, and the call an opcode whose exact semantics
+ * need a guard reaches its generated helper through.
+ */
+interface OperationEnvironment {
+  readonly allocator: IdentifierAllocator;
+  readonly binders: { readonly accumulator: string; readonly element: string };
+  readonly helper: (opcode: LeanOpcode, operands: readonly ts.Expression[]) => ts.Expression;
+}
+
+/**
+ * The one emitted shape every runtime opcode has, over operands already emitted. This is the only
+ * place that shape exists: `inlineOperationForms` prints it over the operand names the registry row
+ * names, and the certificate binding digests that print, so an emitted form that drifted from the
+ * Lean row is refused before a package exists instead of being certified against a copy of the row.
+ */
+function operationForm(
+  opcode: LeanOpcode,
+  operands: readonly ts.Expression[],
+  environment: OperationEnvironment,
+): ts.Expression {
   const binary = (index: number): [ts.Expression, ts.Expression] => {
     const left = operands[0];
     const right = operands[index];
     if (left === undefined || right === undefined) {
-      throw new TypeError(`${expression.opcode} is missing an operand`);
+      throw new TypeError(`${opcode} is missing an operand`);
     }
     return [left, right];
   };
   const unary = (): ts.Expression => {
     const only = operands[0];
-    if (only === undefined) throw new TypeError(`${expression.opcode} is missing its operand`);
+    if (only === undefined) throw new TypeError(`${opcode} is missing its operand`);
     return only;
   };
   const infix = (token: ts.BinaryOperator): ts.Expression => {
@@ -3331,13 +3371,13 @@ function emitOperation(
   };
   const callback = (index: number, arity: number): ts.Expression => {
     const target = operands[index];
-    if (target === undefined) throw new TypeError(`${expression.opcode} is missing its callback`);
+    if (target === undefined) throw new TypeError(`${opcode} is missing its callback`);
     if (ts.isArrowFunction(target) && target.parameters.length === arity) return target;
     // The wrapper's own binders come from the enclosing allocator, because the callback it applies
     // may be a binding the same body holds under one of these names.
-    const names = (arity === 1 ? [context.locals.element] : [context.locals.value, context.locals.element]).map(
-      (hint) => allocator.allocate(hint),
-    );
+    const names = (
+      arity === 1 ? [environment.binders.element] : [environment.binders.accumulator, environment.binders.element]
+    ).map((hint) => environment.allocator.allocate(hint));
     return ts.factory.createArrowFunction(
       undefined,
       undefined,
@@ -3353,14 +3393,14 @@ function emitOperation(
   };
   const method = (receiver: number, name: string, argumentsList: readonly ts.Expression[]): ts.Expression => {
     const target = operands[receiver];
-    if (target === undefined) throw new TypeError(`${expression.opcode} is missing its receiver`);
+    if (target === undefined) throw new TypeError(`${opcode} is missing its receiver`);
     return ts.factory.createCallExpression(
       ts.factory.createPropertyAccessExpression(target, name),
       undefined,
       argumentsList,
     );
   };
-  switch (expression.opcode) {
+  switch (opcode) {
     case 'bool.and':
       return infix(ts.SyntaxKind.AmpersandAmpersandToken);
     case 'bool.or':
@@ -3382,12 +3422,10 @@ function emitOperation(
       return infix(ts.SyntaxKind.LessThanEqualsToken);
     case 'nat.successor':
       return ts.factory.createBinaryExpression(unary(), ts.SyntaxKind.PlusToken, ts.factory.createBigIntLiteral('1n'));
-    case 'nat.subtract': {
-      const [left, right] = binary(1);
-      return callPrelude(context, requiredOpcodeHelper(context, 'nat.subtract'), [left, right]);
-    }
+    case 'nat.subtract':
+      return environment.helper(opcode, binary(1));
     case 'list.head':
-      return callPrelude(context, requiredOpcodeHelper(context, 'list.head'), [unary()]);
+      return environment.helper(opcode, [unary()]);
     case 'list.length':
       return ts.factory.createCallExpression(ts.factory.createIdentifier('BigInt'), undefined, [
         ts.factory.createPropertyAccessExpression(unary(), 'length'),
@@ -3426,7 +3464,7 @@ function emitOperation(
     case 'list.foldRight': {
       const initial = operands[1];
       if (initial === undefined) throw new TypeError('list.foldRight is missing its initial value');
-      return method(2, 'reduceRight', [reversedCallback(operands, allocator, context), initial]);
+      return method(2, 'reduceRight', [reversedCallback(operands, environment), initial]);
     }
     case 'list.first':
       return ts.factory.createElementAccessExpression(unary(), ts.factory.createNumericLiteral(0));
@@ -3436,14 +3474,47 @@ function emitOperation(
 }
 
 /**
+ * The binder names a canonically printed callback wrapper introduces. A use site takes them from the
+ * enclosing codec locals, which the allocator renames when the body already holds one; the canonical
+ * print takes the two names the Lean rows are written in, so the print is compared against the form
+ * the registry states rather than against a renaming of it.
+ */
+const CANONICAL_OPERATION_BINDERS = { accumulator: 'accumulator', element: 'element' } as const;
+
+/**
+ * Every inline opcode's emitted form, canonically printed over the operand names its registry row
+ * declares. An inline opcode has no declaration to resolve, so this print is what its certificate
+ * digests: the Lean row's `emittedForm` is joined against the structure `operationForm` builds
+ * rather than against a second copy of itself. A helper opcode is absent here because its form
+ * reaches the target as a generated declaration, whose printed bytes its certificate binds instead.
+ */
+export function inlineOperationForms(): ReadonlyMap<LeanOpcode, string> {
+  const file = ts.createSourceFile('runtime-form.ts', '', ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
+  const forms = new Map<LeanOpcode, string>();
+  for (const row of Object.values(LEAN_RUNTIME_OPCODES)) {
+    if (runtimeHelperRole(row.runtimeSymbol) !== undefined) continue;
+    const form = operationForm(
+      row.opcode,
+      row.operands.map((operand) => ts.factory.createIdentifier(operand)),
+      {
+        allocator: new IdentifierAllocator(row.operands),
+        binders: CANONICAL_OPERATION_BINDERS,
+        helper: () => {
+          throw new TypeError(`${row.opcode} is emitted inline and reaches no helper`);
+        },
+      },
+    );
+    forms.set(row.opcode, printer.printNode(ts.EmitHint.Unspecified, form, file));
+  }
+  return forms;
+}
+
+/**
  * `reduceRight` hands the accumulator first and Lean's `foldr` hands the element first, so the
  * generated callback swaps them rather than relying on the two orders happening to agree.
  */
-function reversedCallback(
-  operands: readonly ts.Expression[],
-  allocator: IdentifierAllocator,
-  context: EmitContext,
-): ts.Expression {
+function reversedCallback(operands: readonly ts.Expression[], environment: OperationEnvironment): ts.Expression {
   const step = operands[0];
   if (step === undefined) throw new TypeError('list.foldRight is missing its step function');
   if (ts.isArrowFunction(step) && step.parameters.length === 2) {
@@ -3461,8 +3532,8 @@ function reversedCallback(
       step.body,
     );
   }
-  const accumulator = allocator.allocate(context.locals.value);
-  const element = allocator.allocate(context.locals.element);
+  const accumulator = environment.allocator.allocate(environment.binders.accumulator);
+  const element = environment.allocator.allocate(environment.binders.element);
   return ts.factory.createArrowFunction(
     undefined,
     undefined,
@@ -3541,6 +3612,9 @@ function emitVariant(
  * Whether a scrutinee can be read again without recomputing anything. A binding can; a field of a
  * re-readable value can; anything else computes, and the condition is transitive because a field of
  * a call would otherwise smuggle the call in behind one property read.
+ *
+ * This is the condition `Compile.readableScrutinee` decides, clause for clause, so a tag chain this
+ * emitter builds is one the preservation theorem admits rather than a wider set of them.
  */
 function isRereadable(expression: LeanExpression): boolean {
   if (expression.kind === 'variable') return true;

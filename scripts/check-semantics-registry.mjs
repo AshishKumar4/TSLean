@@ -78,42 +78,112 @@ function leanRegistry() {
   return JSON.parse(result.stdout);
 }
 
-/** Every string literal a `case` clause of the named function's switch tests. */
-function switchCaseLiterals(file, functionName) {
-  const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.ESNext, true);
-  const literals = [];
-  let found = false;
+/**
+ * The kinds one declaration's own dispatch admits, keyed on the declaration and on the value it
+ * discriminates.
+ *
+ * The reader takes the switch `functionName` runs on `discriminant` in its own body, and nothing
+ * else. A switch inside a nested function belongs to that function; a second dispatch on the same
+ * value is a lowering path this join would only half see; a case whose test is not a string literal
+ * names a kind the gate cannot read; a `default` clause that does anything but throw admits a kind
+ * no plane declares. Each one is a refusal, because each is a way for the joined set to stop being
+ * the set the declaration actually admits. Taking the text as an argument is what lets `--self-test`
+ * exercise the reader on sources of its own.
+ */
+export function readDispatchedKinds(file, text, functionName, discriminant) {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, true);
+  const declarations = [];
   const visit = (node) => {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === functionName) {
-      found = true;
-      const collect = (inner) => {
-        if (ts.isSwitchStatement(inner)) {
-          for (const clause of inner.caseBlock.clauses) {
-            if (ts.isCaseClause(clause) && ts.isStringLiteral(clause.expression)) {
-              literals.push(clause.expression.text);
-            }
-          }
-        }
-        ts.forEachChild(inner, collect);
-      };
-      collect(node);
-      return;
-    }
+    if (ts.isFunctionDeclaration(node) && node.name?.text === functionName) declarations.push(node);
     ts.forEachChild(node, visit);
   };
   visit(source);
-  if (!found) fail(`${file} declares no function ${functionName}`);
-  if (literals.length === 0) fail(`${file}#${functionName} tests no string literal`);
-  return literals;
+  if (declarations.length === 0) fail(`${file} declares no function ${functionName}`);
+  if (declarations.length > 1) {
+    fail(`${file} declares ${declarations.length} functions named ${functionName}, so the dispatch is ambiguous`);
+  }
+  const [declaration] = declarations;
+  if (declaration.body === undefined) fail(`${file}#${functionName} declares no body`);
+  const dispatches = ownSwitches(declaration.body).filter((statement) =>
+    discriminatesOn(statement.expression, discriminant),
+  );
+  if (dispatches.length === 0) fail(`${file}#${functionName} runs no switch on ${discriminant}`);
+  if (dispatches.length > 1) {
+    fail(`${file}#${functionName} runs ${dispatches.length} switches on ${discriminant}`);
+  }
+  const [dispatch] = dispatches;
+  const kinds = [];
+  for (const clause of dispatch.caseBlock.clauses) {
+    if (ts.isDefaultClause(clause)) {
+      const [only] = clause.statements;
+      if (clause.statements.length !== 1 || only === undefined || !ts.isThrowStatement(only)) {
+        fail(`${file}#${functionName} carries a default clause that does not refuse the kinds it did not test`);
+      }
+      continue;
+    }
+    if (!ts.isStringLiteral(clause.expression)) {
+      fail(`${file}#${functionName} tests a case the gate cannot read as a kind`);
+    }
+    if (kinds.includes(clause.expression.text)) {
+      fail(`${file}#${functionName} tests ${clause.expression.text} twice`);
+    }
+    kinds.push(clause.expression.text);
+  }
+  if (kinds.length === 0) fail(`${file}#${functionName} tests no string literal`);
+  return kinds;
 }
 
-/** Every declaration kind the emitter's declaration dispatch admits, read from the IR decoder. */
+/** Every switch a body runs itself. A nested function's dispatch is that function's own. */
+function ownSwitches(body) {
+  const switches = [];
+  const collect = (node) => {
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node) ||
+      ts.isMethodDeclaration(node)
+    ) {
+      return;
+    }
+    if (ts.isSwitchStatement(node)) switches.push(node);
+    ts.forEachChild(node, collect);
+  };
+  ts.forEachChild(body, collect);
+  return switches;
+}
+
+/** Whether a switch subject is exactly the named value: one identifier, or a dotted read of one. */
+function discriminatesOn(expression, discriminant) {
+  const parts = [];
+  let node = expression;
+  while (ts.isPropertyAccessExpression(node)) {
+    if (!ts.isIdentifier(node.name)) return false;
+    parts.unshift(node.name.text);
+    node = node.expression;
+  }
+  if (!ts.isIdentifier(node)) return false;
+  parts.unshift(node.text);
+  return parts.join('.') === discriminant;
+}
+
+/** The kinds the live source's named dispatch admits. */
+function dispatchedKinds(file, functionName, discriminant) {
+  return readDispatchedKinds(file, readFileSync(file, 'utf8'), functionName, discriminant);
+}
+
+/**
+ * Every declaration kind the emitter's declaration dispatch admits, read from the IR decoder. Each
+ * decoder reads the kind out of the encoded object first and dispatches on that binding, so the
+ * discriminant is the binding rather than a property read.
+ */
 function decoderKinds() {
   const irFile = join(root, 'src/lean-to-typescript/ir.ts');
   return {
-    expressions: switchCaseLiterals(irFile, 'decodeExpression'),
-    declarations: switchCaseLiterals(irFile, 'decodeDeclaration'),
-    types: switchCaseLiterals(irFile, 'decodeType'),
+    expressions: dispatchedKinds(irFile, 'decodeExpression', 'kind'),
+    declarations: dispatchedKinds(irFile, 'decodeDeclaration', 'kind'),
+    types: dispatchedKinds(irFile, 'decodeType', 'kind'),
   };
 }
 
@@ -296,9 +366,47 @@ export function joinOpcodes(registry, declared) {
   return declaredKinds.length;
 }
 
+/**
+ * Joins the emitted form the Lean registry records for each inline opcode against the form the live
+ * `emitter.ts` prints for it.
+ *
+ * The forms come from `inlineOperationForms`, which builds each opcode's emitted syntax through the
+ * one function that emitter lowers an operation with and prints it canonically over the operand
+ * names the row declares. Comparing the two strings byte for byte is what makes an inline opcode's
+ * certificate a claim about emitted structure: the digest a package records is over this print, so a
+ * form that drifted from the row is refused here and at every package verification instead of being
+ * digested from the row and agreeing with itself.
+ */
+export function joinInlineForms(registry, forms) {
+  const inline = registry.opcodes.filter((opcode) => opcode.runtimeSymbol.startsWith('inline:'));
+  requireSameSet(
+    'inline emitted forms',
+    [...forms.keys()].sort(),
+    'emitter.ts',
+    inline.map((opcode) => opcode.opcode).sort(),
+    'the Lean semantics',
+  );
+  for (const opcode of inline) {
+    const printed = forms.get(opcode.opcode);
+    if (printed !== opcode.emittedForm) {
+      fail(
+        `opcode ${opcode.opcode} emits ${JSON.stringify(printed)} but the Lean semantics records ` +
+          `${JSON.stringify(opcode.emittedForm)}`,
+      );
+    }
+  }
+  return inline.length;
+}
+
+/** The inline forms the live emitter prints, read through the module the compiler lowers with. */
+async function emittedInlineForms() {
+  const { inlineOperationForms } = await import('../src/lean-to-typescript/emitter.ts');
+  return inlineOperationForms();
+}
+
 /** Every expression kind the emitter lowers. */
 function emitterKinds() {
-  return switchCaseLiterals(join(root, 'src/lean-to-typescript/emitter.ts'), 'emitExpression');
+  return dispatchedKinds(join(root, 'src/lean-to-typescript/emitter.ts'), 'emitExpression', 'expression.kind');
 }
 
 function sortedUnique(values, label) {
@@ -991,14 +1099,125 @@ function selfTest() {
   if (cleanScan.length > 0) fail(`the token scan reported a clean module: ${cleanScan.join(', ')}`);
   const dirtyScan = forbiddenTokenViolations([{ label: 'dirty', source: 'theorem broken : True := by sorry\n' }]);
   if (dirtyScan.length !== 1) fail('the token scan accepted a sorry');
+
+  // The inline-form join, against a printed map the fixture owns. The live emitter is joined in
+  // `main`, where a difference between what it prints and what Lean records is the finding; here the
+  // point is that the comparison discriminates at all.
+  const inlineOpcodes = registry.opcodes.filter((opcode) => opcode.runtimeSymbol.startsWith('inline:'));
+  const [firstInline] = inlineOpcodes;
+  if (firstInline === undefined) fail('the registry records no inline opcode to join a printed form against');
+  const printedForms = new Map(inlineOpcodes.map((opcode) => [opcode.opcode, opcode.emittedForm]));
+  joinInlineForms(registry, printedForms);
+  const expectFormFailure = (label, forms, expected) => {
+    try {
+      joinInlineForms(registry, forms);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes(expected)) return;
+      throw error;
+    }
+    fail(`${label} was accepted`);
+  };
+  const driftedForm = new Map(printedForms);
+  driftedForm.set(firstInline.opcode, `(${firstInline.emittedForm})`);
+  expectFormFailure(
+    'an inline form the emitter prints differently from the registry',
+    driftedForm,
+    'but the Lean semantics records',
+  );
+  const unprintedForm = new Map(printedForms);
+  unprintedForm.delete(firstInline.opcode);
+  expectFormFailure(
+    'an inline opcode the emitter prints no form for',
+    unprintedForm,
+    `the Lean semantics admits ${firstInline.opcode} but emitter.ts does not`,
+  );
+  const helperOpcode = registry.opcodes.find((opcode) => opcode.runtimeSymbol.startsWith('helper:'));
+  if (helperOpcode === undefined) fail('the registry records no helper opcode to keep out of the inline join');
+  const inlinedHelper = new Map(printedForms);
+  inlinedHelper.set(helperOpcode.opcode, helperOpcode.emittedForm);
+  expectFormFailure(
+    'an inline form printed for an opcode the semantics proves as a helper',
+    inlinedHelper,
+    `emitter.ts admits ${helperOpcode.opcode} but the Lean semantics does not`,
+  );
+
+  // The dispatch reader is keyed on the declaration and on the value it discriminates, so a nested
+  // function's switch, a second dispatch, a case the gate cannot read, a repeated case, a default
+  // that admits instead of refusing, and an ambiguous declaration are refusals rather than a quietly
+  // different joined set.
+  const nestedDispatch = [
+    'function decodeFixture(value) {',
+    "  const kind = value['kind'];",
+    '  const nested = (inner) => {',
+    '    switch (kind) {',
+    "      case 'nested':",
+    '        return inner;',
+    '    }',
+    '  };',
+    '  switch (kind) {',
+    "    case 'variable':",
+    "    case 'operation':",
+    '      return nested(value);',
+    '    default:',
+    "      throw new TypeError('unsupported');",
+    '  }',
+    '}',
+  ].join('\n');
+  const readKinds = readDispatchedKinds('fixture.ts', nestedDispatch, 'decodeFixture', 'kind');
+  if (JSON.stringify(readKinds) !== JSON.stringify(['variable', 'operation'])) {
+    fail(`the dispatch reader read ${JSON.stringify(readKinds)} from the nested-switch fixture`);
+  }
+  const expectDispatchFailure = (label, text, expected) => {
+    try {
+      readDispatchedKinds('fixture.ts', text, 'decodeFixture', 'kind');
+    } catch (error) {
+      if (error instanceof Error && error.message.includes(expected)) return;
+      throw error;
+    }
+    fail(`${label} was accepted`);
+  };
+  expectDispatchFailure(
+    'a second dispatch on the same value',
+    nestedDispatch.replace(
+      '  switch (kind) {\n    case ',
+      "  switch (kind) {\n    case 'extra':\n      return value;\n  }\n  switch (kind) {\n    case ",
+    ),
+    'runs 2 switches on kind',
+  );
+  expectDispatchFailure(
+    'a case the gate cannot read as a kind',
+    nestedDispatch.replace("    case 'variable':", '    case names[0]:'),
+    'tests a case the gate cannot read as a kind',
+  );
+  expectDispatchFailure(
+    'a repeated case',
+    nestedDispatch.replace("    case 'operation':", "    case 'variable':"),
+    'tests variable twice',
+  );
+  expectDispatchFailure(
+    'a default clause that admits the kinds it did not test',
+    nestedDispatch.replace("      throw new TypeError('unsupported');", '      return value;'),
+    'does not refuse the kinds it did not test',
+  );
+  expectDispatchFailure(
+    'two declarations of the same dispatch',
+    `${nestedDispatch}\n${nestedDispatch}`,
+    'so the dispatch is ambiguous',
+  );
+  expectDispatchFailure(
+    'a dispatch on a different value',
+    nestedDispatch.replaceAll('switch (kind) {', 'switch (value.kind) {'),
+    'runs no switch on kind',
+  );
   stdout.write(
     'semantics registry self-test passed: 9 join fixtures, 4 opcode-join fixtures, ' +
-      '2 opcode-reader fixtures, 4 frozen-source fixtures, 1 lock fixture, 1 probe fixture, ' +
+      '2 opcode-reader fixtures, 4 inline-form fixtures, 7 dispatch-reader fixtures, ' +
+      '4 frozen-source fixtures, 1 lock fixture, 1 probe fixture, ' +
       '10 Lean fixtures, 2 token scans\n',
   );
 }
 
-function main() {
+async function main() {
   const args = parseArgs(argv.slice(2));
   if (args.selfTest) return selfTest();
   const registry = leanRegistry();
@@ -1025,14 +1244,16 @@ function main() {
   // The opcode join runs last so a refusal cannot stop the lock from being refreshed: the run still
   // fails, but `--generate` writes what Lean reported before reporting the unjoined registry.
   const joinedOpcodes = joinOpcodes(registry, declaredOpcodes());
+  const joinedForms = joinInlineForms(registry, await emittedInlineForms());
   stdout.write(
     `Semantics registry gate passed: ${counts.expressions} expression operations, ` +
       `${counts.declarations} declaration families, ${counts.types} type forms, ` +
       `${counts.opcodes} opcodes paired with ${paired} theorems and joined to ${joinedOpcodes} ir.ts rows, ` +
+      `${joinedForms} inline forms printed by emitter.ts and compared byte for byte, ` +
       `${counts.assumptions} assumptions ` +
       `measured by ${probes.total} executed probes in ${probes.groups.size} groups, ` +
       `${audited} audited declarations\n`,
   );
 }
 
-if (import.meta.main) main();
+if (import.meta.main) await main();

@@ -709,5 +709,6 @@ describe('what a report has to contain', () => {
     expect(compute?.holds).toBe(true);
     expect(compute?.detail).toContain('every domain exhausted');
     expect(report.holds).toBe(true);
-  });
+    // Executes Lake for the Lean side, so it carries the same budget as the lap test above.
+  }, 180_000);
 });

@@ -109,10 +109,11 @@ A scrutinee the tag chain may re-read once per arm: a binding, or a field of a r
 Anything that computes has to be named by a `let` first, because the chain evaluates the scrutinee
 once per comparison.
 
-The condition is transitive here, and in `emitter.ts` it is not: that emitter tests only the
-outermost node, so it admits a scrutinee such as a field of a call and duplicates the call once per
-arm. Soundness needs the transitive condition, so the model takes it and the shallow check is a
-defect reported against the emitter rather than reproduced here.
+`isRereadable` in `emitter.ts` decides the same transitive condition, clause for clause, so a match
+that emitter lowers to a tag chain is one this model admits. That emitter also lowers a match in
+return position, where it names the scrutinee with a `const` and evaluates it exactly once; this
+model has no such form, because `Target.Body` is a `const` run ending in one `return`, so a match in
+return position is outside the shapes lowered here rather than a wider admission of them.
 -/
 def readableScrutinee : Ir.Expr → Bool
   | .varRef _ => true

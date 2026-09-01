@@ -161,14 +161,17 @@ const provenance = {
 };
 
 describe('Lean semantic IR runtime opcode registry', () => {
-  test('is total, closed, and names one Lean symbol and one emitted form per opcode', () => {
+  test('is total, closed, and names one Lean symbol and one operand list per opcode', () => {
     const opcodes = Object.keys(LEAN_RUNTIME_OPCODES) as readonly LeanOpcode[];
     expect(opcodes.length).toBe(26);
     for (const opcode of opcodes) {
       const row = LEAN_RUNTIME_OPCODES[opcode];
       expect(row.opcode).toBe(opcode);
       expect(row.leanSymbol.length).toBeGreaterThan(0);
-      expect(row.runtimeForm.length).toBeGreaterThan(0);
+      // One name per operand, positionally: the row's form is written over exactly these.
+      expect(row.operands.length).toBe(
+        row.parameters(Array.from({ length: row.typeParameters }, () => ({ kind: 'nat' }) as const)).length,
+      );
       expect(row.modelTheorem).toMatch(/^TSLean\.LeanToTypeScript\.Semantics\.Opcode\.[A-Za-z]+$/u);
       expect(row.assumptions.length).toBeGreaterThan(0);
       for (const assumption of row.assumptions) {

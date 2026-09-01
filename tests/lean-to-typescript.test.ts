@@ -1427,7 +1427,9 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       '  | .second => .first',
     ];
     // In return position a `const` can name the scrutinee, so it is computed exactly once and the
-    // tag tests read the binding.
+    // tag tests read the binding. `Compile` refuses this scrutinee because its target language has
+    // no statement to name it with, so this lowering is outside the model's image; the boundary is
+    // recorded in docs/trust.md rather than closed by refusing a program that evaluates it once.
     const returned = admittedSourceCode(
       [
         ...union,
@@ -1459,6 +1461,48 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       diagnostic: expect.stringContaining('bind the scrutinee with let first'),
     });
   });
+
+  test('refuses a scrutinee that computes behind a field read, and admits one that only reads', () => {
+    const union = [
+      'inductive Choice where',
+      '  | first',
+      '  | second',
+      'structure Held where',
+      '  choice : Choice',
+      'def hold (choice : Choice) : Held := { choice := choice }',
+    ];
+    // `Compile.readableScrutinee` admits a binding, and a field read of a readable scrutinee, and
+    // nothing else, because the tag chain reads the scrutinee once per comparison. This emitter
+    // tests the same condition transitively rather than only at the outermost node: a field of a
+    // call still computes, so admitting it would call the function once per alternative.
+    expect(
+      unsupportedSourceError(
+        [
+          ...union,
+          'def rejected (choice : Choice) : Bool :=',
+          '  Bool.and (match (Fixture.hold choice).choice with | .first => true | .second => false) true',
+        ].join('\n'),
+        'Fixture.rejected',
+      ),
+    ).toMatchObject({
+      code: 'UNSUPPORTED_LEAN_FRAGMENT',
+      declaration: 'Fixture.rejected',
+      diagnostic: expect.stringContaining('bind the scrutinee with let first'),
+    });
+    // A field read of a binding recomputes nothing, so the same match in the same position is
+    // admitted and every test reads the field again.
+    const admitted = admittedSourceCode(
+      [
+        ...union,
+        'def admits (held : Held) : Bool :=',
+        '  Bool.and (match held.choice with | .first => true | .second => false) true',
+      ].join('\n'),
+      ['Fixture.admits'],
+    );
+    expect(admitted).toContain('return (held.choice === "first" ? true : false) && true;');
+    const admits = requireFunction(evaluateGeneratedModuleExports(admitted), 'admits');
+    expect([admits({ choice: 'first' }), admits({ choice: 'second' })]).toEqual([true, false]);
+  }, 60_000);
 
   test('generated enforcement floor agrees with Lean on the complete finite input domain', () => {
     const emitted = compileLeanToTypeScript(enforcementRequest);

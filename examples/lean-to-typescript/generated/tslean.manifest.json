@@ -366,7 +366,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:certificates",
-        "sha256": "sha256:d1ea221722db0c8cec6cb08eacce63cc340a25aad095775cc163b5fbcc675bc2"
+        "sha256": "sha256:0423881fdacc3f785c96d2ae76e05ab3560875bde27c8b27e6837dc21b2243ae"
       },
       {
         "kind": "compiler-source",
@@ -381,7 +381,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:emitter",
-        "sha256": "sha256:05e8a253243efd5c767facd4d48302c808c00bf99a238d5f1c0ea6cd6b0d2afd"
+        "sha256": "sha256:115bd270d9bfb9af2afa98cca401aa40f2d04b4be5cf4db7d5373c86931603cb"
       },
       {
         "kind": "compiler-source",
@@ -396,7 +396,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:ir",
-        "sha256": "sha256:f553e7b018b36b859516cf125241c4dc71d1088d2562779649056d22251bc733"
+        "sha256": "sha256:d15e7b7db6996aac14edb7af48a1a9f7ca76bb87045957c6e3c5588d09a97ebd"
       },
       {
         "kind": "compiler-source",
@@ -426,7 +426,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Compile.lean",
-        "sha256": "sha256:bc19fddbb7a69001131a01b0871b45d50f1a67d71eb756c6a1ad444f6d6e7233"
+        "sha256": "sha256:d532b273d3e1126fc2dd27fa9aa59101e2d4d7f605d9caebb70ea3e56814f4ca"
       },
       {
         "kind": "compiler-source",
@@ -436,7 +436,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Opcode.lean",
-        "sha256": "sha256:1c36afab55aa469447cfbf9383366dcee4a2caef909f3ee0060ceea33bcf0909"
+        "sha256": "sha256:a653295a905f5d94d42da18495fd714ebf164d95cd59c34a331946ba81c066f4"
       },
       {
         "kind": "compiler-source",
@@ -531,7 +531,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:spec:semantics/registry.json",
-        "sha256": "sha256:8d9256f1838221474b5133c154abd333730d857fa2454d51af6140d84fd70fab"
+        "sha256": "sha256:472b476248f17f5b44eff6b00da89be8d50d5aba973d3d990a86158d6dfed09a"
       },
       {
         "kind": "lean-source",
@@ -559,7 +559,7 @@
         "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       }
     ],
-    "inputClosureSha256": "sha256:2922cfb16e4027a440534d14aea449fcf80f788d71fc1e7b3f9da2d95e69bb18",
+    "inputClosureSha256": "sha256:34da26c3dfb2bf5058416d7957639d3a29035b4d20f6c657535e73519edf154a",
     "semanticIrSha256": "sha256:2d7d55bcff52b5967d2f1faaac2f3bc3a68583d4ecc74f9936c75b93386a81dd",
     "certificates": [
       {

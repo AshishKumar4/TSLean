@@ -157,6 +157,10 @@ function readExpectedAuditCount(path) {
   if (counts.differentialScenarios !== undefined) countKeys.push('differentialScenarios');
   if (counts.differential !== undefined) countKeys.push('differential');
   if (counts.emittedTrustedBase !== undefined) countKeys.push('emittedTrustedBase');
+  // The semantics gate's joined cardinalities are pinned in the same input, and
+  // `generate-evidence-manifest.mjs` compares each one against the registry and probe corpus it
+  // read them from. This gate does not measure them, so it admits the key and checks its shape.
+  if (counts.semanticsGate !== undefined) countKeys.push('semanticsGate');
   exactKeys(counts, countKeys, 'counts');
   exactKeys(counts.tests, ['files', 'passed', 'failed', 'todo'], 'counts.tests');
   for (const key of ['files', 'passed', 'failed', 'todo']) nonNegativeInteger(counts.tests[key], `counts.tests.${key}`);
@@ -173,6 +177,7 @@ function readExpectedAuditCount(path) {
     nonNegativeInteger(counts.differentialScenarios, 'counts.differentialScenarios');
   }
   if (counts.differential !== undefined) countObject(counts.differential, 'counts.differential');
+  if (counts.semanticsGate !== undefined) countObject(counts.semanticsGate, 'counts.semanticsGate');
   if (counts.lint !== 'passed') fail('counts.lint must be passed');
   if (counts.build !== 'passed') fail('counts.build must be passed');
   let emittedTrustedBase;

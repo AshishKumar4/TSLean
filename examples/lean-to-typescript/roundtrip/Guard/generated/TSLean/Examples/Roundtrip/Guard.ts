@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Guard
  * Generated module: TSLean/Examples/Roundtrip/Guard.ts
  * Package entry module: TSLean.Examples.Roundtrip.Guard
- * Semantic identity: sha256:947475b4f950fca44b1c173b5cc6f2a36728aacb902d438ac3ab9847ac58eff1
- * Input closure: sha256:549c4735b68fc9a1f86f6fd277864596bc892a9f494fb43dbf3738477cd288f3
+ * Semantic identity: sha256:48debcabf9f2edb5b72da2111525fceaf2601c6fd177a2cdc55325bd6537b2b3
+ * Input closure: sha256:538ed708137f2b7365792923d972657ee63137d2ca31f3b2a821f44735b14fb7
  * Semantic IR: sha256:fcf9ece5633faf04878ad607ad09febc9b2397f4c617c152bd06c4f977476adf
  * Generated module body: sha256:483306d876fcaea46cd835b9c7620076e257815e47e0674d3d52f8cb885c7fad
  * Generated package body: sha256:56c62080f364f40e3788585bc38a130b659a8b5f1ab6a8d39b4e38b793ee56e9

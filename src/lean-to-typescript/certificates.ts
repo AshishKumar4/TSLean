@@ -182,7 +182,12 @@ export function assertRuntimeOpcodeCertificates(opcodes: readonly string[], cata
   }
 }
 
-/** Checks every recorded binding against the registry and the bytes the package actually emitted. */
+/**
+ * Checks every recorded binding against the registry and the bytes the package actually emitted. A
+ * helper's digest is over the declaration the package prints; an inline opcode's digest is over the
+ * form the emitter printed for it, so the comparison against `emittedForm` is a join between what
+ * this compiler emits and what the Lean row states, byte for byte.
+ */
 export function assertRuntimeCertificateBindings(
   catalog: RuntimeCertificateCatalog,
   bindings: readonly RuntimeCertificateBinding[],
@@ -237,7 +242,12 @@ export type RuntimeSymbolBinding =
   | { readonly kind: 'declaration'; readonly declaration: string; readonly digest: string }
   | { readonly kind: 'inline'; readonly form: string; readonly digest: string };
 
-/** What the emitter knows after printing: which helper roles it declared, under which names. */
+/**
+ * What the emitter knows after printing: which helper roles it declared under which names, and the
+ * canonical print of every inline opcode's emitted form. The forms come from the emitter, never from
+ * the registry: digesting them is what lets `assertRuntimeCertificateBindings` compare emitted
+ * structure with the form Lean states instead of comparing the registry with itself.
+ */
 export interface RuntimeSymbolContext {
   readonly helperDeclarations: ReadonlyMap<string, string>;
   readonly inlineForms: ReadonlyMap<string, string>;
@@ -246,9 +256,9 @@ export interface RuntimeSymbolContext {
 
 /**
  * Resolves the tagged runtime symbol a certificate names. `inline:<opcode>` has no declaration and
- * binds to the one emitted form the registry gives that opcode; `helper:<role>` binds to the
- * declaration the emitter allocated for that role, which is not a fixed name; anything else is a
- * declaration name. Every case ends in a digest over real emitted text.
+ * binds to the form the emitter printed for that opcode; `helper:<role>` binds to the declaration
+ * the emitter allocated for that role, which is not a fixed name; anything else is a declaration
+ * name. Every case ends in a digest over real emitted text.
  */
 export function bindRuntimeSymbol(runtimeSymbol: string, context: RuntimeSymbolContext): RuntimeSymbolBinding {
   const separator = runtimeSymbol.indexOf(':');

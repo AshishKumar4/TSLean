@@ -5,9 +5,9 @@
     "bun": "1.4.0",
     "node": "v22.22.3",
     "typescript": "6.0.2",
-    "vitest": "vitest/4.1.11 linux-x64 node-v22.22.3",
+    "vitest": "vitest/4.1.2 linux-x64 node-v22.22.3",
     "prettier": "3.9.6",
-    "eslint": "v10.9.0",
+    "eslint": "v10.8.1",
     "lean": "Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)",
     "lake": "Lake version 5.0.0-src+819816b (Lean version 4.33.1)"
   },
@@ -51,6 +51,14 @@
       "imports": 22,
       "modules": 2362,
       "declarations": 6168
+    },
+    "semanticsGate": {
+      "expressionOperations": 14,
+      "declarationFamilies": 3,
+      "typeForms": 9,
+      "opcodes": 26,
+      "assumptions": 9,
+      "probeGroups": 9
     }
   },
   "refinementProofs": {
@@ -171,12 +179,13 @@
     }
   ],
   "hashes": {
-    "source": "sha256:ad9fc04559d9f84815852e27437c4739c79c76a4515e61740c28ebc362993ea0",
+    "source": "sha256:34cff6d69af273e0c6e6c1ed8533163c938777f54e0b0510c35e41b124eaad93",
+    "semanticsGate": "sha256:c3409553903483d9d5ec3f56da84b4a0b5b73661faeb4b8d01ee0fbcf37f95f4",
     "jsRuntime": "sha256:03f43c01641fd7379f87e7e2a56ad4fc92528c129efa2c736e289e70a3283deb",
     "refinementRuntimeAndBarrel": "sha256:3c4badb33a92287e32a4156353ca3ac594fa575336a633ce98cdcd21e82e1ae2",
     "refinementTestsAuditRegistry": "sha256:442fe58d68dc9252b1622506eeecbcd9cb57f400ff4474f385f3bbb8cf9a311c",
     "corpus": "sha256:813ba0e3fa8d02912872c4451cf33773aa0fc627dac24f68f770e25506fa1903",
     "differentialSpecHarness": "sha256:a60e709b193d859da6521ab4179c645fd0c33cb50cfa9d1fba9f486a4feb6eb5",
-    "trustEvidenceInfrastructure": "sha256:6193cc303c1f350a9eacb01ea1b86ef9449eaa2552016b9e12e24cc492dad067"
+    "trustEvidenceInfrastructure": "sha256:6d787baded5bc6ea93dcdeb7b9723a0a828e3da266dc7a801e119f30b03a928b"
   }
 }

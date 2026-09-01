@@ -169,11 +169,16 @@ interface LeanRuntimeOpcodeBase {
    * constructor whose field the emitted form reads.
    */
   readonly leanSymbol: string;
-  /** The one TypeScript form the emitter produces, written over the opcode's own operands. */
-  readonly runtimeForm: string;
+  /**
+   * The operand names the registry's emitted form is written over, positionally. The form itself is
+   * not restated here: `inlineOperationForms` in `emitter.ts` prints what the emitter builds over
+   * these names, and the certificate binding digests that print, so the Lean row's `emittedForm` is
+   * joined against emitted structure rather than against a copy of itself.
+   */
+  readonly operands: readonly string[];
   /**
    * The kernel-checked Lean theorem that relates `leanSymbol` to this runtime symbol. The compiler
-   * guarantees the emitted TypeScript is exactly the row's inline form, or its tagged helper.
+   * checks that the emitted TypeScript is exactly the row's inline form, or its tagged helper.
    */
   readonly modelTheorem: string;
   /** The assumption records that theorem closes over, in this order. */
@@ -228,7 +233,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'bool.and',
     runtimeSymbol: 'inline:bool.and',
     leanSymbol: 'Bool.and',
-    runtimeForm: 'left && right',
+    operands: ['left', 'right'],
     modelTheorem: `${MODEL_NAMESPACE}.boolAndModelsAnd`,
     assumptions: ['boolean.logical-operators'],
     ...monomorphic([BOOLEAN, BOOLEAN], BOOLEAN),
@@ -237,7 +242,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'bool.or',
     runtimeSymbol: 'inline:bool.or',
     leanSymbol: 'Bool.or',
-    runtimeForm: 'left || right',
+    operands: ['left', 'right'],
     modelTheorem: `${MODEL_NAMESPACE}.boolOrModelsOr`,
     assumptions: ['boolean.logical-operators'],
     ...monomorphic([BOOLEAN, BOOLEAN], BOOLEAN),
@@ -246,7 +251,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'bool.not',
     runtimeSymbol: 'inline:bool.not',
     leanSymbol: 'Bool.not',
-    runtimeForm: '!operand',
+    operands: ['operand'],
     modelTheorem: `${MODEL_NAMESPACE}.boolNotModelsNot`,
     assumptions: ['boolean.logical-operators'],
     ...monomorphic([BOOLEAN], BOOLEAN),
@@ -255,7 +260,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'bool.equals',
     runtimeSymbol: 'inline:bool.equals',
     leanSymbol: 'instDecidableEqBool',
-    runtimeForm: 'left === right',
+    operands: ['left', 'right'],
     modelTheorem: `${MODEL_NAMESPACE}.boolEqualsModelsBEq`,
     assumptions: ['strict-equality.same-type'],
     ...monomorphic([BOOLEAN, BOOLEAN], BOOLEAN),
@@ -264,7 +269,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'nat.add',
     runtimeSymbol: 'inline:nat.add',
     leanSymbol: 'Nat.add',
-    runtimeForm: 'left + right',
+    operands: ['left', 'right'],
     modelTheorem: `${MODEL_NAMESPACE}.natAddModelsAdd`,
     assumptions: ['bigint.exact-arithmetic'],
     ...monomorphic([NAT, NAT], NAT),
@@ -274,7 +279,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     runtimeSymbol: 'helper:nat-truncated-subtraction',
     components: ['inline:nat.less', 'conditional:select', 'primitive:bigint.subtract'],
     leanSymbol: 'Nat.sub',
-    runtimeForm: 'left < right ? 0n : left - right',
+    operands: ['left', 'right'],
     modelTheorem: `${MODEL_NAMESPACE}.natSubtractModelsSub`,
     // Ordered to match the components above: the comparison decides, the conditional selects, and
     // the subtraction runs only on the branch the comparison admitted.
@@ -285,7 +290,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'nat.multiply',
     runtimeSymbol: 'inline:nat.multiply',
     leanSymbol: 'Nat.mul',
-    runtimeForm: 'left * right',
+    operands: ['left', 'right'],
     modelTheorem: `${MODEL_NAMESPACE}.natMultiplyModelsMul`,
     assumptions: ['bigint.exact-arithmetic'],
     ...monomorphic([NAT, NAT], NAT),
@@ -294,7 +299,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'nat.less',
     runtimeSymbol: 'inline:nat.less',
     leanSymbol: 'Nat.decLt',
-    runtimeForm: 'left < right',
+    operands: ['left', 'right'],
     modelTheorem: `${MODEL_NAMESPACE}.natLessModelsLt`,
     assumptions: ['bigint.relational'],
     ...monomorphic([NAT, NAT], BOOLEAN),
@@ -303,7 +308,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'nat.lessOrEqual',
     runtimeSymbol: 'inline:nat.lessOrEqual',
     leanSymbol: 'Nat.decLe',
-    runtimeForm: 'left <= right',
+    operands: ['left', 'right'],
     modelTheorem: `${MODEL_NAMESPACE}.natLessOrEqualModelsLe`,
     assumptions: ['bigint.relational'],
     ...monomorphic([NAT, NAT], BOOLEAN),
@@ -312,7 +317,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'nat.equals',
     runtimeSymbol: 'inline:nat.equals',
     leanSymbol: 'instDecidableEqNat',
-    runtimeForm: 'left === right',
+    operands: ['left', 'right'],
     modelTheorem: `${MODEL_NAMESPACE}.natEqualsModelsBEq`,
     assumptions: ['strict-equality.same-type'],
     ...monomorphic([NAT, NAT], BOOLEAN),
@@ -321,7 +326,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'nat.successor',
     runtimeSymbol: 'inline:nat.successor',
     leanSymbol: 'Nat.succ',
-    runtimeForm: 'operand + 1n',
+    operands: ['operand'],
     modelTheorem: `${MODEL_NAMESPACE}.natSuccessorModelsSucc`,
     assumptions: ['bigint.exact-arithmetic'],
     ...monomorphic([NAT], NAT),
@@ -330,7 +335,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'string.append',
     runtimeSymbol: 'inline:string.append',
     leanSymbol: 'String.append',
-    runtimeForm: 'left + right',
+    operands: ['left', 'right'],
     modelTheorem: `${MODEL_NAMESPACE}.stringAppendModelsAppend`,
     assumptions: ['string.utf16-concatenation'],
     ...monomorphic([STRING, STRING], STRING),
@@ -339,7 +344,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'string.equals',
     runtimeSymbol: 'inline:string.equals',
     leanSymbol: 'instDecidableEqString',
-    runtimeForm: 'left === right',
+    operands: ['left', 'right'],
     modelTheorem: `${MODEL_NAMESPACE}.stringEqualsModelsBEq`,
     assumptions: ['strict-equality.same-type'],
     ...monomorphic([STRING, STRING], BOOLEAN),
@@ -348,7 +353,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'list.length',
     runtimeSymbol: 'inline:list.length',
     leanSymbol: 'List.length',
-    runtimeForm: 'BigInt(value.length)',
+    operands: ['value'],
     modelTheorem: `${MODEL_NAMESPACE}.listLengthModelsLength`,
     assumptions: ['bigint.from-length'],
     typeParameters: 1,
@@ -359,7 +364,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'list.isEmpty',
     runtimeSymbol: 'inline:list.isEmpty',
     leanSymbol: 'List.isEmpty',
-    runtimeForm: 'value.length === 0',
+    operands: ['value'],
     modelTheorem: `${MODEL_NAMESPACE}.listIsEmptyModelsIsEmpty`,
     assumptions: ['array.dense-element-sequence'],
     typeParameters: 1,
@@ -370,7 +375,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'list.append',
     runtimeSymbol: 'inline:list.append',
     leanSymbol: 'List.append',
-    runtimeForm: '[...left, ...right]',
+    operands: ['left', 'right'],
     modelTheorem: `${MODEL_NAMESPACE}.listAppendModelsAppend`,
     assumptions: ['array.dense-element-sequence'],
     typeParameters: 1,
@@ -384,7 +389,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'list.reverse',
     runtimeSymbol: 'inline:list.reverse',
     leanSymbol: 'List.reverse',
-    runtimeForm: '[...value].reverse()',
+    operands: ['value'],
     modelTheorem: `${MODEL_NAMESPACE}.listReverseModelsReverse`,
     assumptions: ['array.dense-element-sequence'],
     typeParameters: 1,
@@ -395,7 +400,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'list.map',
     runtimeSymbol: 'inline:list.map',
     leanSymbol: 'List.map',
-    runtimeForm: 'value.map((element) => transform(element))',
+    operands: ['transform', 'value'],
     modelTheorem: `${MODEL_NAMESPACE}.listMapModelsMap`,
     assumptions: ['array.dense-element-sequence'],
     typeParameters: 2,
@@ -409,7 +414,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'list.filter',
     runtimeSymbol: 'inline:list.filter',
     leanSymbol: 'List.filter',
-    runtimeForm: 'value.filter((element) => keep(element))',
+    operands: ['keep', 'value'],
     modelTheorem: `${MODEL_NAMESPACE}.listFilterModelsFilter`,
     assumptions: ['array.dense-element-sequence'],
     typeParameters: 1,
@@ -423,7 +428,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'list.foldLeft',
     runtimeSymbol: 'inline:list.foldLeft',
     leanSymbol: 'List.foldl',
-    runtimeForm: 'value.reduce((accumulator, element) => step(accumulator, element), initial)',
+    operands: ['step', 'initial', 'value'],
     modelTheorem: `${MODEL_NAMESPACE}.listFoldLeftModelsFoldl`,
     assumptions: ['array.dense-element-sequence'],
     typeParameters: 2,
@@ -438,7 +443,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'list.foldRight',
     runtimeSymbol: 'inline:list.foldRight',
     leanSymbol: 'List.foldr',
-    runtimeForm: 'value.reduceRight((accumulator, element) => step(element, accumulator), initial)',
+    operands: ['step', 'initial', 'value'],
     modelTheorem: `${MODEL_NAMESPACE}.listFoldRightModelsFoldr`,
     assumptions: ['array.dense-element-sequence'],
     typeParameters: 2,
@@ -453,7 +458,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'list.any',
     runtimeSymbol: 'inline:list.any',
     leanSymbol: 'List.any',
-    runtimeForm: 'value.some((element) => holds(element))',
+    operands: ['value', 'holds'],
     modelTheorem: `${MODEL_NAMESPACE}.listAnyModelsAny`,
     assumptions: ['array.dense-element-sequence'],
     typeParameters: 1,
@@ -467,7 +472,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'list.all',
     runtimeSymbol: 'inline:list.all',
     leanSymbol: 'List.all',
-    runtimeForm: 'value.every((element) => holds(element))',
+    operands: ['value', 'holds'],
     modelTheorem: `${MODEL_NAMESPACE}.listAllModelsAll`,
     assumptions: ['array.dense-element-sequence'],
     typeParameters: 1,
@@ -487,7 +492,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
       'representation:option.tagged-option',
     ],
     leanSymbol: 'List.head?',
-    runtimeForm: 'value.length === 0 ? { kind: "none" } : { kind: "some", value: value[0] }',
+    operands: ['value'],
     modelTheorem: `${MODEL_NAMESPACE}.listHeadModelsHead`,
     // Ordered to match the components above: the emptiness test reads the sequence, the conditional
     // selects, and only the non-empty branch builds the tagged object over the first element.
@@ -500,7 +505,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'list.first',
     runtimeSymbol: 'inline:list.first',
     leanSymbol: 'List.cons',
-    runtimeForm: 'value[0]',
+    operands: ['value'],
     modelTheorem: `${MODEL_NAMESPACE}.listFirstModelsHead`,
     assumptions: ['array.dense-element-sequence'],
     typeParameters: 1,
@@ -511,7 +516,7 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     opcode: 'list.rest',
     runtimeSymbol: 'inline:list.rest',
     leanSymbol: 'List.cons',
-    runtimeForm: 'value.slice(1)',
+    operands: ['value'],
     modelTheorem: `${MODEL_NAMESPACE}.listRestModelsTail`,
     assumptions: ['array.dense-element-sequence'],
     typeParameters: 1,

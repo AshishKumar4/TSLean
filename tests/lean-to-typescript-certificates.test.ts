@@ -10,6 +10,7 @@ import {
   RuntimeCertificateUnresolvedError,
   type RuntimeCertificateCatalog,
 } from '../src/lean-to-typescript/certificates.js';
+import { inlineOperationForms } from '../src/lean-to-typescript/emitter.js';
 
 const { catalog, sha256: registrySha256 } = loadRuntimeCertificateRegistry();
 
@@ -124,6 +125,41 @@ describe('Lean-to-TypeScript runtime certificates', () => {
         [],
       ),
     ).toThrowError(/must resolve exactly once/u);
+  });
+
+  test('prints every inline opcode in exactly the form the registry certifies', () => {
+    const forms = inlineOperationForms();
+    const inline = catalog.certificates.filter((certificate) => certificate.runtimeSymbol.startsWith('inline:'));
+    expect(inline.length).toBeGreaterThan(0);
+    // The certificate an emitted package records digests this print, so an inline opcode's binding is
+    // a claim about emitted structure rather than a digest of the registry row it is compared with.
+    for (const certificate of inline) {
+      expect(forms.get(certificate.opcode)).toBe(certificate.emittedForm);
+      expect(runtimeBodyDigest(forms.get(certificate.opcode) ?? '')).toBe(runtimeBodyDigest(certificate.emittedForm));
+    }
+    // A helper reaches the target as a declaration, so it has no inline form to print.
+    for (const certificate of catalog.certificates) {
+      if (certificate.runtimeSymbol.startsWith('helper:')) expect(forms.get(certificate.opcode)).toBeUndefined();
+    }
+    expect(forms.size).toBe(inline.length);
+    // One drifted form is one refused package: the binding a drifted emitter records no longer
+    // digests the form Lean states.
+    const [first] = inline;
+    if (first === undefined) throw new TypeError('the registry certifies no inline opcode');
+    expect(() =>
+      assertRuntimeCertificateBindings(
+        catalog,
+        [
+          {
+            opcode: first.opcode,
+            runtimeSymbol: first.runtimeSymbol,
+            declaration: '',
+            runtimeBodySha256: runtimeBodyDigest(`(${first.emittedForm})`),
+          },
+        ],
+        [],
+      ),
+    ).toThrowError(`inline runtime form digest does not match the registry: ${first.opcode}`);
   });
 
   test('resolves every certified opcode to a registry row with a proved theorem', () => {
