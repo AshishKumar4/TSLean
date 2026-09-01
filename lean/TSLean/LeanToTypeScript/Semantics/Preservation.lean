@@ -31,44 +31,48 @@ structure Aligned (program : Ir.Program) (sourceScope : List Source.Value)
   trace : Relation.RefinesTrace program state trace state.trace
 
 /-- One lowered expression refines its source from every aligned configuration. -/
-def Everywhere (program : Ir.Program) (target : Target.Program) (fuel : Nat)
+def Everywhere (program : Ir.Program) (target : Target.Program)
+    (runtime : Runtime) (fuel : Nat)
     (expression : Ir.Expr) (emitted : Target.Expr) : Prop :=
   ∀ (sourceScope : List Source.Value) (targetScope : List Value) (trace : Source.Trace)
     (state : Target.State),
     Aligned program sourceScope targetScope trace state →
     Relation.Refines program state
       (Source.eval program fuel sourceScope trace expression)
-      (Target.eval target fuel targetScope state emitted)
+      (Target.eval target runtime fuel targetScope state emitted)
 
 /-- One lowered argument list refines its source from every aligned configuration. -/
-def EverywhereList (program : Ir.Program) (target : Target.Program) (fuel : Nat)
+def EverywhereList (program : Ir.Program) (target : Target.Program)
+    (runtime : Runtime) (fuel : Nat)
     (expressions : List Ir.Expr) (emitted : List Target.Expr) : Prop :=
   ∀ (sourceScope : List Source.Value) (targetScope : List Value) (trace : Source.Trace)
     (state : Target.State),
     Aligned program sourceScope targetScope trace state →
     Relation.RefinesList program state
       (Source.evalList program fuel sourceScope trace expressions)
-      (Target.evalList target fuel targetScope state emitted)
+      (Target.evalList target runtime fuel targetScope state emitted)
 
 /-- One lowered field list refines its source from every aligned configuration. -/
-def EverywhereFields (program : Ir.Program) (target : Target.Program) (fuel : Nat)
+def EverywhereFields (program : Ir.Program) (target : Target.Program)
+    (runtime : Runtime) (fuel : Nat)
     (fields : List (String × Ir.Expr)) (emitted : List (String × Target.Expr)) : Prop :=
   ∀ (sourceScope : List Source.Value) (targetScope : List Value) (trace : Source.Trace)
     (state : Target.State),
     Aligned program sourceScope targetScope trace state →
     Relation.RefinesFields program state
       (Source.evalFields program fuel sourceScope trace fields)
-      (Target.evalProperties target fuel targetScope state emitted)
+      (Target.evalProperties target runtime fuel targetScope state emitted)
 
 /-- One lowered function body refines its source from every aligned configuration. -/
-def EverywhereBody (program : Ir.Program) (target : Target.Program) (fuel : Nat)
+def EverywhereBody (program : Ir.Program) (target : Target.Program)
+    (runtime : Runtime) (fuel : Nat)
     (body : Ir.Expr) (emitted : Target.Body) : Prop :=
   ∀ (sourceScope : List Source.Value) (targetScope : List Value) (trace : Source.Trace)
     (state : Target.State),
     Aligned program sourceScope targetScope trace state →
     Relation.Refines program state
       (Source.eval program fuel sourceScope trace body)
-      (Target.evalBody target fuel targetScope state emitted)
+      (Target.evalBody target runtime fuel targetScope state emitted)
 
 /-- Every declared function has a lowered counterpart, declaring the same number of parameters. -/
 def Lowered (program : Ir.Program) (target : Target.Program) : Prop :=
@@ -83,7 +87,7 @@ def EveryFunction (program : Ir.Program) (target : Target.Program) (fuel : Nat) 
     (body : Ir.Expr) (emitted : Target.Function),
     program.function? name = some (parameters, result, recursion, body) →
     target.find? name = some emitted →
-    EverywhereBody program target fuel body emitted.body
+    EverywhereBody program target runtime fuel body emitted.body
 
 /-! ## Support -/
 
@@ -338,7 +342,7 @@ theorem fields_lookup {program : Ir.Program} {state : Target.State} :
 lets the tag chain read its scrutinee once per arm without the repeated reads being observable. -/
 def StateStable (target : Target.Program) (fuel : Nat) (emitted : Target.Expr) : Prop :=
   ∀ (targetScope : List Value) (state : Target.State) (produced : Value) (next : Target.State),
-    Target.eval target fuel targetScope state emitted = .ok produced next → next = state
+    Target.eval target runtime fuel targetScope state emitted = .ok produced next → next = state
 
 /--
 A scrutinee the tag chain may read once per arm, and may also drop.
@@ -350,7 +354,7 @@ secure.
 -/
 structure Readable (program : Ir.Program) (target : Target.Program) (fuel : Nat)
     (scrutinee : Ir.Expr) (emitted : Target.Expr) : Prop where
-  refines : Everywhere program target fuel scrutinee emitted
+  refines : Everywhere program target runtime fuel scrutinee emitted
   sourcePure : ∀ (sourceScope : List Source.Value) (trace : Source.Trace),
     (∃ value, Source.eval program fuel sourceScope trace scrutinee = .value value trace) ∨
       (∃ fault, Source.eval program fuel sourceScope trace scrutinee = .fault fault trace)
@@ -365,8 +369,8 @@ def EverywhereCases (program : Ir.Program) (target : Target.Program) (fuel : Nat
   | (tag, arm) :: rest, emitted =>
       ∃ (emittedArm : Target.Expr) (restEmitted : List (String × Target.Expr)),
         emitted = (tag, emittedArm) :: restEmitted ∧
-          Everywhere program target fuel arm emittedArm ∧
-          EverywhereCases program target fuel rest restEmitted
+          Everywhere program target runtime fuel arm emittedArm ∧
+          EverywhereCases program target runtime fuel rest restEmitted
 
 /--
 What one admitted IR operation owes: given that each of its subexpressions' lowerings refines it from
@@ -375,55 +379,55 @@ exactly the one `src/lean-to-typescript/emitter.ts` builds for that operation.
 -/
 def Op.Preserves : Ir.Op → Prop
   | .varRef => ∀ (program : Ir.Program) (target : Target.Program) (fuel index : Nat),
-      Everywhere program target fuel (.varRef index) (.binding index)
+      Everywhere program target runtime fuel (.varRef index) (.binding index)
   | .boolLit => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat) (value : Bool),
-      Everywhere program target fuel (.boolLit value) (.boolLit value)
+      Everywhere program target runtime fuel (.boolLit value) (.boolLit value)
   | .letBind => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat) (name : String)
       (value body : Ir.Expr) (emittedValue : Target.Expr) (emittedBody : Target.Body),
-      Everywhere program target fuel value emittedValue →
-      EverywhereBody program target fuel body emittedBody →
-      EverywhereBody program target fuel (.letBind name value body)
+      Everywhere program target runtime fuel value emittedValue →
+      EverywhereBody program target runtime fuel body emittedBody →
+      EverywhereBody program target runtime fuel (.letBind name value body)
         (.constBind name emittedValue emittedBody)
   | .fieldGet => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat)
       (subject : Ir.Expr) (field : String) (emittedSubject : Target.Expr),
-      Everywhere program target fuel subject emittedSubject →
-      Everywhere program target fuel (.fieldGet subject field) (.member emittedSubject field)
+      Everywhere program target runtime fuel subject emittedSubject →
+      Everywhere program target runtime fuel (.fieldGet subject field) (.member emittedSubject field)
   | .ifThenElse => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat)
       (condition consequent alternate : Ir.Expr)
       (emittedCondition emittedConsequent emittedAlternate : Target.Expr),
-      Everywhere program target fuel condition emittedCondition →
-      Everywhere program target fuel consequent emittedConsequent →
-      Everywhere program target fuel alternate emittedAlternate →
-      Everywhere program target fuel (.ifThenElse condition consequent alternate)
+      Everywhere program target runtime fuel condition emittedCondition →
+      Everywhere program target runtime fuel consequent emittedConsequent →
+      Everywhere program target runtime fuel alternate emittedAlternate →
+      Everywhere program target runtime fuel (.ifThenElse condition consequent alternate)
         (.conditional emittedCondition emittedConsequent emittedAlternate)
   | .boolEquals => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat)
       (left right : Ir.Expr) (emittedLeft emittedRight : Target.Expr),
-      Everywhere program target fuel left emittedLeft →
-      Everywhere program target fuel right emittedRight →
-      Everywhere program target fuel (.boolEquals left right)
+      Everywhere program target runtime fuel left emittedLeft →
+      Everywhere program target runtime fuel right emittedRight →
+      Everywhere program target runtime fuel (.boolEquals left right)
           (.strictEquals emittedLeft emittedRight) ∧
-        Everywhere program target fuel (.boolEquals left (.boolLit true)) emittedLeft ∧
-        Everywhere program target fuel (.boolEquals (.boolLit true) right) emittedRight
+        Everywhere program target runtime fuel (.boolEquals left (.boolLit true)) emittedLeft ∧
+        Everywhere program target runtime fuel (.boolEquals (.boolLit true) right) emittedRight
   | .boolAnd => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat)
       (left right : Ir.Expr) (emittedLeft emittedRight : Target.Expr),
-      Everywhere program target fuel left emittedLeft →
-      Everywhere program target fuel right emittedRight →
-      Everywhere program target fuel (.boolAnd left right) (.logicalAnd emittedLeft emittedRight)
+      Everywhere program target runtime fuel left emittedLeft →
+      Everywhere program target runtime fuel right emittedRight →
+      Everywhere program target runtime fuel (.boolAnd left right) (.logicalAnd emittedLeft emittedRight)
   | .boolOr => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat)
       (left right : Ir.Expr) (emittedLeft emittedRight : Target.Expr),
-      Everywhere program target fuel left emittedLeft →
-      Everywhere program target fuel right emittedRight →
-      Everywhere program target fuel (.boolOr left right) (.logicalOr emittedLeft emittedRight)
+      Everywhere program target runtime fuel left emittedLeft →
+      Everywhere program target runtime fuel right emittedRight →
+      Everywhere program target runtime fuel (.boolOr left right) (.logicalOr emittedLeft emittedRight)
   | .boolNot => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat)
       (operand : Ir.Expr) (emittedOperand : Target.Expr),
-      Everywhere program target fuel operand emittedOperand →
-      Everywhere program target fuel (.boolNot operand) (.logicalNot emittedOperand)
+      Everywhere program target runtime fuel operand emittedOperand →
+      Everywhere program target runtime fuel (.boolNot operand) (.logicalNot emittedOperand)
   | .someValue => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat)
       (value : Ir.Expr) (emitted : Target.Expr),
-      Everywhere program target fuel value emitted →
-      Everywhere program target fuel (.someValue value) emitted
+      Everywhere program target runtime fuel value emitted →
+      Everywhere program target runtime fuel (.someValue value) emitted
   | .noneValue => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat),
-      Everywhere program target fuel .noneValue .undefinedLit
+      Everywhere program target runtime fuel .noneValue .undefinedLit
   | .variant => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat)
       (type name : String) (constructors : List Ir.Constructor) (constructor : Ir.Constructor)
       (arguments : List Ir.Expr) (emittedArguments : List Target.Expr),
@@ -433,19 +437,19 @@ def Op.Preserves : Ir.Op → Prop
       (constructor.fields.map Ir.Field.name).Nodup →
       constructor.fields.length = arguments.length →
       arguments.length = emittedArguments.length →
-      EverywhereList program target fuel arguments emittedArguments →
+      EverywhereList program target runtime fuel arguments emittedArguments →
       (Ir.allNullary constructors = true →
-          Everywhere program target fuel (.variant type name arguments) (.stringLit name)) ∧
+          Everywhere program target runtime fuel (.variant type name arguments) (.stringLit name)) ∧
         (Ir.allNullary constructors = false →
-          Everywhere program target fuel (.variant type name arguments)
+          Everywhere program target runtime fuel (.variant type name arguments)
             (.objectLiteral (("kind", .stringLit name) ::
               (constructor.fields.map Ir.Field.name).zip emittedArguments)))
   | .record => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat) (type : String)
       (fields : List (String × Ir.Expr)) (emittedFields : List (String × Target.Expr)),
       (∀ field ∈ fields, Ir.ValidKey field.1) →
       (fields.map Prod.fst).Nodup →
-      EverywhereFields program target fuel fields emittedFields →
-      Everywhere program target fuel (.record type fields) (.objectLiteral emittedFields)
+      EverywhereFields program target runtime fuel fields emittedFields →
+      Everywhere program target runtime fuel (.record type fields) (.objectLiteral emittedFields)
   | .matchOn => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat) (type : String)
       (scrutinee : Ir.Expr) (cases : List (String × Ir.Expr)) (emittedScrutinee : Target.Expr)
       (emittedCases : List (String × Target.Expr)) (chain : Target.Expr)
@@ -453,28 +457,28 @@ def Op.Preserves : Ir.Op → Prop
       program.enum? type = some constructors →
       Ir.allNullary constructors = true →
       Readable program target fuel scrutinee emittedScrutinee →
-      EverywhereCases program target fuel cases emittedCases →
+      EverywhereCases program target runtime fuel cases emittedCases →
       Compile.tagChain emittedScrutinee emittedCases = some chain →
-      Everywhere program target fuel (.matchOn type scrutinee cases) chain
+      Everywhere program target runtime fuel (.matchOn type scrutinee cases) chain
   | .call => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat) (function : String)
       (arguments : List Ir.Expr) (emittedArguments : List Target.Expr),
       Lowered program target →
-      EverywhereList program target fuel arguments emittedArguments →
+      EverywhereList program target runtime fuel arguments emittedArguments →
       (∀ smaller, smaller + 1 = fuel → EveryFunction program target smaller) →
-      Everywhere program target fuel (.call function arguments)
+      Everywhere program target runtime fuel (.call function arguments)
         (.callFunction function emittedArguments)
   | .lambda => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat)
       (parameters : List Ir.Field) (body : Ir.Expr) (emittedBody : Target.Body),
       Compile.body program body = .ok emittedBody →
-      EverywhereBody program target fuel body emittedBody →
-      Everywhere program target fuel (.lambda parameters body) (.arrow ⟨parameters, body⟩ emittedBody)
+      EverywhereBody program target runtime fuel body emittedBody →
+      Everywhere program target runtime fuel (.lambda parameters body) (.arrow ⟨parameters, body⟩ emittedBody)
   | .apply => ∀ (program : Ir.Program) (target : Target.Program) (fuel index : Nat)
       (arguments : List Ir.Expr) (emittedArguments : List Target.Expr),
-      EverywhereList program target fuel arguments emittedArguments →
+      EverywhereList program target runtime fuel arguments emittedArguments →
       (∀ smaller, smaller + 1 = fuel → ∀ body emittedBody,
         Compile.body program body = .ok emittedBody →
-        EverywhereBody program target smaller body emittedBody) →
-      Everywhere program target fuel (.apply (.varRef index) arguments)
+        EverywhereBody program target runtime smaller body emittedBody) →
+      Everywhere program target runtime fuel (.apply (.varRef index) arguments)
         (.callValue (.binding index) emittedArguments)
 
 /-! ## The theorems -/
@@ -1288,8 +1292,8 @@ theorem evalProperties_zip_ok {target : Target.Program} {fuel : Nat} {targetScop
     ∀ (names : List String) (expressions : List Target.Expr) (state : Target.State)
       (targets : List Value) (next : Target.State),
       names.length = expressions.length →
-      Target.evalList target fuel targetScope state expressions = .ok targets next →
-      Target.evalProperties target fuel targetScope state (names.zip expressions)
+      Target.evalList target runtime fuel targetScope state expressions = .ok targets next →
+      Target.evalProperties target runtime fuel targetScope state (names.zip expressions)
         = .ok (names.zip targets) next
   | [], [], state, targets, next, _, run => by
       simp only [Target.evalList] at run
@@ -1301,14 +1305,14 @@ theorem evalProperties_zip_ok {target : Target.Program} {fuel : Nat} {targetScop
   | _ :: _, [], _, _, _, lengths, _ => by simp at lengths
   | name :: restNames, expression :: restExpressions, state, targets, next, lengths, run => by
       simp only [Target.evalList] at run
-      cases headRun : Target.eval target fuel targetScope state expression with
+      cases headRun : Target.eval target runtime fuel targetScope state expression with
       | thrown error middle => rw [headRun] at run; simp at run
       | fault fault middle => rw [headRun] at run; simp at run
       | exhausted middle => rw [headRun] at run; simp at run
       | ok value middle =>
           rw [headRun] at run
           dsimp only at run
-          cases tailRun : Target.evalList target fuel targetScope middle restExpressions with
+          cases tailRun : Target.evalList target runtime fuel targetScope middle restExpressions with
           | thrown error last => rw [tailRun] at run; simp at run
           | fault fault last => rw [tailRun] at run; simp at run
           | exhausted last => rw [tailRun] at run; simp at run
@@ -1327,8 +1331,8 @@ theorem evalProperties_zip_exhausted {target : Target.Program} {fuel : Nat}
     ∀ (names : List String) (expressions : List Target.Expr) (state : Target.State)
       (next : Target.State),
       names.length = expressions.length →
-      Target.evalList target fuel targetScope state expressions = .exhausted next →
-      Target.evalProperties target fuel targetScope state (names.zip expressions) = .exhausted next
+      Target.evalList target runtime fuel targetScope state expressions = .exhausted next →
+      Target.evalProperties target runtime fuel targetScope state (names.zip expressions) = .exhausted next
   | [], [], state, next, _, run => by
       simp only [Target.evalList] at run
       exact absurd run (by simp)
@@ -1336,7 +1340,7 @@ theorem evalProperties_zip_exhausted {target : Target.Program} {fuel : Nat}
   | _ :: _, [], _, _, lengths, _ => by simp at lengths
   | name :: restNames, expression :: restExpressions, state, next, lengths, run => by
       simp only [Target.evalList] at run
-      cases headRun : Target.eval target fuel targetScope state expression with
+      cases headRun : Target.eval target runtime fuel targetScope state expression with
       | thrown error middle => rw [headRun] at run; simp at run
       | fault fault middle => rw [headRun] at run; simp at run
       | exhausted middle =>
@@ -1347,7 +1351,7 @@ theorem evalProperties_zip_exhausted {target : Target.Program} {fuel : Nat}
       | ok value middle =>
           rw [headRun] at run
           dsimp only at run
-          cases tailRun : Target.evalList target fuel targetScope middle restExpressions with
+          cases tailRun : Target.evalList target runtime fuel targetScope middle restExpressions with
           | thrown error last => rw [tailRun] at run; simp at run
           | fault fault last => rw [tailRun] at run; simp at run
           | ok values last => rw [tailRun] at run; simp at run
@@ -1536,14 +1540,14 @@ theorem tagChain_refines {program : Ir.Program} {target : Target.Program} {fuel 
     ∀ (cases : List (String × Ir.Expr)) (emittedCases : List (String × Target.Expr))
       (chain : Target.Expr) (tagName : String) (sourceScope : List Source.Value)
       (targetScope : List Value) (trace : Source.Trace) (state : Target.State),
-      EverywhereCases program target fuel cases emittedCases →
+      EverywhereCases program target runtime fuel cases emittedCases →
       Compile.tagChain emittedScrutinee emittedCases = some chain →
       Aligned program sourceScope targetScope trace state →
-      Target.eval target fuel targetScope state emittedScrutinee
+      Target.eval target runtime fuel targetScope state emittedScrutinee
         = .ok (.primitive (.string (JSString.ofLeanString tagName))) state →
       Relation.Refines program state
         (Source.evalCases program fuel sourceScope trace tagName [] cases)
-        (Target.eval target fuel targetScope state chain)
+        (Target.eval target runtime fuel targetScope state chain)
   | [], emittedCases, chain, tagName, sourceScope, targetScope, trace, state, armsStep, built,
       aligned, scrutineeRun => by
       unfold EverywhereCases at armsStep
@@ -1651,17 +1655,17 @@ model omits could not change any answer.
 -/
 theorem member_reads_own_data_property {program : Ir.Program} {target : Target.Program} {fuel : Nat}
     {subject : Ir.Expr} {field : String} {emittedSubject : Target.Expr}
-    (subjectStep : Everywhere program target fuel subject emittedSubject)
+    (subjectStep : Everywhere program target runtime fuel subject emittedSubject)
     {sourceScope : List Source.Value} {targetScope : List Value} {trace : Source.Trace}
     {state : Target.State} (aligned : Aligned program sourceScope targetScope trace state)
     {value : Source.Value} {next : Source.Trace}
     (sourceRun : Source.eval program fuel sourceScope trace (.fieldGet subject field)
       = .value value next) :
     ∃ ref image final,
-      Target.eval target fuel targetScope state emittedSubject = .ok (.object ref) final ∧
+      Target.eval target runtime fuel targetScope state emittedSubject = .ok (.object ref) final ∧
         final.heap.getOwnProperty ref (Ir.propertyKey field)
           = .ok (some (.data ⟨image, true, true, true⟩)) ∧
-        Target.eval target fuel targetScope state (.member emittedSubject field)
+        Target.eval target runtime fuel targetScope state (.member emittedSubject field)
           = .ok image final ∧
         Relation.Represents program final value image := by
   simp only [Source.eval] at sourceRun
@@ -1743,7 +1747,7 @@ def Family.Preserves : Ir.Family → Prop
           target.find? name = some declaration →
           declaration.parameters = arguments.length →
           Target.enter target (fuel + 1) state name arguments
-            = Target.evalBody target fuel arguments.reverse
+            = Target.evalBody target runtime fuel arguments.reverse
                 (state.record (.function name arguments)) declaration.body
 
 /-- An enum contributes no runtime declaration, and its values are the tag or the tagged object. -/
