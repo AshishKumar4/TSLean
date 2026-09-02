@@ -156,9 +156,12 @@ export class RuntimeCertificateUnresolvedError extends TypeError {
 }
 
 /**
- * Every opcode a program references must carry a Lean certificate whose assumptions all resolve to
- * catalog records. Compilation calls this before it builds anything, so an opcode without a proved
- * lowering cannot reach a manifest, a generated module, or a reviewer.
+ * Every opcode a program references must carry a Lean certificate that stands on something the
+ * registry declares. A row stands on an engine assumption, or — where its emitted form is an
+ * identity on an image two Lean types share — on the ordered model composition that makes it one.
+ * A row with neither would be a lowering nothing accounts for. Compilation calls this before it
+ * builds anything, so an opcode without a proved lowering cannot reach a manifest, a generated
+ * module, or a reviewer.
  */
 export function assertRuntimeOpcodeCertificates(opcodes: readonly string[], catalog: RuntimeCertificateCatalog): void {
   requireCanonicalOrder(opcodes, 'referenced runtime opcodes');
@@ -167,8 +170,11 @@ export function assertRuntimeOpcodeCertificates(opcodes: readonly string[], cata
     if (certificate === undefined) {
       throw new RuntimeCertificateUnresolvedError(referenced, 'no Lean certificate names this opcode');
     }
-    if (certificate.assumptions.length === 0) {
-      throw new RuntimeCertificateUnresolvedError(referenced, 'certificate names no external assumption');
+    if (certificate.assumptions.length === 0 && certificate.components.length === 0) {
+      throw new RuntimeCertificateUnresolvedError(
+        referenced,
+        'certificate names neither an external assumption nor a model composition',
+      );
     }
     for (const id of certificate.assumptions) {
       const assumption = catalog.assumptions.find((entry) => entry.id === id);
@@ -178,6 +184,34 @@ export function assertRuntimeOpcodeCertificates(opcodes: readonly string[], cata
       if (assumption.coverage.length === 0) {
         throw new RuntimeCertificateUnresolvedError(referenced, `assumption ${id} declares no evidence coverage`);
       }
+    }
+  }
+}
+
+/**
+ * Every opcode the compiler can emit carries a Lean certificate, and every certificate names an
+ * opcode the compiler can emit. This is the coverage half of the join: `assertRuntimeOpcodeCertificates`
+ * checks the opcodes one program reached, while this checks the registry against the whole admitted
+ * set, so a row the Lean side proved and this compiler cannot emit — or the reverse — is refused
+ * before any program is compiled rather than the first time one happens to use it.
+ */
+export function assertRuntimeCertificateCoverage(
+  opcodes: readonly string[],
+  catalog: RuntimeCertificateCatalog,
+): void {
+  const certified = new Set(catalog.certificates.map((certificate) => certificate.opcode));
+  const admitted = new Set(opcodes);
+  for (const opcode of opcodes) {
+    if (!certified.has(opcode)) {
+      throw new RuntimeCertificateUnresolvedError(opcode, 'the compiler admits this opcode and no Lean row certifies it');
+    }
+  }
+  for (const certificate of catalog.certificates) {
+    if (!admitted.has(certificate.opcode)) {
+      throw new RuntimeCertificateUnresolvedError(
+        certificate.opcode,
+        'a Lean row certifies this opcode and the compiler does not admit it',
+      );
     }
   }
 }
@@ -374,7 +408,10 @@ function decodeCertificate(
     location,
   );
   const assumptions = strings(certificate['requires'], `${location}.requires`);
-  if (assumptions.length === 0) throw new TypeError(`${location}.requires must name at least one assumption`);
+  const components = strings(certificate['components'], `${location}.components`);
+  if (assumptions.length === 0 && components.length === 0) {
+    throw new TypeError(`${location} must name an assumption closure or a model composition`);
+  }
   for (const assumption of assumptions) {
     if (!knownAssumptions.has(assumption)) {
       throw new TypeError(`${location}.requires references unknown assumption ${assumption}`);
@@ -389,7 +426,7 @@ function decodeCertificate(
     model: qualifiedLeanName(certificate['model'], `${location}.model`),
     relation,
     emittedForm: text(certificate['emittedForm'], `${location}.emittedForm`),
-    components: strings(certificate['components'], `${location}.components`),
+    components,
     assumptions,
   };
 }

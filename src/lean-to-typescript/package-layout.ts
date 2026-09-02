@@ -9,6 +9,13 @@ import { compareCodePoints } from './ordering.js';
 export const LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH = 'tslean-runtime.ts';
 
 /**
+ * The generated package reaches every host operation through one module the substrate provides.
+ * The generated tree never writes it — a `foreign` declaration is imported, never defined — and
+ * its name is outside the Lean module grammar, so no Lean module can claim that path either.
+ */
+export const LEAN_TO_TYPESCRIPT_HOST_MODULE_PATH = 'tslean-host.ts';
+
+/**
  * Windows reserves these device names in every directory, with or without an extension, so a
  * module that spells one has no portable file to be written to.
  */
@@ -45,8 +52,8 @@ export function generatedModulePath(leanModule: string): string {
   const components = leanModule.split('.');
   for (const component of components) assertPathSafeComponent(component, leanModule);
   const path = `${components.join('/')}.ts`;
-  if (path === LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH) {
-    throw new TypeError(`Lean module ${leanModule} claims the generated runtime module path`);
+  if (path === LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH || path === LEAN_TO_TYPESCRIPT_HOST_MODULE_PATH) {
+    throw new TypeError(`Lean module ${leanModule} claims a generated module path the package reserves`);
   }
   return path;
 }
@@ -63,7 +70,7 @@ export function compareGeneratedPaths(left: string, right: string): number {
  * literally or reject it.
  */
 function assertGeneratedModulePath(path: string): void {
-  if (path === LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH) return;
+  if (path === LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH || path === LEAN_TO_TYPESCRIPT_HOST_MODULE_PATH) return;
   if (!path.endsWith('.ts') || path.includes('\\') || /[?#%]/u.test(path)) {
     throw new TypeError(`invalid generated module path: ${path}`);
   }

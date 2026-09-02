@@ -2,9 +2,12 @@ import { createHash } from 'node:crypto';
 import {
   LEAN_TO_TYPESCRIPT_INPUT_PLANES,
   type LeanToTypeScriptClosureEntry,
+  type LeanToTypeScriptCodecSurface,
   type LeanToTypeScriptDeclarationRole,
   type LeanToTypeScriptEnvironmentAttestation,
   type LeanToTypeScriptGeneratedDeclaration,
+  type LeanToTypeScriptHelperDeclaration,
+  type LeanToTypeScriptHostBoundary,
   type LeanToTypeScriptInput,
   type LeanToTypeScriptInputKind,
   type LeanToTypeScriptManifest,
@@ -24,13 +27,15 @@ import {
   type RuntimeConformanceAttestation,
 } from './certificates.js';
 import { compareCodePoints } from './ordering.js';
+import { LEAN_HOST_OPCODES, LEAN_RUNTIME_HELPER_ROLES } from './ir.js';
 
 /**
  * One shared manifest schema version, split as major.minor. A minor bump adds an optional field
  * and every reader in the major accepts it; only a major bump may remove or reinterpret a field,
- * and that is the only change that strands an older reader.
+ * and that is the only change that strands an older reader. The v6 surface adds the host, helper
+ * and codec inventories as required fields, which no v5 writer supplies, so it is a major bump.
  */
-export const LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION = 4_001;
+export const LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION = 5_001;
 
 /**
  * How many lines the provenance header occupies. The header is a fixed template of one line per
@@ -240,6 +245,18 @@ function canonicalSemanticIdentity(semantic: LeanToTypeScriptSemanticIdentity): 
       runtimeBodySha256: certificate.runtimeBodySha256,
     })),
     generatedBodySha256: semantic.generatedBodySha256,
+    hosts: semantic.hosts.map((host) => ({
+      declaration: host.declaration,
+      host: host.host,
+      binding: host.binding,
+      module: host.module,
+    })),
+    helpers: semantic.helpers.map((helper) => ({ role: helper.role, declaration: helper.declaration })),
+    codecs: semantic.codecs.map((codec) => ({
+      declaration: codec.declaration,
+      type: codec.type,
+      statics: codec.statics,
+    })),
   };
 }
 /**
@@ -388,6 +405,9 @@ function decodeSemanticIdentity(value: unknown): LeanToTypeScriptSemanticIdentit
       'semanticIrSha256',
       'certificates',
       'generatedBodySha256',
+      'hosts',
+      'helpers',
+      'codecs',
     ],
     location,
   );
@@ -426,6 +446,9 @@ function decodeSemanticIdentity(value: unknown): LeanToTypeScriptSemanticIdentit
     semanticIrSha256: digest(semantic['semanticIrSha256'], `${location} semantic IR`),
     certificates: decodeCertificateBindings(semantic['certificates'], `${location} certificates`),
     generatedBodySha256: digest(semantic['generatedBodySha256'], `${location} generated body`),
+    hosts: decodeHostBoundaries(semantic['hosts'], `${location} hosts`),
+    helpers: decodeHelperDeclarations(semantic['helpers'], `${location} helpers`),
+    codecs: decodeCodecSurfaces(semantic['codecs'], `${location} codecs`),
   };
 }
 
@@ -536,6 +559,81 @@ function decodeCertificateBindings(value: unknown, location: string): readonly R
     location,
   );
   return bindings;
+}
+
+/**
+ * The host surface the package imports. Every row names a host identity the compiler admits, so a
+ * manifest cannot record a boundary against an operation the substrate never published, and the
+ * rows are ordered by the Lean declaration they came from so the record is a function of the
+ * program rather than of emission order.
+ */
+function decodeHostBoundaries(value: unknown, location: string): readonly LeanToTypeScriptHostBoundary[] {
+  const hosts = array(value, location).map((entry, index): LeanToTypeScriptHostBoundary => {
+    const hostLocation = `${location}[${index}]`;
+    const host = record(entry, hostLocation);
+    exactKeys(host, ['declaration', 'host', 'binding', 'module'], hostLocation);
+    const wire = string(host['host'], `${hostLocation}.host`);
+    if (!Object.hasOwn(LEAN_HOST_OPCODES, wire)) {
+      throw new TypeError(`${hostLocation}.host is not a registered host opcode: ${wire}`);
+    }
+    return {
+      declaration: string(host['declaration'], `${hostLocation}.declaration`),
+      host: wire,
+      binding: bindingName(host['binding'], `${hostLocation}.binding`),
+      module: string(host['module'], `${hostLocation}.module`),
+    };
+  });
+  requireCanonicalOrder(
+    hosts.map((host) => host.declaration),
+    location,
+  );
+  return hosts;
+}
+
+function decodeHelperDeclarations(value: unknown, location: string): readonly LeanToTypeScriptHelperDeclaration[] {
+  const helpers = array(value, location).map((entry, index): LeanToTypeScriptHelperDeclaration => {
+    const helperLocation = `${location}[${index}]`;
+    const helper = record(entry, helperLocation);
+    exactKeys(helper, ['role', 'declaration'], helperLocation);
+    const role = string(helper['role'], `${helperLocation}.role`);
+    if (!LEAN_RUNTIME_HELPER_ROLES.some((admitted) => admitted === role)) {
+      throw new TypeError(`${helperLocation}.role is not a generated helper role: ${role}`);
+    }
+    return { role, declaration: bindingName(helper['declaration'], `${helperLocation}.declaration`) };
+  });
+  requireCanonicalOrder(
+    helpers.map((helper) => helper.role),
+    location,
+  );
+  return helpers;
+}
+
+/** The three statics a structure's generated codec carries, recorded per data type. */
+const CODEC_STATICS: readonly string[] = ['equals', 'fromData', 'toData'];
+
+function decodeCodecSurfaces(value: unknown, location: string): readonly LeanToTypeScriptCodecSurface[] {
+  const codecs = array(value, location).map((entry, index): LeanToTypeScriptCodecSurface => {
+    const codecLocation = `${location}[${index}]`;
+    const codec = record(entry, codecLocation);
+    exactKeys(codec, ['declaration', 'type', 'statics'], codecLocation);
+    const statics = strings(codec['statics'], `${codecLocation}.statics`);
+    requireCanonicalOrder(statics, `${codecLocation}.statics`);
+    for (const member of statics) {
+      if (!CODEC_STATICS.includes(member)) {
+        throw new TypeError(`${codecLocation}.statics names ${member}, which is not a generated codec static`);
+      }
+    }
+    return {
+      declaration: string(codec['declaration'], `${codecLocation}.declaration`),
+      type: bindingName(codec['type'], `${codecLocation}.type`),
+      statics,
+    };
+  });
+  requireCanonicalOrder(
+    codecs.map((codec) => codec.declaration),
+    location,
+  );
+  return codecs;
 }
 
 function decodeRuntimeConformance(value: unknown, location: string): readonly RuntimeConformanceAttestation[] {

@@ -39,7 +39,7 @@
       "statement": "The === operator applied to two values of the same primitive type compares those values and performs no conversion."
     },
     {
-      "canonicalWording": "28:sec-numeric-types-bigint-add:33:sec-numeric-types-bigint-subtract:33:sec-numeric-types-bigint-multiply:126:The +, - and * operators applied to two bigints are exact integer addition, subtraction and multiplication at every magnitude.:40:semantics-probes/bigint.exact-arithmetic:10:bigint-add:15:bigint-subtract:15:bigint-multiply:26:bigint-beyond-safe-integer",
+      "canonicalWording": "28:sec-numeric-types-bigint-add:33:sec-numeric-types-bigint-subtract:33:sec-numeric-types-bigint-multiply:167:The +, - and * operators applied to two bigints are exact integer addition, subtraction and multiplication at every magnitude, including a difference that is negative.:40:semantics-probes/bigint.exact-arithmetic:10:bigint-add:15:bigint-subtract:15:bigint-multiply:26:bigint-negative-difference:26:bigint-beyond-safe-integer",
       "clauses": [
         "sec-numeric-types-bigint-add",
         "sec-numeric-types-bigint-subtract",
@@ -49,6 +49,7 @@
         "bigint-add",
         "bigint-subtract",
         "bigint-multiply",
+        "bigint-negative-difference",
         "bigint-beyond-safe-integer"
       ],
       "id": "bigint.exact-arithmetic",
@@ -56,7 +57,7 @@
       "sourceArtifact": "spec/semantics/ecma262-2025.html",
       "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
       "sourceUrl": "https://tc39.es/ecma262/2025/",
-      "statement": "The +, - and * operators applied to two bigints are exact integer addition, subtraction and multiplication at every magnitude."
+      "statement": "The +, - and * operators applied to two bigints are exact integer addition, subtraction and multiplication at every magnitude, including a difference that is negative."
     },
     {
       "canonicalWording": "24:sec-relational-operators:33:sec-numeric-types-bigint-lessThan:77:The < and <= operators applied to two bigints compare them as exact integers.:34:semantics-probes/bigint.relational:16:bigint-less-than:25:bigint-less-than-or-equal",
@@ -112,7 +113,7 @@
       "statement": "The + operator applied to two strings concatenates their UTF-16 code units and converts nothing."
     },
     {
-      "canonicalWording": "24:sec-array-exotic-objects:23:sec-array.prototype.map:26:sec-array.prototype.filter:26:sec-array.prototype.reduce:31:sec-array.prototype.reduceright:24:sec-array.prototype.some:25:sec-array.prototype.every:27:sec-array.prototype.reverse:25:sec-array.prototype.slice:256:An array literal, a spread of an array, and length, indexing, slice, reverse, map, filter, reduce, reduceRight, some and every over it observe and produce exactly the dense element sequence, including the length === 0 comparison the emitted guards perform.:45:semantics-probes/array.dense-element-sequence:12:array-length:12:array-spread:13:array-reverse:9:array-map:12:array-filter:12:array-reduce:18:array-reduce-right:10:array-some:11:array-every:11:array-index:11:array-slice",
+      "canonicalWording": "24:sec-array-exotic-objects:23:sec-array.prototype.map:26:sec-array.prototype.filter:26:sec-array.prototype.reduce:31:sec-array.prototype.reduceright:24:sec-array.prototype.some:25:sec-array.prototype.every:27:sec-array.prototype.reverse:25:sec-array.prototype.slice:295:An array literal, a spread of an array, a spread followed by one more element, and length, indexing, slice, reverse, map, filter, reduce, reduceRight, some and every over it observe and produce exactly the dense element sequence, including the length === 0 comparison the emitted guards perform.:45:semantics-probes/array.dense-element-sequence:12:array-length:12:array-spread:13:array-reverse:9:array-map:12:array-filter:12:array-reduce:18:array-reduce-right:10:array-some:11:array-every:11:array-index:11:array-slice:19:array-spread-append",
       "clauses": [
         "sec-array-exotic-objects",
         "sec-array.prototype.map",
@@ -135,14 +136,15 @@
         "array-some",
         "array-every",
         "array-index",
-        "array-slice"
+        "array-slice",
+        "array-spread-append"
       ],
       "id": "array.dense-element-sequence",
       "oracle": "semantics-probes/array.dense-element-sequence",
       "sourceArtifact": "spec/semantics/ecma262-2025.html",
       "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
       "sourceUrl": "https://tc39.es/ecma262/2025/",
-      "statement": "An array literal, a spread of an array, and length, indexing, slice, reverse, map, filter, reduce, reduceRight, some and every over it observe and produce exactly the dense element sequence, including the length === 0 comparison the emitted guards perform."
+      "statement": "An array literal, a spread of an array, a spread followed by one more element, and length, indexing, slice, reverse, map, filter, reduce, reduceRight, some and every over it observe and produce exactly the dense element sequence, including the length === 0 comparison the emitted guards perform."
     },
     {
       "canonicalWording": "35:sec-bigint-constructor-number-value:89:The BigInt constructor applied to an array length yields that length as an exact integer.:35:semantics-probes/bigint.from-length:18:bigint-from-length",
@@ -158,6 +160,111 @@
       "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
       "sourceUrl": "https://tc39.es/ecma262/2025/",
       "statement": "The BigInt constructor applied to an array length yields that length as an exact integer."
+    },
+    {
+      "canonicalWording": "24:sec-unary-minus-operator:35:sec-numeric-types-bigint-unaryMinus:86:The unary - operator applied to a bigint is exact integer negation at every magnitude.:32:semantics-probes/bigint.negation:13:bigint-negate:33:bigint-negate-beyond-safe-integer",
+      "clauses": [
+        "sec-unary-minus-operator",
+        "sec-numeric-types-bigint-unaryMinus"
+      ],
+      "coverage": [
+        "bigint-negate",
+        "bigint-negate-beyond-safe-integer"
+      ],
+      "id": "bigint.negation",
+      "oracle": "semantics-probes/bigint.negation",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "The unary - operator applied to a bigint is exact integer negation at every magnitude."
+    },
+    {
+      "canonicalWording": "28:sec-multiplicative-operators:31:sec-numeric-types-bigint-divide:34:sec-numeric-types-bigint-remainder:189:The / and % operators applied to two bigints with a nonzero divisor truncate toward zero and give the remainder the dividend's sign; a zero divisor throws, which the emitted guard prevents.:42:semantics-probes/bigint.truncated-division:23:bigint-divide-truncates:21:bigint-remainder-sign:31:bigint-divide-negative-operands",
+      "clauses": [
+        "sec-multiplicative-operators",
+        "sec-numeric-types-bigint-divide",
+        "sec-numeric-types-bigint-remainder"
+      ],
+      "coverage": [
+        "bigint-divide-truncates",
+        "bigint-remainder-sign",
+        "bigint-divide-negative-operands"
+      ],
+      "id": "bigint.truncated-division",
+      "oracle": "semantics-probes/bigint.truncated-division",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "The / and % operators applied to two bigints with a nonzero divisor truncate toward zero and give the remainder the dividend's sign; a zero divisor throws, which the emitted guard prevents."
+    },
+    {
+      "canonicalWording": "32:sec-string.prototype.codepointat:35:sec-bigint-constructor-number-value:155:The codePointAt(0) method of a one-code-point string is that code point, and the BigInt constructor applied to it is that scalar value as an exact integer.:37:semantics-probes/string.code-point-at:20:string-code-point-at:27:string-code-point-at-astral",
+      "clauses": [
+        "sec-string.prototype.codepointat",
+        "sec-bigint-constructor-number-value"
+      ],
+      "coverage": [
+        "string-code-point-at",
+        "string-code-point-at-astral"
+      ],
+      "id": "string.code-point-at",
+      "oracle": "semantics-probes/string.code-point-at",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "The codePointAt(0) method of a one-code-point string is that code point, and the BigInt constructor applied to it is that scalar value as an exact integer."
+    },
+    {
+      "canonicalWording": "24:sec-string.fromcodepoint:12:sec-tonumber:149:The String.fromCodePoint constructor applied to Number of a bigint that is a Unicode scalar value produces the string of exactly that one code point.:39:semantics-probes/string.from-code-point:22:string-from-code-point:29:string-from-code-point-astral",
+      "clauses": [
+        "sec-string.fromcodepoint",
+        "sec-tonumber"
+      ],
+      "coverage": [
+        "string-from-code-point",
+        "string-from-code-point-astral"
+      ],
+      "id": "string.from-code-point",
+      "oracle": "semantics-probes/string.from-code-point",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "The String.fromCodePoint constructor applied to Number of a bigint that is a Unicode scalar value produces the string of exactly that one code point."
+    },
+    {
+      "canonicalWording": "31:sec-string.prototype-@@iterator:24:sec-createstringiterator:21:sec-array-initializer:95:Spreading a string yields its code points in order, each as a string of exactly one code point.:44:semantics-probes/string.code-point-iteration:25:string-spread-code-points:20:string-spread-astral:19:string-spread-empty",
+      "clauses": [
+        "sec-string.prototype-@@iterator",
+        "sec-createstringiterator",
+        "sec-array-initializer"
+      ],
+      "coverage": [
+        "string-spread-code-points",
+        "string-spread-astral",
+        "string-spread-empty"
+      ],
+      "id": "string.code-point-iteration",
+      "oracle": "semantics-probes/string.code-point-iteration",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "Spreading a string yields its code points in order, each as a string of exactly one code point."
+    },
+    {
+      "canonicalWording": "41:sec-properties-of-string-instances-length:114:The length property of a string is its UTF-16 code unit count, so length === 0 holds exactly for the empty string.:46:semantics-probes/string.empty-code-unit-length:18:string-length-zero:22:string-length-nonempty",
+      "clauses": [
+        "sec-properties-of-string-instances-length"
+      ],
+      "coverage": [
+        "string-length-zero",
+        "string-length-nonempty"
+      ],
+      "id": "string.empty-code-unit-length",
+      "oracle": "semantics-probes/string.empty-code-unit-length",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "The length property of a string is its UTF-16 code unit count, so length === 0 holds exactly for the empty string."
     },
     {
       "canonicalWording": "22:sec-object-initializer:22:sec-property-accessors:198:The constructors for { kind: tag } and { kind: tag, value: payload } produce exactly the none and some tagged Option images; property reads of those images are modelled by the target heap semantics.:37:semantics-probes/option.tagged-object:23:object-literal-own-keys:20:object-property-read:22:object-absent-property",
@@ -176,6 +283,23 @@
       "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
       "sourceUrl": "https://tc39.es/ecma262/2025/",
       "statement": "The constructors for { kind: tag } and { kind: tag, value: payload } produce exactly the none and some tagged Option images; property reads of those images are modelled by the target heap semantics."
+    },
+    {
+      "canonicalWording": "24:sec-array.prototype.join:138:The join method with the empty separator concatenates the elements of an array of strings in index order and inserts nothing between them.:43:semantics-probes/array.join-empty-separator:26:array-join-empty-separator:17:array-join-single:22:array-join-empty-array",
+      "clauses": [
+        "sec-array.prototype.join"
+      ],
+      "coverage": [
+        "array-join-empty-separator",
+        "array-join-single",
+        "array-join-empty-array"
+      ],
+      "id": "array.join-empty-separator",
+      "oracle": "semantics-probes/array.join-empty-separator",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "The join method with the empty separator concatenates the elements of an array of strings in index order and inserts nothing between them."
     }
   ],
   "declarationFamilies": [
@@ -190,6 +314,10 @@
     {
       "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Family.function",
       "kind": "function"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.Family.foreign",
+      "kind": "foreign"
     }
   ],
   "expressionOperations": [
@@ -575,6 +703,379 @@
       ],
       "runtimeSymbol": "inline:list.rest",
       "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.listRestModelsTail"
+    },
+    {
+      "components": [],
+      "emittedForm": "left + right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.natAdd",
+      "opcode": "int.add",
+      "relation": "source = model",
+      "requires": [
+        "bigint.exact-arithmetic"
+      ],
+      "runtimeSymbol": "inline:int.add",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.intAddModelsAdd"
+    },
+    {
+      "components": [],
+      "emittedForm": "left - right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.natDifference",
+      "opcode": "int.subtract",
+      "relation": "source = model",
+      "requires": [
+        "bigint.exact-arithmetic"
+      ],
+      "runtimeSymbol": "inline:int.subtract",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.intSubtractModelsSub"
+    },
+    {
+      "components": [],
+      "emittedForm": "left * right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.natMultiply",
+      "opcode": "int.multiply",
+      "relation": "source = model",
+      "requires": [
+        "bigint.exact-arithmetic"
+      ],
+      "runtimeSymbol": "inline:int.multiply",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.intMultiplyModelsMul"
+    },
+    {
+      "components": [],
+      "emittedForm": "-operand",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.intNegate",
+      "opcode": "int.negate",
+      "relation": "source = model",
+      "requires": [
+        "bigint.negation"
+      ],
+      "runtimeSymbol": "inline:int.negate",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.intNegateModelsNeg"
+    },
+    {
+      "components": [
+        "inline:int.equals",
+        "conditional:select",
+        "primitive:bigint.divide"
+      ],
+      "emittedForm": "right === 0n ? 0n : left / right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.intTruncatedDivide",
+      "opcode": "int.tdiv",
+      "relation": "source = model",
+      "requires": [
+        "strict-equality.same-type",
+        "conditional.truthy-selection",
+        "bigint.truncated-division"
+      ],
+      "runtimeSymbol": "helper:int-truncated-division",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.intTruncatedDivideModelsTdiv"
+    },
+    {
+      "components": [
+        "inline:int.equals",
+        "conditional:select",
+        "primitive:bigint.remainder"
+      ],
+      "emittedForm": "right === 0n ? left : left % right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.intTruncatedModulo",
+      "opcode": "int.tmod",
+      "relation": "source = model",
+      "requires": [
+        "strict-equality.same-type",
+        "conditional.truthy-selection",
+        "bigint.truncated-division"
+      ],
+      "runtimeSymbol": "helper:int-truncated-modulo",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.intTruncatedModuloModelsTmod"
+    },
+    {
+      "components": [],
+      "emittedForm": "left < right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.natLess",
+      "opcode": "int.less",
+      "relation": "source = model",
+      "requires": [
+        "bigint.relational"
+      ],
+      "runtimeSymbol": "inline:int.less",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.intLessModelsLt"
+    },
+    {
+      "components": [],
+      "emittedForm": "left <= right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.natLessOrEqual",
+      "opcode": "int.lessOrEqual",
+      "relation": "source = model",
+      "requires": [
+        "bigint.relational"
+      ],
+      "runtimeSymbol": "inline:int.lessOrEqual",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.intLessOrEqualModelsLe"
+    },
+    {
+      "components": [],
+      "emittedForm": "left === right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.natEquals",
+      "opcode": "int.equals",
+      "relation": "source = model",
+      "requires": [
+        "strict-equality.same-type"
+      ],
+      "runtimeSymbol": "inline:int.equals",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.intEqualsModelsBEq"
+    },
+    {
+      "components": [
+        "representation:bigint.shared-nat-int"
+      ],
+      "emittedForm": "operand",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.intOfNat",
+      "opcode": "int.ofNat",
+      "relation": "source = model",
+      "requires": [],
+      "runtimeSymbol": "inline:int.ofNat",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.intOfNatModelsOfNat"
+    },
+    {
+      "components": [
+        "inline:int.less",
+        "conditional:select",
+        "representation:nat.nonnegative-bigint"
+      ],
+      "emittedForm": "operand < 0n ? 0n : operand",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.intToNat",
+      "opcode": "int.toNat",
+      "relation": "source = model",
+      "requires": [
+        "bigint.relational",
+        "conditional.truthy-selection"
+      ],
+      "runtimeSymbol": "helper:int-to-nat-clamp",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.intToNatModelsToNat"
+    },
+    {
+      "components": [],
+      "emittedForm": "BigInt(operand.codePointAt(0))",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.charToNat",
+      "opcode": "char.toNat",
+      "relation": "source = model",
+      "requires": [
+        "string.code-point-at"
+      ],
+      "runtimeSymbol": "inline:char.toNat",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.charToNatModelsToNat"
+    },
+    {
+      "components": [
+        "inline:int.lessOrEqual",
+        "inline:int.less",
+        "conditional:select",
+        "primitive:string.fromCodePoint",
+        "representation:char.scalar-value"
+      ],
+      "emittedForm": "operand >= 0n && operand <= 1114111n && !(operand >= 55296n && operand <= 57343n) ? String.fromCodePoint(Number(operand)) : \"\\u0000\"",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.charOfNat",
+      "opcode": "char.ofNat",
+      "relation": "source = model",
+      "requires": [
+        "bigint.relational",
+        "boolean.logical-operators",
+        "conditional.truthy-selection",
+        "string.from-code-point"
+      ],
+      "runtimeSymbol": "helper:char-of-nat",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.charOfNatModelsOfNat"
+    },
+    {
+      "components": [],
+      "emittedForm": "left === right",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.stringEquals",
+      "opcode": "char.equals",
+      "relation": "source = model",
+      "requires": [
+        "strict-equality.same-type"
+      ],
+      "runtimeSymbol": "inline:char.equals",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.charEqualsModelsBEq"
+    },
+    {
+      "components": [
+        "inline:char.toNat",
+        "inline:int.less"
+      ],
+      "emittedForm": "left.codePointAt(0) < right.codePointAt(0)",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.charLess",
+      "opcode": "char.less",
+      "relation": "source = model",
+      "requires": [
+        "string.code-point-at",
+        "bigint.relational"
+      ],
+      "runtimeSymbol": "helper:char-less-code-point",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.charLessModelsLt"
+    },
+    {
+      "components": [
+        "inline:string.toList",
+        "inline:list.length"
+      ],
+      "emittedForm": "BigInt([...value].length)",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.stringLength",
+      "opcode": "string.length",
+      "relation": "source = model",
+      "requires": [
+        "string.code-point-iteration",
+        "bigint.from-length"
+      ],
+      "runtimeSymbol": "inline:string.length",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.stringLengthModelsLength"
+    },
+    {
+      "components": [],
+      "emittedForm": "value.length === 0",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.stringIsEmpty",
+      "opcode": "string.isEmpty",
+      "relation": "source = model",
+      "requires": [
+        "string.empty-code-unit-length"
+      ],
+      "runtimeSymbol": "inline:string.isEmpty",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.stringIsEmptyModelsIsEmpty"
+    },
+    {
+      "components": [
+        "inline:string.append",
+        "representation:char.one-code-point-string"
+      ],
+      "emittedForm": "value + character",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.stringPush",
+      "opcode": "string.push",
+      "relation": "source = model",
+      "requires": [
+        "string.utf16-concatenation"
+      ],
+      "runtimeSymbol": "inline:string.push",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.stringPushModelsPush"
+    },
+    {
+      "components": [
+        "representation:char.one-code-point-string"
+      ],
+      "emittedForm": "character",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.stringSingleton",
+      "opcode": "string.singleton",
+      "relation": "source = model",
+      "requires": [],
+      "runtimeSymbol": "inline:string.singleton",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.stringSingletonModelsSingleton"
+    },
+    {
+      "components": [],
+      "emittedForm": "[...value]",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.stringToList",
+      "opcode": "string.toList",
+      "relation": "source = model",
+      "requires": [
+        "string.code-point-iteration"
+      ],
+      "runtimeSymbol": "inline:string.toList",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.stringToListModelsToList"
+    },
+    {
+      "components": [],
+      "emittedForm": "value.join(\"\")",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.stringOfList",
+      "opcode": "string.ofList",
+      "relation": "source = model",
+      "requires": [
+        "array.join-empty-separator"
+      ],
+      "runtimeSymbol": "inline:string.ofList",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.stringOfListModelsOfList"
+    },
+    {
+      "components": [],
+      "emittedForm": "BigInt(value.length)",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listLength",
+      "opcode": "array.size",
+      "relation": "source = model",
+      "requires": [
+        "bigint.from-length"
+      ],
+      "runtimeSymbol": "inline:array.size",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.arraySizeModelsSize"
+    },
+    {
+      "components": [],
+      "emittedForm": "value.length === 0",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listIsEmpty",
+      "opcode": "array.isEmpty",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "inline:array.isEmpty",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.arrayIsEmptyModelsIsEmpty"
+    },
+    {
+      "components": [],
+      "emittedForm": "[...value, element]",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listPush",
+      "opcode": "array.push",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "inline:array.push",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.arrayPushModelsPush"
+    },
+    {
+      "components": [],
+      "emittedForm": "[...left, ...right]",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listAppend",
+      "opcode": "array.append",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "inline:array.append",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.arrayAppendModelsAppend"
+    },
+    {
+      "components": [],
+      "emittedForm": "[...value].reverse()",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.listReverse",
+      "opcode": "array.reverse",
+      "relation": "source = model",
+      "requires": [
+        "array.dense-element-sequence"
+      ],
+      "runtimeSymbol": "inline:array.reverse",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.arrayReverseModelsReverse"
+    },
+    {
+      "components": [
+        "representation:array.shared-dense-image"
+      ],
+      "emittedForm": "value",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.arrayToList",
+      "opcode": "array.toList",
+      "relation": "source = model",
+      "requires": [],
+      "runtimeSymbol": "inline:array.toList",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.arrayToListModelsToList"
+    },
+    {
+      "components": [
+        "representation:array.shared-dense-image"
+      ],
+      "emittedForm": "value",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.arrayOfList",
+      "opcode": "array.ofList",
+      "relation": "source = model",
+      "requires": [],
+      "runtimeSymbol": "inline:array.ofList",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.arrayOfListModelsOfList"
     }
   ],
   "schemaVersion": 1,
@@ -614,6 +1115,38 @@
     {
       "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.TyKind.function",
       "kind": "function"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.TyKind.int",
+      "kind": "int"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.TyKind.char",
+      "kind": "char"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.TyKind.bytes",
+      "kind": "bytes"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.TyKind.json",
+      "kind": "json"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.TyKind.array",
+      "kind": "array"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.TyKind.pair",
+      "kind": "pair"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.TyKind.hashMap",
+      "kind": "hashMap"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.TyKind.treeMap",
+      "kind": "treeMap"
     }
   ]
 }

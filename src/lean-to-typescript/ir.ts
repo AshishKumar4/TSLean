@@ -3,7 +3,15 @@ import type { LeanToTypeScriptClosureEntry, LeanToTypeScriptDeclarationRole } fr
 import { compareCodePoints } from './ordering.js';
 
 export const LEAN_TO_TYPESCRIPT_SCHEMA_VERSION = 1;
-export const LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION = 'tslean-semantic-typed-v5';
+export const LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION = 'tslean-semantic-typed-v6';
+
+/**
+ * The fragment this compiler no longer admits. A v5 document decodes under a strictly smaller type
+ * and opcode registry and carries `termination` where v6 carries `recursion`, so accepting one
+ * would silently reinterpret its recursion evidence. It is named here so the refusal says which
+ * fragment arrived rather than only which one was expected.
+ */
+const RETIRED_FRAGMENT_VERSION = 'tslean-semantic-typed-v5';
 
 /**
  * The Lean module grammar the compiler admits: dot-separated segments beginning with `[A-Za-z_]`.
@@ -45,11 +53,19 @@ export type LeanType =
   | { readonly kind: 'boolean' }
   | { readonly kind: 'nat' }
   | { readonly kind: 'string' }
+  | { readonly kind: 'int' }
+  | { readonly kind: 'char' }
+  | { readonly kind: 'bytes' }
+  | { readonly kind: 'json' }
   | { readonly kind: 'parameter'; readonly index: number }
   | { readonly kind: 'named'; readonly name: string; readonly arguments: readonly LeanType[] }
   | { readonly kind: 'option'; readonly value: LeanType }
   | { readonly kind: 'except'; readonly error: LeanType; readonly value: LeanType }
   | { readonly kind: 'list'; readonly element: LeanType }
+  | { readonly kind: 'array'; readonly element: LeanType }
+  | { readonly kind: 'pair'; readonly first: LeanType; readonly second: LeanType }
+  | { readonly kind: 'hashMap'; readonly key: LeanType; readonly value: LeanType }
+  | { readonly kind: 'treeMap'; readonly key: LeanType; readonly value: LeanType }
   | { readonly kind: 'function'; readonly parameters: readonly LeanType[]; readonly result: LeanType };
 
 /**
@@ -85,7 +101,87 @@ export type LeanOpcode =
   | 'list.all'
   | 'list.head'
   | 'list.first'
-  | 'list.rest';
+  | 'list.rest'
+  | 'int.add'
+  | 'int.subtract'
+  | 'int.multiply'
+  | 'int.negate'
+  | 'int.tdiv'
+  | 'int.tmod'
+  | 'int.less'
+  | 'int.lessOrEqual'
+  | 'int.equals'
+  | 'int.ofNat'
+  | 'int.toNat'
+  | 'char.toNat'
+  | 'char.ofNat'
+  | 'char.equals'
+  | 'char.less'
+  | 'string.length'
+  | 'string.isEmpty'
+  | 'string.push'
+  | 'string.singleton'
+  | 'string.toList'
+  | 'string.ofList'
+  | 'array.size'
+  | 'array.isEmpty'
+  | 'array.push'
+  | 'array.append'
+  | 'array.reverse'
+  | 'array.toList'
+  | 'array.ofList';
+
+/**
+ * The host operations a `foreign` declaration may be the boundary for, as the closed registry the
+ * substrate publishes. A host wire string is an identity the substrate and this compiler agree on,
+ * so a declaration naming anything outside this set is refused before it can reach an import.
+ */
+export type LeanHostOpcode =
+  | 'host.store.get'
+  | 'host.store.put'
+  | 'host.store.delete'
+  | 'host.store.list'
+  | 'host.store.txn'
+  | 'host.alarm.set'
+  | 'host.alarm.get'
+  | 'host.alarm.delete'
+  | 'host.content.put'
+  | 'host.content.get'
+  | 'host.content.head'
+  | 'host.content.range'
+  | 'host.queue.send'
+  | 'host.queue.ack'
+  | 'host.queue.retry'
+  | 'host.isolate.load'
+  | 'host.isolate.call'
+  | 'host.rpc.call'
+  | 'host.rpc.dispose';
+
+/**
+ * Every admitted host operation and what the substrate owes it. The record is total over
+ * `LeanHostOpcode` and has no fallback entry, so a host identity either appears here or is refused.
+ */
+export const LEAN_HOST_OPCODES: Readonly<Record<LeanHostOpcode, string>> = {
+  'host.store.get': 'reads one stored value at a key',
+  'host.store.put': 'writes one stored value at a key',
+  'host.store.delete': 'removes one stored value at a key',
+  'host.store.list': 'lists the stored keys under one prefix',
+  'host.store.txn': 'runs one store transaction',
+  'host.alarm.set': 'arms the alarm at one instant',
+  'host.alarm.get': 'reads the armed alarm instant',
+  'host.alarm.delete': 'disarms the alarm',
+  'host.content.put': 'writes one content object',
+  'host.content.get': 'reads one content object whole',
+  'host.content.head': 'reads one content object’s metadata',
+  'host.content.range': 'reads one byte range of a content object',
+  'host.queue.send': 'enqueues one message',
+  'host.queue.ack': 'acknowledges one delivered message',
+  'host.queue.retry': 'returns one delivered message for redelivery',
+  'host.isolate.load': 'loads one isolate',
+  'host.isolate.call': 'calls one loaded isolate',
+  'host.rpc.call': 'calls one remote stub',
+  'host.rpc.dispose': 'disposes one remote stub',
+};
 
 /**
  * The external facts a runtime opcode stands on, as a closed set so an opcode cannot quietly
@@ -98,9 +194,16 @@ export type LeanRuntimeAssumption =
   | 'bigint.exact-arithmetic'
   | 'bigint.relational'
   | 'bigint.from-length'
+  | 'bigint.negation'
+  | 'bigint.truncated-division'
   | 'conditional.truthy-selection'
   | 'string.utf16-concatenation'
+  | 'string.code-point-at'
+  | 'string.code-point-iteration'
+  | 'string.empty-code-unit-length'
+  | 'string.from-code-point'
   | 'array.dense-element-sequence'
+  | 'array.join-empty-separator'
   | 'option.tagged-object';
 
 export const LEAN_RUNTIME_ASSUMPTIONS: Readonly<Record<LeanRuntimeAssumption, string>> = {
@@ -115,6 +218,15 @@ export const LEAN_RUNTIME_ASSUMPTIONS: Readonly<Record<LeanRuntimeAssumption, st
     '+ on strings concatenates their UTF-16 code unit sequences, which preserves the Unicode scalar sequence',
   'array.dense-element-sequence':
     'a readonly array is a dense sequence carrying the Lean List order and length, and its map, filter, some, every, reduce and reduceRight visit every index exactly once',
+  'bigint.negation': 'unary - on a bigint is exact integer negation',
+  'bigint.truncated-division':
+    'BigInt / and % truncate toward zero and take the dividend’s sign; a 0n divisor throws, which the emitted guard prevents',
+  'string.code-point-at': 'value.codePointAt(0) is the first code point of a nonempty string',
+  'string.code-point-iteration':
+    'spreading a string yields its code points in order, each as a one-code-point string',
+  'string.empty-code-unit-length': 'a string has zero UTF-16 code units exactly when it has no code points',
+  'string.from-code-point': 'String.fromCodePoint(n) is the one-code-point string at a valid scalar n',
+  'array.join-empty-separator': 'value.join("") concatenates the elements of an array of strings in order',
   'option.tagged-object': '{ kind: "none" } and { kind: "some", value } denote Option.none and Option.some',
 };
 
@@ -122,12 +234,34 @@ export const LEAN_RUNTIME_ASSUMPTIONS: Readonly<Record<LeanRuntimeAssumption, st
 const MODEL_NAMESPACE = 'TSLean.LeanToTypeScript.Semantics.Opcode';
 
 /**
- * The two opcodes whose exact Lean semantics need a guard. A guard that appears at every use site
+ * The opcodes whose exact Lean semantics need a guard. A guard that appears at every use site
  * would exist many times, so the emitter puts it in one generated declaration and records the role
  * it plays. The role is abstract on purpose: the emitted identifier comes from the emitter's own
  * allocator, so a certificate binds the printed declaration rather than a name fixed here.
  */
-export type LeanRuntimeHelperRole = 'nat-truncated-subtraction' | 'list-head-option';
+export type LeanRuntimeHelperRole =
+  | 'nat-truncated-subtraction'
+  | 'list-head-option'
+  | 'int-truncated-division'
+  | 'int-truncated-modulo'
+  | 'int-to-nat-clamp'
+  | 'char-of-nat'
+  | 'char-less-code-point';
+
+/**
+ * Every helper role, in one fixed order. The emitter allocates a declaration name per role and
+ * prints the reached ones in this order, so the generated bytes do not depend on the order a
+ * program happened to reach them in.
+ */
+export const LEAN_RUNTIME_HELPER_ROLES: readonly LeanRuntimeHelperRole[] = [
+  'nat-truncated-subtraction',
+  'list-head-option',
+  'int-truncated-division',
+  'int-truncated-modulo',
+  'int-to-nat-clamp',
+  'char-of-nat',
+  'char-less-code-point',
+];
 
 /**
  * The certificate-facing identity of an opcode's target. An inline form binds to the canonical
@@ -143,24 +277,52 @@ export function runtimeHelperRole(symbol: LeanRuntimeSymbol): LeanRuntimeHelperR
       return 'nat-truncated-subtraction';
     case 'helper:list-head-option':
       return 'list-head-option';
+    case 'helper:int-truncated-division':
+      return 'int-truncated-division';
+    case 'helper:int-truncated-modulo':
+      return 'int-truncated-modulo';
+    case 'helper:int-to-nat-clamp':
+      return 'int-to-nat-clamp';
+    case 'helper:char-of-nat':
+      return 'char-of-nat';
+    case 'helper:char-less-code-point':
+      return 'char-less-code-point';
     default:
       return undefined;
   }
 }
 
 /**
- * One primitive or representation step inside a generated helper. This is separate from
- * `LeanRuntimeSymbol`: the primary helper symbol binds the declaration digest, while Formal proves
- * this ordered sequence gives the helper its source meaning. A component is never a second name for
- * a declaration and never a new assumption identifier.
+ * One primitive or representation step a row's model theorem composes. This is separate from
+ * `LeanRuntimeSymbol`: a helper's primary symbol binds the declaration digest, while the ordered
+ * component sequence is what Formal proves gives the row its source meaning. An inline row carries
+ * components exactly when its model constant is derived from other model constants rather than
+ * stated primitively, which is how an identity row — one with an empty assumption closure — still
+ * says what makes it an identity. A component is never a second name for a declaration and never a
+ * new assumption identifier.
  */
 export type LeanRuntimeComponent =
   | 'inline:nat.less'
+  | 'inline:int.less'
+  | 'inline:int.lessOrEqual'
+  | 'inline:int.equals'
+  | 'inline:char.toNat'
   | 'inline:list.isEmpty'
   | 'inline:list.first'
+  | 'inline:list.length'
+  | 'inline:string.append'
+  | 'inline:string.toList'
   | 'conditional:select'
   | 'primitive:bigint.subtract'
-  | 'representation:option.tagged-option';
+  | 'primitive:bigint.divide'
+  | 'primitive:bigint.remainder'
+  | 'primitive:string.fromCodePoint'
+  | 'representation:option.tagged-option'
+  | 'representation:bigint.shared-nat-int'
+  | 'representation:nat.nonnegative-bigint'
+  | 'representation:char.scalar-value'
+  | 'representation:char.one-code-point-string'
+  | 'representation:array.shared-dense-image';
 
 interface LeanRuntimeOpcodeBase {
   readonly opcode: LeanOpcode;
@@ -183,6 +345,12 @@ interface LeanRuntimeOpcodeBase {
   readonly modelTheorem: string;
   /** The assumption records that theorem closes over, in this order. */
   readonly assumptions: readonly LeanRuntimeAssumption[];
+  /**
+   * The ordered model composition Formal proves gives the row its meaning, or absent where the
+   * model constant is stated primitively. A row whose assumption closure is empty is an identity
+   * on the shared image and says so here instead of standing on nothing.
+   */
+  readonly components?: readonly LeanRuntimeComponent[];
   /** How many type arguments the opcode takes, positionally. */
   readonly typeParameters: number;
   /** The operand types, in order, given the opcode's type arguments. */
@@ -190,10 +358,9 @@ interface LeanRuntimeOpcodeBase {
   readonly result: (typeArguments: readonly LeanType[]) => LeanType;
 }
 
-/** An inline form binds its canonical source form and carries no helper composition. */
+/** An inline form binds the canonical print of the shape the emitter builds at every use site. */
 export interface LeanInlineRuntimeOpcode extends LeanRuntimeOpcodeBase {
   readonly runtimeSymbol: `inline:${LeanOpcode}`;
-  readonly components?: never;
 }
 
 /** A helper binds one allocated declaration and lists Formal's ordered primitive composition. */
@@ -207,6 +374,9 @@ export type LeanRuntimeOpcode = LeanInlineRuntimeOpcode | LeanHelperRuntimeOpcod
 const BOOLEAN: LeanType = { kind: 'boolean' };
 const NAT: LeanType = { kind: 'nat' };
 const STRING: LeanType = { kind: 'string' };
+const INT: LeanType = { kind: 'int' };
+const CHAR: LeanType = { kind: 'char' };
+const CHARACTERS: LeanType = { kind: 'list', element: CHAR };
 
 function typeArgument(typeArguments: readonly LeanType[], index: number): LeanType {
   const type = typeArguments[index];
@@ -523,6 +693,309 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     parameters: (args) => [{ kind: 'list', element: typeArgument(args, 0) }],
     result: (args) => ({ kind: 'list', element: typeArgument(args, 0) }),
   },
+  'int.add': {
+    opcode: 'int.add',
+    runtimeSymbol: 'inline:int.add',
+    leanSymbol: 'Int.add',
+    operands: ['left', 'right'],
+    modelTheorem: `${MODEL_NAMESPACE}.intAddModelsAdd`,
+    assumptions: ['bigint.exact-arithmetic'],
+    ...monomorphic([INT, INT], INT),
+  },
+  'int.subtract': {
+    opcode: 'int.subtract',
+    runtimeSymbol: 'inline:int.subtract',
+    leanSymbol: 'Int.sub',
+    operands: ['left', 'right'],
+    modelTheorem: `${MODEL_NAMESPACE}.intSubtractModelsSub`,
+    assumptions: ['bigint.exact-arithmetic'],
+    ...monomorphic([INT, INT], INT),
+  },
+  'int.multiply': {
+    opcode: 'int.multiply',
+    runtimeSymbol: 'inline:int.multiply',
+    leanSymbol: 'Int.mul',
+    operands: ['left', 'right'],
+    modelTheorem: `${MODEL_NAMESPACE}.intMultiplyModelsMul`,
+    assumptions: ['bigint.exact-arithmetic'],
+    ...monomorphic([INT, INT], INT),
+  },
+  'int.negate': {
+    opcode: 'int.negate',
+    runtimeSymbol: 'inline:int.negate',
+    leanSymbol: 'Int.neg',
+    operands: ['operand'],
+    modelTheorem: `${MODEL_NAMESPACE}.intNegateModelsNeg`,
+    assumptions: ['bigint.negation'],
+    ...monomorphic([INT], INT),
+  },
+  'int.tdiv': {
+    opcode: 'int.tdiv',
+    runtimeSymbol: 'helper:int-truncated-division',
+    components: ['inline:int.equals', 'conditional:select', 'primitive:bigint.divide'],
+    leanSymbol: 'Int.tdiv',
+    operands: ['left', 'right'],
+    modelTheorem: `${MODEL_NAMESPACE}.intTruncatedDivideModelsTdiv`,
+    // Ordered to match the components: the zero test decides, the conditional selects, and the
+    // division runs only on the branch where the divisor cannot throw.
+    assumptions: ['strict-equality.same-type', 'conditional.truthy-selection', 'bigint.truncated-division'],
+    ...monomorphic([INT, INT], INT),
+  },
+  'int.tmod': {
+    opcode: 'int.tmod',
+    runtimeSymbol: 'helper:int-truncated-modulo',
+    components: ['inline:int.equals', 'conditional:select', 'primitive:bigint.remainder'],
+    leanSymbol: 'Int.tmod',
+    operands: ['left', 'right'],
+    modelTheorem: `${MODEL_NAMESPACE}.intTruncatedModuloModelsTmod`,
+    assumptions: ['strict-equality.same-type', 'conditional.truthy-selection', 'bigint.truncated-division'],
+    ...monomorphic([INT, INT], INT),
+  },
+  'int.less': {
+    opcode: 'int.less',
+    runtimeSymbol: 'inline:int.less',
+    leanSymbol: 'Int.decLt',
+    operands: ['left', 'right'],
+    modelTheorem: `${MODEL_NAMESPACE}.intLessModelsLt`,
+    assumptions: ['bigint.relational'],
+    ...monomorphic([INT, INT], BOOLEAN),
+  },
+  'int.lessOrEqual': {
+    opcode: 'int.lessOrEqual',
+    runtimeSymbol: 'inline:int.lessOrEqual',
+    leanSymbol: 'Int.decLe',
+    operands: ['left', 'right'],
+    modelTheorem: `${MODEL_NAMESPACE}.intLessOrEqualModelsLe`,
+    assumptions: ['bigint.relational'],
+    ...monomorphic([INT, INT], BOOLEAN),
+  },
+  'int.equals': {
+    opcode: 'int.equals',
+    runtimeSymbol: 'inline:int.equals',
+    leanSymbol: 'instDecidableEqInt',
+    operands: ['left', 'right'],
+    modelTheorem: `${MODEL_NAMESPACE}.intEqualsModelsBEq`,
+    assumptions: ['strict-equality.same-type'],
+    ...monomorphic([INT, INT], BOOLEAN),
+  },
+  'int.ofNat': {
+    opcode: 'int.ofNat',
+    runtimeSymbol: 'inline:int.ofNat',
+    // A Nat and a nonnegative Int share one bigint image, so the emitted form is the operand and
+    // the row stands on that shared representation rather than on an engine fact.
+    components: ['representation:bigint.shared-nat-int'],
+    leanSymbol: 'Int.ofNat',
+    operands: ['operand'],
+    modelTheorem: `${MODEL_NAMESPACE}.intOfNatModelsOfNat`,
+    assumptions: [],
+    ...monomorphic([NAT], INT),
+  },
+  'int.toNat': {
+    opcode: 'int.toNat',
+    runtimeSymbol: 'helper:int-to-nat-clamp',
+    components: ['inline:int.less', 'conditional:select', 'representation:nat.nonnegative-bigint'],
+    leanSymbol: 'Int.toNat',
+    operands: ['operand'],
+    modelTheorem: `${MODEL_NAMESPACE}.intToNatModelsToNat`,
+    assumptions: ['bigint.relational', 'conditional.truthy-selection'],
+    ...monomorphic([INT], NAT),
+  },
+  'char.toNat': {
+    opcode: 'char.toNat',
+    runtimeSymbol: 'inline:char.toNat',
+    leanSymbol: 'Char.toNat',
+    operands: ['operand'],
+    modelTheorem: `${MODEL_NAMESPACE}.charToNatModelsToNat`,
+    assumptions: ['string.code-point-at'],
+    ...monomorphic([CHAR], NAT),
+  },
+  'char.ofNat': {
+    opcode: 'char.ofNat',
+    runtimeSymbol: 'helper:char-of-nat',
+    components: [
+      'inline:int.lessOrEqual',
+      'inline:int.less',
+      'conditional:select',
+      'primitive:string.fromCodePoint',
+      'representation:char.scalar-value',
+    ],
+    leanSymbol: 'Char.ofNat',
+    operands: ['operand'],
+    modelTheorem: `${MODEL_NAMESPACE}.charOfNatModelsOfNat`,
+    // Ordered to match the components: the range tests decide, the surrogate test excludes, the
+    // conditional selects, and only the admitted branch builds the one-code-point string.
+    assumptions: [
+      'bigint.relational',
+      'boolean.logical-operators',
+      'conditional.truthy-selection',
+      'string.from-code-point',
+    ],
+    ...monomorphic([NAT], CHAR),
+  },
+  'char.equals': {
+    opcode: 'char.equals',
+    runtimeSymbol: 'inline:char.equals',
+    leanSymbol: 'instDecidableEqChar',
+    operands: ['left', 'right'],
+    modelTheorem: `${MODEL_NAMESPACE}.charEqualsModelsBEq`,
+    assumptions: ['strict-equality.same-type'],
+    ...monomorphic([CHAR, CHAR], BOOLEAN),
+  },
+  'char.less': {
+    opcode: 'char.less',
+    runtimeSymbol: 'helper:char-less-code-point',
+    components: ['inline:char.toNat', 'inline:int.less'],
+    leanSymbol: 'Char.lt',
+    operands: ['left', 'right'],
+    modelTheorem: `${MODEL_NAMESPACE}.charLessModelsLt`,
+    assumptions: ['string.code-point-at', 'bigint.relational'],
+    ...monomorphic([CHAR, CHAR], BOOLEAN),
+  },
+  'string.length': {
+    opcode: 'string.length',
+    runtimeSymbol: 'inline:string.length',
+    // Lean's String.length counts code points, so the emitted form counts the spread sequence
+    // rather than the UTF-16 code units `value.length` would report.
+    components: ['inline:string.toList', 'inline:list.length'],
+    leanSymbol: 'String.length',
+    operands: ['value'],
+    modelTheorem: `${MODEL_NAMESPACE}.stringLengthModelsLength`,
+    assumptions: ['string.code-point-iteration', 'bigint.from-length'],
+    ...monomorphic([STRING], NAT),
+  },
+  'string.isEmpty': {
+    opcode: 'string.isEmpty',
+    runtimeSymbol: 'inline:string.isEmpty',
+    leanSymbol: 'String.isEmpty',
+    operands: ['value'],
+    modelTheorem: `${MODEL_NAMESPACE}.stringIsEmptyModelsIsEmpty`,
+    assumptions: ['string.empty-code-unit-length'],
+    ...monomorphic([STRING], BOOLEAN),
+  },
+  'string.push': {
+    opcode: 'string.push',
+    runtimeSymbol: 'inline:string.push',
+    components: ['inline:string.append', 'representation:char.one-code-point-string'],
+    leanSymbol: 'String.push',
+    operands: ['value', 'character'],
+    modelTheorem: `${MODEL_NAMESPACE}.stringPushModelsPush`,
+    assumptions: ['string.utf16-concatenation'],
+    ...monomorphic([STRING, CHAR], STRING),
+  },
+  'string.singleton': {
+    opcode: 'string.singleton',
+    runtimeSymbol: 'inline:string.singleton',
+    // A Char is already the one-code-point string its singleton denotes, so the emitted form is
+    // the operand and the row stands on that shared representation alone.
+    components: ['representation:char.one-code-point-string'],
+    leanSymbol: 'String.singleton',
+    operands: ['character'],
+    modelTheorem: `${MODEL_NAMESPACE}.stringSingletonModelsSingleton`,
+    assumptions: [],
+    ...monomorphic([CHAR], STRING),
+  },
+  'string.toList': {
+    opcode: 'string.toList',
+    runtimeSymbol: 'inline:string.toList',
+    leanSymbol: 'String.toList',
+    operands: ['value'],
+    modelTheorem: `${MODEL_NAMESPACE}.stringToListModelsToList`,
+    assumptions: ['string.code-point-iteration'],
+    ...monomorphic([STRING], CHARACTERS),
+  },
+  'string.ofList': {
+    opcode: 'string.ofList',
+    runtimeSymbol: 'inline:string.ofList',
+    leanSymbol: 'String.ofList',
+    operands: ['value'],
+    modelTheorem: `${MODEL_NAMESPACE}.stringOfListModelsOfList`,
+    assumptions: ['array.join-empty-separator'],
+    ...monomorphic([CHARACTERS], STRING),
+  },
+  'array.size': {
+    opcode: 'array.size',
+    runtimeSymbol: 'inline:array.size',
+    leanSymbol: 'Array.size',
+    operands: ['value'],
+    modelTheorem: `${MODEL_NAMESPACE}.arraySizeModelsSize`,
+    assumptions: ['bigint.from-length'],
+    typeParameters: 1,
+    parameters: (args) => [{ kind: 'array', element: typeArgument(args, 0) }],
+    result: () => NAT,
+  },
+  'array.isEmpty': {
+    opcode: 'array.isEmpty',
+    runtimeSymbol: 'inline:array.isEmpty',
+    leanSymbol: 'Array.isEmpty',
+    operands: ['value'],
+    modelTheorem: `${MODEL_NAMESPACE}.arrayIsEmptyModelsIsEmpty`,
+    assumptions: ['array.dense-element-sequence'],
+    typeParameters: 1,
+    parameters: (args) => [{ kind: 'array', element: typeArgument(args, 0) }],
+    result: () => BOOLEAN,
+  },
+  'array.push': {
+    opcode: 'array.push',
+    runtimeSymbol: 'inline:array.push',
+    leanSymbol: 'Array.push',
+    operands: ['value', 'element'],
+    modelTheorem: `${MODEL_NAMESPACE}.arrayPushModelsPush`,
+    assumptions: ['array.dense-element-sequence'],
+    typeParameters: 1,
+    parameters: (args) => [{ kind: 'array', element: typeArgument(args, 0) }, typeArgument(args, 0)],
+    result: (args) => ({ kind: 'array', element: typeArgument(args, 0) }),
+  },
+  'array.append': {
+    opcode: 'array.append',
+    runtimeSymbol: 'inline:array.append',
+    leanSymbol: 'Array.append',
+    operands: ['left', 'right'],
+    modelTheorem: `${MODEL_NAMESPACE}.arrayAppendModelsAppend`,
+    assumptions: ['array.dense-element-sequence'],
+    typeParameters: 1,
+    parameters: (args) => [
+      { kind: 'array', element: typeArgument(args, 0) },
+      { kind: 'array', element: typeArgument(args, 0) },
+    ],
+    result: (args) => ({ kind: 'array', element: typeArgument(args, 0) }),
+  },
+  'array.reverse': {
+    opcode: 'array.reverse',
+    runtimeSymbol: 'inline:array.reverse',
+    leanSymbol: 'Array.reverse',
+    operands: ['value'],
+    modelTheorem: `${MODEL_NAMESPACE}.arrayReverseModelsReverse`,
+    assumptions: ['array.dense-element-sequence'],
+    typeParameters: 1,
+    parameters: (args) => [{ kind: 'array', element: typeArgument(args, 0) }],
+    result: (args) => ({ kind: 'array', element: typeArgument(args, 0) }),
+  },
+  'array.toList': {
+    opcode: 'array.toList',
+    runtimeSymbol: 'inline:array.toList',
+    // List and Array share the dense-array image, which is what makes the conversion an identity
+    // and what lets the higher-order list opcodes reach an Array without a second callback family.
+    components: ['representation:array.shared-dense-image'],
+    leanSymbol: 'Array.toList',
+    operands: ['value'],
+    modelTheorem: `${MODEL_NAMESPACE}.arrayToListModelsToList`,
+    assumptions: [],
+    typeParameters: 1,
+    parameters: (args) => [{ kind: 'array', element: typeArgument(args, 0) }],
+    result: (args) => ({ kind: 'list', element: typeArgument(args, 0) }),
+  },
+  'array.ofList': {
+    opcode: 'array.ofList',
+    runtimeSymbol: 'inline:array.ofList',
+    components: ['representation:array.shared-dense-image'],
+    leanSymbol: 'List.toArray',
+    operands: ['value'],
+    modelTheorem: `${MODEL_NAMESPACE}.arrayOfListModelsOfList`,
+    assumptions: [],
+    typeParameters: 1,
+    parameters: (args) => [{ kind: 'list', element: typeArgument(args, 0) }],
+    result: (args) => ({ kind: 'array', element: typeArgument(args, 0) }),
+  },
 };
 
 /**
@@ -638,24 +1111,23 @@ export interface LeanReceiver {
 }
 
 /**
- * How Lean discharged termination, and the exact evidence the compiler read.
+ * Which recursion discipline Lean proved for a declaration, and the evidence the compiler reads.
  *
  * A single-declaration structural recursion is re-verified here against the emitted program: the
  * self-call has to pass a constructor field of the parameter Lean decreases on, so the generated
- * recursion terminates for the reason the Lean definition does. Every other recursive form —
- * well-founded recursion, or a mutual group — has a measure the emitted program cannot restate, so
- * the policy is narrower and explicit: the body is read from the kernel-checked unfolding equation
- * named here, the recursive group is recorded, and a recursive call outside that group is refused.
+ * recursion terminates for the reason the Lean definition does. Well-founded recursion has a
+ * measure the emitted program cannot restate, and a mutual block has one measure over the whole
+ * group, so for those the policy is narrower and explicit: the group is recorded, every member is
+ * exported, and a recursive call that leaves the group is refused.
+ *
+ * The source semantics ignores the discipline — `enter` resolves a callee by name and the fuel
+ * machine terminates either way — so this field exists for the emitter, which needs it to choose a
+ * legal emission order for a mutual block, and for the gate, which checks that order.
  */
-export interface LeanTermination {
-  readonly kind: 'structural' | 'wellFounded';
-  /** The parameter the structural recursion decreases on. Present exactly for `structural`. */
-  readonly argument?: number;
-  /** Every declaration in Lean's recursive group, in Lean's own order, including this one. */
-  readonly group: readonly string[];
-  /** The unfolding theorem the exported body was read from. */
-  readonly equation: string;
-}
+export type LeanRecursion =
+  | { readonly kind: 'structural'; readonly parameter: number }
+  | { readonly kind: 'wellFounded' }
+  | { readonly kind: 'mutual'; readonly group: readonly string[] };
 
 export type LeanDeclaration =
   | ({
@@ -673,12 +1145,29 @@ export type LeanDeclaration =
       readonly parameters: readonly LeanParameter[];
       readonly result: LeanType;
       readonly receiver?: LeanReceiver;
-      readonly termination?: LeanTermination;
+      /** The discipline Lean proved, or absent where the declaration does not recurse. */
+      readonly recursion?: LeanRecursion;
       readonly body: LeanExpression;
+    } & LeanDeclared)
+  | ({
+      readonly kind: 'foreign';
+      /** The host operation this declaration is the boundary for. */
+      readonly host: LeanHostOpcode;
+      readonly parameters: readonly LeanParameter[];
+      readonly result: LeanType;
+      /**
+       * The exported reference implementation, in IR. The emitted module imports the substrate's
+       * implementation instead of defining this, so the reference is what the model runs against
+       * and what the named premise `Preservation.HostAgrees` relates the imported binding to.
+       */
+      readonly reference: LeanExpression;
     } & LeanDeclared);
 
 export type LeanFunctionDeclaration = Extract<LeanDeclaration, { readonly kind: 'function' }>;
+export type LeanForeignDeclaration = Extract<LeanDeclaration, { readonly kind: 'foreign' }>;
 export type LeanDataDeclaration = Extract<LeanDeclaration, { readonly kind: 'enum' | 'record' }>;
+/** A declaration a `call` may name: one with a parameter list, a result, and a body to relate. */
+export type LeanCallableDeclaration = LeanFunctionDeclaration | LeanForeignDeclaration;
 
 export interface LeanSemanticProgram {
   readonly schemaVersion: 1;
@@ -731,9 +1220,41 @@ export function constructorsOf(type: LeanType, declarations: LeanDeclarationInde
           ],
         },
       ];
+    case 'pair':
+      return [
+        {
+          name: 'mk',
+          fields: [
+            { name: 'fst', type: type.first },
+            { name: 'snd', type: type.second },
+          ],
+        },
+      ];
+    // The one inductive the fragment owns rather than the target: a JsonValue is decided by the
+    // same tagged-object machinery every other union uses, with one payload field per constructor.
+    case 'json':
+      return [
+        { name: 'null', fields: [] },
+        { name: 'bool', fields: [{ name: 'value', type: { kind: 'boolean' } }] },
+        { name: 'int', fields: [{ name: 'value', type: { kind: 'int' } }] },
+        { name: 'string', fields: [{ name: 'value', type: { kind: 'string' } }] },
+        { name: 'array', fields: [{ name: 'value', type: { kind: 'list', element: { kind: 'json' } } }] },
+        {
+          name: 'object',
+          fields: [
+            {
+              name: 'value',
+              type: {
+                kind: 'list',
+                element: { kind: 'pair', first: { kind: 'string' }, second: { kind: 'json' } },
+              },
+            },
+          ],
+        },
+      ];
     case 'named': {
       const declaration = declarations.get(type.name);
-      if (declaration === undefined || declaration.kind === 'function') return [];
+      if (declaration === undefined || declaration.kind === 'function' || declaration.kind === 'foreign') return [];
       if (declaration.kind === 'record') {
         return [{ name: declaration.constructor, fields: substituteFields(declaration.fields, type.arguments) }];
       }
@@ -841,6 +1362,10 @@ export function substituteType(type: LeanType, typeArguments: readonly LeanType[
     case 'boolean':
     case 'nat':
     case 'string':
+    case 'int':
+    case 'char':
+    case 'bytes':
+    case 'json':
       return type;
     case 'parameter': {
       const argument = typeArguments[type.index];
@@ -859,6 +1384,26 @@ export function substituteType(type: LeanType, typeArguments: readonly LeanType[
       };
     case 'list':
       return { kind: 'list', element: substituteType(type.element, typeArguments) };
+    case 'array':
+      return { kind: 'array', element: substituteType(type.element, typeArguments) };
+    case 'pair':
+      return {
+        kind: 'pair',
+        first: substituteType(type.first, typeArguments),
+        second: substituteType(type.second, typeArguments),
+      };
+    case 'hashMap':
+      return {
+        kind: 'hashMap',
+        key: substituteType(type.key, typeArguments),
+        value: substituteType(type.value, typeArguments),
+      };
+    case 'treeMap':
+      return {
+        kind: 'treeMap',
+        key: substituteType(type.key, typeArguments),
+        value: substituteType(type.value, typeArguments),
+      };
     case 'function':
       return {
         kind: 'function',
@@ -874,6 +1419,10 @@ export function sameType(left: LeanType, right: LeanType): boolean {
     case 'boolean':
     case 'nat':
     case 'string':
+    case 'int':
+    case 'char':
+    case 'bytes':
+    case 'json':
       return true;
     case 'parameter':
       return right.kind === 'parameter' && left.index === right.index;
@@ -890,6 +1439,14 @@ export function sameType(left: LeanType, right: LeanType): boolean {
       return right.kind === 'except' && sameType(left.error, right.error) && sameType(left.value, right.value);
     case 'list':
       return right.kind === 'list' && sameType(left.element, right.element);
+    case 'array':
+      return right.kind === 'array' && sameType(left.element, right.element);
+    case 'pair':
+      return right.kind === 'pair' && sameType(left.first, right.first) && sameType(left.second, right.second);
+    case 'hashMap':
+      return right.kind === 'hashMap' && sameType(left.key, right.key) && sameType(left.value, right.value);
+    case 'treeMap':
+      return right.kind === 'treeMap' && sameType(left.key, right.key) && sameType(left.value, right.value);
     case 'function':
       return (
         right.kind === 'function' &&
@@ -914,6 +1471,14 @@ export function renderType(type: LeanType): string {
       return 'Nat';
     case 'string':
       return 'String';
+    case 'int':
+      return 'Int';
+    case 'char':
+      return 'Char';
+    case 'bytes':
+      return 'ByteArray';
+    case 'json':
+      return 'JsonValue';
     case 'parameter':
       return `#${type.index}`;
     case 'named':
@@ -926,6 +1491,14 @@ export function renderType(type: LeanType): string {
       return `Except (${renderType(type.error)}) (${renderType(type.value)})`;
     case 'list':
       return `List (${renderType(type.element)})`;
+    case 'array':
+      return `Array (${renderType(type.element)})`;
+    case 'pair':
+      return `(${renderType(type.first)}) × (${renderType(type.second)})`;
+    case 'hashMap':
+      return `Std.HashMap (${renderType(type.key)}) (${renderType(type.value)})`;
+    case 'treeMap':
+      return `Std.TreeMap (${renderType(type.key)}) (${renderType(type.value)})`;
     case 'function':
       return `${type.parameters.map((parameter) => `(${renderType(parameter)})`).join(' → ')} → ${renderType(type.result)}`;
   }
@@ -945,21 +1518,36 @@ export function hasDataImage(type: LeanType, declarations: LeanDeclarationIndex)
       case 'boolean':
       case 'nat':
       case 'string':
+      case 'int':
+      case 'char':
+        return true;
+      // A JsonValue is already the tagged image its own data carries, so it crosses the boundary
+      // as itself. A ByteArray and a Map do not: `Uint8Array` and `Map` are engine objects with
+      // internal slots, and no admitted opcode observes either, so neither has a decodable form.
+      case 'json':
         return true;
       case 'parameter':
       case 'function':
+      case 'bytes':
+      case 'hashMap':
+      case 'treeMap':
         return false;
       case 'option':
         return visit(candidate.value);
       case 'except':
         return visit(candidate.error) && visit(candidate.value);
       case 'list':
+      case 'array':
         return visit(candidate.element);
+      case 'pair':
+        return visit(candidate.first) && visit(candidate.second);
       case 'named': {
         if (candidate.arguments.length > 0) return false;
         if (visiting.has(candidate.name)) return true;
         const declaration = declarations.get(candidate.name);
-        if (declaration === undefined || declaration.kind === 'function') return false;
+        if (declaration === undefined || declaration.kind === 'function' || declaration.kind === 'foreign') {
+          return false;
+        }
         visiting.add(candidate.name);
         const fields =
           declaration.kind === 'record'
@@ -979,6 +1567,11 @@ export function decodeLeanSemanticProgram(value: unknown): LeanSemanticProgram {
   exactKeys(program, ['schemaVersion', 'fragmentVersion', 'roots', 'closure', 'declarations'], 'semantic program');
   if (program['schemaVersion'] !== LEAN_TO_TYPESCRIPT_SCHEMA_VERSION) {
     throw new TypeError(`unsupported Lean semantic IR schema ${String(program['schemaVersion'])}`);
+  }
+  if (program['fragmentVersion'] === RETIRED_FRAGMENT_VERSION) {
+    throw new TypeError(
+      `Lean fragment ${RETIRED_FRAGMENT_VERSION} is retired: it carries termination evidence where ${LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION} carries a recursion discipline, and it predates the int, char, bytes, json, array, pair, hashMap and treeMap type forms; re-export the program with the current exporter`,
+    );
   }
   if (program['fragmentVersion'] !== LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION) {
     throw new TypeError(`unsupported Lean fragment ${String(program['fragmentVersion'])}`);
@@ -1059,6 +1652,9 @@ export function referencedRuntimeOpcodes(program: LeanSemanticProgram): readonly
         return;
     }
   };
+  // A `foreign` declaration's reference body is not printed — the module imports the substrate's
+  // implementation instead — so its opcodes are not opcodes this package emits, and advertising
+  // them would bind certificates to bytes no generated file carries.
   for (const declaration of program.declarations) {
     if (declaration.kind === 'function') {
       const liveness = analyzeExpressionLiveness(declaration.body, declarations);
@@ -1172,7 +1768,7 @@ function assertReceiverEvidence(declaration: LeanFunctionDeclaration, declaratio
   const receiver = declaration.receiver;
   if (receiver === undefined) return;
   const data = declarations.get(receiver.type);
-  if (data === undefined || data.kind === 'function') {
+  if (data === undefined || data.kind === 'function' || data.kind === 'foreign') {
     throw new TypeError(`${declaration.name} claims a receiver ${receiver.type} that is not an exported data type`);
   }
   if (declaration.namespace !== receiver.type) {
@@ -1205,6 +1801,16 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
   const declarations: LeanDeclarationIndex = new Map(
     program.declarations.map((declaration) => [declaration.name, declaration]),
   );
+  // A `call` names a declaration with a parameter list, a result and a body to relate: a Lean
+  // function, or the reference body of a host boundary. Which of the two it is decides the
+  // recursion policy below, never whether the call resolves.
+  const callables = new Map(
+    program.declarations
+      .filter((declaration): declaration is LeanCallableDeclaration =>
+        declaration.kind === 'function' || declaration.kind === 'foreign',
+      )
+      .map((declaration) => [declaration.name, declaration]),
+  );
   const functions = new Map(
     program.declarations
       .filter((declaration): declaration is LeanFunctionDeclaration => declaration.kind === 'function')
@@ -1227,6 +1833,11 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
           throw new TypeError(`${location} references type parameter ${type.index}, which is not declared`);
         }
         return;
+      case 'int':
+      case 'char':
+      case 'bytes':
+      case 'json':
+        return;
       case 'option':
         validateType(type.value, typeParameters, `${location}.value`);
         return;
@@ -1235,7 +1846,17 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
         validateType(type.value, typeParameters, `${location}.value`);
         return;
       case 'list':
+      case 'array':
         validateType(type.element, typeParameters, `${location}.element`);
+        return;
+      case 'pair':
+        validateType(type.first, typeParameters, `${location}.first`);
+        validateType(type.second, typeParameters, `${location}.second`);
+        return;
+      case 'hashMap':
+      case 'treeMap':
+        validateType(type.key, typeParameters, `${location}.key`);
+        validateType(type.value, typeParameters, `${location}.value`);
         return;
       case 'function':
         if (type.parameters.length === 0) {
@@ -1248,7 +1869,7 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
         return;
       case 'named': {
         const declaration = declarations.get(type.name);
-        if (declaration === undefined || declaration.kind === 'function') {
+        if (declaration === undefined || declaration.kind === 'function' || declaration.kind === 'foreign') {
           throw new TypeError(`${location} references unknown data type ${type.name}`);
         }
         if (declaration.typeParameters.length !== type.arguments.length) {
@@ -1474,7 +2095,7 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
         return requireType(target.result, expected, location);
       }
       case 'call': {
-        const declaration = functions.get(expression.function);
+        const declaration = callables.get(expression.function);
         if (declaration === undefined) {
           throw new TypeError(`${location} references unknown function ${expression.function}`);
         }
@@ -1520,18 +2141,33 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
         );
       }
     }
-    if (declaration.kind === 'function') {
+    if (declaration.kind === 'function' || declaration.kind === 'foreign') {
       declaration.parameters.forEach((parameter, index) =>
         validateType(parameter.type, typeParameters, `${declaration.name}.parameters[${index}].type`),
       );
       validateType(declaration.result, typeParameters, `${declaration.name}.result`);
+    }
+    if (declaration.kind === 'function') {
       assertReceiverEvidence(declaration, declarations);
-      validateTermination(declaration, declarations, functions);
+      validateRecursion(declaration, declarations, functions);
       checkExpression(
         declaration.body,
         declaration.parameters.map((parameter) => parameter.type).reverse(),
         declaration.result,
         `${declaration.name}.body`,
+        typeParameters,
+      );
+    }
+    if (declaration.kind === 'foreign') {
+      assertHostBoundary(declaration);
+      // The reference body is what the model runs on the source side of `HostAgrees`, so it is
+      // type-checked exactly like a function body even though the emitted module imports the
+      // substrate's implementation instead of printing it.
+      checkExpression(
+        declaration.reference,
+        declaration.parameters.map((parameter) => parameter.type).reverse(),
+        declaration.result,
+        `${declaration.name}.reference`,
         typeParameters,
       );
     }
@@ -1574,44 +2210,49 @@ function assertDecodableBoundary(declaration: LeanFunctionDeclaration, declarati
 type RecursionSlot = 'other' | 'recursive' | 'smaller';
 
 /**
- * The termination policy, applied to one declaration.
+ * The recursion policy, applied to one declaration.
  *
- * A recursive group is admitted only as Lean recorded it: every member is exported, every member
- * agrees on the group, and no recursive call leaves it. On top of that, a single-declaration
- * structural recursion is re-verified against the emitted program — the self-call has to pass a
- * constructor field of the recursion parameter, taken from a match on it — so the common case
- * carries a decrease argument the generated TypeScript can be read against, not only Lean's word.
+ * A mutual group is admitted only as Lean recorded it: every member is exported, every member
+ * agrees on the group, and no recursive call leaves it. A structural recursion is re-verified
+ * against the emitted program — the self-call has to pass a constructor field of the recursion
+ * parameter, taken from a match on it — so the common case carries a decrease argument the
+ * generated TypeScript can be read against, not only Lean's word. Well-founded recursion has a
+ * measure the emitted program cannot restate, so it is admitted on Lean's proof and refused where
+ * it recurses through a declaration Lean did not record.
  */
-function validateTermination(
+function validateRecursion(
   declaration: LeanFunctionDeclaration,
   declarations: LeanDeclarationIndex,
   functions: ReadonlyMap<string, LeanFunctionDeclaration>,
 ): void {
-  const termination = declaration.termination;
+  const recursion = declaration.recursion;
   const called = calledDeclarations(declaration.body);
-  if (termination === undefined) {
+  if (recursion === undefined) {
     if (called.has(declaration.name)) {
-      throw new TypeError(`${declaration.name} calls itself without recorded termination evidence`);
+      throw new TypeError(`${declaration.name} calls itself but records no recursion discipline`);
     }
     return;
   }
-  if (!termination.group.includes(declaration.name)) {
-    throw new TypeError(`${declaration.name} is absent from its own recursive group`);
+  const group = recursion.kind === 'mutual' ? recursion.group : [declaration.name];
+  if (!group.includes(declaration.name)) {
+    throw new TypeError(`${declaration.name} is absent from its own mutual group`);
   }
-  for (const member of termination.group) {
+  for (const member of group) {
     const peer = functions.get(member);
     if (peer === undefined) {
-      throw new TypeError(`${declaration.name} names ${member} in its recursive group, which is not an exported function`);
+      throw new TypeError(`${declaration.name} names ${member} in its mutual group, which the program does not declare as a function`);
     }
-    const peerGroup = peer.termination?.group;
-    if (peerGroup === undefined || peerGroup.length !== termination.group.length) {
-      throw new TypeError(`${declaration.name} and ${member} disagree on their recursive group`);
+    const peerRecursion = peer.recursion;
+    const peerGroup = peerRecursion?.kind === 'mutual' ? peerRecursion.group : undefined;
+    if (recursion.kind !== 'mutual') continue;
+    if (peerGroup === undefined || peerGroup.length !== group.length) {
+      throw new TypeError(`${declaration.name} and ${member} disagree on their mutual group`);
     }
-    if (peerGroup.some((name, index) => name !== termination.group[index])) {
-      throw new TypeError(`${declaration.name} and ${member} disagree on their recursive group`);
+    if (peerGroup.some((name, index) => name !== group[index])) {
+      throw new TypeError(`${declaration.name} and ${member} disagree on their mutual group`);
     }
   }
-  const group = new Set(termination.group);
+  const inGroup = new Set(group);
   const reachesBack = (name: string, seen: Set<string>): boolean => {
     if (name === declaration.name) return true;
     if (seen.has(name)) return false;
@@ -1621,27 +2262,39 @@ function validateTermination(
     return [...calledDeclarations(peer.body)].some((next) => reachesBack(next, seen));
   };
   for (const target of called) {
-    if (group.has(target)) continue;
+    if (inGroup.has(target)) continue;
     if (reachesBack(target, new Set([declaration.name]))) {
       throw new TypeError(
-        `${declaration.name} recurses through ${target}, which Lean did not record in its recursive group`,
+        `${declaration.name} recurses through ${target}, which Lean did not record in its mutual group`,
       );
     }
   }
-  if (termination.kind === 'structural') {
-    if (termination.argument === undefined) {
-      throw new TypeError(`${declaration.name} records structural recursion without a decreasing argument`);
-    }
-    if (termination.group.length === 1) {
-      assertStructuralDecrease(declaration, termination.argument, declarations);
-    }
+  if (recursion.kind === 'structural') {
+    assertStructuralDecrease(declaration, recursion.parameter, declarations);
     return;
   }
-  if (termination.argument !== undefined) {
-    throw new TypeError(`${declaration.name} records a decreasing argument for well-founded recursion`);
+  if (!group.some((member) => called.has(member))) {
+    throw new TypeError(`${declaration.name} records a ${recursion.kind} recursion discipline but never recurses`);
   }
-  if (!termination.group.some((member) => called.has(member))) {
-    throw new TypeError(`${declaration.name} records recursion evidence but never recurses`);
+}
+
+/**
+ * A host boundary is a synchronous store-passing call the substrate implements, so its own shape is
+ * checked here rather than left to the module that imports it: it takes at least the store, it is
+ * monomorphic — the substrate publishes one implementation per host identity, not one per
+ * instantiation — and it declares no receiver, because a host operation is not a method on a type
+ * this package owns.
+ */
+function assertHostBoundary(declaration: LeanForeignDeclaration): void {
+  if (declaration.typeParameters.length > 0) {
+    throw new TypeError(
+      `foreign declaration ${declaration.name} is polymorphic in ${declaration.typeParameters.length} type parameter(s); the substrate publishes one implementation per host identity`,
+    );
+  }
+  if (declaration.parameters.length === 0) {
+    throw new TypeError(
+      `foreign declaration ${declaration.name} takes no parameter; a host call is store passing, so it takes the store and returns it with the reply`,
+    );
   }
 }
 
@@ -1841,26 +2494,58 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
     case 'function': {
       exactKeys(
         declaration,
-        ['kind', 'name', 'module', 'namespace', 'typeParameters', 'span', 'parameters', 'result', 'body'],
+        [
+          'kind',
+          'name',
+          'module',
+          'namespace',
+          'typeParameters',
+          'span',
+          'parameters',
+          'result',
+          'recursion',
+          'body',
+        ],
         location,
-        ['doc', 'receiver', 'termination'],
+        ['doc', 'receiver'],
       );
-      const parameters = array(declaration['parameters'], `${location}.parameters`).map((parameter, index) => {
-        const decoded = object(parameter, `${location}.parameters[${index}]`);
-        exactKeys(decoded, ['name', 'type'], `${location}.parameters[${index}]`);
-        return {
-          name: string(decoded['name'], `${location}.parameters[${index}].name`),
-          type: decodeType(decoded['type'], `${location}.parameters[${index}].type`),
-        };
-      });
+      const parameters = decodeParameters(declaration['parameters'], `${location}.parameters`);
       return {
         kind,
         ...shared,
         parameters,
         result: decodeType(declaration['result'], `${location}.result`),
         ...decodeReceiver(declaration, parameters.length, location),
-        ...decodeTermination(declaration, parameters.length, location),
+        ...decodeRecursion(declaration['recursion'], parameters.length, `${location}.recursion`),
         body: decodeExpression(declaration['body'], `${location}.body`),
+        ...documentation(declaration, location),
+      };
+    }
+    case 'foreign': {
+      exactKeys(
+        declaration,
+        [
+          'kind',
+          'name',
+          'module',
+          'namespace',
+          'typeParameters',
+          'span',
+          'host',
+          'parameters',
+          'result',
+          'reference',
+        ],
+        location,
+        ['doc'],
+      );
+      return {
+        kind,
+        ...shared,
+        host: hostOpcode(declaration['host'], `${location}.host`),
+        parameters: decodeParameters(declaration['parameters'], `${location}.parameters`),
+        result: decodeType(declaration['result'], `${location}.result`),
+        reference: decodeExpression(declaration['reference'], `${location}.reference`),
         ...documentation(declaration, location),
       };
     }
@@ -1917,35 +2602,69 @@ function decodeReceiver(
   };
 }
 
-function decodeTermination(
-  declaration: Record<string, unknown>,
+/**
+ * The recursion descriptor, which every function carries. A non-recursive declaration spells it as
+ * a literal `null` rather than by omitting the key, so a document that simply forgot the field is
+ * refused instead of being read as "Lean proved nothing to record".
+ */
+function decodeRecursion(
+  value: unknown,
   parameterCount: number,
   location: string,
-): { readonly termination?: LeanTermination } {
-  if (!Object.hasOwn(declaration, 'termination')) return {};
-  const termination = object(declaration['termination'], `${location}.termination`);
-  exactKeys(termination, ['kind', 'group', 'equation'], `${location}.termination`, ['argument']);
-  const kind = string(termination['kind'], `${location}.termination.kind`);
-  if (kind !== 'structural' && kind !== 'wellFounded') {
-    throw new TypeError(`${location}.termination.kind is unsupported: ${kind}`);
+): { readonly recursion?: LeanRecursion } {
+  if (value === null) return {};
+  const recursion = object(value, location);
+  const kind = string(recursion['kind'], `${location}.kind`);
+  switch (kind) {
+    case 'structural': {
+      exactKeys(recursion, ['kind', 'parameter'], location);
+      const parameter = recursion['parameter'];
+      if (!Number.isSafeInteger(parameter) || Number(parameter) < 0 || Number(parameter) >= parameterCount) {
+        throw new TypeError(`${location}.parameter is not one of the declared parameters`);
+      }
+      return { recursion: { kind, parameter: Number(parameter) } };
+    }
+    case 'wellFounded':
+      exactKeys(recursion, ['kind'], location);
+      return { recursion: { kind } };
+    case 'mutual': {
+      exactKeys(recursion, ['kind', 'group'], location);
+      const group = array(recursion['group'], `${location}.group`).map((member, index) =>
+        qualifiedName(member, `${location}.group[${index}]`),
+      );
+      if (group.length < 2) {
+        throw new TypeError(
+          `${location}.group names ${group.length} declaration(s); a mutual block has at least two members, and a single structural recursion is spelled structural`,
+        );
+      }
+      requireUnique(group, `${location}.group`);
+      return { recursion: { kind, group } };
+    }
+    default:
+      throw new TypeError(`${location}.kind is unsupported: ${kind}`);
   }
-  const group = array(termination['group'], `${location}.termination.group`).map((member, index) =>
-    qualifiedName(member, `${location}.termination.group[${index}]`),
-  );
-  if (group.length === 0) throw new TypeError(`${location}.termination.group is empty`);
-  requireUnique(group, `${location}.termination.group`);
-  const equation = string(termination['equation'], `${location}.termination.equation`);
-  if (!isLeanDeclarationName(equation)) {
-    throw new TypeError(`${location}.termination.equation is not a Lean declaration name: ${equation}`);
-  }
-  if (!Object.hasOwn(termination, 'argument')) {
-    return { termination: { kind, group, equation } };
-  }
-  const argument = termination['argument'];
-  if (!Number.isSafeInteger(argument) || Number(argument) < 0 || Number(argument) >= parameterCount) {
-    throw new TypeError(`${location}.termination.argument is not one of the declared parameters`);
-  }
-  return { termination: { kind, argument: Number(argument), group, equation } };
+}
+
+function decodeParameters(value: unknown, location: string): readonly LeanParameter[] {
+  return array(value, location).map((parameter, index) => {
+    const decoded = object(parameter, `${location}[${index}]`);
+    exactKeys(decoded, ['name', 'type'], `${location}[${index}]`);
+    return {
+      name: string(decoded['name'], `${location}[${index}].name`),
+      type: decodeType(decoded['type'], `${location}[${index}].type`),
+    };
+  });
+}
+
+/** The host identity a `foreign` declaration is the boundary for, refused outside the registry. */
+function hostOpcode(value: unknown, location: string): LeanHostOpcode {
+  const wire = string(value, location);
+  if (!isHostOpcode(wire)) throw new TypeError(`${location} is not a registered host opcode: ${wire}`);
+  return wire;
+}
+
+function isHostOpcode(value: string): value is LeanHostOpcode {
+  return Object.hasOwn(LEAN_HOST_OPCODES, value);
 }
 
 function decodeFields(value: unknown, location: string): readonly LeanField[] {
@@ -1973,6 +2692,10 @@ function decodeType(value: unknown, location: string): LeanType {
     case 'boolean':
     case 'nat':
     case 'string':
+    case 'int':
+    case 'char':
+    case 'bytes':
+    case 'json':
       exactKeys(type, ['kind'], location);
       return { kind };
     case 'parameter': {
@@ -2005,6 +2728,24 @@ function decodeType(value: unknown, location: string): LeanType {
     case 'list':
       exactKeys(type, ['kind', 'element'], location);
       return { kind, element: decodeType(type['element'], `${location}.element`) };
+    case 'array':
+      exactKeys(type, ['kind', 'element'], location);
+      return { kind, element: decodeType(type['element'], `${location}.element`) };
+    case 'pair':
+      exactKeys(type, ['kind', 'first', 'second'], location);
+      return {
+        kind,
+        first: decodeType(type['first'], `${location}.first`),
+        second: decodeType(type['second'], `${location}.second`),
+      };
+    case 'hashMap':
+    case 'treeMap':
+      exactKeys(type, ['kind', 'key', 'value'], location);
+      return {
+        kind,
+        key: decodeType(type['key'], `${location}.key`),
+        value: decodeType(type['value'], `${location}.value`),
+      };
     case 'function': {
       exactKeys(type, ['kind', 'parameters', 'result'], location);
       const parameters = array(type['parameters'], `${location}.parameters`).map((parameter, index) =>

@@ -398,10 +398,121 @@ export function joinInlineForms(registry, forms) {
   return inline.length;
 }
 
-/** The inline forms the live emitter prints, read through the module the compiler lowers with. */
-async function emittedInlineForms() {
-  const { inlineOperationForms } = await import('../src/lean-to-typescript/emitter.ts');
-  return inlineOperationForms();
+/**
+ * Joins the body the Lean registry records for each `helper:` opcode against the body the live
+ * emitter prints for that helper's role.
+ *
+ * A helper reaches the target as a generated declaration rather than as a use-site form, so its
+ * row's `emittedForm` states the body. Printing that body through the one function the emitter
+ * builds it with, and comparing byte for byte, is what makes the two halves of the opcode registry
+ * covered: without it a helper row could drift from the declaration the package actually prints and
+ * only the digest of that drifted declaration would be recorded.
+ */
+export function joinHelperForms(registry, forms) {
+  const helpers = registry.opcodes.filter((opcode) => opcode.runtimeSymbol.startsWith('helper:'));
+  requireSameSet(
+    'helper emitted bodies',
+    [...forms.keys()].sort(),
+    'emitter.ts',
+    helpers.map((opcode) => opcode.opcode).sort(),
+    'the Lean semantics',
+  );
+  for (const opcode of helpers) {
+    const printed = forms.get(opcode.opcode);
+    if (printed !== opcode.emittedForm) {
+      fail(
+        `helper ${opcode.opcode} emits ${JSON.stringify(printed)} but the Lean semantics records ` +
+          `${JSON.stringify(opcode.emittedForm)}`,
+      );
+    }
+  }
+  return helpers.length;
+}
+
+/**
+ * Joins the host opcode registry the Lean side declares against the one `ir.ts` decodes.
+ *
+ * A `foreign` declaration names a host identity, and the decoder refuses any spelling outside its
+ * own table, so that table is the trust boundary for the whole host surface: a row on either side
+ * with no partner on the other is a boundary one language admits and the other does not.
+ */
+export function joinHostOpcodes(registry, declared) {
+  if (!registry.declarationFamilies.some((family) => family.kind === 'foreign')) return 0;
+  if (!Array.isArray(registry.hostOpcodes)) {
+    fail(
+      'the Lean registry admits the foreign declaration family but its report carries no hostOpcodes ' +
+        `inventory, so the ${declared.length} host rows ir.ts decodes are joined against nothing; ` +
+        'print Ir.HostOp.all from RegistryReport.lean',
+    );
+  }
+  const leanHosts = sortedUnique(
+    registry.hostOpcodes.map((entry) => entry.wire ?? entry.kind),
+    'Lean host registry',
+  );
+  requireSameSet('host opcodes', [...declared].sort(), 'ir.ts', leanHosts, 'the Lean semantics');
+  return leanHosts.length;
+}
+
+/** The host opcode table the live `ir.ts` declares. */
+export function readDeclaredHostOpcodes(file, text) {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, true);
+  let table;
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'LEAN_HOST_OPCODES') {
+      table = node.initializer;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  if (table === undefined) fail(`${file} declares no LEAN_HOST_OPCODES table`);
+  const literal = ts.isCallExpression(table) ? table.arguments[0] : table;
+  if (literal === undefined || !ts.isObjectLiteralExpression(literal)) {
+    fail('ir.ts LEAN_HOST_OPCODES is not an object literal');
+  }
+  return literal.properties.map((property) => {
+    if (!ts.isPropertyAssignment(property) || !ts.isStringLiteral(property.name)) {
+      fail('ir.ts LEAN_HOST_OPCODES carries a row whose key the gate cannot read');
+    }
+    return property.name.text;
+  });
+}
+
+/** The inline forms and helper bodies the live emitter prints, through the module the compiler lowers with. */
+async function emittedForms() {
+  const { inlineOperationForms, helperOperationForms } = await import('../src/lean-to-typescript/emitter.ts');
+  return { inline: inlineOperationForms(), helpers: helperOperationForms() };
+}
+
+/**
+ * Joins the locked registry against the certificate surface a generated package binds.
+ *
+ * Every opcode `ir.ts` admits has to carry a row, every row has to name an opcode `ir.ts` admits,
+ * and every row has to resolve to a runtime symbol the emitter can bind: an inline form it prints,
+ * or a helper role it declares. A gap in either direction is a certificate a package would spend
+ * without a proof, or a proof no package can spend.
+ */
+export function joinCertificateCoverage(registry, declared) {
+  if (declared === undefined) fail('certificate coverage is not joined: ir.ts declares no opcode table');
+  for (const [kind, row] of declared) {
+    const certificate = registry.opcodes.find((opcode) => opcode.opcode === kind);
+    if (certificate === undefined) fail(`opcode ${kind} is admitted by ir.ts and no registry row certifies it`);
+    if (certificate.runtimeSymbol !== row.runtimeSymbol) {
+      fail(`opcode ${kind} would bind ${row.runtimeSymbol} but its certificate names ${certificate.runtimeSymbol}`);
+    }
+  }
+  for (const certificate of registry.opcodes) {
+    if (!declared.has(certificate.opcode)) {
+      fail(`registry row ${certificate.opcode} certifies an opcode ir.ts does not admit`);
+    }
+  }
+  return registry.opcodes.length;
+}
+
+/** The host opcode table the live `ir.ts` declares. */
+function declaredHostOpcodes() {
+  const file = join(root, 'src/lean-to-typescript/ir.ts');
+  return readDeclaredHostOpcodes(file, readFileSync(file, 'utf8'));
 }
 
 /** Every expression kind the emitter lowers. */
@@ -624,16 +735,22 @@ export function joinRegistries(registry, kinds, emitted, groups) {
           `${opcode.runtimeSymbol} names a different opcode`,
       );
     }
-    if (opcode.components.length > 0 !== (tag === 'helper:')) {
-      fail(
-        tag === 'helper:'
-          ? `opcode ${opcode.opcode} reaches the target as a generated helper but certifies no components`
-          : `opcode ${opcode.opcode} is emitted inline but certifies helper components`,
-      );
+    // A row stands on something the registry declares. An engine assumption is one way; the other
+    // is a model composition, which is what an identity row on a shared image carries instead —
+    // `int.ofNat` is the operand because a Nat and a nonnegative Int are one bigint, and that
+    // representation is the composition, not an engine fact. A row with neither would be a
+    // lowering nothing accounts for. A helper always composes: its body is built from parts.
+    if (opcode.requires.length === 0 && opcode.components.length === 0) {
+      fail(`opcode ${opcode.opcode} names neither an assumption closure nor a model composition`);
     }
-    if (opcode.requires.length === 0) fail(`opcode ${opcode.opcode} names no assumption`);
+    if (tag === 'helper:' && opcode.components.length === 0) {
+      fail(`opcode ${opcode.opcode} reaches the target as a generated helper but certifies no components`);
+    }
     if (new Set(opcode.requires).size !== opcode.requires.length) {
       fail(`opcode ${opcode.opcode} repeats an assumption in its closure`);
+    }
+    if (new Set(opcode.components).size !== opcode.components.length) {
+      fail(`opcode ${opcode.opcode} repeats a component in its composition`);
     }
     for (const name of opcode.requires) {
       if (!declared.has(name)) fail(`opcode ${opcode.opcode} requires undeclared assumption ${name}`);
@@ -1141,6 +1258,166 @@ function selfTest() {
     `emitter.ts admits ${helperOpcode.opcode} but the Lean semantics does not`,
   );
 
+  // The helper-body join. A helper row states the body of the declaration the emitter prints, so
+  // the same three ways an inline form can drift apply to it: a body that differs, a role the
+  // emitter prints nothing for, and a body printed for a row the semantics proves inline.
+  const helperRows = registry.opcodes.filter((opcode) => opcode.runtimeSymbol.startsWith('helper:'));
+  const [firstHelper] = helperRows;
+  if (firstHelper === undefined) fail('the registry records no helper opcode to join a printed body against');
+  const printedHelpers = new Map(helperRows.map((opcode) => [opcode.opcode, opcode.emittedForm]));
+  joinHelperForms(registry, printedHelpers);
+  const expectHelperFailure = (label, forms, expected) => {
+    try {
+      joinHelperForms(registry, forms);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes(expected)) return;
+      throw error;
+    }
+    fail(`${label} was accepted`);
+  };
+  const driftedHelper = new Map(printedHelpers);
+  driftedHelper.set(firstHelper.opcode, `(${firstHelper.emittedForm})`);
+  expectHelperFailure(
+    'a helper body the emitter prints differently from the registry',
+    driftedHelper,
+    'but the Lean semantics records',
+  );
+  const unprintedHelper = new Map(printedHelpers);
+  unprintedHelper.delete(firstHelper.opcode);
+  expectHelperFailure(
+    'a helper row the emitter prints no body for',
+    unprintedHelper,
+    `the Lean semantics admits ${firstHelper.opcode} but emitter.ts does not`,
+  );
+  const helperedInline = new Map(printedHelpers);
+  helperedInline.set(firstInline.opcode, firstInline.emittedForm);
+  expectHelperFailure(
+    'a helper body printed for an opcode the semantics proves inline',
+    helperedInline,
+    `emitter.ts admits ${firstInline.opcode} but the Lean semantics does not`,
+  );
+
+  // The host-opcode join. The decoder's table is the trust boundary for every `foreign`
+  // declaration, so a host row on one side with no partner on the other is a refusal in both
+  // directions, and a Lean report that carries no inventory at all is named rather than skipped.
+  const hostWires = readDeclaredHostOpcodes(
+    join(root, 'src/lean-to-typescript/ir.ts'),
+    readFileSync(join(root, 'src/lean-to-typescript/ir.ts'), 'utf8'),
+  );
+  if (hostWires.length === 0) fail('ir.ts declares no host opcode to join');
+  const hostRegistry = { ...cloneJson(registry), hostOpcodes: hostWires.map((wire) => ({ wire })) };
+  joinHostOpcodes(hostRegistry, hostWires);
+  const expectHostFailure = (label, candidate, declared, expected) => {
+    try {
+      joinHostOpcodes(candidate, declared);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes(expected)) return;
+      throw error;
+    }
+    fail(`${label} was accepted`);
+  };
+  const [firstHost, ...remainingHosts] = hostWires;
+  if (firstHost === undefined) fail('ir.ts declares no host opcode to drop');
+  expectHostFailure(
+    'a host opcode the decoder admits and Lean does not',
+    { ...hostRegistry, hostOpcodes: remainingHosts.map((wire) => ({ wire })) },
+    hostWires,
+    `host opcodes: ir.ts admits ${firstHost} but the Lean semantics does not`,
+  );
+  expectHostFailure(
+    'a host opcode Lean declares and the decoder does not',
+    hostRegistry,
+    remainingHosts,
+    `host opcodes: the Lean semantics admits ${firstHost} but ir.ts does not`,
+  );
+  expectHostFailure(
+    'a Lean report with no host inventory beside a foreign declaration family',
+    cloneJson(registry),
+    hostWires,
+    'carries no hostOpcodes',
+  );
+
+  // The certificate join. Every admitted opcode carries a row, every row names an admitted opcode,
+  // and the runtime symbol each side records is the same one, so a certificate gap in either
+  // direction is reported as its own failure rather than surfacing as a missing digest later.
+  const certificateTable = new Map(
+    registry.opcodes.map((opcode) => [
+      opcode.opcode,
+      {
+        modelTheorem: opcode.theorem,
+        assumptions: [...opcode.requires],
+        runtimeSymbol: opcode.runtimeSymbol,
+        components: [...opcode.components],
+      },
+    ]),
+  );
+  joinCertificateCoverage(registry, certificateTable);
+  const expectCoverageFailure = (label, candidate, declaredRows, expected) => {
+    try {
+      joinCertificateCoverage(candidate, declaredRows);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes(expected)) return;
+      throw error;
+    }
+    fail(`${label} was accepted`);
+  };
+  const withoutCertificate = cloneJson(registry);
+  const droppedCertificate = withoutCertificate.opcodes.pop().opcode;
+  expectCoverageFailure(
+    'an opcode the decoder admits with no certificate',
+    withoutCertificate,
+    certificateTable,
+    `opcode ${droppedCertificate} is admitted by ir.ts and no registry row certifies it`,
+  );
+  const uncoveredRow = new Map(certificateTable);
+  uncoveredRow.delete(droppedCertificate);
+  expectCoverageFailure(
+    'a certificate for an opcode the decoder does not admit',
+    registry,
+    uncoveredRow,
+    `registry row ${droppedCertificate} certifies an opcode ir.ts does not admit`,
+  );
+  const rebound = new Map(certificateTable);
+  rebound.set(firstInline.opcode, {
+    ...certificateTable.get(firstInline.opcode),
+    runtimeSymbol: 'helper:invented-role',
+  });
+  expectCoverageFailure(
+    'an opcode whose binding names a runtime symbol its certificate does not',
+    registry,
+    rebound,
+    `opcode ${firstInline.opcode} would bind helper:invented-role`,
+  );
+
+  // The row rule: a row stands on an assumption closure, or on the model composition that makes an
+  // identity one. A row with neither is a lowering nothing accounts for.
+  const groundlessRow = cloneJson(registry);
+  groundlessRow.opcodes[0].requires = [];
+  groundlessRow.opcodes[0].components = [];
+  expectJoinFailure(
+    'a row that names neither an assumption nor a composition',
+    groundlessRow,
+    kinds,
+    emitted,
+    scenarios,
+    'names neither an assumption closure nor a model composition',
+  );
+  const identityRow = registry.opcodes.find(
+    (opcode) => opcode.requires.length === 0 && opcode.components.length > 0,
+  );
+  if (identityRow === undefined) fail('the registry records no identity row to admit on its composition alone');
+  const composedHelper = cloneJson(registry);
+  const helperIndex = composedHelper.opcodes.findIndex((opcode) => opcode.runtimeSymbol.startsWith('helper:'));
+  composedHelper.opcodes[helperIndex].components = [];
+  expectJoinFailure(
+    'a helper row that certifies no components',
+    composedHelper,
+    kinds,
+    emitted,
+    scenarios,
+    'reaches the target as a generated helper but certifies no components',
+  );
+
   // The dispatch reader is keyed on the declaration and on the value it discriminates, so a nested
   // function's switch, a second dispatch, a case the gate cannot read, a repeated case, a default
   // that admits instead of refusing, and an ambiguous declaration are refusals rather than a quietly
@@ -1210,8 +1487,9 @@ function selfTest() {
     'runs no switch on kind',
   );
   stdout.write(
-    'semantics registry self-test passed: 9 join fixtures, 4 opcode-join fixtures, ' +
-      '2 opcode-reader fixtures, 4 inline-form fixtures, 7 dispatch-reader fixtures, ' +
+    'semantics registry self-test passed: 11 join fixtures, 4 opcode-join fixtures, ' +
+      '2 opcode-reader fixtures, 4 inline-form fixtures, 3 helper-body fixtures, ' +
+      '3 host-opcode fixtures, 3 certificate-coverage fixtures, 7 dispatch-reader fixtures, ' +
       '4 frozen-source fixtures, 1 lock fixture, 1 probe fixture, ' +
       '10 Lean fixtures, 2 token scans\n',
   );
@@ -1241,15 +1519,20 @@ async function main() {
   // The frozen-source and opcode joins run last so a refusal cannot stop the lock from being
   // refreshed: the run still fails, but `--generate` writes what Lean reported first.
   checkFrozenSource(registry);
-  // The opcode join runs last so a refusal cannot stop the lock from being refreshed: the run still
+  // The opcode joins run last so a refusal cannot stop the lock from being refreshed: the run still
   // fails, but `--generate` writes what Lean reported before reporting the unjoined registry.
   const joinedOpcodes = joinOpcodes(registry, declaredOpcodes());
-  const joinedForms = joinInlineForms(registry, await emittedInlineForms());
+  const forms = await emittedForms();
+  const joinedForms = joinInlineForms(registry, forms.inline);
+  const joinedHelpers = joinHelperForms(registry, forms.helpers);
+  const joinedHosts = joinHostOpcodes(registry, declaredHostOpcodes());
+  const certified = joinCertificateCoverage(registry, declaredOpcodes());
   stdout.write(
     `Semantics registry gate passed: ${counts.expressions} expression operations, ` +
       `${counts.declarations} declaration families, ${counts.types} type forms, ` +
       `${counts.opcodes} opcodes paired with ${paired} theorems and joined to ${joinedOpcodes} ir.ts rows, ` +
-      `${joinedForms} inline forms printed by emitter.ts and compared byte for byte, ` +
+      `${joinedForms} inline forms and ${joinedHelpers} helper bodies printed by emitter.ts and ` +
+      `compared byte for byte, ${joinedHosts} host opcodes joined, ${certified} certificates covered, ` +
       `${counts.assumptions} assumptions ` +
       `measured by ${probes.total} executed probes in ${probes.groups.size} groups, ` +
       `${audited} audited declarations\n`,

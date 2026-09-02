@@ -26,10 +26,19 @@ import {
   type LeanToTypeScriptInput,
   type LeanToTypeScriptPackage,
 } from './artifact.js';
-import { assertRuntimeOpcodeCertificates, loadRuntimeCertificateRegistry } from './certificates.js';
+import {
+  assertRuntimeCertificateCoverage,
+  assertRuntimeOpcodeCertificates,
+  loadRuntimeCertificateRegistry,
+} from './certificates.js';
 import { emitTypeScriptPackage } from './emitter.js';
 import { UnsupportedLeanFragmentError } from './fragment.js';
-import { decodeLeanSemanticProgram, isLeanModuleName, referencedRuntimeOpcodes } from './ir.js';
+import {
+  decodeLeanSemanticProgram,
+  isLeanModuleName,
+  LEAN_RUNTIME_OPCODES,
+  referencedRuntimeOpcodes,
+} from './ir.js';
 import { compareCodePoints } from './ordering.js';
 import {
   assertLeanToTypeScriptPlatform,
@@ -219,8 +228,10 @@ function compileNormalized(
   const environmentInputs = inputs.filter((input) => LEAN_TO_TYPESCRIPT_INPUT_PLANES[input.kind] === 'environment');
   const outputDirectory = normalized.outputDirectory;
   if (outputDirectory === undefined) throw new TypeError('normalized generated output directory is missing');
-  // Before anything is built: every opcode this program spends must carry a proved certificate.
+  // Before anything is built: the registry and the admitted opcode set cover each other exactly,
+  // and every opcode this program spends carries a proved certificate.
   const { catalog } = loadRuntimeCertificateRegistry();
+  assertRuntimeCertificateCoverage(Object.keys(LEAN_RUNTIME_OPCODES).sort(compareCodePoints), catalog);
   assertRuntimeOpcodeCertificates([...referencedRuntimeOpcodes(program)].sort(compareCodePoints), catalog);
   const emitted = emitTypeScriptPackage(program, {
     certificates: catalog,

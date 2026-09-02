@@ -247,6 +247,14 @@
             "bigint": "0"
           },
           "family": "bigint-subtract"
+        },
+        {
+          "id": "subtract-below-zero",
+          "source": "-7n - 5n",
+          "expect": {
+            "bigint": "-12"
+          },
+          "family": "bigint-negative-difference"
         }
       ]
     },
@@ -635,6 +643,14 @@
             ]
           },
           "family": "array-map"
+        },
+        {
+          "id": "spread-appends-two-arrays",
+          "source": "[...[1, 2], ...[3]].join(',')",
+          "expect": {
+            "string": "1,2,3"
+          },
+          "family": "array-spread-append"
         }
       ]
     },
@@ -744,6 +760,281 @@
             "number": 4
           },
           "family": "object-property-read"
+        }
+      ]
+    },
+    {
+      "id": "bigint.negation",
+      "probes": [
+        {
+          "id": "negate-positive",
+          "source": "-(42n)",
+          "expect": {
+            "bigint": "-42"
+          },
+          "family": "bigint-negate"
+        },
+        {
+          "id": "negate-negative",
+          "source": "-(-42n)",
+          "expect": {
+            "bigint": "42"
+          },
+          "family": "bigint-negate"
+        },
+        {
+          "id": "negate-zero",
+          "source": "-(0n)",
+          "expect": {
+            "bigint": "0"
+          },
+          "family": "bigint-negate"
+        },
+        {
+          "id": "negate-beyond-safe-integer",
+          "source": "-(9007199254740993n)",
+          "expect": {
+            "bigint": "-9007199254740993"
+          },
+          "family": "bigint-negate-beyond-safe-integer"
+        }
+      ]
+    },
+    {
+      "id": "bigint.truncated-division",
+      "probes": [
+        {
+          "id": "divide-truncates-toward-zero",
+          "source": "7n / 2n",
+          "expect": {
+            "bigint": "3"
+          },
+          "family": "bigint-divide-truncates"
+        },
+        {
+          "id": "divide-truncates-exactly",
+          "source": "8n / 2n",
+          "expect": {
+            "bigint": "4"
+          },
+          "family": "bigint-divide-truncates"
+        },
+        {
+          "id": "divide-negative-dividend",
+          "source": "-7n / 2n",
+          "expect": {
+            "bigint": "-3"
+          },
+          "family": "bigint-divide-negative-operands"
+        },
+        {
+          "id": "divide-negative-divisor",
+          "source": "7n / -2n",
+          "expect": {
+            "bigint": "-3"
+          },
+          "family": "bigint-divide-negative-operands"
+        },
+        {
+          "id": "remainder-takes-dividend-sign",
+          "source": "-7n % 2n",
+          "expect": {
+            "bigint": "-1"
+          },
+          "family": "bigint-remainder-sign"
+        },
+        {
+          "id": "remainder-positive-dividend",
+          "source": "7n % -2n",
+          "expect": {
+            "bigint": "1"
+          },
+          "family": "bigint-remainder-sign"
+        }
+      ]
+    },
+    {
+      "id": "string.code-point-at",
+      "probes": [
+        {
+          "id": "code-point-at-ascii",
+          "source": "\"a\".codePointAt(0)",
+          "expect": {
+            "number": 97
+          },
+          "family": "string-code-point-at"
+        },
+        {
+          "id": "code-point-at-basic-multilingual",
+          "source": "\"\\u00e9\".codePointAt(0)",
+          "expect": {
+            "number": 233
+          },
+          "family": "string-code-point-at"
+        },
+        {
+          "id": "code-point-at-astral",
+          "source": "\"\\u{1f600}\".codePointAt(0)",
+          "expect": {
+            "number": 128512
+          },
+          "family": "string-code-point-at-astral"
+        }
+      ]
+    },
+    {
+      "id": "string.from-code-point",
+      "probes": [
+        {
+          "id": "from-code-point-ascii",
+          "source": "String.fromCodePoint(97)",
+          "expect": {
+            "string": "a"
+          },
+          "family": "string-from-code-point"
+        },
+        {
+          "id": "from-code-point-round-trip",
+          "source": "String.fromCodePoint(\"\\u00e9\".codePointAt(0))",
+          "expect": {
+            "string": "\u00e9"
+          },
+          "family": "string-from-code-point"
+        },
+        {
+          "id": "from-code-point-astral",
+          "source": "String.fromCodePoint(128512).length",
+          "expect": {
+            "number": 2
+          },
+          "family": "string-from-code-point-astral"
+        },
+        {
+          "id": "from-code-point-astral-round-trip",
+          "source": "String.fromCodePoint(128512).codePointAt(0)",
+          "expect": {
+            "number": 128512
+          },
+          "family": "string-from-code-point-astral"
+        }
+      ]
+    },
+    {
+      "id": "string.code-point-iteration",
+      "probes": [
+        {
+          "id": "spread-code-points",
+          "source": "[...\"abc\"].join(\",\")",
+          "expect": {
+            "string": "a,b,c"
+          },
+          "family": "string-spread-code-points"
+        },
+        {
+          "id": "spread-code-point-count",
+          "source": "[...\"abc\"].length",
+          "expect": {
+            "number": 3
+          },
+          "family": "string-spread-code-points"
+        },
+        {
+          "id": "spread-astral-is-one-element",
+          "source": "[...\"\\u{1f600}\"].length",
+          "expect": {
+            "number": 1
+          },
+          "family": "string-spread-astral"
+        },
+        {
+          "id": "spread-astral-keeps-code-point",
+          "source": "[...\"\\u{1f600}\"][0].codePointAt(0)",
+          "expect": {
+            "number": 128512
+          },
+          "family": "string-spread-astral"
+        },
+        {
+          "id": "spread-empty",
+          "source": "[...\"\"].length",
+          "expect": {
+            "number": 0
+          },
+          "family": "string-spread-empty"
+        }
+      ]
+    },
+    {
+      "id": "string.empty-code-unit-length",
+      "probes": [
+        {
+          "id": "empty-string-has-no-code-units",
+          "source": "\"\".length === 0",
+          "expect": {
+            "boolean": true
+          },
+          "family": "string-length-zero"
+        },
+        {
+          "id": "empty-string-has-no-code-points",
+          "source": "[...\"\"].length === 0",
+          "expect": {
+            "boolean": true
+          },
+          "family": "string-length-zero"
+        },
+        {
+          "id": "nonempty-string-has-code-units",
+          "source": "\"a\".length === 0",
+          "expect": {
+            "boolean": false
+          },
+          "family": "string-length-nonempty"
+        },
+        {
+          "id": "astral-string-has-code-units",
+          "source": "\"\\u{1f600}\".length === 0",
+          "expect": {
+            "boolean": false
+          },
+          "family": "string-length-nonempty"
+        }
+      ]
+    },
+    {
+      "id": "array.join-empty-separator",
+      "probes": [
+        {
+          "id": "join-concatenates-in-order",
+          "source": "[\"a\", \"b\", \"c\"].join(\"\")",
+          "expect": {
+            "string": "abc"
+          },
+          "family": "array-join-empty-separator"
+        },
+        {
+          "id": "join-preserves-astral-elements",
+          "source": "[...\"\\u{1f600}a\"].join(\"\")",
+          "expect": {
+            "string": "\ud83d\ude00a"
+          },
+          "family": "array-join-empty-separator"
+        },
+        {
+          "id": "join-single-element",
+          "source": "[\"only\"].join(\"\")",
+          "expect": {
+            "string": "only"
+          },
+          "family": "array-join-single"
+        },
+        {
+          "id": "join-empty-array",
+          "source": "[].join(\"\")",
+          "expect": {
+            "string": ""
+          },
+          "family": "array-join-empty-array"
         }
       ]
     }

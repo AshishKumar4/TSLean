@@ -1,8 +1,11 @@
 import ts from 'typescript';
 import { createHash } from 'node:crypto';
 import type {
+  LeanToTypeScriptCodecSurface,
   LeanToTypeScriptEnvironmentAttestation,
   LeanToTypeScriptGeneratedDeclaration,
+  LeanToTypeScriptHelperDeclaration,
+  LeanToTypeScriptHostBoundary,
   LeanToTypeScriptModuleArtifact,
   LeanToTypeScriptModuleIdentity,
   LeanToTypeScriptPackage,
@@ -11,6 +14,7 @@ import type {
 import {
   bindRuntimeSymbol,
   certificateForOpcode,
+  declaresRuntimeSymbol,
   type RuntimeCertificateBinding,
   type RuntimeCertificateCatalog,
 } from './certificates.js';
@@ -21,6 +25,7 @@ import type {
   LeanExpression,
   LeanExpressionLiveness,
   LeanField,
+  LeanHostOpcode,
   LeanFunctionDeclaration,
   LeanOpcode,
   LeanParameter,
@@ -32,6 +37,7 @@ import type {
 import {
   constructorsOf,
   analyzeExpressionLiveness,
+  LEAN_RUNTIME_HELPER_ROLES,
   LEAN_RUNTIME_OPCODES,
   referencedRuntimeOpcodes,
   renderType,
@@ -57,14 +63,30 @@ import {
   groupByLeanModule,
   importStatement,
   isExportedStatement,
+  LEAN_TO_TYPESCRIPT_HOST_MODULE_PATH,
   LEAN_TO_TYPESCRIPT_RUNTIME_MODULE_PATH,
+  type ModuleImport,
   moduleImports,
+  referencedNames,
+  relativeModuleSpecifier,
 } from './package-layout.js';
 
 export interface LeanToTypeScriptProvenance {
+  /**
+   * Everything the caller knows before emission. The module identities, the closure, the
+   * certificates and the host, helper and codec inventories are observations of the emitted tree,
+   * so the emitter derives them here rather than accepting a caller's copy.
+   */
   readonly semantic: Omit<
     LeanToTypeScriptSemanticIdentity,
-    'generatedBodySha256' | 'modules' | 'closure' | 'leanProjectPath' | 'certificates'
+    | 'generatedBodySha256'
+    | 'modules'
+    | 'closure'
+    | 'leanProjectPath'
+    | 'certificates'
+    | 'hosts'
+    | 'helpers'
+    | 'codecs'
   >;
   readonly environment: Omit<LeanToTypeScriptEnvironmentAttestation, 'runtimeConformance'>;
   /** The Lean-owned registry every spent opcode is certified against. */
@@ -122,6 +144,9 @@ export function emitTypeScriptPackage(
       closure: program.closure,
       certificates,
       generatedBodySha256: generatedPackageDigest(printed.map((module) => module.identity)),
+      hosts: hostInventory(context),
+      helpers: helperInventory(context, printed),
+      codecs: codecInventory(context),
     },
     environment: {
       ...provenance.environment,
@@ -143,6 +168,44 @@ export function emitTypeScriptPackage(
   };
   verifyLeanToTypeScriptPackage(emitted);
   return emitted;
+}
+
+/** The host boundaries the emitted package imports, ordered by the Lean declaration they came from. */
+function hostInventory(context: EmitContext): readonly LeanToTypeScriptHostBoundary[] {
+  return [...context.hosts]
+    .map(([binding, host]) => ({ declaration: host.declaration, host: host.host, binding, module: host.module }))
+    .sort((left, right) => compareCodePoints(left.declaration, right.declaration));
+}
+
+/**
+ * The generated helpers the package actually printed. A role the program never reached prints no
+ * declaration, so recording it would claim a body the tree does not carry.
+ */
+function helperInventory(
+  context: EmitContext,
+  printed: readonly { readonly body: string }[],
+): readonly LeanToTypeScriptHelperDeclaration[] {
+  return LEAN_RUNTIME_HELPER_ROLES.filter((role) =>
+    printed.some((module) => declaresRuntimeSymbol(module.body, requiredHelper(context, role))),
+  )
+    .map((role) => ({ role, declaration: requiredHelper(context, role) }))
+    .sort((left, right) => compareCodePoints(left.role, right.role));
+}
+
+/**
+ * The codec statics the package emitted, per data type. A ground type carries `equals`, `toData`
+ * and `fromData`; a generic one carries none, because a codec per instantiation would be a second
+ * representation of one type.
+ */
+function codecInventory(context: EmitContext): readonly LeanToTypeScriptCodecSurface[] {
+  return [...context.types.values()]
+    .filter((plan) => plan.ground && plan.nominal)
+    .map((plan) => ({
+      declaration: plan.declaration.name,
+      type: plan.typeName,
+      statics: ['equals', 'fromData', 'toData'],
+    }))
+    .sort((left, right) => compareCodePoints(left.declaration, right.declaration));
 }
 
 /**
@@ -309,7 +372,12 @@ function printPackage(
   for (const draft of drafts) {
     for (const name of declaredNames(draft.statements)) owners.set(name, draft.path);
   }
-  const imports = new Map(drafts.map((draft) => [draft.path, moduleImports(draft.path, draft.statements, owners)]));
+  const imports = new Map(
+    drafts.map((draft) => [
+      draft.path,
+      [...hostImports(draft, context), ...moduleImports(draft.path, draft.statements, owners)],
+    ]),
+  );
   const required = new Set([...imports.values()].flatMap((entries) => entries.flatMap((entry) => entry.names)));
   const declarations = new Map(program.declarations.map((declaration) => [declaration.name, declaration]));
   return drafts.map((draft) => {
@@ -332,6 +400,30 @@ function printPackage(
       sourceMap,
     };
   });
+}
+
+/**
+ * What one generated module imports from the substrate: the host binding of every `foreign`
+ * declaration it declares, plus every one it calls. A host operation is not defined by the emitted
+ * package — its correctness is the named premise `Preservation.HostAgrees` between the substrate's
+ * implementation and the exported reference body — so the module names it through an import and
+ * never through a local definition it would then have to prove something about.
+ */
+function hostImports(draft: ModuleDraft, context: EmitContext): readonly ModuleImport[] {
+  if (context.hosts.size === 0) return [];
+  const referenced = referencedNames(draft.statements);
+  const names = [...context.hosts]
+    .filter(([binding, host]) => host.module === draft.leanModule || referenced.all.has(binding))
+    .map(([binding]) => binding)
+    .sort(compareCodePoints);
+  if (names.length === 0) return [];
+  return [
+    {
+      specifier: relativeModuleSpecifier(draft.path, LEAN_TO_TYPESCRIPT_HOST_MODULE_PATH),
+      names,
+      typeOnly: new Set(),
+    },
+  ];
 }
 
 /**
@@ -587,6 +679,11 @@ interface PreludeNames {
   readonly requireList: string;
   readonly optionType: string;
   readonly exceptType: string;
+  readonly jsonType: string;
+  readonly requireInt: string;
+  readonly requireChar: string;
+  readonly requirePair: string;
+  readonly requireJson: string;
   readonly requireOption: string;
   readonly requireExcept: string;
   readonly equalOption: string;
@@ -625,6 +722,16 @@ interface BoundaryPlan {
   readonly validators: ReadonlySet<string>;
 }
 
+/**
+ * One host binding the emitted package imports: the substrate's implementation of a host identity,
+ * under the name the Lean declaration spells, and the Lean module the boundary was declared in.
+ */
+export interface LeanToTypeScriptHostBinding {
+  readonly declaration: string;
+  readonly host: LeanHostOpcode;
+  readonly module: string;
+}
+
 interface EmitContext {
   readonly roots: ReadonlySet<string>;
   readonly declarationNames: ReadonlyMap<string, string>;
@@ -636,6 +743,8 @@ interface EmitContext {
   readonly locals: CodecLocals;
   readonly boundary: BoundaryPlan;
   readonly used: Set<string>;
+  /** The imported host binding of every `foreign` declaration, keyed by its emitted name. */
+  readonly hosts: ReadonlyMap<string, LeanToTypeScriptHostBinding>;
   /** The enclosing declaration's type parameters, in order, as emitted names. */
   readonly typeParameters: readonly string[];
 }
@@ -834,15 +943,19 @@ function planProgram(program: LeanSemanticProgram): EmitContext {
     requireList: allocator.allocate('requireList'),
     optionType: allocator.allocate('Option'),
     exceptType: allocator.allocate('Except'),
+    jsonType: allocator.allocate('JsonValue'),
+    requireInt: allocator.allocate('requireInt'),
+    requireChar: allocator.allocate('requireChar'),
+    requirePair: allocator.allocate('requirePair'),
+    requireJson: allocator.allocate('requireJson'),
     requireOption: allocator.allocate('requireOption'),
     requireExcept: allocator.allocate('requireExcept'),
     equalOption: allocator.allocate('equalOption'),
     equalExcept: allocator.allocate('equalExcept'),
     equalList: allocator.allocate('equalList'),
-    helpers: new Map<LeanRuntimeHelperRole, string>([
-      ['nat-truncated-subtraction', allocator.allocate('natSubtract')],
-      ['list-head-option', allocator.allocate('listHead')],
-    ]),
+    helpers: new Map<LeanRuntimeHelperRole, string>(
+      LEAN_RUNTIME_HELPER_ROLES.map((role) => [role, allocator.allocate(HELPER_DECLARATION_HINTS[role])]),
+    ),
     decoders,
   };
   // Every generated name an emitted function body can reach: the shared helpers it calls, the
@@ -863,6 +976,22 @@ function planProgram(program: LeanSemanticProgram): EmitContext {
     codeUnit: allocator.allocate('codeUnit'),
   };
   const roots = new Set(program.roots);
+  const hosts = new Map<string, LeanToTypeScriptHostBinding>();
+  for (const declaration of program.declarations) {
+    if (declaration.kind !== 'foreign') continue;
+    const emitted = requiredDeclarationName(declarationNames, declaration.name);
+    // The substrate exports the host binding under the declaration's own Lean name, so a package
+    // that had to rename it — because a global or another declaration already holds the spelling —
+    // could not import it under that name. Refuse in the Lean source rather than import an alias
+    // the substrate never published.
+    if (emitted !== localName(declaration.name)) {
+      throw new UnsupportedLeanFragmentError(
+        declaration.module,
+        `host boundary ${declaration.name} would be imported as ${emitted}, which is not the name the substrate publishes it under; rename the colliding declaration in the Lean source`,
+      );
+    }
+    hosts.set(emitted, { declaration: declaration.name, host: declaration.host, module: declaration.module });
+  }
   const base: EmitContext = {
     roots,
     declarationNames,
@@ -874,6 +1003,7 @@ function planProgram(program: LeanSemanticProgram): EmitContext {
     locals,
     boundary: { types: new Set(), validators: new Set() },
     used: new Set(),
+    hosts,
     typeParameters: [],
   };
   const boundary = planBoundary(program, base);
@@ -906,6 +1036,20 @@ function planBoundary(program: LeanSemanticProgram, context: EmitContext): Bound
       case 'string':
         validators.add(context.prelude.requireString);
         return;
+      case 'int':
+        validators.add(context.prelude.requireInt);
+        return;
+      case 'char':
+        validators.add(context.prelude.requireChar);
+        return;
+      case 'json':
+        validators.add(context.prelude.requireJson);
+        return;
+      case 'pair':
+        validators.add(context.prelude.requirePair);
+        walk(type.first);
+        walk(type.second);
+        return;
       case 'option':
         validators.add(context.prelude.requireOption);
         walk(type.value);
@@ -919,8 +1063,16 @@ function planBoundary(program: LeanSemanticProgram, context: EmitContext): Bound
         validators.add(context.prelude.requireList);
         walk(type.element);
         return;
+      // An Array is read by the List validator, because the two share one dense image.
+      case 'array':
+        validators.add(context.prelude.requireList);
+        walk(type.element);
+        return;
       case 'parameter':
       case 'function':
+      case 'bytes':
+      case 'hashMap':
+      case 'treeMap':
         throw new TypeError(`a root declaration cannot expose ${renderType(type)} at its boundary`);
       case 'named': {
         const plan = context.types.get(type.name);
@@ -958,6 +1110,9 @@ function emitDeclaration(declaration: LeanDeclaration, context: EmitContext): re
     if (context.methods.has(declaration.name)) return [];
     return [emitFunction(declaration, context)];
   }
+  // A host boundary is imported, never defined: the substrate owns the implementation, and the
+  // module that names it carries an import instead of a statement. `hostImports` places it.
+  if (declaration.kind === 'foreign') return [];
   const plan = requiredTypePlan(context, declaration.name);
   const scoped = withTypeParameters(context, plan.typeParameters);
   if (declaration.kind === 'enum') {
@@ -981,26 +1136,66 @@ function emitFunction(declaration: LeanFunction, context: EmitContext): ts.State
   const scope: readonly Binding[] = parameters
     .map((parameter): Binding => ({ kind: 'identifier', name: parameter.emittedName }))
     .reverse();
+  const body = emitFunctionBody(declaration.body, scope, allocator, scoped);
   return documented(
     ts.factory.createFunctionDeclaration(
       context.roots.has(declaration.name) ? [modifier(ts.SyntaxKind.ExportKeyword)] : undefined,
       undefined,
       requiredDeclarationName(context.declarationNames, declaration.name),
       typeParameterDeclarations(scoped.typeParameters),
-      parameters.map((parameter) =>
-        ts.factory.createParameterDeclaration(
-          undefined,
-          undefined,
-          parameter.emittedName,
-          undefined,
-          emitType(parameter.type, scoped),
+      markUnreadParameters(
+        parameters.map((parameter) =>
+          ts.factory.createParameterDeclaration(
+            undefined,
+            undefined,
+            parameter.emittedName,
+            undefined,
+            emitType(parameter.type, scoped),
+          ),
         ),
+        body,
+        allocator,
       ),
       emitType(declaration.result, scoped),
-      emitFunctionBody(declaration.body, scope, allocator, scoped),
+      body,
     ),
     declaration.doc,
   );
+}
+
+/**
+ * Parameters an emitted body never names, respelled with a leading underscore.
+ *
+ * A Lean declaration may ignore a parameter, and one override of a dispatched method may decide its
+ * case without reading an argument another case reads. The parameter still has to be declared —
+ * it holds its position in the signature — so it is spelled the way TypeScript's own unused-binding
+ * rule reads as deliberate, rather than left to a consumer's compiler options. The body is already
+ * built when this runs, and the allocator gives every binder in it a distinct name, so an
+ * identifier that does not occur in the body is genuinely unread.
+ */
+function markUnreadParameters(
+  parameters: readonly ts.ParameterDeclaration[],
+  body: ts.Node,
+  allocator: IdentifierAllocator,
+): readonly ts.ParameterDeclaration[] {
+  const read = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) read.add(node.text);
+    ts.forEachChild(node, visit);
+  };
+  visit(body);
+  return parameters.map((parameter) => {
+    if (!ts.isIdentifier(parameter.name) || read.has(parameter.name.text)) return parameter;
+    return ts.factory.updateParameterDeclaration(
+      parameter,
+      parameter.modifiers,
+      parameter.dotDotDotToken,
+      allocator.allocate(`_${parameter.name.text}`),
+      parameter.questionToken,
+      parameter.type,
+      parameter.initializer,
+    );
+  });
 }
 
 /** A nullary inductive with no behaviour is a tag; one with payloads is a discriminated union. */
@@ -1205,6 +1400,7 @@ function emitBaseMethod(method: MethodPlan, plan: TypePlan, context: EmitContext
       method.declaration.doc,
     );
   }
+  const body = emitFunctionBody(method.declaration.body, methodScope(method, parameters), allocator, scoped);
   return documented(
     ts.factory.createMethodDeclaration(
       [modifier(ts.SyntaxKind.PublicKeyword)],
@@ -1212,9 +1408,9 @@ function emitBaseMethod(method: MethodPlan, plan: TypePlan, context: EmitContext
       method.name,
       undefined,
       own,
-      parameters,
+      markUnreadParameters(parameters, body, allocator),
       emitType(method.declaration.result, scoped),
-      emitFunctionBody(method.declaration.body, methodScope(method, parameters), allocator, scoped),
+      body,
     ),
     method.declaration.doc,
   );
@@ -1269,12 +1465,28 @@ function emitCaseClass(entry: CasePlan, plan: TypePlan, nullary: boolean, contex
         ),
       ),
     );
+  } else {
+    // A payload constructor freezes in the constructor above. A nullary one has no field to assign
+    // and would otherwise be the one mutable value the generated representation hands out, so it
+    // declares the constructor that freezes it — every instance, not only the shared singleton.
+    members.push(
+      ts.factory.createConstructorDeclaration(
+        [modifier(ts.SyntaxKind.PublicKeyword)],
+        [],
+        block(
+          ts.factory.createExpressionStatement(
+            ts.factory.createCallExpression(ts.factory.createSuper(), undefined, []),
+          ),
+          freezeThis(),
+        ),
+      ),
+    );
   }
   for (const method of plan.methods) {
     if (!method.dispatches) continue;
-    const body = method.declaration.body;
-    if (body.kind !== 'match') throw new TypeError(`dispatching method ${method.declaration.name} lost its match`);
-    const arm = body.cases.find((candidate) => candidate.constructor === entry.constructor.name);
+    const dispatch = method.declaration.body;
+    if (dispatch.kind !== 'match') throw new TypeError(`dispatching method ${method.declaration.name} lost its match`);
+    const arm = dispatch.cases.find((candidate) => candidate.constructor === entry.constructor.name);
     if (arm === undefined) {
       throw new TypeError(`method ${method.declaration.name} decides no ${entry.constructor.name} case`);
     }
@@ -1282,6 +1494,7 @@ function emitCaseClass(entry: CasePlan, plan: TypePlan, nullary: boolean, contex
     const allocator = newAllocator(scoped);
     const declared = methodParameters(method, allocator, scoped);
     const scope = [...armBindings(entry.constructor), ...methodScope(method, declared)];
+    const body = emitFunctionBody(arm.value, scope, allocator, scoped);
     members.push(
       ts.factory.createMethodDeclaration(
         [modifier(ts.SyntaxKind.PublicKeyword), modifier(ts.SyntaxKind.OverrideKeyword)],
@@ -1289,9 +1502,11 @@ function emitCaseClass(entry: CasePlan, plan: TypePlan, nullary: boolean, contex
         method.name,
         undefined,
         typeParameterDeclarations(methodOwnTypeParameters(method, plan)),
-        declared,
+        // One override per case, so a parameter one case decides without reading is genuinely
+        // unread there while the abstract signature still declares it.
+        markUnreadParameters(declared, body, allocator),
         emitType(method.declaration.result, scoped),
-        emitFunctionBody(arm.value, scope, allocator, scoped),
+        body,
       ),
     );
   }
@@ -1689,9 +1904,16 @@ function assertIdentityDataImage(type: LeanType, context: EmitContext, path: rea
     case 'boolean':
     case 'nat':
     case 'string':
+    case 'int':
+    case 'char':
+    // A JsonValue's data image is the tagged union it already is, exactly as an Option's is.
+    case 'json':
       return;
     case 'parameter':
     case 'function':
+    case 'bytes':
+    case 'hashMap':
+    case 'treeMap':
       throw new TypeError(`${renderType(type)}${at} has no data image`);
     case 'option':
       assertIdentityDataImage(type.value, context, path);
@@ -1701,7 +1923,12 @@ function assertIdentityDataImage(type: LeanType, context: EmitContext, path: rea
       assertIdentityDataImage(type.value, context, path);
       return;
     case 'list':
+    case 'array':
       assertIdentityDataImage(type.element, context, path);
+      return;
+    case 'pair':
+      assertIdentityDataImage(type.first, context, path);
+      assertIdentityDataImage(type.second, context, path);
       return;
     case 'named': {
       const plan = requiredTypePlan(context, type.name);
@@ -1740,8 +1967,26 @@ function decodeExpression(
       return callPrelude(context, context.prelude.requireNat, [value, label]);
     case 'string':
       return callPrelude(context, context.prelude.requireString, [value, label]);
+    case 'int':
+      return callPrelude(context, context.prelude.requireInt, [value, label]);
+    case 'char':
+      return callPrelude(context, context.prelude.requireChar, [value, label]);
+    case 'json':
+      return callPrelude(context, context.prelude.requireJson, [value, label]);
+    case 'pair':
+      return callPrelude(context, context.prelude.requirePair, [
+        value,
+        label,
+        elementDecoder(type.first, context),
+        elementDecoder(type.second, context),
+      ]);
+    // A ByteArray and a Map are engine objects with internal slots rather than JSON-shaped values,
+    // and no admitted opcode observes either, so neither has a decoder to reach here.
     case 'parameter':
     case 'function':
+    case 'bytes':
+    case 'hashMap':
+    case 'treeMap':
       throw new TypeError(`${renderType(type)} cannot be decoded at the package boundary`);
     case 'option':
       return callPrelude(context, context.prelude.requireOption, [value, label, elementDecoder(type.value, context)]);
@@ -1753,6 +1998,9 @@ function decodeExpression(
         elementDecoder(type.value, context),
       ]);
     case 'list':
+      return callPrelude(context, context.prelude.requireList, [value, label, elementDecoder(type.element, context)]);
+    // An Array shares the List image, so it is read by the same validator over the same elements.
+    case 'array':
       return callPrelude(context, context.prelude.requireList, [value, label, elementDecoder(type.element, context)]);
     case 'named': {
       const plan = requiredTypePlan(context, type.name);
@@ -1806,9 +2054,23 @@ function equalityExpression(
     case 'boolean':
     case 'nat':
     case 'string':
+    case 'int':
+    case 'char':
       return ts.factory.createBinaryExpression(left, ts.SyntaxKind.EqualsEqualsEqualsToken, right);
+    case 'pair':
+      return conjunction([
+        equalityExpression(fieldAccess(left, 'fst'), fieldAccess(right, 'fst'), type.first, allocator, context),
+        equalityExpression(fieldAccess(left, 'snd'), fieldAccess(right, 'snd'), type.second, allocator, context),
+      ]);
+    // A JsonValue is a payload-carrying union, and a Map or a ByteArray is an engine object whose
+    // contents no admitted opcode reads, so each is refused here for the same reason a user union
+    // with payloads is: this fragment version proves no structural comparison for it.
     case 'parameter':
     case 'function':
+    case 'json':
+    case 'bytes':
+    case 'hashMap':
+    case 'treeMap':
       throw new TypeError(`${renderType(type)} has no structural equality`);
     case 'named': {
       const plan = requiredTypePlan(context, type.name);
@@ -1831,6 +2093,12 @@ function equalityExpression(
         comparator(type.value, allocator, context),
       ]);
     case 'list':
+      return callPrelude(context, context.prelude.equalList, [
+        left,
+        right,
+        comparator(type.element, allocator, context),
+      ]);
+    case 'array':
       return callPrelude(context, context.prelude.equalList, [
         left,
         right,
@@ -1921,10 +2189,14 @@ function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
   const statements: ts.Statement[] = [];
   // Built last-to-first so a validator reached only through another one is still emitted, then
   // returned in a fixed order so the bytes are stable.
-  if (context.used.has(requiredHelper(context, 'list-head-option'))) statements.push(emitListHeadHelper(context));
-  if (context.used.has(requiredHelper(context, 'nat-truncated-subtraction'))) {
-    statements.push(emitNatSubtractHelper(context));
+  // Every guarded opcode the package reached, in one fixed order so the bytes are stable.
+  for (const role of [...LEAN_RUNTIME_HELPER_ROLES].reverse()) {
+    if (context.used.has(requiredHelper(context, role))) statements.push(emitRuntimeHelper(role, context));
   }
+  if (context.used.has(prelude.requireJson)) statements.push(emitJsonValidator(context));
+  if (context.used.has(prelude.requirePair)) statements.push(emitPairValidator(context));
+  if (context.used.has(prelude.requireChar)) statements.push(emitCharValidator(context));
+  if (context.used.has(prelude.requireInt)) statements.push(emitIntValidator(context));
   if (context.used.has(prelude.equalList)) statements.push(emitEqualListHelper(context));
   if (context.used.has(prelude.equalExcept)) statements.push(emitEqualExceptHelper(context));
   if (context.used.has(prelude.equalOption)) statements.push(emitEqualOptionHelper(context));
@@ -2181,6 +2453,7 @@ function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
   }
   // Built last: each alias is emitted only once something above has actually referenced it.
   const aliases: ts.Statement[] = [];
+  if (context.used.has(prelude.jsonType)) aliases.push(emitJsonAlias(prelude.jsonType));
   if (context.used.has(prelude.exceptType)) aliases.push(emitExceptAlias(prelude.exceptType));
   if (context.used.has(prelude.optionType)) aliases.push(emitOptionAlias(prelude.optionType));
   if (context.used.has(prelude.dataBoundary)) aliases.push(emitDataBoundaryAlias(prelude.dataBoundary));
@@ -2261,63 +2534,233 @@ function emitExceptAlias(name: string): ts.Statement {
   );
 }
 
-/** `Nat` subtraction truncates at zero, so the guard exists once rather than at every use site. */
-function emitNatSubtractHelper(context: EmitContext): ts.Statement {
-  const helper = requiredHelper(context, 'nat-truncated-subtraction');
-  const left = ts.factory.createIdentifier('left');
-  const right = ts.factory.createIdentifier('right');
-  const bigint = ts.factory.createKeywordTypeNode(ts.SyntaxKind.BigIntKeyword);
+/**
+ * `JsonValue`, the one inductive the fragment owns rather than the target. It lowers to the same
+ * tagged-object image every other union has, so a match on it is the tag chain a user inductive
+ * gets and its data image is itself.
+ */
+function emitJsonAlias(name: string): ts.Statement {
+  const self = ts.factory.createTypeReferenceNode(name);
+  const variant = (tag: string, payload?: ts.TypeNode): ts.TypeNode =>
+    ts.factory.createTypeLiteralNode([
+      readonlyProperty('kind', literalType(tag)),
+      ...(payload === undefined ? [] : [readonlyProperty('value', payload)]),
+    ]);
+  return ts.factory.createTypeAliasDeclaration(
+    [modifier(ts.SyntaxKind.ExportKeyword)],
+    name,
+    undefined,
+    ts.factory.createUnionTypeNode([
+      variant('null'),
+      variant('bool', ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword)),
+      variant('int', ts.factory.createKeywordTypeNode(ts.SyntaxKind.BigIntKeyword)),
+      variant('string', ts.factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword)),
+      variant('array', readonlyArrayType(self)),
+      variant(
+        'object',
+        readonlyArrayType(
+          ts.factory.createTypeLiteralNode([
+            readonlyProperty('fst', ts.factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword)),
+            readonlyProperty('snd', self),
+          ]),
+        ),
+      ),
+    ]),
+  );
+}
+
+/** The identifier hint each helper role's declaration is allocated from. */
+const HELPER_DECLARATION_HINTS: Readonly<Record<LeanRuntimeHelperRole, string>> = {
+  'nat-truncated-subtraction': 'natSubtract',
+  'list-head-option': 'listHead',
+  'int-truncated-division': 'intTruncatedDivide',
+  'int-truncated-modulo': 'intTruncatedModulo',
+  'int-to-nat-clamp': 'intToNat',
+  'char-of-nat': 'charOfNat',
+  'char-less-code-point': 'charLess',
+};
+
+/** `value.codePointAt(0)`: the first code point of a nonempty string, which is a Char's image. */
+function firstCodePoint(value: ts.Expression): ts.Expression {
+  return ts.factory.createCallExpression(ts.factory.createPropertyAccessExpression(value, 'codePointAt'), undefined, [
+    ts.factory.createNumericLiteral(0),
+  ]);
+}
+
+/** `[...value]`: the code points of a string, or a fresh dense copy of an array. */
+function spreadArray(value: ts.Expression): ts.Expression {
+  return ts.factory.createArrayLiteralExpression([ts.factory.createSpreadElement(value)], false);
+}
+
+/**
+ * The one emitted shape every generated helper's body has, over operands already emitted.
+ *
+ * This is the helper counterpart of `operationForm`: an opcode whose exact Lean semantics need a
+ * guard reaches the target as a declaration rather than as a use-site form, and this is the only
+ * place that declaration's body exists. `helperOperationForms` prints it over the operand names
+ * its registry row declares, so the row's `emittedForm` is joined against emitted structure rather
+ * than against a copy of itself.
+ */
+function helperBodyForm(role: LeanRuntimeHelperRole, operands: readonly ts.Expression[]): ts.Expression {
+  const operand = (index: number): ts.Expression => {
+    const only = operands[index];
+    if (only === undefined) throw new TypeError(`the ${role} helper is missing operand ${index}`);
+    return only;
+  };
+  const zero = ts.factory.createBigIntLiteral('0n');
+  const select = (condition: ts.Expression, consequent: ts.Expression, alternate: ts.Expression): ts.Expression =>
+    ts.factory.createConditionalExpression(condition, undefined, consequent, undefined, alternate);
+  const compare = (left: ts.Expression, token: ts.BinaryOperator, right: ts.Expression): ts.Expression =>
+    ts.factory.createBinaryExpression(left, token, right);
+  switch (role) {
+    case 'nat-truncated-subtraction':
+      return select(
+        compare(operand(0), ts.SyntaxKind.LessThanToken, operand(1)),
+        zero,
+        compare(operand(0), ts.SyntaxKind.MinusToken, operand(1)),
+      );
+    case 'list-head-option':
+      return select(
+        isEmptyList(operand(0)),
+        noneLiteral(),
+        someLiteral(ts.factory.createElementAccessExpression(operand(0), ts.factory.createNumericLiteral(0))),
+      );
+    // BigInt division throws on a zero divisor, and Lean's `Int.tdiv` is total with `0` there, so
+    // the guard decides before the division runs.
+    case 'int-truncated-division':
+      return select(
+        compare(operand(1), ts.SyntaxKind.EqualsEqualsEqualsToken, zero),
+        zero,
+        compare(operand(0), ts.SyntaxKind.SlashToken, operand(1)),
+      );
+    case 'int-truncated-modulo':
+      return select(
+        compare(operand(1), ts.SyntaxKind.EqualsEqualsEqualsToken, zero),
+        operand(0),
+        compare(operand(0), ts.SyntaxKind.PercentToken, operand(1)),
+      );
+    case 'int-to-nat-clamp':
+      return select(compare(operand(0), ts.SyntaxKind.LessThanToken, zero), zero, operand(0));
+    // `Nat.isValidChar`: a scalar value below the maximum code point and outside the surrogate
+    // range. Anything else is `Char.ofNat`'s default, which is U+0000.
+    case 'char-of-nat':
+      return select(
+        conjunction([
+          compare(operand(0), ts.SyntaxKind.GreaterThanEqualsToken, zero),
+          compare(operand(0), ts.SyntaxKind.LessThanEqualsToken, ts.factory.createBigIntLiteral('1114111n')),
+          ts.factory.createPrefixUnaryExpression(
+            ts.SyntaxKind.ExclamationToken,
+            conjunction([
+              compare(operand(0), ts.SyntaxKind.GreaterThanEqualsToken, ts.factory.createBigIntLiteral('55296n')),
+              compare(operand(0), ts.SyntaxKind.LessThanEqualsToken, ts.factory.createBigIntLiteral('57343n')),
+            ]),
+          ),
+        ]),
+        ts.factory.createCallExpression(
+          ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('String'), 'fromCodePoint'),
+          undefined,
+          [ts.factory.createCallExpression(ts.factory.createIdentifier('Number'), undefined, [operand(0)])],
+        ),
+        ts.factory.createStringLiteral('\u0000'),
+      );
+    // Lean orders Char by code point; JavaScript `<` on strings orders UTF-16 code units, and the
+    // two disagree above the BMP, so the comparison reads the code points.
+    case 'char-less-code-point':
+      return compare(firstCodePoint(operand(0)), ts.SyntaxKind.LessThanToken, firstCodePoint(operand(1)));
+  }
+}
+
+/** The parameters and result one generated helper declares, over the operands its row names. */
+interface HelperSignature {
+  readonly typeParameters: readonly ts.TypeParameterDeclaration[] | undefined;
+  readonly parameters: readonly { readonly name: string; readonly type: ts.TypeNode }[];
+  readonly result: ts.TypeNode;
+}
+
+function helperSignature(role: LeanRuntimeHelperRole, context: EmitContext): HelperSignature {
+  const bigintType = ts.factory.createKeywordTypeNode(ts.SyntaxKind.BigIntKeyword);
+  const stringType = ts.factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword);
+  const pair = (type: ts.TypeNode): HelperSignature['parameters'] => [
+    { name: 'left', type },
+    { name: 'right', type },
+  ];
+  switch (role) {
+    case 'list-head-option': {
+      const element = ts.factory.createTypeReferenceNode('A');
+      return {
+        typeParameters: [ts.factory.createTypeParameterDeclaration(undefined, 'A')],
+        parameters: [{ name: context.locals.value, type: readonlyArrayType(element) }],
+        result: optionTypeNode(context, element),
+      };
+    }
+    case 'nat-truncated-subtraction':
+    case 'int-truncated-division':
+    case 'int-truncated-modulo':
+      return { typeParameters: undefined, parameters: pair(bigintType), result: bigintType };
+    case 'int-to-nat-clamp':
+      return {
+        typeParameters: undefined,
+        parameters: [{ name: 'operand', type: bigintType }],
+        result: bigintType,
+      };
+    case 'char-of-nat':
+      return {
+        typeParameters: undefined,
+        parameters: [{ name: 'operand', type: bigintType }],
+        result: stringType,
+      };
+    case 'char-less-code-point':
+      return {
+        typeParameters: undefined,
+        parameters: pair(stringType),
+        result: ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
+      };
+  }
+}
+
+/** One generated helper: the signature its role fixes, returning the body its registry row fixes. */
+function emitRuntimeHelper(role: LeanRuntimeHelperRole, context: EmitContext): ts.Statement {
+  const signature = helperSignature(role, context);
   return ts.factory.createFunctionDeclaration(
     undefined,
     undefined,
-    helper,
-    undefined,
-    [
-      ts.factory.createParameterDeclaration(undefined, undefined, 'left', undefined, bigint),
-      ts.factory.createParameterDeclaration(undefined, undefined, 'right', undefined, bigint),
-    ],
-    bigint,
+    requiredHelper(context, role),
+    signature.typeParameters,
+    signature.parameters.map((parameter) =>
+      ts.factory.createParameterDeclaration(undefined, undefined, parameter.name, undefined, parameter.type),
+    ),
+    signature.result,
     block(
       ts.factory.createReturnStatement(
-        ts.factory.createConditionalExpression(
-          ts.factory.createBinaryExpression(left, ts.SyntaxKind.LessThanToken, right),
-          undefined,
-          ts.factory.createBigIntLiteral('0n'),
-          undefined,
-          ts.factory.createBinaryExpression(left, ts.SyntaxKind.MinusToken, right),
+        helperBodyForm(
+          role,
+          signature.parameters.map((parameter) => ts.factory.createIdentifier(parameter.name)),
         ),
       ),
     ),
   );
 }
 
-/** `List.head?` is total on an empty list, so the guard exists once. */
-function emitListHeadHelper(context: EmitContext): ts.Statement {
-  const helper = requiredHelper(context, 'list-head-option');
-  const value = ts.factory.createIdentifier(context.locals.value);
-  const element = ts.factory.createTypeReferenceNode('A');
-  return ts.factory.createFunctionDeclaration(
-    undefined,
-    undefined,
-    helper,
-    [ts.factory.createTypeParameterDeclaration(undefined, 'A')],
-    [
-      ts.factory.createParameterDeclaration(
-        undefined,
-        undefined,
-        context.locals.value,
-        undefined,
-        readonlyArrayType(element),
-      ),
-    ],
-    optionTypeNode(context, element),
-    block(
-      ts.factory.createIfStatement(isEmptyList(value), block(ts.factory.createReturnStatement(noneLiteral()))),
-      ts.factory.createReturnStatement(
-        someLiteral(ts.factory.createElementAccessExpression(value, ts.factory.createNumericLiteral(0))),
-      ),
-    ),
-  );
+/**
+ * Every generated helper's body, canonically printed over the operand names its registry row
+ * declares. The Lean row's `emittedForm` for a `helper:` symbol states the body, so the gate joins
+ * this print against it exactly as it joins an inline form, and the two halves of the registry are
+ * covered rather than only the inline half.
+ */
+export function helperOperationForms(): ReadonlyMap<LeanOpcode, string> {
+  const file = ts.createSourceFile('runtime-form.ts', '', ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
+  const forms = new Map<LeanOpcode, string>();
+  for (const row of Object.values(LEAN_RUNTIME_OPCODES)) {
+    const role = runtimeHelperRole(row.runtimeSymbol);
+    if (role === undefined) continue;
+    const form = helperBodyForm(
+      role,
+      row.operands.map((operand) => ts.factory.createIdentifier(operand)),
+    );
+    forms.set(row.opcode, printer.printNode(ts.EmitHint.Unspecified, form, file));
+  }
+  return forms;
 }
 
 function requiredHelper(context: EmitContext, role: LeanRuntimeHelperRole): string {
@@ -2655,12 +3098,21 @@ function decoderParameter(name: string, result: ts.TypeNode, context: EmitContex
   );
 }
 
-/** Reads a tagged union at the boundary: one constructor decides, and its payload is decoded. */
+/**
+ * Reads a tagged union at the boundary: one constructor decides, and its payload is decoded. How a
+ * payload is read is the caller's, because `Option` and `Except` are read by a decoder their own
+ * caller supplies while `JsonValue` reads its two recursive arms through the boundary decoder for
+ * the type each arm carries.
+ */
 function emitTaggedValidator(
   name: string,
   typeParameters: readonly string[],
   result: ts.TypeNode,
-  cases: readonly { readonly tag: string; readonly field?: string; readonly decoder?: string }[],
+  cases: readonly {
+    readonly tag: string;
+    readonly field?: string;
+    readonly decode?: (payload: ts.Expression, label: ts.Expression) => ts.Expression;
+  }[],
   decoders: readonly ts.ParameterDeclaration[],
   context: EmitContext,
 ): ts.Statement {
@@ -2668,8 +3120,8 @@ function emitTaggedValidator(
   const value = ts.factory.createIdentifier(locals.value);
   const clauses = cases.map((entry) => {
     const payload = entry.field;
-    const decoder = entry.decoder;
-    if (payload === undefined || decoder === undefined) {
+    const decode = entry.decode;
+    if (payload === undefined || decode === undefined) {
       return ts.factory.createCaseClause(ts.factory.createStringLiteral(entry.tag), [
         ts.factory.createBlock(
           [
@@ -2703,10 +3155,10 @@ function emitTaggedValidator(
           ts.factory.createReturnStatement(
             taggedLiteral(entry.tag, {
               field: payload,
-              value: ts.factory.createCallExpression(ts.factory.createIdentifier(decoder), undefined, [
+              value: decode(
                 elementAccess(ts.factory.createIdentifier(locals.data), payload),
                 ts.factory.createIdentifier(locals.name),
-              ]),
+              ),
             }),
           ),
         ],
@@ -2740,12 +3192,20 @@ function emitTaggedValidator(
   );
 }
 
+/** The call one supplied decoder parameter makes on a payload, as `decoder(payload, name)`. */
+function suppliedDecoder(
+  decoder: string,
+): (payload: ts.Expression, label: ts.Expression) => ts.Expression {
+  return (payload, label) =>
+    ts.factory.createCallExpression(ts.factory.createIdentifier(decoder), undefined, [payload, label]);
+}
+
 function emitOptionValidator(context: EmitContext): ts.Statement {
   return emitTaggedValidator(
     context.prelude.requireOption,
     ['A'],
     optionTypeNode(context, ts.factory.createTypeReferenceNode('A')),
-    [{ tag: 'none' }, { tag: 'some', field: 'value', decoder: context.locals.element }],
+    [{ tag: 'none' }, { tag: 'some', field: 'value', decode: suppliedDecoder(context.locals.element) }],
     [decoderParameter(context.locals.element, ts.factory.createTypeReferenceNode('A'), context)],
     context,
   );
@@ -2760,13 +3220,158 @@ function emitExceptValidator(context: EmitContext): ts.Statement {
       ts.factory.createTypeReferenceNode('A'),
     ]),
     [
-      { tag: 'error', field: 'error', decoder: context.locals.field },
-      { tag: 'ok', field: 'value', decoder: context.locals.element },
+      { tag: 'error', field: 'error', decode: suppliedDecoder(context.locals.field) },
+      { tag: 'ok', field: 'value', decode: suppliedDecoder(context.locals.element) },
     ],
     [
       decoderParameter(context.locals.field, ts.factory.createTypeReferenceNode('E'), context),
       decoderParameter(context.locals.element, ts.factory.createTypeReferenceNode('A'), context),
     ],
+    context,
+  );
+}
+
+/** Reads an `Int` at the boundary: any bigint, where a `Nat` also has to be nonnegative. */
+function emitIntValidator(context: EmitContext): ts.Statement {
+  const { locals, prelude } = context;
+  const value = ts.factory.createIdentifier(locals.value);
+  return ts.factory.createFunctionDeclaration(
+    context.boundary.validators.has(prelude.requireInt) ? [modifier(ts.SyntaxKind.ExportKeyword)] : undefined,
+    undefined,
+    prelude.requireInt,
+    undefined,
+    [dataParameter(locals.value, context), stringParameter(locals.name)],
+    ts.factory.createKeywordTypeNode(ts.SyntaxKind.BigIntKeyword),
+    block(
+      ts.factory.createIfStatement(typeOfIs(value, 'bigint'), block(ts.factory.createReturnStatement(value))),
+      throwNamed(context, 'must be an integer'),
+    ),
+  );
+}
+
+/**
+ * Reads a `Char` at the boundary. A Char is one Unicode scalar value, and its image is the
+ * one-code-point string the opcodes read, so a string of two code points and a lone surrogate are
+ * both refused here rather than reaching `char.toNat`.
+ */
+function emitCharValidator(context: EmitContext): ts.Statement {
+  const { locals, prelude } = context;
+  const value = ts.factory.createIdentifier(locals.value);
+  return ts.factory.createFunctionDeclaration(
+    context.boundary.validators.has(prelude.requireChar) ? [modifier(ts.SyntaxKind.ExportKeyword)] : undefined,
+    undefined,
+    prelude.requireChar,
+    undefined,
+    [dataParameter(locals.value, context), stringParameter(locals.name)],
+    ts.factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword),
+    block(
+      guard(
+        ts.factory.createPrefixUnaryExpression(ts.SyntaxKind.ExclamationToken, typeOfIs(value, 'string')),
+        namedMessage(context, 'must be a character'),
+      ),
+      guard(
+        ts.factory.createBinaryExpression(
+          ts.factory.createPropertyAccessExpression(spreadArray(value), 'length'),
+          ts.SyntaxKind.ExclamationEqualsEqualsToken,
+          ts.factory.createNumericLiteral(1),
+        ),
+        namedMessage(context, 'must be exactly one code point'),
+      ),
+      guard(
+        codeUnitInRange(charCodeAt(value, ts.factory.createNumericLiteral(0)), 0xd800, 0xdfff),
+        namedMessage(context, 'must be a Unicode scalar value'),
+      ),
+      ts.factory.createReturnStatement(value),
+    ),
+  );
+}
+
+/** Reads a pair at the boundary: an object with exactly `fst` and `snd`, each decoded in order. */
+function emitPairValidator(context: EmitContext): ts.Statement {
+  const { locals, prelude } = context;
+  const first = ts.factory.createTypeReferenceNode('A');
+  const second = ts.factory.createTypeReferenceNode('B');
+  const data = ts.factory.createIdentifier(locals.data);
+  return ts.factory.createFunctionDeclaration(
+    context.boundary.validators.has(prelude.requirePair) ? [modifier(ts.SyntaxKind.ExportKeyword)] : undefined,
+    undefined,
+    prelude.requirePair,
+    [
+      ts.factory.createTypeParameterDeclaration(undefined, 'A'),
+      ts.factory.createTypeParameterDeclaration(undefined, 'B'),
+    ],
+    [
+      dataParameter(locals.value, context),
+      stringParameter(locals.name),
+      decoderParameter(locals.field, first, context),
+      decoderParameter(locals.element, second, context),
+    ],
+    ts.factory.createTypeLiteralNode([readonlyProperty('fst', first), readonlyProperty('snd', second)]),
+    block(
+      constantStatement(
+        locals.data,
+        callPrelude(context, prelude.dataFields, [
+          ts.factory.createIdentifier(locals.value),
+          ts.factory.createIdentifier(locals.name),
+          ts.factory.createArrayLiteralExpression([
+            ts.factory.createStringLiteral('fst'),
+            ts.factory.createStringLiteral('snd'),
+          ]),
+        ]),
+      ),
+      ts.factory.createReturnStatement(
+        ts.factory.createObjectLiteralExpression(
+          [
+            ts.factory.createPropertyAssignment(
+              propertyName('fst'),
+              ts.factory.createCallExpression(ts.factory.createIdentifier(locals.field), undefined, [
+                elementAccess(data, 'fst'),
+                ts.factory.createIdentifier(locals.name),
+              ]),
+            ),
+            ts.factory.createPropertyAssignment(
+              propertyName('snd'),
+              ts.factory.createCallExpression(ts.factory.createIdentifier(locals.element), undefined, [
+                elementAccess(data, 'snd'),
+                ts.factory.createIdentifier(locals.name),
+              ]),
+            ),
+          ],
+          true,
+        ),
+      ),
+    ),
+  );
+}
+
+/**
+ * Reads a `JsonValue` at the boundary. Its data image is the tagged union itself, so the reader is
+ * the same tag-decided validator every other union gets, and the two recursive arms hand it back
+ * to itself rather than to a second parser.
+ */
+function emitJsonValidator(context: EmitContext): ts.Statement {
+  const { prelude } = context;
+  const json: LeanType = { kind: 'json' };
+  const elements: LeanType = { kind: 'list', element: json };
+  const entries: LeanType = {
+    kind: 'list',
+    element: { kind: 'pair', first: { kind: 'string' }, second: json },
+  };
+  const through = (type: LeanType): ((payload: ts.Expression, label: ts.Expression) => ts.Expression) =>
+    (payload, label) => decodeExpression(payload, type, label, context);
+  return emitTaggedValidator(
+    prelude.requireJson,
+    [],
+    ts.factory.createTypeReferenceNode(usePrelude(context, prelude.jsonType)),
+    [
+      { tag: 'null' },
+      { tag: 'bool', field: 'value', decode: through({ kind: 'boolean' }) },
+      { tag: 'int', field: 'value', decode: through({ kind: 'int' }) },
+      { tag: 'string', field: 'value', decode: through({ kind: 'string' }) },
+      { tag: 'array', field: 'value', decode: through(elements) },
+      { tag: 'object', field: 'value', decode: through(entries) },
+    ],
+    [],
     context,
   );
 }
@@ -2960,6 +3565,16 @@ function emitType(type: LeanType, context: EmitContext): ts.TypeNode {
       return ts.factory.createKeywordTypeNode(ts.SyntaxKind.BigIntKeyword);
     case 'string':
       return ts.factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword);
+    case 'int':
+      return ts.factory.createKeywordTypeNode(ts.SyntaxKind.BigIntKeyword);
+    // A Char is the one-code-point string its opcodes read and write, which is why `char.equals`
+    // is strict equality and `string.singleton` is the identity.
+    case 'char':
+      return ts.factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword);
+    case 'bytes':
+      return ts.factory.createTypeReferenceNode('Uint8Array');
+    case 'json':
+      return ts.factory.createTypeReferenceNode(usePrelude(context, context.prelude.jsonType));
     case 'parameter': {
       const name = context.typeParameters[type.index];
       if (name === undefined) {
@@ -2983,6 +3598,21 @@ function emitType(type: LeanType, context: EmitContext): ts.TypeNode {
       ]);
     case 'list':
       return readonlyArrayType(emitType(type.element, context));
+    // An Array shares the dense readonly-array image a List has, which is what makes `array.toList`
+    // and `array.ofList` identities rather than conversions.
+    case 'array':
+      return readonlyArrayType(emitType(type.element, context));
+    case 'pair':
+      return ts.factory.createTypeLiteralNode([
+        readonlyProperty('fst', emitType(type.first, context)),
+        readonlyProperty('snd', emitType(type.second, context)),
+      ]);
+    case 'hashMap':
+    case 'treeMap':
+      return ts.factory.createTypeReferenceNode('ReadonlyMap', [
+        emitType(type.key, context),
+        emitType(type.value, context),
+      ]);
     case 'function':
       return ts.factory.createFunctionTypeNode(
         undefined,
@@ -3034,7 +3664,12 @@ function emitReturn(
       }
       const emittedName = allocator.allocate(expression.name);
       return [
-        constantStatement(emittedName, emitExpression(expression.value, scope, allocator, context)),
+        constantStatement(
+          emittedName,
+          emitExpression(expression.value, scope, allocator, context),
+          undefined,
+          declaredExpressionType(expression.value, context),
+        ),
         ...emitReturn(
           expression.body,
           [{ kind: 'identifier', name: emittedName }, ...scope],
@@ -3410,7 +4045,74 @@ function operationForm(
     case 'bool.equals':
     case 'nat.equals':
     case 'string.equals':
+    case 'int.equals':
+    case 'char.equals':
       return infix(ts.SyntaxKind.EqualsEqualsEqualsToken);
+    case 'int.add':
+      return infix(ts.SyntaxKind.PlusToken);
+    case 'int.subtract':
+      return infix(ts.SyntaxKind.MinusToken);
+    case 'int.multiply':
+      return infix(ts.SyntaxKind.AsteriskToken);
+    case 'int.negate':
+      return ts.factory.createPrefixUnaryExpression(ts.SyntaxKind.MinusToken, unary());
+    case 'int.less':
+      return infix(ts.SyntaxKind.LessThanToken);
+    case 'int.lessOrEqual':
+      return infix(ts.SyntaxKind.LessThanEqualsToken);
+    // Four identities on a shared image: a Nat and a nonnegative Int are one bigint, a Char is the
+    // one-code-point string its singleton denotes, and a List and an Array are one dense array.
+    case 'int.ofNat':
+    case 'string.singleton':
+    case 'array.toList':
+    case 'array.ofList':
+      return unary();
+    case 'int.tdiv':
+    case 'int.tmod':
+      return environment.helper(opcode, binary(1));
+    case 'int.toNat':
+    case 'char.ofNat':
+      return environment.helper(opcode, [unary()]);
+    case 'char.less':
+      return environment.helper(opcode, binary(1));
+    case 'char.toNat':
+      return ts.factory.createCallExpression(ts.factory.createIdentifier('BigInt'), undefined, [firstCodePoint(unary())]);
+    // Lean counts code points, so the length is taken over the spread sequence rather than over
+    // the UTF-16 code units `value.length` reports.
+    case 'string.length':
+      return ts.factory.createCallExpression(ts.factory.createIdentifier('BigInt'), undefined, [
+        ts.factory.createPropertyAccessExpression(spreadArray(unary()), 'length'),
+      ]);
+    case 'string.isEmpty':
+    case 'array.isEmpty':
+      return isEmptyList(unary());
+    case 'string.push':
+      return infix(ts.SyntaxKind.PlusToken);
+    case 'string.toList':
+      return spreadArray(unary());
+    case 'string.ofList':
+      return method(0, 'join', [ts.factory.createStringLiteral('')]);
+    case 'array.size':
+      return ts.factory.createCallExpression(ts.factory.createIdentifier('BigInt'), undefined, [
+        ts.factory.createPropertyAccessExpression(unary(), 'length'),
+      ]);
+    case 'array.push': {
+      const [value, element] = binary(1);
+      return ts.factory.createArrayLiteralExpression([ts.factory.createSpreadElement(value), element], false);
+    }
+    case 'array.append': {
+      const [left, right] = binary(1);
+      return ts.factory.createArrayLiteralExpression(
+        [ts.factory.createSpreadElement(left), ts.factory.createSpreadElement(right)],
+        false,
+      );
+    }
+    case 'array.reverse':
+      return ts.factory.createCallExpression(
+        ts.factory.createPropertyAccessExpression(spreadArray(unary()), 'reverse'),
+        undefined,
+        [],
+      );
     case 'nat.add':
     case 'string.append':
       return infix(ts.SyntaxKind.PlusToken);
@@ -3564,12 +4266,28 @@ function emitVariant(
     if (expression.name === 'nil') return ts.factory.createArrayLiteralExpression([], false);
     const [head, tail] = values;
     if (head === undefined || tail === undefined) throw new TypeError('list.cons is missing an argument');
-    if (ts.isArrayLiteralExpression(tail) && tail.elements.length === 0) {
-      return ts.factory.createArrayLiteralExpression([head], false);
+    // A chain of conses over literals is one dense literal, not a literal spread into a literal.
+    // The difference is observable to the type checker: an array literal inside a spread is typed
+    // on its own, so `[Tag.a, Tag.b]` would widen its elements to `string` and stop being the
+    // annotated element type, while one flat literal takes the element type from its context.
+    if (ts.isArrayLiteralExpression(tail)) {
+      return ts.factory.createArrayLiteralExpression([head, ...tail.elements], false);
     }
     return ts.factory.createArrayLiteralExpression([head, ts.factory.createSpreadElement(tail)], false);
   }
-  if (expression.type.kind === 'option' || expression.type.kind === 'except') {
+  // `pair` has one constructor and no tag: its image is the two own keys, in that order.
+  if (expression.type.kind === 'pair') {
+    const [first, second] = values;
+    if (first === undefined || second === undefined) throw new TypeError('a pair is missing a component');
+    return ts.factory.createObjectLiteralExpression(
+      [
+        ts.factory.createPropertyAssignment(propertyName('fst'), first),
+        ts.factory.createPropertyAssignment(propertyName('snd'), second),
+      ],
+      false,
+    );
+  }
+  if (expression.type.kind === 'option' || expression.type.kind === 'except' || expression.type.kind === 'json') {
     const field = constructor.fields[0];
     const [payload] = values;
     if (field === undefined || payload === undefined) return taggedLiteral(expression.name);
@@ -3684,12 +4402,12 @@ function emitBinding(binding: Binding): ts.Expression {
 
 /**
  * The emission order of one program's declarations: data types first, then functions in dependency
- * order. A recursive group Lean recorded is emitted as one adjacent block, because TypeScript
- * hoists function declarations and the group's members refer to each other.
+ * order. A mutual group Lean recorded is emitted as one adjacent block of `function` declarations,
+ * which hoist, so a forward reference inside the group is legal wherever the block is placed.
  */
 function orderedDeclarations(program: LeanSemanticProgram): readonly LeanDeclaration[] {
   const types = program.declarations
-    .filter((declaration) => declaration.kind !== 'function')
+    .filter((declaration) => declaration.kind !== 'function' && declaration.kind !== 'foreign')
     .sort((left, right) => {
       const kindOrder = Number(left.kind === 'record') - Number(right.kind === 'record');
       return kindOrder || compareCodePoints(left.name, right.name);
@@ -3706,7 +4424,8 @@ function orderedDeclarations(program: LeanSemanticProgram): readonly LeanDeclara
     if (visited.has(name)) return;
     const declaration = functions.get(name);
     if (declaration === undefined) return;
-    const group = declaration.termination?.group ?? [name];
+    const recursion = declaration.recursion;
+    const group = recursion?.kind === 'mutual' ? recursion.group : [name];
     if (group.some((member) => visited.has(member))) return;
     if (visiting.has(name)) {
       throw new TypeError(`mutual recursion outside a recorded group: ${name}`);
@@ -3849,11 +4568,29 @@ function readonlyProperty(field: string, type: ts.TypeNode): ts.PropertySignatur
   );
 }
 
-function constantStatement(name: string, initializer: ts.Expression, modifiers?: readonly ts.Modifier[]): ts.Statement {
+/**
+ * The emitted type of a value the IR states the type of. A constructed value, a record and a match
+ * each carry their own Lean type, so a binding over one is annotated rather than inferred: a bare
+ * array literal of tag strings would otherwise widen its elements to `string` and stop being the
+ * union its own declaration spells. Every other value is emitted from something already annotated —
+ * a parameter, a declared function's result, an opcode's form — so its inferred type is exact and
+ * an annotation would restate it.
+ */
+function declaredExpressionType(expression: LeanExpression, context: EmitContext): ts.TypeNode | undefined {
+  if (expression.kind !== 'variant' && expression.kind !== 'record' && expression.kind !== 'match') return undefined;
+  return emitType(expression.type, context);
+}
+
+function constantStatement(
+  name: string,
+  initializer: ts.Expression,
+  modifiers?: readonly ts.Modifier[],
+  type?: ts.TypeNode,
+): ts.Statement {
   return ts.factory.createVariableStatement(
     modifiers,
     ts.factory.createVariableDeclarationList(
-      [ts.factory.createVariableDeclaration(name, undefined, undefined, initializer)],
+      [ts.factory.createVariableDeclaration(name, undefined, type, initializer)],
       ts.NodeFlags.Const,
     ),
   );
