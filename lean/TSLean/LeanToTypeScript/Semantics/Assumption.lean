@@ -51,6 +51,14 @@ def nat (value : Nat) : Value := bigint value
 /-- A Lean `String` reaches the target as a JavaScript string, in UTF-16 code units. -/
 def string (value : String) : Value := jsString (JSString.ofLeanString value)
 
+/-- A Lean `Char` reaches the target as a string of exactly one code point, which is the string its
+`String.singleton` denotes. `string.singleton` is therefore the identity on the image. -/
+def char (value : Char) : Value := string (String.singleton value)
+
+/-- A Lean `Int` reaches the target as a bigint, exactly as a `Nat` does. The two share one
+representation, so `int.ofNat` is the identity on the image. -/
+def int (value : Int) : Value := bigint value
+
 /-- A Lean `Option` reaches the target as the tagged image. -/
 def option : Option Value → OptionImage
   | none => .absent
@@ -143,6 +151,22 @@ structure Runtime where
   listFirst : List Value → Value
   /-- `value.slice(1)`, emitted only under a `length === 0` guard -/
   listRest : List Value → List Value
+  /-- `-operand` on a bigint -/
+  intNegate : Value → Value
+  /-- raw bigint quotient `left / right`; the generated zero-guarded helper is derived below. -/
+  intDivide : Value → Value → Value
+  /-- raw bigint remainder `left % right`; the generated zero-guarded helper is derived below. -/
+  intRemainder : Value → Value → Value
+  /-- `BigInt(operand.codePointAt(0))` on a one-code-point string -/
+  charToNat : Value → Value
+  /-- `String.fromCodePoint(Number(operand))`, emitted only under a scalar-value guard -/
+  stringFromCodePoint : Value → Value
+  /-- `value.length === 0` on a string -/
+  stringIsEmpty : Value → Value
+  /-- `[...value]`, the code points of a string as one-code-point strings -/
+  stringToList : Value → List Value
+  /-- `value.join("")` over an array of strings -/
+  stringOfList : List Value → Value
 
 namespace Runtime
 
@@ -151,6 +175,63 @@ def natSubtract (runtime : Runtime) (left right : Value) : Value :=
   runtime.conditionalValue (runtime.natLess left right)
     (fun () => Encode.nat 0)
     (fun () => runtime.natDifference left right)
+
+/-- The generated `Int.tdiv` helper. BigInt division throws on a zero divisor and Lean's `Int.tdiv`
+answers `0` there, so the emitted form guards the divisor and the model composes exactly that guard,
+the selection and the raw quotient. -/
+def intTruncatedDivide (runtime : Runtime) (left right : Value) : Value :=
+  runtime.conditionalValue (runtime.natEquals right (Encode.int 0))
+    (fun () => Encode.int 0)
+    (fun () => runtime.intDivide left right)
+
+/-- The generated `Int.tmod` helper. Lean's `Int.tmod` answers the dividend at a zero divisor, which
+is what the emitted guard selects. -/
+def intTruncatedModulo (runtime : Runtime) (left right : Value) : Value :=
+  runtime.conditionalValue (runtime.natEquals right (Encode.int 0))
+    (fun () => left)
+    (fun () => runtime.intRemainder left right)
+
+/-- The generated `Int.toNat` helper, which clamps a negative operand at zero. -/
+def intToNat (runtime : Runtime) (operand : Value) : Value :=
+  runtime.conditionalValue (runtime.natLess operand (Encode.int 0))
+    (fun () => Encode.nat 0)
+    (fun () => operand)
+
+/-- `Int.ofNat` reaches the target as the operand itself: a `Nat` and an `Int` share the bigint
+representation, so the widening is the identity on the image rather than an engine operation. -/
+def intOfNat (_runtime : Runtime) (operand : Value) : Value := operand
+
+/-- `String.singleton` reaches the target as the operand itself: a `Char` is already the
+one-code-point string its singleton denotes. -/
+def stringSingleton (_runtime : Runtime) (character : Value) : Value := character
+
+/-- `String.push` is string concatenation with a one-code-point string, which is the one engine
+operation `+` already named. -/
+def stringPush (runtime : Runtime) (value character : Value) : Value :=
+  runtime.stringAppend value character
+
+/-- `String.length` counts code points, so the generated helper spreads the string and takes the
+length of that sequence. `value.length` would count UTF-16 code units and disagree outside the
+BMP. -/
+def stringLength (runtime : Runtime) (value : Value) : Value :=
+  runtime.listLength (runtime.stringToList value)
+
+/-- `Char.lt` compares scalar values, so the generated helper compares code points rather than code
+units: `<` on two one-code-point strings compares UTF-16 units and disagrees for an astral character
+against U+E000..U+FFFF. -/
+def charLess (runtime : Runtime) (left right : Value) : Value :=
+  runtime.natLess (runtime.charToNat left) (runtime.charToNat right)
+
+/-- The generated `Char.ofNat` helper. Lean answers the null character for a code that is not a
+scalar value, so the emitted form guards exactly `Char.isValidCharNat`: below `0x110000` and outside
+the surrogate range. -/
+def charOfNat (runtime : Runtime) (operand : Value) : Value :=
+  runtime.conditionalValue
+    (runtime.boolAnd (runtime.natLessOrEqual operand (Encode.int 1114111))
+      (runtime.boolOr (runtime.natLess operand (Encode.int 55296))
+        (runtime.natLess (Encode.int 57343) operand)))
+    (fun () => runtime.stringFromCodePoint operand)
+    (fun () => Encode.char (Char.ofNat 0))
 
 /-- The generated `List.head?` helper, derived from its guard, its nonempty read, selection and
 Option representation. -/
@@ -227,6 +308,20 @@ inductive Id where
   | bigintFromLength
   /-- The emitted `{ kind, value }` object denotes the tagged image. -/
   | optionTaggedObject
+  /-- Unary `-` on a bigint. -/
+  | bigintNegation
+  /-- `/` and `%` on bigints truncate toward zero, which is what `Int.tdiv` and `Int.tmod` compute. -/
+  | bigintTruncatedDivision
+  /-- `value.codePointAt(0)` reads the leading scalar value, exactly. -/
+  | stringCodePointAt
+  /-- `String.fromCodePoint(Number(operand))` at a scalar value. -/
+  | stringFromCodePoint
+  /-- `[...value]` yields the code points of a string, in order. -/
+  | stringCodePointIteration
+  /-- `value.length === 0` decides emptiness. -/
+  | stringEmptyCodeUnitLength
+  /-- `value.join(\"\")` concatenates an array of strings in order. -/
+  | arrayJoinEmptySeparator
   deriving DecidableEq, Repr
 
 /-- The stable string identity, which catalog rows key on. -/
@@ -240,12 +335,21 @@ def Id.name : Id → String
   | .arrayDenseElementSequence => "array.dense-element-sequence"
   | .bigintFromLength => "bigint.from-length"
   | .optionTaggedObject => "option.tagged-object"
+  | .bigintNegation => "bigint.negation"
+  | .bigintTruncatedDivision => "bigint.truncated-division"
+  | .stringCodePointAt => "string.code-point-at"
+  | .stringFromCodePoint => "string.from-code-point"
+  | .stringCodePointIteration => "string.code-point-iteration"
+  | .stringEmptyCodeUnitLength => "string.empty-code-unit-length"
+  | .arrayJoinEmptySeparator => "array.join-empty-separator"
 
 /-- Every assumption this compiler makes. -/
 def Id.all : List Id :=
-  [.booleanLogicalOperators, .strictEqualitySameType, .bigintExactArithmetic, .bigintRelational,
+  [ .booleanLogicalOperators, .strictEqualitySameType, .bigintExactArithmetic, .bigintRelational,
     .conditionalTruthySelection, .stringUtf16Concatenation, .arrayDenseElementSequence,
-    .bigintFromLength, .optionTaggedObject]
+    .bigintFromLength, .bigintNegation, .bigintTruncatedDivision, .stringCodePointAt,
+    .stringFromCodePoint, .stringCodePointIteration, .stringEmptyCodeUnitLength,
+    .optionTaggedObject, .arrayJoinEmptySeparator]
 
 theorem Id.mem_all (id : Id) : id ∈ Id.all := by
   cases id <;> simp [Id.all]
@@ -271,9 +375,10 @@ def Id.provenance : Id → Provenance
   | .bigintExactArithmetic =>
       { clauses := ["sec-numeric-types-bigint-add", "sec-numeric-types-bigint-subtract",
           "sec-numeric-types-bigint-multiply"]
-        statement := "The +, - and * operators applied to two bigints are exact integer addition, subtraction and multiplication at every magnitude."
+        statement := "The +, - and * operators applied to two bigints are exact integer addition, subtraction and multiplication at every magnitude, including a difference that is negative."
         oracle := "semantics-probes/bigint.exact-arithmetic"
-        coverage := ["bigint-add", "bigint-subtract", "bigint-multiply", "bigint-beyond-safe-integer"] }
+        coverage := ["bigint-add", "bigint-subtract", "bigint-multiply", "bigint-negative-difference",
+            "bigint-beyond-safe-integer"] }
   | .bigintRelational =>
       { clauses := ["sec-relational-operators", "sec-numeric-types-bigint-lessThan"]
         statement := "The < and <= operators applied to two bigints compare them as exact integers."
@@ -309,6 +414,44 @@ def Id.provenance : Id → Provenance
         statement := "The constructors for { kind: tag } and { kind: tag, value: payload } produce exactly the none and some tagged Option images; property reads of those images are modelled by the target heap semantics."
         oracle := "semantics-probes/option.tagged-object"
         coverage := ["object-literal-own-keys", "object-property-read", "object-absent-property"] }
+  | .bigintNegation =>
+      { clauses := ["sec-unary-minus-operator", "sec-numeric-types-bigint-unaryMinus"]
+        statement := "The unary - operator applied to a bigint is exact integer negation at every magnitude."
+        oracle := "semantics-probes/bigint.negation"
+        coverage := ["bigint-negate", "bigint-negate-beyond-safe-integer"] }
+  | .bigintTruncatedDivision =>
+      { clauses := ["sec-multiplicative-operators", "sec-numeric-types-bigint-divide",
+          "sec-numeric-types-bigint-remainder"]
+        statement := "The / and % operators applied to two bigints with a nonzero divisor truncate toward zero and give the remainder the dividend's sign; a zero divisor throws, which the emitted guard prevents."
+        oracle := "semantics-probes/bigint.truncated-division"
+        coverage := ["bigint-divide-truncates", "bigint-remainder-sign",
+            "bigint-divide-negative-operands"] }
+  | .stringCodePointAt =>
+      { clauses := ["sec-string.prototype.codepointat", "sec-bigint-constructor-number-value"]
+        statement := "The codePointAt(0) method of a one-code-point string is that code point, and the BigInt constructor applied to it is that scalar value as an exact integer."
+        oracle := "semantics-probes/string.code-point-at"
+        coverage := ["string-code-point-at", "string-code-point-at-astral"] }
+  | .stringFromCodePoint =>
+      { clauses := ["sec-string.fromcodepoint", "sec-tonumber"]
+        statement := "The String.fromCodePoint constructor applied to Number of a bigint that is a Unicode scalar value produces the string of exactly that one code point."
+        oracle := "semantics-probes/string.from-code-point"
+        coverage := ["string-from-code-point", "string-from-code-point-astral"] }
+  | .stringCodePointIteration =>
+      { clauses := ["sec-string.prototype-@@iterator", "sec-createstringiterator",
+          "sec-array-initializer"]
+        statement := "Spreading a string yields its code points in order, each as a string of exactly one code point."
+        oracle := "semantics-probes/string.code-point-iteration"
+        coverage := ["string-spread-code-points", "string-spread-astral", "string-spread-empty"] }
+  | .stringEmptyCodeUnitLength =>
+      { clauses := ["sec-properties-of-string-instances-length"]
+        statement := "The length property of a string is its UTF-16 code unit count, so length === 0 holds exactly for the empty string."
+        oracle := "semantics-probes/string.empty-code-unit-length"
+        coverage := ["string-length-zero", "string-length-nonempty"] }
+  | .arrayJoinEmptySeparator =>
+      { clauses := ["sec-array.prototype.join"]
+        statement := "The join method with the empty separator concatenates the elements of an array of strings in index order and inserts nothing between them."
+        oracle := "semantics-probes/array.join-empty-separator"
+        coverage := ["array-join-empty-separator", "array-join-single", "array-join-empty-array"] }
 
 /-- The recorded digest for one assumption. -/
 def Id.canonicalWording (id : Id) : String := id.provenance.canonicalWording
@@ -336,9 +479,8 @@ def Id.statement (runtime : Runtime) : Id → Prop
           = Encode.bigint (left * right)) ∧
       (∀ operand : Int, runtime.natSuccessor (Encode.bigint operand)
           = Encode.bigint (operand + 1)) ∧
-      (∀ left right : Int, right ≤ left →
-          runtime.natDifference (Encode.bigint left) (Encode.bigint right)
-            = Encode.bigint (left - right))
+      (∀ left right : Int, runtime.natDifference (Encode.bigint left) (Encode.bigint right)
+          = Encode.bigint (left - right))
   | .bigintRelational =>
       (∀ left right : Int, runtime.natLess (Encode.bigint left) (Encode.bigint right)
           = Encode.bool (decide (left < right))) ∧
@@ -379,6 +521,24 @@ def Id.statement (runtime : Runtime) : Id → Prop
   | .optionTaggedObject =>
       runtime.optionNone = .absent ∧
         ∀ value : Value, runtime.optionSome value = .present value
+  | .bigintNegation => ∀ operand : Int,
+      runtime.intNegate (Encode.int operand) = Encode.int (-operand)
+  | .bigintTruncatedDivision =>
+      (∀ left right : Int, right ≠ 0 →
+          runtime.intDivide (Encode.int left) (Encode.int right) = Encode.int (left.tdiv right)) ∧
+        ∀ left right : Int, right ≠ 0 →
+          runtime.intRemainder (Encode.int left) (Encode.int right) = Encode.int (left.tmod right)
+  | .stringCodePointAt => ∀ character : Char,
+      runtime.charToNat (Encode.char character) = Encode.nat character.toNat
+  | .stringFromCodePoint => ∀ character : Char,
+      runtime.stringFromCodePoint (Encode.nat character.toNat) = Encode.char character
+  | .stringCodePointIteration => ∀ value : String,
+      runtime.stringToList (Encode.string value) = value.toList.map Encode.char
+  | .stringEmptyCodeUnitLength => ∀ value : String,
+      runtime.stringIsEmpty (Encode.string value) = Encode.bool value.isEmpty
+  | .arrayJoinEmptySeparator => ∀ characters : List Char,
+      runtime.stringOfList (characters.map Encode.char)
+        = Encode.string (String.ofList characters)
 
 /-- An ordered assumption closure. The order is the order the emitted form depends on them. -/
 def Holds (runtime : Runtime) : List Id → Prop

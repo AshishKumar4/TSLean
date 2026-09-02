@@ -57,6 +57,28 @@ def emittedForm : Opcode → String
   | .listHead => "value.length === 0 ? { kind: \"none\" } : { kind: \"some\", value: value[0] }"
   | .listFirst => "value[0]"
   | .listRest => "value.slice(1)"
+  | .intAdd => "left + right"
+  | .intSubtract => "left - right"
+  | .intMultiply => "left * right"
+  | .intNegate => "-operand"
+  | .intTruncatedDivide => "right === 0n ? 0n : left / right"
+  | .intTruncatedModulo => "right === 0n ? left : left % right"
+  | .intLess => "left < right"
+  | .intLessOrEqual => "left <= right"
+  | .intEquals => "left === right"
+  | .intOfNat => "operand"
+  | .intToNat => "operand < 0n ? 0n : operand"
+  | .charToNat => "BigInt(operand.codePointAt(0))"
+  | .charOfNat =>
+      "operand >= 0n && operand <= 1114111n && !(operand >= 55296n && operand <= 57343n) ? String.fromCodePoint(Number(operand)) : \"\\u0000\""
+  | .charEquals => "left === right"
+  | .charLess => "left.codePointAt(0) < right.codePointAt(0)"
+  | .stringLength => "BigInt([...value].length)"
+  | .stringIsEmpty => "value.length === 0"
+  | .stringPush => "value + character"
+  | .stringSingleton => "character"
+  | .stringToList => "[...value]"
+  | .stringOfList => "value.join(\"\")"
 
 /-- The theorem that discharges the opcode, by name inside this namespace. `registry` pairs each
 opcode with that theorem, so a name recorded here and a clause naming a different theorem is a
@@ -88,6 +110,27 @@ def theoremName : Opcode → String
   | .listHead => "listHeadModelsHead"
   | .listFirst => "listFirstModelsHead"
   | .listRest => "listRestModelsTail"
+  | .intAdd => "intAddModelsAdd"
+  | .intSubtract => "intSubtractModelsSub"
+  | .intMultiply => "intMultiplyModelsMul"
+  | .intNegate => "intNegateModelsNeg"
+  | .intTruncatedDivide => "intTruncatedDivideModelsTdiv"
+  | .intTruncatedModulo => "intTruncatedModuloModelsTmod"
+  | .intLess => "intLessModelsLt"
+  | .intLessOrEqual => "intLessOrEqualModelsLe"
+  | .intEquals => "intEqualsModelsBEq"
+  | .intOfNat => "intOfNatModelsOfNat"
+  | .intToNat => "intToNatModelsToNat"
+  | .charToNat => "charToNatModelsToNat"
+  | .charOfNat => "charOfNatModelsOfNat"
+  | .charEquals => "charEqualsModelsBEq"
+  | .charLess => "charLessModelsLt"
+  | .stringLength => "stringLengthModelsLength"
+  | .stringIsEmpty => "stringIsEmptyModelsIsEmpty"
+  | .stringPush => "stringPushModelsPush"
+  | .stringSingleton => "stringSingletonModelsSingleton"
+  | .stringToList => "stringToListModelsToList"
+  | .stringOfList => "stringOfListModelsOfList"
 
 /-- The fully named model constant the opcode's theorem constrains. Most are primitive Runtime
 fields; generated helpers such as natSubtract and listHead are derived Runtime definitions. -/
@@ -118,6 +161,27 @@ def modelField : Opcode → String
   | .listHead => "listHead"
   | .listFirst => "listFirst"
   | .listRest => "listRest"
+  | .intAdd => "natAdd"
+  | .intSubtract => "natDifference"
+  | .intMultiply => "natMultiply"
+  | .intNegate => "intNegate"
+  | .intTruncatedDivide => "intTruncatedDivide"
+  | .intTruncatedModulo => "intTruncatedModulo"
+  | .intLess => "natLess"
+  | .intLessOrEqual => "natLessOrEqual"
+  | .intEquals => "natEquals"
+  | .intOfNat => "intOfNat"
+  | .intToNat => "intToNat"
+  | .charToNat => "charToNat"
+  | .charOfNat => "charOfNat"
+  | .charEquals => "stringEquals"
+  | .charLess => "charLess"
+  | .stringLength => "stringLength"
+  | .stringIsEmpty => "stringIsEmpty"
+  | .stringPush => "stringPush"
+  | .stringSingleton => "stringSingleton"
+  | .stringToList => "stringToList"
+  | .stringOfList => "stringOfList"
 
 /--
 The emitted role the opcode's form is built from, tagged by how it reaches the target.
@@ -135,6 +199,11 @@ names the `Runtime` constant.
 def runtimeSymbol : Opcode → String
   | .natSubtract => "helper:nat-truncated-subtraction"
   | .listHead => "helper:list-head-option"
+  | .intTruncatedDivide => "helper:int-truncated-division"
+  | .intTruncatedModulo => "helper:int-truncated-modulo"
+  | .intToNat => "helper:int-to-nat-clamp"
+  | .charOfNat => "helper:char-of-nat"
+  | .charLess => "helper:char-less-code-point"
   | code => "inline:" ++ code.kind
 
 /-- The tag every runtime symbol carries: `inline:` for a form written at the use site, `helper:`
@@ -149,13 +218,50 @@ def components : Opcode → List String
   | .natSubtract => ["inline:nat.less", "conditional:select", "primitive:bigint.subtract"]
   | .listHead => ["inline:list.isEmpty", "inline:list.first", "conditional:select",
       "representation:option.tagged-option"]
+  | .intTruncatedDivide => ["inline:int.equals", "conditional:select", "primitive:bigint.divide"]
+  | .intTruncatedModulo => ["inline:int.equals", "conditional:select",
+      "primitive:bigint.remainder"]
+  | .intToNat => ["inline:int.less", "conditional:select",
+      "representation:nat.nonnegative-bigint"]
+  | .charOfNat => ["inline:int.lessOrEqual", "inline:int.less", "conditional:select",
+      "primitive:string.fromCodePoint", "representation:char.scalar-value"]
+  | .charLess => ["inline:char.toNat", "inline:int.less"]
+  | .intOfNat => ["representation:bigint.shared-nat-int"]
+  | .stringLength => ["inline:string.toList", "inline:list.length"]
+  | .stringPush => ["inline:string.append", "representation:char.one-code-point-string"]
+  | .stringSingleton => ["representation:char.one-code-point-string"]
   | _ => []
 
-/-- Exactly the opcodes that reach the target as a generated helper record the semantic components
-that helper composes. -/
-theorem components_iff_helper (code : Opcode) :
-    code.components ≠ [] ↔ code.runtimeSymbolTag = "helper:" := by
-  cases code <;> simp [components, runtimeSymbolTag, runtimeSymbol]
+/--
+Whether the row's model constant is a derived `Runtime` definition rather than a primitive field.
+
+A derived constant is composed out of other rows, so the registry records that composition in
+`components`; a primitive field is one engine operation and composes nothing. This is orthogonal to
+`runtimeSymbolTag`, which records how the *bytes* reach the target: `string.length` composes two
+rows and still reaches the target as one inline expression, while `char.ofNat` composes rows and
+reaches it as a declared helper.
+-/
+def derived : Opcode → Bool
+  | .natSubtract | .listHead | .intTruncatedDivide | .intTruncatedModulo | .intToNat | .intOfNat
+  | .charOfNat | .charLess | .stringLength | .stringPush | .stringSingleton => true
+  | .boolAnd | .boolOr | .boolNot | .boolEquals | .natAdd | .natMultiply | .natLess
+  | .natLessOrEqual | .natEquals | .natSuccessor | .stringAppend | .stringEquals | .listLength
+  | .listIsEmpty | .listAppend | .listReverse | .listMap | .listFilter | .listFoldLeft
+  | .listFoldRight | .listAny | .listAll | .listFirst | .listRest | .intAdd | .intSubtract
+  | .intMultiply | .intNegate | .intLess | .intLessOrEqual | .intEquals | .charToNat | .charEquals
+  | .stringIsEmpty | .stringToList | .stringOfList => false
+
+/-- Exactly the opcodes whose model constant is derived record the semantic components it composes;
+a primitive field has none, because there is nothing to certify. -/
+theorem components_iff_derived (code : Opcode) :
+    code.components ≠ [] ↔ code.derived = true := by
+  cases code <;> simp [components, derived]
+
+/-- Every generated helper has a derived model constant: a helper exists exactly because the form is
+a composition the emitter declares once rather than one operator. -/
+theorem derived_of_helper (code : Opcode) (helper : code.runtimeSymbolTag = "helper:") :
+    code.derived = true := by
+  cases code <;> first | rfl | simp [runtimeSymbolTag, runtimeSymbol] at helper
 
 /-- An inline runtime symbol names the opcode it is the emitted form of, so the join between this
 registry and `LEAN_RUNTIME_OPCODES` in `ir.ts` is a bijection rather than a lookup. -/
@@ -177,6 +283,30 @@ def requires : Opcode → List Assumption.Id
   | .listIsEmpty | .listAppend | .listReverse | .listMap | .listFilter | .listFoldLeft
   | .listFoldRight | .listAny | .listAll | .listFirst | .listRest =>
       [.arrayDenseElementSequence]
+  | .intAdd => [.bigintExactArithmetic]
+  | .intSubtract => [.bigintExactArithmetic]
+  | .intMultiply => [.bigintExactArithmetic]
+  | .intNegate => [.bigintNegation]
+  | .intTruncatedDivide =>
+      [.strictEqualitySameType, .conditionalTruthySelection, .bigintTruncatedDivision]
+  | .intTruncatedModulo =>
+      [.strictEqualitySameType, .conditionalTruthySelection, .bigintTruncatedDivision]
+  | .intLess => [.bigintRelational]
+  | .intLessOrEqual => [.bigintRelational]
+  | .intEquals => [.strictEqualitySameType]
+  | .intOfNat => []
+  | .intToNat => [.bigintRelational, .conditionalTruthySelection]
+  | .charToNat => [.stringCodePointAt]
+  | .charOfNat =>
+      [.bigintRelational, .booleanLogicalOperators, .conditionalTruthySelection, .stringFromCodePoint]
+  | .charEquals => [.strictEqualitySameType]
+  | .charLess => [.stringCodePointAt, .bigintRelational]
+  | .stringLength => [.stringCodePointIteration, .bigintFromLength]
+  | .stringIsEmpty => [.stringEmptyCodeUnitLength]
+  | .stringPush => [.stringUtf16Concatenation]
+  | .stringSingleton => []
+  | .stringToList => [.stringCodePointIteration]
+  | .stringOfList => [.arrayJoinEmptySeparator]
 
 /--
 What the opcode's theorem states. The left side is the source operation, encoded; the right side is
@@ -262,6 +392,54 @@ def Preserves (runtime : Runtime) : Opcode → Prop
       encode head = runtime.listFirst ((head :: tail).map encode)
   | .listRest => ∀ {α : Type} (encode : α → Value) (head : α) (tail : List α),
       tail.map encode = runtime.listRest ((head :: tail).map encode)
+  | .intAdd => ∀ left right : Int,
+      Encode.int (left + right) = runtime.natAdd (Encode.int left) (Encode.int right)
+  | .intSubtract => ∀ left right : Int,
+      Encode.int (left - right) = runtime.natDifference (Encode.int left) (Encode.int right)
+  | .intMultiply => ∀ left right : Int,
+      Encode.int (left * right) = runtime.natMultiply (Encode.int left) (Encode.int right)
+  | .intNegate => ∀ operand : Int,
+      Encode.int (-operand) = runtime.intNegate (Encode.int operand)
+  | .intTruncatedDivide => ∀ left right : Int,
+      Encode.int (left.tdiv right)
+        = runtime.intTruncatedDivide (Encode.int left) (Encode.int right)
+  | .intTruncatedModulo => ∀ left right : Int,
+      Encode.int (left.tmod right)
+        = runtime.intTruncatedModulo (Encode.int left) (Encode.int right)
+  | .intLess => ∀ left right : Int,
+      Encode.bool (decide (left < right)) = runtime.natLess (Encode.int left) (Encode.int right)
+  | .intLessOrEqual => ∀ left right : Int,
+      Encode.bool (decide (left ≤ right))
+        = runtime.natLessOrEqual (Encode.int left) (Encode.int right)
+  | .intEquals => ∀ left right : Int,
+      Encode.bool (left == right) = runtime.natEquals (Encode.int left) (Encode.int right)
+  | .intOfNat => ∀ operand : Nat,
+      Encode.int (Int.ofNat operand) = runtime.intOfNat (Encode.nat operand)
+  | .intToNat => ∀ operand : Int,
+      Encode.nat operand.toNat = runtime.intToNat (Encode.int operand)
+  | .charToNat => ∀ character : Char,
+      Encode.nat character.toNat = runtime.charToNat (Encode.char character)
+  | .charOfNat => ∀ code : Nat,
+      Encode.char (Char.ofNat code) = runtime.charOfNat (Encode.nat code)
+  | .charEquals => ∀ left right : Char,
+      Encode.bool (left == right) = runtime.stringEquals (Encode.char left) (Encode.char right)
+  | .charLess => ∀ left right : Char,
+      Encode.bool (decide (left < right)) = runtime.charLess (Encode.char left) (Encode.char right)
+  | .stringLength => ∀ value : String,
+      Encode.nat value.length = runtime.stringLength (Encode.string value)
+  | .stringIsEmpty => ∀ value : String,
+      Encode.bool value.isEmpty = runtime.stringIsEmpty (Encode.string value)
+  | .stringPush => ∀ (value : String) (character : Char),
+      Encode.string (value.push character)
+        = runtime.stringPush (Encode.string value) (Encode.char character)
+  | .stringSingleton => ∀ character : Char,
+      Encode.string (String.singleton character)
+        = runtime.stringSingleton (Encode.char character)
+  | .stringToList => ∀ value : String,
+      value.toList.map Encode.char = runtime.stringToList (Encode.string value)
+  | .stringOfList => ∀ characters : List Char,
+      Encode.string (String.ofList characters)
+        = runtime.stringOfList (characters.map Encode.char)
 
 /-- The obligation one opcode carries: its ordered assumption closure entails its statement. -/
 def Obligation (runtime : Runtime) (code : Opcode) : Prop :=
@@ -334,7 +512,7 @@ theorem natSubtractModelsSub (runtime : Runtime)
     Opcode.natSubtract.Preserves runtime := by
   intro left right
   rcases holds with ⟨relational, conditional, arithmetic⟩
-  have difference : ∀ left right : Int, right ≤ left →
+  have difference : ∀ left right : Int,
       runtime.natDifference (Encode.bigint left) (Encode.bigint right)
         = Encode.bigint (left - right) := arithmetic.1.2.2.2
   by_cases below : right ≤ left
@@ -350,8 +528,7 @@ theorem natSubtractModelsSub (runtime : Runtime)
       rw [condition]
       simp
     unfold Encode.nat Runtime.natSubtract
-    rw [conditional.1 _ _ _, if_neg notCondition,
-      difference (left : Int) (right : Int) (by omega)]
+    rw [conditional.1 _ _ _, if_neg notCondition, difference (left : Int) (right : Int)]
     rw [show ((left - right : Nat) : Int) = (left : Int) - (right : Int) by omega]
   · have less : (left : Int) < (right : Int) := by omega
     have condition :
@@ -589,6 +766,318 @@ theorem listRestModelsTail (runtime : Runtime)
   intro α encode head tail
   rw [List.map_cons, holds.1.2.2.2.2.2.2.2.2.2.2 (encode head) (List.map encode tail)]
 
+
+/-! ### `Int`
+
+A `Nat` and an `Int` share the bigint representation, so the three arithmetic rows name the same
+engine operations the `nat.*` rows name and are discharged from the same recorded assumption. The
+`Nat` rows carry the extra work: `nat.subtract` truncates, so it needs a guard, while `int.subtract`
+is the raw difference.
+-/
+
+/-- `+` on two bigints denotes `Int.add` directly: the assumption is already stated at integer
+operands, which is what makes the shared representation pay off. -/
+theorem intAddModelsAdd (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.intAdd.requires) :
+    Opcode.intAdd.Preserves runtime := by
+  intro left right
+  unfold Encode.int
+  rw [holds.1.1 left right]
+
+/-- `-` on two bigints denotes `Int.sub`, including where the difference is negative, which is
+exactly where the `Nat` row has to truncate instead. -/
+theorem intSubtractModelsSub (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.intSubtract.requires) :
+    Opcode.intSubtract.Preserves runtime := by
+  intro left right
+  unfold Encode.int
+  rw [holds.1.2.2.2 left right]
+
+/-- `*` on two bigints denotes `Int.mul`. -/
+theorem intMultiplyModelsMul (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.intMultiply.requires) :
+    Opcode.intMultiply.Preserves runtime := by
+  intro left right
+  unfold Encode.int
+  rw [holds.1.2.1 left right]
+
+/-- Unary `-` on a bigint denotes `Int.neg`. -/
+theorem intNegateModelsNeg (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.intNegate.requires) :
+    Opcode.intNegate.Preserves runtime := by
+  intro operand
+  rw [holds.1 operand]
+
+/-- The zero-guarded quotient helper denotes `Int.tdiv`. BigInt division throws on a zero divisor,
+and `Int.tdiv` answers zero there, so the guard is what makes the two agree rather than a
+convenience. -/
+theorem intTruncatedDivideModelsTdiv (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.intTruncatedDivide.requires) :
+    Opcode.intTruncatedDivide.Preserves runtime := by
+  intro left right
+  rcases holds with ⟨equality, conditional, division, _⟩
+  have condition : (runtime.natEquals (Encode.int right) (Encode.int 0)).toBoolean
+      = decide (right = 0) := by
+    rw [equality.2.1 (Encode.int right) (Encode.int 0)]
+    unfold Model.strictEquals Encode.int Encode.bigint
+    rw [TSLean.Refinement.BigInt.strictEqual_commutes right 0]
+    by_cases zero : right = 0 <;>
+      simp [Encode.bool, Value.toBoolean, Primitive.toBoolean, zero]
+  unfold Runtime.intTruncatedDivide
+  rw [conditional.1 _ _ _]
+  by_cases zero : right = 0
+  · rw [if_pos (by rw [condition]; simp [zero]), zero, Int.tdiv_zero]
+  · rw [if_neg (by rw [condition]; simp [zero]), division.1 left right zero]
+
+/-- The zero-guarded remainder helper denotes `Int.tmod`, which answers the dividend at a zero
+divisor, which is exactly what the guard selects. -/
+theorem intTruncatedModuloModelsTmod (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.intTruncatedModulo.requires) :
+    Opcode.intTruncatedModulo.Preserves runtime := by
+  intro left right
+  rcases holds with ⟨equality, conditional, division, _⟩
+  have condition : (runtime.natEquals (Encode.int right) (Encode.int 0)).toBoolean
+      = decide (right = 0) := by
+    rw [equality.2.1 (Encode.int right) (Encode.int 0)]
+    unfold Model.strictEquals Encode.int Encode.bigint
+    rw [TSLean.Refinement.BigInt.strictEqual_commutes right 0]
+    by_cases zero : right = 0 <;>
+      simp [Encode.bool, Value.toBoolean, Primitive.toBoolean, zero]
+  unfold Runtime.intTruncatedModulo
+  rw [conditional.1 _ _ _]
+  by_cases zero : right = 0
+  · rw [if_pos (by rw [condition]; simp [zero]), zero, Int.tmod_zero]
+  · rw [if_neg (by rw [condition]; simp [zero]), division.2 left right zero]
+
+/-- `<` on two bigints denotes `Int.lt`. -/
+theorem intLessModelsLt (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.intLess.requires) :
+    Opcode.intLess.Preserves runtime := by
+  intro left right
+  unfold Encode.int
+  rw [holds.1.1 left right]
+
+/-- `<=` on two bigints denotes `Int.le`. -/
+theorem intLessOrEqualModelsLe (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.intLessOrEqual.requires) :
+    Opcode.intLessOrEqual.Preserves runtime := by
+  intro left right
+  unfold Encode.int
+  rw [holds.1.2 left right]
+
+/-- `===` on two bigints denotes `Int` equality. -/
+theorem intEqualsModelsBEq (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.intEquals.requires) :
+    Opcode.intEquals.Preserves runtime := by
+  intro left right
+  rw [holds.1.2.1 (Encode.int left) (Encode.int right)]
+  unfold Model.strictEquals Encode.int Encode.bigint
+  rw [TSLean.Refinement.BigInt.strictEqual_commutes left right]
+
+/-- `Int.ofNat` reaches the target as the operand itself. The widening is invisible because a `Nat`
+and an `Int` are the same bigint, which is a representation fact and not an engine claim: this row
+names no assumption at all. -/
+theorem intOfNatModelsOfNat (runtime : Runtime)
+    (_holds : Assumption.Holds runtime Opcode.intOfNat.requires) :
+    Opcode.intOfNat.Preserves runtime := by
+  intro operand
+  rfl
+
+/-- The clamping helper denotes `Int.toNat`: below zero the conditional yields zero, which is where
+`Int.toNat` clamps, and at or above zero the operand already is its own image. -/
+theorem intToNatModelsToNat (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.intToNat.requires) :
+    Opcode.intToNat.Preserves runtime := by
+  intro operand
+  rcases holds with ⟨relational, conditional, _⟩
+  have condition : (runtime.natLess (Encode.int operand) (Encode.int 0)).toBoolean
+      = decide (operand < 0) := by
+    unfold Encode.int
+    rw [relational.1 operand 0]
+    simp [Encode.bool, Value.toBoolean, Primitive.toBoolean]
+  unfold Runtime.intToNat
+  rw [conditional.1 _ _ _]
+  by_cases negative : operand < 0
+  · rw [if_pos (by rw [condition]; simp [negative])]
+    have clamped : operand.toNat = 0 := by omega
+    rw [clamped]
+  · rw [if_neg (by rw [condition]; simp [negative])]
+    unfold Encode.nat Encode.int Encode.bigint
+    rw [Int.toNat_of_nonneg (by omega)]
+
+/-! ### `Char`
+
+A `Char` reaches the target as a string of exactly one code point. That is why `string.singleton` is
+the identity on the image, and why `char.less` compares code points rather than the `<` the engine
+would apply to the two strings: code-unit order disagrees with scalar order for an astral character
+against U+E000..U+FFFF.
+-/
+
+/-- `BigInt(operand.codePointAt(0))` denotes `Char.toNat`. -/
+theorem charToNatModelsToNat (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.charToNat.requires) :
+    Opcode.charToNat.Preserves runtime := by
+  intro character
+  rw [holds.1 character]
+
+/-- `===` on two one-code-point strings denotes `Char` equality, because the singleton map is
+injective and the UTF-16 encoding of a Lean string is. -/
+theorem charEqualsModelsBEq (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.charEquals.requires) :
+    Opcode.charEquals.Preserves runtime := by
+  intro left right
+  rw [holds.1.2.2 (Encode.char left) (Encode.char right)]
+  unfold Model.strictEquals Encode.char Encode.string Encode.jsString
+  rw [TSLean.Refinement.String.strictEqual_commutes (String.singleton left)
+    (String.singleton right)]
+  congr 1
+  apply Bool.eq_iff_iff.mpr
+  simp only [beq_iff_eq]
+  refine ⟨fun equal => by rw [equal], fun equal => ?_⟩
+  have lists := congrArg String.toList equal
+  simpa using lists
+
+/-- The code-point comparison helper denotes `Char.lt`, which is the order on scalar values. -/
+theorem charLessModelsLt (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.charLess.requires) :
+    Opcode.charLess.Preserves runtime := by
+  intro left right
+  rcases holds with ⟨codePoint, relational, _⟩
+  unfold Runtime.charLess
+  rw [codePoint left, codePoint right]
+  unfold Encode.nat
+  rw [relational.1 (left.toNat : Int) (right.toNat : Int)]
+  congr 1
+  apply decide_eq_decide.mpr
+  rw [Char.lt_def, UInt32.lt_iff_toNat_lt, Int.ofNat_lt]
+  rfl
+
+/-- A code that is a Unicode scalar value is the scalar value of the character it names: `Char.ofNat`
+stores the code itself in that branch. -/
+private theorem toNat_ofNat_of_valid {code : Nat} (valid : Nat.isValidChar code) :
+    (Char.ofNat code).toNat = code := by
+  simp [Char.ofNat, Char.toNat, dif_pos valid, Char.ofNatAux]
+
+/-- A code that is not a scalar value names the null character, which is what the emitted guard's
+alternate branch answers. -/
+private theorem ofNat_of_invalid {code : Nat} (invalid : ¬ Nat.isValidChar code) :
+    Char.ofNat code = Char.ofNat 0 := by
+  apply Char.ext
+  simp [Char.ofNat, dif_neg invalid, Char.ofNatAux]
+
+/-- The scalar-value guard helper denotes `Char.ofNat`, including its answer for a code that is not
+a scalar value: Lean gives the null character there, and the guard's alternate branch is exactly
+that character's image. -/
+theorem charOfNatModelsOfNat (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.charOfNat.requires) :
+    Opcode.charOfNat.Preserves runtime := by
+  intro code
+  rcases holds with ⟨relational, logical, conditional, fromCodePoint, _⟩
+  have upper : runtime.natLessOrEqual (Encode.nat code) (Encode.int 1114111)
+      = Encode.bool (decide ((code : Int) ≤ 1114111)) := by
+    unfold Encode.nat Encode.int
+    exact relational.2 (code : Int) 1114111
+  have below : runtime.natLess (Encode.nat code) (Encode.int 55296)
+      = Encode.bool (decide ((code : Int) < 55296)) := by
+    unfold Encode.nat Encode.int
+    exact relational.1 (code : Int) 55296
+  have above : runtime.natLess (Encode.int 57343) (Encode.nat code)
+      = Encode.bool (decide ((57343 : Int) < (code : Int))) := by
+    unfold Encode.nat Encode.int
+    exact relational.1 57343 (code : Int)
+  have condition :
+      (runtime.boolAnd (runtime.natLessOrEqual (Encode.nat code) (Encode.int 1114111))
+          (runtime.boolOr (runtime.natLess (Encode.nat code) (Encode.int 55296))
+            (runtime.natLess (Encode.int 57343) (Encode.nat code)))).toBoolean
+        = decide (Nat.isValidChar code) := by
+    rw [logical.1 _ _, logical.2.1 _ _, upper, below, above]
+    unfold Model.boolAnd Model.boolOr Encode.bool Value.toBoolean Primitive.toBoolean
+    by_cases upperBound : ((code : Int) ≤ 1114111)
+    · by_cases lower : ((code : Int) < 55296)
+      · have valid : Nat.isValidChar code := by
+          unfold Nat.isValidChar
+          omega
+        simp [upperBound, lower, valid]
+      · by_cases higher : ((57343 : Int) < (code : Int))
+        · have valid : Nat.isValidChar code := by
+            unfold Nat.isValidChar
+            omega
+          simp [upperBound, lower, higher, valid]
+        · have invalid : ¬ Nat.isValidChar code := by
+            unfold Nat.isValidChar
+            omega
+          simp [upperBound, lower, higher, invalid]
+    · have invalid : ¬ Nat.isValidChar code := by
+        unfold Nat.isValidChar
+        omega
+      simp [upperBound, invalid]
+  unfold Runtime.charOfNat
+  rw [conditional.1 _ _ _]
+  by_cases valid : Nat.isValidChar code
+  · rw [if_pos (by rw [condition]; simp [valid])]
+    have image := fromCodePoint (Char.ofNat code)
+    rw [toNat_ofNat_of_valid valid] at image
+    rw [image]
+  · rw [if_neg (by rw [condition]; simp [valid]), ofNat_of_invalid valid]
+
+/-! ### `String`
+
+`String.length` counts code points, so its helper spreads the string; `value.length` counts UTF-16
+code units and disagrees outside the BMP. `string.toList` and `string.ofList` are the proved bridge
+to `List Char`, which is what makes the rest of `String` expressible in Lean rather than in a widened
+opcode set.
+-/
+
+/-- The spread-and-length helper denotes `String.length`, which counts code points. -/
+theorem stringLengthModelsLength (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.stringLength.requires) :
+    Opcode.stringLength.Preserves runtime := by
+  intro value
+  rcases holds with ⟨iteration, fromLength, _⟩
+  unfold Runtime.stringLength
+  rw [iteration value, fromLength (value.toList.map Encode.char), List.length_map]
+  rfl
+
+/-- `value.length === 0` denotes `String.isEmpty`. -/
+theorem stringIsEmptyModelsIsEmpty (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.stringIsEmpty.requires) :
+    Opcode.stringIsEmpty.Preserves runtime := by
+  intro value
+  rw [holds.1 value]
+
+/-- `value + character` denotes `String.push`, which is concatenation with a one-code-point
+string. -/
+theorem stringPushModelsPush (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.stringPush.requires) :
+    Opcode.stringPush.Preserves runtime := by
+  intro value character
+  unfold Runtime.stringPush Encode.char Encode.string
+  rw [holds.1 (JSString.ofLeanString value) (JSString.ofLeanString (String.singleton character)),
+    ← JSString.ofLeanString_append]
+  rfl
+
+/-- `String.singleton` reaches the target as the operand itself, because a `Char`'s image already is
+that one-code-point string. -/
+theorem stringSingletonModelsSingleton (runtime : Runtime)
+    (_holds : Assumption.Holds runtime Opcode.stringSingleton.requires) :
+    Opcode.stringSingleton.Preserves runtime := by
+  intro character
+  rfl
+
+/-- `[...value]` denotes `String.toList`, code point for code point. -/
+theorem stringToListModelsToList (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.stringToList.requires) :
+    Opcode.stringToList.Preserves runtime := by
+  intro value
+  rw [holds.1 value]
+
+/-- `value.join("")` denotes `String.ofList`. -/
+theorem stringOfListModelsOfList (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.stringOfList.requires) :
+    Opcode.stringOfList.Preserves runtime := by
+  intro characters
+  rw [holds.1 characters]
+
 /--
 The closure over the opcode registry. It is a total function on `Opcode`, so an opcode with no theorem
 is a build failure rather than an unproved row, and a theorem whose assumption closure differs from
@@ -621,6 +1110,27 @@ theorem registry (runtime : Runtime) : (code : Opcode) → code.Obligation runti
   | .listHead => listHeadModelsHead runtime
   | .listFirst => listFirstModelsHead runtime
   | .listRest => listRestModelsTail runtime
+  | .intAdd => intAddModelsAdd runtime
+  | .intSubtract => intSubtractModelsSub runtime
+  | .intMultiply => intMultiplyModelsMul runtime
+  | .intNegate => intNegateModelsNeg runtime
+  | .intTruncatedDivide => intTruncatedDivideModelsTdiv runtime
+  | .intTruncatedModulo => intTruncatedModuloModelsTmod runtime
+  | .intLess => intLessModelsLt runtime
+  | .intLessOrEqual => intLessOrEqualModelsLe runtime
+  | .intEquals => intEqualsModelsBEq runtime
+  | .intOfNat => intOfNatModelsOfNat runtime
+  | .intToNat => intToNatModelsToNat runtime
+  | .charToNat => charToNatModelsToNat runtime
+  | .charOfNat => charOfNatModelsOfNat runtime
+  | .charEquals => charEqualsModelsBEq runtime
+  | .charLess => charLessModelsLt runtime
+  | .stringLength => stringLengthModelsLength runtime
+  | .stringIsEmpty => stringIsEmptyModelsIsEmpty runtime
+  | .stringPush => stringPushModelsPush runtime
+  | .stringSingleton => stringSingletonModelsSingleton runtime
+  | .stringToList => stringToListModelsToList runtime
+  | .stringOfList => stringOfListModelsOfList runtime
 
 /-- Every admitted opcode is discharged from its own recorded assumption closure. -/
 theorem registry_total (runtime : Runtime) (code : Opcode)

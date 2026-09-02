@@ -104,7 +104,10 @@ mutual
 def Represents (program : Ir.Program) (state : Target.State) : Source.Value → Value → Prop
   | .boolean value, target => target = .primitive (.boolean value)
   | .nat value, target => target = .primitive (.bigint value)
+  | .int value, target => target = .primitive (.bigint value)
   | .string value, target => target = .primitive (.string (JSString.ofLeanString value))
+  | .char value, target =>
+      target = .primitive (.string (JSString.ofLeanString (String.singleton value)))
   | .record _ fields, target =>
       ∃ (ref : RefId) (entries : List (String × Value)),
         target = .object ref ∧ RepresentsFields program state fields entries ∧
@@ -244,7 +247,9 @@ theorem Represents.stable {program : Ir.Program} {old next : Target.State}
   match value with
   | .boolean _ => unfold Represents at related ⊢; exact related
   | .nat _ => unfold Represents at related ⊢; exact related
+  | .int _ => unfold Represents at related ⊢; exact related
   | .string _ => unfold Represents at related ⊢; exact related
+  | .char _ => unfold Represents at related ⊢; exact related
   | .record type fields =>
       unfold Represents at related ⊢
       obtain ⟨ref, entries, targetEq, fieldsRelated, shape⟩ := related

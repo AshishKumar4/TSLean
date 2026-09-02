@@ -359,7 +359,11 @@ theorem valueValid_of_represents {program : Ir.Program} {state : Target.State} :
       unfold Relation.Represents at related; subst related; rfl
   | .nat _, _, related => by
       unfold Relation.Represents at related; subst related; rfl
+  | .int _, _, related => by
+      unfold Relation.Represents at related; subst related; rfl
   | .string _, _, related => by
+      unfold Relation.Represents at related; subst related; rfl
+  | .char _, _, related => by
       unfold Relation.Represents at related; subst related; rfl
   | .record _ _, _, related => by
       unfold Relation.Represents at related
@@ -684,6 +688,8 @@ theorem ifThenElse {runtime : Runtime} : Op.Preserves runtime .ifThenElse := by
               exact refines_widen extension
                 (alternateStep sourceScope targetScope next targetState nextAligned)
       | nat _ => exact refines_fault
+      | int _ => exact refines_fault
+      | char _ => exact refines_fault
       | string _ => exact refines_fault
       | record _ _ => exact refines_fault
       | array _ _ => exact refines_fault
@@ -721,7 +727,9 @@ theorem fieldGet {runtime : Runtime} : Op.Preserves runtime .fieldGet := by
               exact refines_value extension closuresValid fieldRelated traceRefines
       | boolean _ => exact refines_fault
       | nat _ => exact refines_fault
+      | int _ => exact refines_fault
       | string _ => exact refines_fault
+      | char _ => exact refines_fault
       | array _ _ => exact refines_fault
       | variant _ _ _ => exact refines_fault
       | closure _ _ _ => exact refines_fault
@@ -1151,7 +1159,9 @@ theorem apply {runtime : Runtime} : Op.Preserves runtime .apply := by
       cases callee with
       | boolean _ => exact refines_fault
       | nat _ => exact refines_fault
+      | int _ => exact refines_fault
       | string _ => exact refines_fault
+      | char _ => exact refines_fault
       | record _ _ => exact refines_fault
       | array _ _ => exact refines_fault
       | variant _ _ _ => exact refines_fault
@@ -1325,6 +1335,8 @@ theorem filterElements_refines {program : Ir.Program} {target : Target.Program} 
                       simp only [Value.toBoolean, Primitive.toBoolean, Bool.false_eq_true, if_false]
                       exact listRelated
           | nat _ => exact refinesList_fault
+          | int _ => exact refinesList_fault
+          | char _ => exact refinesList_fault
           | string _ => exact refinesList_fault
           | record _ _ => exact refinesList_fault
           | array _ _ => exact refinesList_fault
@@ -1393,6 +1405,8 @@ theorem anyElements_refines {program : Ir.Program} {target : Target.Program} {ru
                     (Relation.Represents.stable extension _ _ calleeRelated)
                     (Relation.RepresentsList.stable extension rest restImages tailRelated) nextTrace
           | nat _ => exact refines_fault
+          | int _ => exact refines_fault
+          | char _ => exact refines_fault
           | string _ => exact refines_fault
           | record _ _ => exact refines_fault
           | array _ _ => exact refines_fault
@@ -1461,6 +1475,8 @@ theorem allElements_refines {program : Ir.Program} {target : Target.Program} {ru
                     (Relation.Represents.stable extension _ _ calleeRelated)
                     (Relation.RepresentsList.stable extension rest restImages tailRelated) nextTrace
           | nat _ => exact refines_fault
+          | int _ => exact refines_fault
+          | char _ => exact refines_fault
           | string _ => exact refines_fault
           | record _ _ => exact refines_fault
           | array _ _ => exact refines_fault
@@ -1689,6 +1705,118 @@ theorem strict_listAppend {values : List Source.Value} {value : Source.Value}
       values = [.array firstElement first, .array secondElement second] := by
   unfold Source.applyStrict at produced
   split at produced <;> simp_all
+
+/-- The binary `Int` opcodes accept two `Int` operands. -/
+theorem strict_binaryInt {opcode : Ir.Opcode} {values : List Source.Value} {value : Source.Value}
+    (binary : opcode = .intAdd ∨ opcode = .intSubtract ∨ opcode = .intMultiply ∨
+      opcode = .intTruncatedDivide ∨ opcode = .intTruncatedModulo ∨ opcode = .intLess ∨
+      opcode = .intLessOrEqual ∨ opcode = .intEquals)
+    (produced : Source.applyStrict opcode values = .ok value) :
+    ∃ left right, values = [.int left, .int right] := by
+  rcases binary with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    (unfold Source.applyStrict at produced; split at produced <;> simp_all)
+
+/-- The unary `Int` opcodes accept one `Int` operand. -/
+theorem strict_unaryInt {opcode : Ir.Opcode} {values : List Source.Value} {value : Source.Value}
+    (unary : opcode = .intNegate ∨ opcode = .intToNat)
+    (produced : Source.applyStrict opcode values = .ok value) :
+    ∃ operand, values = [.int operand] := by
+  rcases unary with rfl | rfl <;>
+    (unfold Source.applyStrict at produced; split at produced <;> simp_all)
+
+/-- The two opcodes that read a `Nat` accept one `Nat` operand. -/
+theorem strict_unaryNat {opcode : Ir.Opcode} {values : List Source.Value} {value : Source.Value}
+    (unary : opcode = .intOfNat ∨ opcode = .charOfNat)
+    (produced : Source.applyStrict opcode values = .ok value) :
+    ∃ operand, values = [.nat operand] := by
+  rcases unary with rfl | rfl <;>
+    (unfold Source.applyStrict at produced; split at produced <;> simp_all)
+
+/-- `char.toNat` and `string.singleton` accept one `Char` operand. -/
+theorem strict_unaryChar {opcode : Ir.Opcode} {values : List Source.Value} {value : Source.Value}
+    (unary : opcode = .charToNat ∨ opcode = .stringSingleton)
+    (produced : Source.applyStrict opcode values = .ok value) :
+    ∃ character, values = [.char character] := by
+  rcases unary with rfl | rfl <;>
+    (unfold Source.applyStrict at produced; split at produced <;> simp_all)
+
+/-- The binary `Char` opcodes accept two `Char` operands. -/
+theorem strict_binaryChar {opcode : Ir.Opcode} {values : List Source.Value} {value : Source.Value}
+    (binary : opcode = .charEquals ∨ opcode = .charLess)
+    (produced : Source.applyStrict opcode values = .ok value) :
+    ∃ left right, values = [.char left, .char right] := by
+  rcases binary with rfl | rfl <;>
+    (unfold Source.applyStrict at produced; split at produced <;> simp_all)
+
+/-- The unary `String` opcodes accept one `String` operand. -/
+theorem strict_unaryString {opcode : Ir.Opcode} {values : List Source.Value}
+    {value : Source.Value}
+    (unary : opcode = .stringLength ∨ opcode = .stringIsEmpty ∨ opcode = .stringToList)
+    (produced : Source.applyStrict opcode values = .ok value) :
+    ∃ operand, values = [.string operand] := by
+  rcases unary with rfl | rfl | rfl <;>
+    (unfold Source.applyStrict at produced; split at produced <;> simp_all)
+
+/-- `string.push` accepts a `String` and a `Char`. -/
+theorem strict_stringPush {values : List Source.Value} {value : Source.Value}
+    (produced : Source.applyStrict .stringPush values = .ok value) :
+    ∃ operand character, values = [.string operand, .char character] := by
+  unfold Source.applyStrict at produced
+  split at produced <;> simp_all
+
+/-- `string.ofList` accepts one array operand, and refuses it unless every element is a
+character. -/
+theorem strict_stringOfList {values : List Source.Value} {value : Source.Value}
+    (produced : Source.applyStrict .stringOfList values = .ok value) :
+    ∃ element characters,
+      values = [.array element (characters.map Source.Value.char)] ∧
+        value = .string (String.ofList characters) := by
+  cases values with
+  | nil => simp [Source.applyStrict] at produced
+  | cons head rest =>
+      cases rest with
+      | cons _ _ => simp [Source.applyStrict] at produced
+      | nil =>
+          cases head with
+          | array element elements =>
+              cases read : Source.charList? elements with
+              | none => simp [Source.applyStrict, read] at produced
+              | some characters =>
+                  refine ⟨element, characters, ?_, ?_⟩
+                  · rw [Source.charList?_eq_some read]
+                  · simp only [Source.applyStrict, read, Except.ok.injEq] at produced
+                    exact produced.symm
+          | boolean _ | nat _ | int _ | string _ | char _ | record _ _ | variant _ _ _
+          | closure _ _ _ => simp [Source.applyStrict] at produced
+
+/-- A character list and its images are related pointwise, which is what makes `string.toList`
+produce a represented array and `string.ofList` read one back. -/
+theorem represents_charList {program : Ir.Program} {state : Target.State} :
+    ∀ characters : List Char,
+      Relation.RepresentsList program state (characters.map Source.Value.char)
+        (characters.map Encode.char)
+  | [] => by unfold Relation.RepresentsList; rfl
+  | character :: rest => by
+      simp only [List.map_cons]
+      unfold Relation.RepresentsList
+      refine ⟨Encode.char character, rest.map Encode.char, rfl, ?_, represents_charList rest⟩
+      unfold Relation.Represents
+      rfl
+
+/-- A represented character list has exactly the character images. -/
+theorem representsList_charList {program : Ir.Program} {state : Target.State} :
+    ∀ (characters : List Char) (images : List Value),
+      Relation.RepresentsList program state (characters.map Source.Value.char) images →
+      images = characters.map Encode.char
+  | [], images, related => by unfold Relation.RepresentsList at related; exact related
+  | character :: rest, images, related => by
+      unfold Relation.RepresentsList at related
+      obtain ⟨image, restImages, imagesEq, headRelated, tailRelated⟩ := related
+      unfold Relation.Represents at headRelated
+      subst imagesEq
+      subst headRelated
+      rw [List.map_cons, representsList_charList rest restImages tailRelated]
+      rfl
 
 /-- `bool.and` and `bool.or` have no first-order clause: they are lazy in their right operand, which
 `eval` decides before any operand is evaluated. -/
@@ -2116,6 +2244,472 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         exact refines_allocateArray heapValid closuresValid
           (represents_append first firstImages second secondImages firstList secondList)
           traceRefines (fits firstElement (first ++ second) trace sourceRun)
+  case intAdd =>
+    cases strict : Source.applyStrict Ir.Opcode.intAdd values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨left, right, valuesEq⟩ := strict_binaryInt (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .int (left + right) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨leftImage, rightImage, operandsEq, leftRelated, rightRelated⟩ :=
+          representsList_two related
+        subst operandsEq
+        unfold Relation.Represents at leftRelated rightRelated
+        subst leftRelated
+        subst rightRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law left right).symm
+  case intSubtract =>
+    cases strict : Source.applyStrict Ir.Opcode.intSubtract values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨left, right, valuesEq⟩ := strict_binaryInt (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .int (left - right) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨leftImage, rightImage, operandsEq, leftRelated, rightRelated⟩ :=
+          representsList_two related
+        subst operandsEq
+        unfold Relation.Represents at leftRelated rightRelated
+        subst leftRelated
+        subst rightRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law left right).symm
+  case intMultiply =>
+    cases strict : Source.applyStrict Ir.Opcode.intMultiply values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨left, right, valuesEq⟩ := strict_binaryInt (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .int (left * right) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨leftImage, rightImage, operandsEq, leftRelated, rightRelated⟩ :=
+          representsList_two related
+        subst operandsEq
+        unfold Relation.Represents at leftRelated rightRelated
+        subst leftRelated
+        subst rightRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law left right).symm
+  case intTruncatedDivide =>
+    cases strict : Source.applyStrict Ir.Opcode.intTruncatedDivide values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨left, right, valuesEq⟩ := strict_binaryInt (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .int (left.tdiv right) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨leftImage, rightImage, operandsEq, leftRelated, rightRelated⟩ :=
+          representsList_two related
+        subst operandsEq
+        unfold Relation.Represents at leftRelated rightRelated
+        subst leftRelated
+        subst rightRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law left right).symm
+  case intTruncatedModulo =>
+    cases strict : Source.applyStrict Ir.Opcode.intTruncatedModulo values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨left, right, valuesEq⟩ := strict_binaryInt (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .int (left.tmod right) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨leftImage, rightImage, operandsEq, leftRelated, rightRelated⟩ :=
+          representsList_two related
+        subst operandsEq
+        unfold Relation.Represents at leftRelated rightRelated
+        subst leftRelated
+        subst rightRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law left right).symm
+  case intLess =>
+    cases strict : Source.applyStrict Ir.Opcode.intLess values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨left, right, valuesEq⟩ := strict_binaryInt (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .boolean (decide (left < right)) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨leftImage, rightImage, operandsEq, leftRelated, rightRelated⟩ :=
+          representsList_two related
+        subst operandsEq
+        unfold Relation.Represents at leftRelated rightRelated
+        subst leftRelated
+        subst rightRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law left right).symm
+  case intLessOrEqual =>
+    cases strict : Source.applyStrict Ir.Opcode.intLessOrEqual values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨left, right, valuesEq⟩ := strict_binaryInt (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .boolean (decide (left ≤ right)) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨leftImage, rightImage, operandsEq, leftRelated, rightRelated⟩ :=
+          representsList_two related
+        subst operandsEq
+        unfold Relation.Represents at leftRelated rightRelated
+        subst leftRelated
+        subst rightRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law left right).symm
+  case intEquals =>
+    cases strict : Source.applyStrict Ir.Opcode.intEquals values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨left, right, valuesEq⟩ := strict_binaryInt (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .boolean (left == right) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨leftImage, rightImage, operandsEq, leftRelated, rightRelated⟩ :=
+          representsList_two related
+        subst operandsEq
+        unfold Relation.Represents at leftRelated rightRelated
+        subst leftRelated
+        subst rightRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law left right).symm
+  case intNegate =>
+    cases strict : Source.applyStrict Ir.Opcode.intNegate values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨operand, valuesEq⟩ := strict_unaryInt (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .int (-operand) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨image, operandsEq, operandRelated⟩ := representsList_one related
+        subst operandsEq
+        unfold Relation.Represents at operandRelated
+        subst operandRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law operand).symm
+  case intToNat =>
+    cases strict : Source.applyStrict Ir.Opcode.intToNat values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨operand, valuesEq⟩ := strict_unaryInt (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .nat operand.toNat := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨image, operandsEq, operandRelated⟩ := representsList_one related
+        subst operandsEq
+        unfold Relation.Represents at operandRelated
+        subst operandRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law operand).symm
+  case intOfNat =>
+    cases strict : Source.applyStrict Ir.Opcode.intOfNat values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨operand, valuesEq⟩ := strict_unaryNat (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .int (Int.ofNat operand) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨image, operandsEq, operandRelated⟩ := representsList_one related
+        subst operandsEq
+        unfold Relation.Represents at operandRelated
+        subst operandRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law operand).symm
+  case charOfNat =>
+    cases strict : Source.applyStrict Ir.Opcode.charOfNat values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨operand, valuesEq⟩ := strict_unaryNat (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .char (Char.ofNat operand) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨image, operandsEq, operandRelated⟩ := representsList_one related
+        subst operandsEq
+        unfold Relation.Represents at operandRelated
+        subst operandRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law operand).symm
+  case charToNat =>
+    cases strict : Source.applyStrict Ir.Opcode.charToNat values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨character, valuesEq⟩ := strict_unaryChar (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .nat character.toNat := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨image, operandsEq, operandRelated⟩ := representsList_one related
+        subst operandsEq
+        unfold Relation.Represents at operandRelated
+        subst operandRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law character).symm
+  case stringSingleton =>
+    cases strict : Source.applyStrict Ir.Opcode.stringSingleton values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨character, valuesEq⟩ := strict_unaryChar (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .string (String.singleton character) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨image, operandsEq, operandRelated⟩ := representsList_one related
+        subst operandsEq
+        unfold Relation.Represents at operandRelated
+        subst operandRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law character).symm
+  case charEquals =>
+    cases strict : Source.applyStrict Ir.Opcode.charEquals values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨left, right, valuesEq⟩ := strict_binaryChar (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .boolean (left == right) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨leftImage, rightImage, operandsEq, leftRelated, rightRelated⟩ :=
+          representsList_two related
+        subst operandsEq
+        unfold Relation.Represents at leftRelated rightRelated
+        subst leftRelated
+        subst rightRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law left right).symm
+  case charLess =>
+    cases strict : Source.applyStrict Ir.Opcode.charLess values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨left, right, valuesEq⟩ := strict_binaryChar (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .boolean (decide (left < right)) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨leftImage, rightImage, operandsEq, leftRelated, rightRelated⟩ :=
+          representsList_two related
+        subst operandsEq
+        unfold Relation.Represents at leftRelated rightRelated
+        subst leftRelated
+        subst rightRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law left right).symm
+  case stringLength =>
+    cases strict : Source.applyStrict Ir.Opcode.stringLength values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨operand, valuesEq⟩ := strict_unaryString (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .nat operand.length := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨image, operandsEq, operandRelated⟩ := representsList_one related
+        subst operandsEq
+        unfold Relation.Represents at operandRelated
+        subst operandRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law operand).symm
+  case stringIsEmpty =>
+    cases strict : Source.applyStrict Ir.Opcode.stringIsEmpty values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨operand, valuesEq⟩ := strict_unaryString (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .boolean operand.isEmpty := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨image, operandsEq, operandRelated⟩ := representsList_one related
+        subst operandsEq
+        unfold Relation.Represents at operandRelated
+        subst operandRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law operand).symm
+  case stringPush =>
+    cases strict : Source.applyStrict Ir.Opcode.stringPush values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨operand, character, valuesEq⟩ := strict_stringPush strict
+        subst valuesEq
+        have producedEq : produced = .string (operand.push character) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨operandImage, characterImage, operandsEq, operandRelated, characterRelated⟩ :=
+          representsList_two related
+        subst operandsEq
+        unfold Relation.Represents at operandRelated characterRelated
+        subst operandRelated
+        subst characterRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law operand character).symm
+  case stringToList =>
+    cases strict : Source.applyStrict Ir.Opcode.stringToList values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨operand, valuesEq⟩ := strict_unaryString (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .array .char (operand.toList.map Source.Value.char) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨image, operandsEq, operandRelated⟩ := representsList_one related
+        subst operandsEq
+        unfold Relation.Represents at operandRelated
+        subst operandRelated
+        have sourceRun := applyOperation_of_strict_ok (program := program) (fuel := fuel)
+          (trace := trace) (typeArguments := typeArguments) firstOrder strict
+        rw [sourceRun]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        have denoted := law operand
+        simp only [Encode.string, Encode.jsString] at denoted
+        rw [← denoted]
+        exact refines_allocateArray heapValid closuresValid (represents_charList operand.toList)
+          traceRefines (fits .char (operand.toList.map Source.Value.char) trace sourceRun)
+  case stringOfList =>
+    cases strict : Source.applyStrict Ir.Opcode.stringOfList values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨element, characters, valuesEq, producedEq⟩ := strict_stringOfList strict
+        subst valuesEq
+        subst producedEq
+        obtain ⟨subject, operandsEq, subjectRelated⟩ := representsList_one related
+        subst operandsEq
+        obtain ⟨images, read, listRelated⟩ := readArray_of_represents subjectRelated
+        have imagesEq := representsList_charList characters images listRelated
+        subst imagesEq
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation, read]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        exact (law characters).symm
   case listHead =>
     cases strict : Source.applyStrict Ir.Opcode.listHead values with
     | error fault =>
@@ -2241,11 +2835,11 @@ theorem listMap_operands {program : Ir.Program} {target : Target.Program} {runti
       exact Or.inl (by simp only [Source.applyOperation, Source.applyStrict]; exact refines_fault)
   | [.closure captured parameters body, .array element elements] =>
       exact Or.inr ⟨captured, parameters, body, element, elements, rfl⟩
-  | [.closure _ _ _, .boolean _] | [.closure _ _ _, .nat _] | [.closure _ _ _, .string _]
-  | [.closure _ _ _, .record _ _] | [.closure _ _ _, .variant _ _ _]
-  | [.closure _ _ _, .closure _ _ _]
-  | [.boolean _, _] | [.nat _, _] | [.string _, _] | [.record _ _, _] | [.array _ _, _]
-  | [.variant _ _ _, _] =>
+  | [.closure _ _ _, .boolean _] | [.closure _ _ _, .nat _] | [.closure _ _ _, .int _]
+  | [.closure _ _ _, .string _] | [.closure _ _ _, .char _] | [.closure _ _ _, .record _ _]
+  | [.closure _ _ _, .variant _ _ _] | [.closure _ _ _, .closure _ _ _]
+  | [.boolean _, _] | [.nat _, _] | [.int _, _] | [.string _, _] | [.char _, _]
+  | [.record _ _, _] | [.array _ _, _] | [.variant _ _ _, _] =>
       exact Or.inl (by simp only [Source.applyOperation]; exact refines_fault)
 
 /-- `list.filter` takes the callback first and the subject second. -/
@@ -2264,11 +2858,11 @@ theorem listFilter_operands {program : Ir.Program} {target : Target.Program} {ru
       exact Or.inl (by simp only [Source.applyOperation, Source.applyStrict]; exact refines_fault)
   | [.closure captured parameters body, .array element elements] =>
       exact Or.inr ⟨captured, parameters, body, element, elements, rfl⟩
-  | [.closure _ _ _, .boolean _] | [.closure _ _ _, .nat _] | [.closure _ _ _, .string _]
-  | [.closure _ _ _, .record _ _] | [.closure _ _ _, .variant _ _ _]
-  | [.closure _ _ _, .closure _ _ _]
-  | [.boolean _, _] | [.nat _, _] | [.string _, _] | [.record _ _, _] | [.array _ _, _]
-  | [.variant _ _ _, _] =>
+  | [.closure _ _ _, .boolean _] | [.closure _ _ _, .nat _] | [.closure _ _ _, .int _]
+  | [.closure _ _ _, .string _] | [.closure _ _ _, .char _] | [.closure _ _ _, .record _ _]
+  | [.closure _ _ _, .variant _ _ _] | [.closure _ _ _, .closure _ _ _]
+  | [.boolean _, _] | [.nat _, _] | [.int _, _] | [.string _, _] | [.char _, _]
+  | [.record _ _, _] | [.array _ _, _] | [.variant _ _ _, _] =>
       exact Or.inl (by simp only [Source.applyOperation]; exact refines_fault)
 
 /-- `list.any` takes the subject first and the callback second. -/
@@ -2287,9 +2881,11 @@ theorem listAny_operands {program : Ir.Program} {target : Target.Program} {runti
       exact Or.inl (by simp only [Source.applyOperation, Source.applyStrict]; exact refines_fault)
   | [.array element elements, .closure captured parameters body] =>
       exact Or.inr ⟨element, elements, captured, parameters, body, rfl⟩
-  | [.array _ _, .boolean _] | [.array _ _, .nat _] | [.array _ _, .string _]
-  | [.array _ _, .record _ _] | [.array _ _, .variant _ _ _] | [.array _ _, .array _ _]
-  | [.boolean _, _] | [.nat _, _] | [.string _, _] | [.record _ _, _] | [.closure _ _ _, _]
+  | [.array _ _, .boolean _] | [.array _ _, .nat _] | [.array _ _, .int _]
+  | [.array _ _, .string _] | [.array _ _, .char _] | [.array _ _, .record _ _]
+  | [.array _ _, .variant _ _ _] | [.array _ _, .array _ _]
+  | [.boolean _, _] | [.nat _, _] | [.int _, _] | [.string _, _] | [.char _, _]
+  | [.record _ _, _] | [.closure _ _ _, _]
   | [.variant _ _ _, _] =>
       exact Or.inl (by simp only [Source.applyOperation]; exact refines_fault)
 
@@ -2309,9 +2905,11 @@ theorem listAll_operands {program : Ir.Program} {target : Target.Program} {runti
       exact Or.inl (by simp only [Source.applyOperation, Source.applyStrict]; exact refines_fault)
   | [.array element elements, .closure captured parameters body] =>
       exact Or.inr ⟨element, elements, captured, parameters, body, rfl⟩
-  | [.array _ _, .boolean _] | [.array _ _, .nat _] | [.array _ _, .string _]
-  | [.array _ _, .record _ _] | [.array _ _, .variant _ _ _] | [.array _ _, .array _ _]
-  | [.boolean _, _] | [.nat _, _] | [.string _, _] | [.record _ _, _] | [.closure _ _ _, _]
+  | [.array _ _, .boolean _] | [.array _ _, .nat _] | [.array _ _, .int _]
+  | [.array _ _, .string _] | [.array _ _, .char _] | [.array _ _, .record _ _]
+  | [.array _ _, .variant _ _ _] | [.array _ _, .array _ _]
+  | [.boolean _, _] | [.nat _, _] | [.int _, _] | [.string _, _] | [.char _, _]
+  | [.record _ _, _] | [.closure _ _ _, _]
   | [.variant _ _ _, _] =>
       exact Or.inl (by simp only [Source.applyOperation]; exact refines_fault)
 
@@ -2332,11 +2930,12 @@ theorem listFoldLeft_operands {program : Ir.Program} {target : Target.Program} {
       exact Or.inl (by simp only [Source.applyOperation, Source.applyStrict]; exact refines_fault)
   | [.closure captured parameters body, initial, .array element elements] =>
       exact Or.inr ⟨captured, parameters, body, initial, element, elements, rfl⟩
-  | [.closure _ _ _, _, .boolean _] | [.closure _ _ _, _, .nat _] | [.closure _ _ _, _, .string _]
+  | [.closure _ _ _, _, .boolean _] | [.closure _ _ _, _, .nat _] | [.closure _ _ _, _, .int _]
+  | [.closure _ _ _, _, .string _] | [.closure _ _ _, _, .char _]
   | [.closure _ _ _, _, .record _ _] | [.closure _ _ _, _, .variant _ _ _]
   | [.closure _ _ _, _, .closure _ _ _]
-  | [.boolean _, _, _] | [.nat _, _, _] | [.string _, _, _] | [.record _ _, _, _]
-  | [.array _ _, _, _] | [.variant _ _ _, _, _] =>
+  | [.boolean _, _, _] | [.nat _, _, _] | [.int _, _, _] | [.string _, _, _] | [.char _, _, _]
+  | [.record _ _, _, _] | [.array _ _, _, _] | [.variant _ _ _, _, _] =>
       exact Or.inl (by simp only [Source.applyOperation]; exact refines_fault)
 
 /-- `list.foldRight` takes the step, the initial accumulator, then the subject. -/
@@ -2356,11 +2955,12 @@ theorem listFoldRight_operands {program : Ir.Program} {target : Target.Program} 
       exact Or.inl (by simp only [Source.applyOperation, Source.applyStrict]; exact refines_fault)
   | [.closure captured parameters body, initial, .array element elements] =>
       exact Or.inr ⟨captured, parameters, body, initial, element, elements, rfl⟩
-  | [.closure _ _ _, _, .boolean _] | [.closure _ _ _, _, .nat _] | [.closure _ _ _, _, .string _]
+  | [.closure _ _ _, _, .boolean _] | [.closure _ _ _, _, .nat _] | [.closure _ _ _, _, .int _]
+  | [.closure _ _ _, _, .string _] | [.closure _ _ _, _, .char _]
   | [.closure _ _ _, _, .record _ _] | [.closure _ _ _, _, .variant _ _ _]
   | [.closure _ _ _, _, .closure _ _ _]
-  | [.boolean _, _, _] | [.nat _, _, _] | [.string _, _, _] | [.record _ _, _, _]
-  | [.array _ _, _, _] | [.variant _ _ _, _, _] =>
+  | [.boolean _, _, _] | [.nat _, _, _] | [.int _, _, _] | [.string _, _, _] | [.char _, _, _]
+  | [.record _ _, _, _] | [.array _ _, _, _] | [.variant _ _ _, _, _] =>
       exact Or.inl (by simp only [Source.applyOperation]; exact refines_fault)
 
 /--
@@ -2659,7 +3259,8 @@ theorem applyOperation_boolNot {program : Ir.Program} {fuel : Nat} {trace : Sour
   | boolean flag =>
       exact Or.inl ⟨flag, rfl,
         applyOperation_of_strict_ok (by decide) (by simp only [Source.applyStrict])⟩
-  | nat _ | string _ | record _ _ | array _ _ | variant _ _ _ | closure _ _ _ =>
+  | nat _ | int _ | string _ | char _ | record _ _ | array _ _ | variant _ _ _
+      | closure _ _ _ =>
       all_goals exact Or.inr ⟨_, applyOperation_of_strict_error (by decide)
         (by simp only [Source.applyStrict]; rfl)⟩
 
@@ -2677,10 +3278,12 @@ theorem applyOperation_boolEquals {program : Ir.Program} {fuel : Nat} {trace : S
       | boolean rightFlag =>
           exact Or.inl ⟨leftFlag, rightFlag, rfl, rfl,
             applyOperation_of_strict_ok (by decide) (by simp only [Source.applyStrict])⟩
-      | nat _ | string _ | record _ _ | array _ _ | variant _ _ _ | closure _ _ _ =>
+      | nat _ | int _ | string _ | char _ | record _ _ | array _ _ | variant _ _ _
+      | closure _ _ _ =>
           all_goals exact Or.inr ⟨_, applyOperation_of_strict_error (by decide)
             (by simp only [Source.applyStrict]; rfl)⟩
-  | nat _ | string _ | record _ _ | array _ _ | variant _ _ _ | closure _ _ _ =>
+  | nat _ | int _ | string _ | char _ | record _ _ | array _ _ | variant _ _ _
+      | closure _ _ _ =>
       all_goals exact Or.inr ⟨_, applyOperation_of_strict_error (by decide)
         (by simp only [Source.applyStrict]; rfl)⟩
 
@@ -2741,9 +3344,10 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
                     | boolean secondFlag =>
                         exact refines_value (extension.trans lastExtension) lastValid secondRelated
                           lastTrace
-                    | nat _ | string _ | record _ _ | array _ _ | variant _ _ _
-                    | closure _ _ _ => all_goals exact refines_fault
-        | nat _ | string _ | record _ _ | array _ _ | variant _ _ _ | closure _ _ _ =>
+                    | nat _ | int _ | string _ | char _ | record _ _ | array _ _
+                    | variant _ _ _ | closure _ _ _ => all_goals exact refines_fault
+        | nat _ | int _ | string _ | char _ | record _ _ | array _ _ | variant _ _ _
+      | closure _ _ _ =>
             all_goals exact refines_fault
   · intro typeArguments left right emittedLeft emittedRight leftStep rightStep
       sourceScope targetScope trace state aligned
@@ -2791,9 +3395,10 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
                     | boolean secondFlag =>
                         exact refines_value (extension.trans lastExtension) lastValid secondRelated
                           lastTrace
-                    | nat _ | string _ | record _ _ | array _ _ | variant _ _ _
-                    | closure _ _ _ => all_goals exact refines_fault
-        | nat _ | string _ | record _ _ | array _ _ | variant _ _ _ | closure _ _ _ =>
+                    | nat _ | int _ | string _ | char _ | record _ _ | array _ _
+                    | variant _ _ _ | closure _ _ _ => all_goals exact refines_fault
+        | nat _ | int _ | string _ | char _ | record _ _ | array _ _ | variant _ _ _
+      | closure _ _ _ =>
             all_goals exact refines_fault
   · intro typeArguments operand emittedOperand operandStep
       sourceScope targetScope trace state aligned
@@ -3296,7 +3901,8 @@ theorem variant {runtime : Runtime} : Op.Preserves runtime .variant := by
                       Relation.Represents.stable lastExtension headValue headImage headRelated,
                       listRelated⟩)
                   lastTrace bound
-            | boolean _ | nat _ | string _ | record _ _ | variant _ _ _ | closure _ _ _ =>
+            | boolean _ | nat _ | int _ | string _ | char _ | record _ _ | variant _ _ _
+            | closure _ _ _ =>
                 all_goals exact refines_fault
 
 /-! ## The tag chain -/
@@ -3330,7 +3936,8 @@ theorem element?_none_of_nullary {program : Ir.Program} {type : Ir.Ty}
       injection declared with constructorsEq
       subst constructorsEq
       exact absurd nullary (by simp [Ir.allNullary])
-  | boolean | nat | string | parameter _ | named _ _ | option _ | except _ _ | function _ _ =>
+  | boolean | nat | string | parameter _ | named _ _ | option _ | except _ _ | function _ _
+  | int | char | bytes | json | array _ | pair _ _ | hashMap _ _ | treeMap _ _ =>
       all_goals rfl
 
 /-- The tag chain decides the arm whose tag the scrutinee carries, reading the scrutinee once per
@@ -3447,6 +4054,8 @@ theorem matchOn {runtime : Runtime} : Op.Preserves runtime .matchOn := by
         exact refines_fault
     | boolean _ => exact refines_fault
     | nat _ => exact refines_fault
+    | int _ => exact refines_fault
+    | char _ => exact refines_fault
     | string _ => exact refines_fault
     | record _ _ => exact refines_fault
     | closure _ _ _ => exact refines_fault
@@ -3491,6 +4100,8 @@ theorem member_reads_own_data_property {program : Ir.Program} {target : Target.P
       cases produced with
       | boolean _ => simp at sourceRun
       | nat _ => simp at sourceRun
+      | int _ => simp at sourceRun
+      | char _ => simp at sourceRun
       | string _ => simp at sourceRun
       | array _ _ => simp at sourceRun
       | variant _ _ _ => simp at sourceRun

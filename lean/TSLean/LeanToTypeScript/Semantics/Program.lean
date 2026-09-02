@@ -87,7 +87,9 @@ theorem sourcePure_of_readable {program : Ir.Program} {fuel : Nat} :
             | some found => exact Or.inl ⟨found, rfl⟩
         | boolean _ => exact Or.inr ⟨_, rfl⟩
         | nat _ => exact Or.inr ⟨_, rfl⟩
+        | int _ => exact Or.inr ⟨_, rfl⟩
         | string _ => exact Or.inr ⟨_, rfl⟩
+        | char _ => exact Or.inr ⟨_, rfl⟩
         | array _ _ => exact Or.inr ⟨_, rfl⟩
         | variant _ _ _ => exact Or.inr ⟨_, rfl⟩
         | closure _ _ _ => exact Or.inr ⟨_, rfl⟩

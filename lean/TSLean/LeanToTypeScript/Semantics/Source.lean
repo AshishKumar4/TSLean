@@ -34,6 +34,11 @@ inductive Value where
   | boolean (value : Bool)
   | nat (value : Nat)
   | string (value : String)
+  /-- An `Int`. It shares the target's bigint representation with a `Nat`, which is why `int.ofNat`
+  is the identity on the image rather than a conversion. -/
+  | int (value : Int)
+  /-- A `Char`, which reaches the target as a string of exactly one code point. -/
+  | char (value : Char)
   | record (type : Ir.Ty) (fields : List (String × Value))
   /-- A `List`, holding its elements directly. `constructorsOf` gives a list `nil`/`cons`
   constructors so a match can take one apart, but that is how it is *decided*, not how it is
@@ -61,7 +66,9 @@ inductive Fault where
   | unboundVariable (index : Nat)
   | notABoolean
   | notANat
+  | notAnInt
   | notAString
+  | notAChar
   | notARecord
   | fieldAbsent (field : String)
   | notAVariant
@@ -113,6 +120,35 @@ def elementType (typeArguments : List Ir.Ty) : Ir.Ty := (typeArguments[0]?).getD
 def imageType (typeArguments : List Ir.Ty) : Ir.Ty := (typeArguments[1]?).getD .boolean
 
 /--
+The characters a `List Char` value carries, and `none` for a list carrying anything else.
+
+`string.ofList` is the one opcode whose operand is a homogeneous list of a *primitive* it has to read
+back rather than pass along, so the read is written once here instead of inside the opcode clause.
+-/
+def charList? : List Value → Option (List Char)
+  | [] => some []
+  | .char character :: rest => (charList? rest).map fun characters => character :: characters
+  | _ :: _ => none
+
+/-- Exactly a list of character values answers a character list, element for element. -/
+theorem charList?_eq_some : ∀ {values : List Value} {characters : List Char},
+    charList? values = some characters → values = characters.map Value.char
+  | [], _, read => by simpa [charList?] using read.symm
+  | .char character :: rest, characters, read => by
+      simp only [charList?, Option.map_eq_some_iff] at read
+      obtain ⟨tail, tailRead, characterEq⟩ := read
+      rw [← characterEq, List.map_cons, charList?_eq_some tailRead]
+  | .boolean _ :: _, _, read | .nat _ :: _, _, read | .int _ :: _, _, read
+  | .string _ :: _, _, read | .record _ _ :: _, _, read | .array _ _ :: _, _, read
+  | .variant _ _ _ :: _, _, read | .closure _ _ _ :: _, _, read => by simp [charList?] at read
+
+/-- A character list is read back exactly. -/
+theorem charList?_map : ∀ characters : List Char,
+    charList? (characters.map Value.char) = some characters
+  | [] => rfl
+  | character :: rest => by simp [charList?, charList?_map rest]
+
+/--
 The strict, first-order opcodes, as a total function on operand lists: one clause per opcode and
 accepted operand shape, and one refusal carrying the opcode and the number of operands it was
 reached with. Every shape an opcode does not accept is that typed fault rather than a silent
@@ -145,6 +181,31 @@ def applyStrict (opcode : Ir.Opcode) (values : List Value) : Except Fault Value 
   | .listHead, [.array element (head :: _)] => .ok (.variant (.option element) "some" [head])
   | .listAppend, [.array element first, .array _ second] =>
       .ok (.array element (first ++ second))
+  | .intAdd, [.int left, .int right] => .ok (.int (left + right))
+  | .intSubtract, [.int left, .int right] => .ok (.int (left - right))
+  | .intMultiply, [.int left, .int right] => .ok (.int (left * right))
+  | .intNegate, [.int operand] => .ok (.int (-operand))
+  | .intTruncatedDivide, [.int left, .int right] => .ok (.int (left.tdiv right))
+  | .intTruncatedModulo, [.int left, .int right] => .ok (.int (left.tmod right))
+  | .intLess, [.int left, .int right] => .ok (.boolean (decide (left < right)))
+  | .intLessOrEqual, [.int left, .int right] => .ok (.boolean (decide (left ≤ right)))
+  | .intEquals, [.int left, .int right] => .ok (.boolean (left == right))
+  | .intOfNat, [.nat operand] => .ok (.int (Int.ofNat operand))
+  | .intToNat, [.int operand] => .ok (.nat operand.toNat)
+  | .charToNat, [.char operand] => .ok (.nat operand.toNat)
+  | .charOfNat, [.nat operand] => .ok (.char (Char.ofNat operand))
+  | .charEquals, [.char left, .char right] => .ok (.boolean (left == right))
+  | .charLess, [.char left, .char right] => .ok (.boolean (decide (left < right)))
+  | .stringLength, [.string operand] => .ok (.nat operand.length)
+  | .stringIsEmpty, [.string operand] => .ok (.boolean operand.isEmpty)
+  | .stringPush, [.string operand, .char character] => .ok (.string (operand.push character))
+  | .stringSingleton, [.char character] => .ok (.string (String.singleton character))
+  | .stringToList, [.string operand] =>
+      .ok (.array .char (operand.toList.map Value.char))
+  | .stringOfList, [.array _ elements] =>
+      match charList? elements with
+      | some characters => .ok (.string (String.ofList characters))
+      | none => .error .notAChar
   | opcode, values => .error (.opcodeOperands opcode values.length)
 
 

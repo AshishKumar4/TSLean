@@ -563,6 +563,30 @@ def runOperation (program : Program) (runtime : Runtime) (fuel : Nat) (state : S
       match readArray state subject with
       | .error fault => .fault fault state
       | .ok elements => foldRightCalls program runtime fuel state callback initial elements
+  | .intAdd, [left, right] => .ok (runtime.natAdd left right) state
+  | .intSubtract, [left, right] => .ok (runtime.natDifference left right) state
+  | .intMultiply, [left, right] => .ok (runtime.natMultiply left right) state
+  | .intNegate, [operand] => .ok (runtime.intNegate operand) state
+  | .intTruncatedDivide, [left, right] => .ok (runtime.intTruncatedDivide left right) state
+  | .intTruncatedModulo, [left, right] => .ok (runtime.intTruncatedModulo left right) state
+  | .intLess, [left, right] => .ok (runtime.natLess left right) state
+  | .intLessOrEqual, [left, right] => .ok (runtime.natLessOrEqual left right) state
+  | .intEquals, [left, right] => .ok (runtime.natEquals left right) state
+  | .intOfNat, [operand] => .ok (runtime.intOfNat operand) state
+  | .intToNat, [operand] => .ok (runtime.intToNat operand) state
+  | .charToNat, [operand] => .ok (runtime.charToNat operand) state
+  | .charOfNat, [operand] => .ok (runtime.charOfNat operand) state
+  | .charEquals, [left, right] => .ok (runtime.stringEquals left right) state
+  | .charLess, [left, right] => .ok (runtime.charLess left right) state
+  | .stringLength, [operand] => .ok (runtime.stringLength operand) state
+  | .stringIsEmpty, [operand] => .ok (runtime.stringIsEmpty operand) state
+  | .stringPush, [operand, character] => .ok (runtime.stringPush operand character) state
+  | .stringSingleton, [character] => .ok (runtime.stringSingleton character) state
+  | .stringToList, [operand] => allocateArray state (runtime.stringToList operand)
+  | .stringOfList, [subject] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => .ok (runtime.stringOfList elements) state
   | .boolAnd, _ | .boolOr, _ | .boolNot, _ | .boolEquals, _ =>
       .fault (.structuralOpcode opcode) state
   | opcode, operands => .fault (.operandCount opcode operands.length) state

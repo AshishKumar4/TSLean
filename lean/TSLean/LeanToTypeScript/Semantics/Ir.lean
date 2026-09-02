@@ -38,6 +38,27 @@ inductive Ty where
   | except (error value : Ty)
   | list (element : Ty)
   | function (parameters : List Ty) (result : Ty)
+  /-- `Int`, which reaches the target as a bigint exactly as a `Nat` does: the two share one
+  representation, which is what makes `int.ofNat` the identity rather than a conversion. -/
+  | int
+  /-- `Char`, which reaches the target as a string of exactly one code point. -/
+  | char
+  /-- `ByteArray`, which reaches the target as a `Uint8Array`. -/
+  | bytes
+  /-- The TSLean-owned `JsonValue`, a mapped Lean inductive carrying the six constructors its
+  discriminated-union image carries. -/
+  | json
+  /-- `Array α`, which shares the dense-array image with `list`. The two are distinct type forms
+  because their Lean operations are distinct, not because their values are. -/
+  | array (element : Ty)
+  /-- `α × β`, which reaches the target as an object with own keys `fst` then `snd`. It is a mapped
+  Lean structure, so it carries one constructor and is decided by field reads. -/
+  | pair (first second : Ty)
+  /-- `Std.HashMap κ ν`, which reaches the target as a `Map` whose entry sequence is kept sorted by
+  key, so iteration is deterministic. -/
+  | hashMap (key value : Ty)
+  /-- `Std.TreeMap κ ν`, with the same sorted image. -/
+  | treeMap (key value : Ty)
   deriving Repr
 
 mutual
@@ -48,6 +69,10 @@ def Ty.decEq : (left right : Ty) → Decidable (left = right)
   | .boolean, .boolean => isTrue rfl
   | .nat, .nat => isTrue rfl
   | .string, .string => isTrue rfl
+  | .int, .int => isTrue rfl
+  | .char, .char => isTrue rfl
+  | .bytes, .bytes => isTrue rfl
+  | .json, .json => isTrue rfl
   | .parameter left, .parameter right =>
       if index : left = right then isTrue (by rw [index]) else isFalse (by simp [index])
   | .named leftName leftArguments, .named rightName rightArguments =>
@@ -60,15 +85,34 @@ def Ty.decEq : (left right : Ty) → Decidable (left = right)
       match Ty.decEq left right with
       | isTrue value => isTrue (by rw [value])
       | isFalse value => isFalse (by simp [value])
+  | .list left, .list right =>
+      match Ty.decEq left right with
+      | isTrue element => isTrue (by rw [element])
+      | isFalse element => isFalse (by simp [element])
+  | .array left, .array right =>
+      match Ty.decEq left right with
+      | isTrue element => isTrue (by rw [element])
+      | isFalse element => isFalse (by simp [element])
   | .except leftError leftValue, .except rightError rightValue =>
       match Ty.decEq leftError rightError, Ty.decEq leftValue rightValue with
       | isTrue error, isTrue value => isTrue (by rw [error, value])
       | isFalse error, _ => isFalse (by simp [error])
       | _, isFalse value => isFalse (by simp [value])
-  | .list left, .list right =>
-      match Ty.decEq left right with
-      | isTrue element => isTrue (by rw [element])
-      | isFalse element => isFalse (by simp [element])
+  | .pair leftFirst leftSecond, .pair rightFirst rightSecond =>
+      match Ty.decEq leftFirst rightFirst, Ty.decEq leftSecond rightSecond with
+      | isTrue first, isTrue second => isTrue (by rw [first, second])
+      | isFalse first, _ => isFalse (by simp [first])
+      | _, isFalse second => isFalse (by simp [second])
+  | .hashMap leftKey leftValue, .hashMap rightKey rightValue =>
+      match Ty.decEq leftKey rightKey, Ty.decEq leftValue rightValue with
+      | isTrue key, isTrue value => isTrue (by rw [key, value])
+      | isFalse key, _ => isFalse (by simp [key])
+      | _, isFalse value => isFalse (by simp [value])
+  | .treeMap leftKey leftValue, .treeMap rightKey rightValue =>
+      match Ty.decEq leftKey rightKey, Ty.decEq leftValue rightValue with
+      | isTrue key, isTrue value => isTrue (by rw [key, value])
+      | isFalse key, _ => isFalse (by simp [key])
+      | _, isFalse value => isFalse (by simp [value])
   | .function leftParameters leftResult, .function rightParameters rightResult =>
       match Ty.decEqList leftParameters rightParameters, Ty.decEq leftResult rightResult with
       | isTrue parameters, isTrue result => isTrue (by rw [parameters, result])
@@ -76,26 +120,78 @@ def Ty.decEq : (left right : Ty) → Decidable (left = right)
       | _, isFalse result => isFalse (by simp [result])
   | .boolean, .nat | .boolean, .string | .boolean, .parameter _ | .boolean, .named _ _
   | .boolean, .option _ | .boolean, .except _ _ | .boolean, .list _ | .boolean, .function _ _
-  | .nat, .boolean | .nat, .string | .nat, .parameter _ | .nat, .named _ _
-  | .nat, .option _ | .nat, .except _ _ | .nat, .list _ | .nat, .function _ _
+  | .boolean, .int | .boolean, .char | .boolean, .bytes | .boolean, .json | .boolean, .array _
+  | .boolean, .pair _ _ | .boolean, .hashMap _ _ | .boolean, .treeMap _ _
+  | .nat, .boolean | .nat, .string | .nat, .parameter _ | .nat, .named _ _ | .nat, .option _
+  | .nat, .except _ _ | .nat, .list _ | .nat, .function _ _ | .nat, .int | .nat, .char
+  | .nat, .bytes | .nat, .json | .nat, .array _ | .nat, .pair _ _ | .nat, .hashMap _ _
+  | .nat, .treeMap _ _
   | .string, .boolean | .string, .nat | .string, .parameter _ | .string, .named _ _
   | .string, .option _ | .string, .except _ _ | .string, .list _ | .string, .function _ _
+  | .string, .int | .string, .char | .string, .bytes | .string, .json | .string, .array _
+  | .string, .pair _ _ | .string, .hashMap _ _ | .string, .treeMap _ _
   | .parameter _, .boolean | .parameter _, .nat | .parameter _, .string | .parameter _, .named _ _
   | .parameter _, .option _ | .parameter _, .except _ _ | .parameter _, .list _
-  | .parameter _, .function _ _
+  | .parameter _, .function _ _ | .parameter _, .int | .parameter _, .char | .parameter _, .bytes
+  | .parameter _, .json | .parameter _, .array _ | .parameter _, .pair _ _
+  | .parameter _, .hashMap _ _ | .parameter _, .treeMap _ _
   | .named _ _, .boolean | .named _ _, .nat | .named _ _, .string | .named _ _, .parameter _
   | .named _ _, .option _ | .named _ _, .except _ _ | .named _ _, .list _
-  | .named _ _, .function _ _
+  | .named _ _, .function _ _ | .named _ _, .int | .named _ _, .char | .named _ _, .bytes
+  | .named _ _, .json | .named _ _, .array _ | .named _ _, .pair _ _ | .named _ _, .hashMap _ _
+  | .named _ _, .treeMap _ _
   | .option _, .boolean | .option _, .nat | .option _, .string | .option _, .parameter _
   | .option _, .named _ _ | .option _, .except _ _ | .option _, .list _ | .option _, .function _ _
+  | .option _, .int | .option _, .char | .option _, .bytes | .option _, .json
+  | .option _, .array _ | .option _, .pair _ _ | .option _, .hashMap _ _ | .option _, .treeMap _ _
   | .except _ _, .boolean | .except _ _, .nat | .except _ _, .string | .except _ _, .parameter _
   | .except _ _, .named _ _ | .except _ _, .option _ | .except _ _, .list _
-  | .except _ _, .function _ _
+  | .except _ _, .function _ _ | .except _ _, .int | .except _ _, .char | .except _ _, .bytes
+  | .except _ _, .json | .except _ _, .array _ | .except _ _, .pair _ _
+  | .except _ _, .hashMap _ _ | .except _ _, .treeMap _ _
   | .list _, .boolean | .list _, .nat | .list _, .string | .list _, .parameter _
   | .list _, .named _ _ | .list _, .option _ | .list _, .except _ _ | .list _, .function _ _
+  | .list _, .int | .list _, .char | .list _, .bytes | .list _, .json | .list _, .array _
+  | .list _, .pair _ _ | .list _, .hashMap _ _ | .list _, .treeMap _ _
   | .function _ _, .boolean | .function _ _, .nat | .function _ _, .string
   | .function _ _, .parameter _ | .function _ _, .named _ _ | .function _ _, .option _
-  | .function _ _, .except _ _ | .function _ _, .list _ => isFalse nofun
+  | .function _ _, .except _ _ | .function _ _, .list _ | .function _ _, .int
+  | .function _ _, .char | .function _ _, .bytes | .function _ _, .json | .function _ _, .array _
+  | .function _ _, .pair _ _ | .function _ _, .hashMap _ _ | .function _ _, .treeMap _ _
+  | .int, .boolean | .int, .nat | .int, .string | .int, .parameter _ | .int, .named _ _
+  | .int, .option _ | .int, .except _ _ | .int, .list _ | .int, .function _ _ | .int, .char
+  | .int, .bytes | .int, .json | .int, .array _ | .int, .pair _ _ | .int, .hashMap _ _
+  | .int, .treeMap _ _
+  | .char, .boolean | .char, .nat | .char, .string | .char, .parameter _ | .char, .named _ _
+  | .char, .option _ | .char, .except _ _ | .char, .list _ | .char, .function _ _ | .char, .int
+  | .char, .bytes | .char, .json | .char, .array _ | .char, .pair _ _ | .char, .hashMap _ _
+  | .char, .treeMap _ _
+  | .bytes, .boolean | .bytes, .nat | .bytes, .string | .bytes, .parameter _ | .bytes, .named _ _
+  | .bytes, .option _ | .bytes, .except _ _ | .bytes, .list _ | .bytes, .function _ _
+  | .bytes, .int | .bytes, .char | .bytes, .json | .bytes, .array _ | .bytes, .pair _ _
+  | .bytes, .hashMap _ _ | .bytes, .treeMap _ _
+  | .json, .boolean | .json, .nat | .json, .string | .json, .parameter _ | .json, .named _ _
+  | .json, .option _ | .json, .except _ _ | .json, .list _ | .json, .function _ _ | .json, .int
+  | .json, .char | .json, .bytes | .json, .array _ | .json, .pair _ _ | .json, .hashMap _ _
+  | .json, .treeMap _ _
+  | .array _, .boolean | .array _, .nat | .array _, .string | .array _, .parameter _
+  | .array _, .named _ _ | .array _, .option _ | .array _, .except _ _ | .array _, .list _
+  | .array _, .function _ _ | .array _, .int | .array _, .char | .array _, .bytes
+  | .array _, .json | .array _, .pair _ _ | .array _, .hashMap _ _ | .array _, .treeMap _ _
+  | .pair _ _, .boolean | .pair _ _, .nat | .pair _ _, .string | .pair _ _, .parameter _
+  | .pair _ _, .named _ _ | .pair _ _, .option _ | .pair _ _, .except _ _ | .pair _ _, .list _
+  | .pair _ _, .function _ _ | .pair _ _, .int | .pair _ _, .char | .pair _ _, .bytes
+  | .pair _ _, .json | .pair _ _, .array _ | .pair _ _, .hashMap _ _ | .pair _ _, .treeMap _ _
+  | .hashMap _ _, .boolean | .hashMap _ _, .nat | .hashMap _ _, .string
+  | .hashMap _ _, .parameter _ | .hashMap _ _, .named _ _ | .hashMap _ _, .option _
+  | .hashMap _ _, .except _ _ | .hashMap _ _, .list _ | .hashMap _ _, .function _ _
+  | .hashMap _ _, .int | .hashMap _ _, .char | .hashMap _ _, .bytes | .hashMap _ _, .json
+  | .hashMap _ _, .array _ | .hashMap _ _, .pair _ _ | .hashMap _ _, .treeMap _ _
+  | .treeMap _ _, .boolean | .treeMap _ _, .nat | .treeMap _ _, .string
+  | .treeMap _ _, .parameter _ | .treeMap _ _, .named _ _ | .treeMap _ _, .option _
+  | .treeMap _ _, .except _ _ | .treeMap _ _, .list _ | .treeMap _ _, .function _ _
+  | .treeMap _ _, .int | .treeMap _ _, .char | .treeMap _ _, .bytes | .treeMap _ _, .json
+  | .treeMap _ _, .array _ | .treeMap _ _, .pair _ _ | .treeMap _ _, .hashMap _ _ => isFalse nofun
 
 /-- Structural equality on a type-argument list, in step with `Ty.decEq`. -/
 def Ty.decEqList : (left right : List Ty) → Decidable (left = right)
@@ -123,6 +219,14 @@ inductive TyKind where
   | except
   | list
   | function
+  | int
+  | char
+  | bytes
+  | json
+  | array
+  | pair
+  | hashMap
+  | treeMap
   deriving DecidableEq, Repr
 
 /-- The wire spelling `Export.lean` writes and `ir.ts` decodes. -/
@@ -136,10 +240,19 @@ def TyKind.kind : TyKind → String
   | .except => "except"
   | .list => "list"
   | .function => "function"
+  | .int => "int"
+  | .char => "char"
+  | .bytes => "bytes"
+  | .json => "json"
+  | .array => "array"
+  | .pair => "pair"
+  | .hashMap => "hashMap"
+  | .treeMap => "treeMap"
 
 /-- Every admitted type form. -/
 def TyKind.all : List TyKind :=
-  [.boolean, .nat, .string, .parameter, .named, .option, .except, .list, .function]
+  [.boolean, .nat, .string, .parameter, .named, .option, .except, .list, .function, .int, .char,
+    .bytes, .json, .array, .pair, .hashMap, .treeMap]
 
 theorem TyKind.mem_all (kind : TyKind) : kind ∈ TyKind.all := by
   cases kind <;> simp [TyKind.all]
@@ -160,6 +273,14 @@ def Ty.kind : Ty → TyKind
   | .except _ _ => .except
   | .list _ => .list
   | .function _ _ => .function
+  | .int => .int
+  | .char => .char
+  | .bytes => .bytes
+  | .json => .json
+  | .array _ => .array
+  | .pair _ _ => .pair
+  | .hashMap _ _ => .hashMap
+  | .treeMap _ _ => .treeMap
 
 /--
 The element type a `List` holds, and `none` for every other form.
@@ -172,7 +293,8 @@ keeps the two from drifting.
 def Ty.element? : Ty → Option Ty
   | .list element => some element
   | .boolean | .nat | .string | .parameter _ | .named _ _ | .option _ | .except _ _
-  | .function _ _ => none
+  | .function _ _ | .int | .char | .bytes | .json | .array _ | .pair _ _ | .hashMap _ _
+  | .treeMap _ _ => none
 
 /-- Exactly the `list` form holds an element type. -/
 theorem Ty.eq_list_of_element? {type element : Ty} (held : type.element? = some element) :
@@ -215,6 +337,27 @@ inductive Opcode where
   | listHead
   | listFirst
   | listRest
+  | intAdd
+  | intSubtract
+  | intMultiply
+  | intNegate
+  | intTruncatedDivide
+  | intTruncatedModulo
+  | intLess
+  | intLessOrEqual
+  | intEquals
+  | intOfNat
+  | intToNat
+  | charToNat
+  | charOfNat
+  | charEquals
+  | charLess
+  | stringLength
+  | stringIsEmpty
+  | stringPush
+  | stringSingleton
+  | stringToList
+  | stringOfList
   deriving DecidableEq, Repr
 
 /-- The wire spelling the IR carries. -/
@@ -245,14 +388,38 @@ def Opcode.kind : Opcode → String
   | .listHead => "list.head"
   | .listFirst => "list.first"
   | .listRest => "list.rest"
+  | .intAdd => "int.add"
+  | .intSubtract => "int.subtract"
+  | .intMultiply => "int.multiply"
+  | .intNegate => "int.negate"
+  | .intTruncatedDivide => "int.tdiv"
+  | .intTruncatedModulo => "int.tmod"
+  | .intLess => "int.less"
+  | .intLessOrEqual => "int.lessOrEqual"
+  | .intEquals => "int.equals"
+  | .intOfNat => "int.ofNat"
+  | .intToNat => "int.toNat"
+  | .charToNat => "char.toNat"
+  | .charOfNat => "char.ofNat"
+  | .charEquals => "char.equals"
+  | .charLess => "char.less"
+  | .stringLength => "string.length"
+  | .stringIsEmpty => "string.isEmpty"
+  | .stringPush => "string.push"
+  | .stringSingleton => "string.singleton"
+  | .stringToList => "string.toList"
+  | .stringOfList => "string.ofList"
 
 
 /-- Every admitted opcode. -/
 def Opcode.all : List Opcode :=
-  [.boolAnd, .boolOr, .boolNot, .boolEquals, .natAdd, .natSubtract, .natMultiply, .natLess,
+  [ .boolAnd, .boolOr, .boolNot, .boolEquals, .natAdd, .natSubtract, .natMultiply, .natLess,
     .natLessOrEqual, .natEquals, .natSuccessor, .stringAppend, .stringEquals, .listLength,
     .listIsEmpty, .listAppend, .listReverse, .listMap, .listFilter, .listFoldLeft, .listFoldRight,
-    .listAny, .listAll, .listHead, .listFirst, .listRest]
+    .listAny, .listAll, .listHead, .listFirst, .listRest, .intAdd, .intSubtract, .intMultiply,
+    .intNegate, .intTruncatedDivide, .intTruncatedModulo, .intLess, .intLessOrEqual, .intEquals,
+    .intOfNat, .intToNat, .charToNat, .charOfNat, .charEquals, .charLess, .stringLength,
+    .stringIsEmpty, .stringPush, .stringSingleton, .stringToList, .stringOfList]
 
 theorem Opcode.mem_all (code : Opcode) : code ∈ Opcode.all := by
   cases code <;> simp [Opcode.all]
@@ -301,7 +468,10 @@ def Opcode.operator? : Opcode → Option OperatorForm
   | .natAdd | .natSubtract | .natMultiply | .natLess | .natLessOrEqual | .natEquals
   | .natSuccessor | .stringAppend | .stringEquals | .listLength | .listIsEmpty | .listAppend
   | .listReverse | .listMap | .listFilter | .listFoldLeft | .listFoldRight | .listAny | .listAll
-  | .listHead | .listFirst | .listRest => none
+  | .listHead | .listFirst | .listRest | .intAdd | .intSubtract | .intMultiply | .intNegate
+  | .intTruncatedDivide | .intTruncatedModulo | .intLess | .intLessOrEqual | .intEquals
+  | .intOfNat | .intToNat | .charToNat | .charOfNat | .charEquals | .charLess | .stringLength
+  | .stringIsEmpty | .stringPush | .stringSingleton | .stringToList | .stringOfList => none
 
 /-- Exactly `bool.and` is spelled `&&`. -/
 theorem Opcode.eq_boolAnd_of_operator? {code : Opcode}
@@ -333,10 +503,13 @@ the registry names the distinction rather than leaving it to be read off a proof
 -/
 def Opcode.callback : Opcode → Bool
   | .listMap | .listFilter | .listFoldLeft | .listFoldRight | .listAny | .listAll => true
-  | .boolAnd | .boolOr | .boolNot | .boolEquals | .natAdd | .natSubtract | .natMultiply
-  | .natLess | .natLessOrEqual | .natEquals | .natSuccessor | .stringAppend | .stringEquals
-  | .listLength | .listIsEmpty | .listAppend | .listReverse | .listHead | .listFirst
-  | .listRest => false
+  | .boolAnd | .boolOr | .boolNot | .boolEquals | .natAdd | .natSubtract | .natMultiply | .natLess
+  | .natLessOrEqual | .natEquals | .natSuccessor | .stringAppend | .stringEquals | .listLength
+  | .listIsEmpty | .listAppend | .listReverse | .listHead | .listFirst | .listRest | .intAdd
+  | .intSubtract | .intMultiply | .intNegate | .intTruncatedDivide | .intTruncatedModulo
+  | .intLess | .intLessOrEqual | .intEquals | .intOfNat | .intToNat | .charToNat | .charOfNat
+  | .charEquals | .charLess | .stringLength | .stringIsEmpty | .stringPush | .stringSingleton
+  | .stringToList | .stringOfList => false
 
 
 /-- One declared field: its emitted property key and its type. -/
@@ -558,11 +731,22 @@ def Ty.substitute (arguments : List Ty) : Ty → Ty
   | .boolean => .boolean
   | .nat => .nat
   | .string => .string
+  | .int => .int
+  | .char => .char
+  | .bytes => .bytes
+  | .json => .json
   | .parameter index => (arguments[index]?).getD (.parameter index)
   | .named name inner => .named name (Ty.substituteList arguments inner)
   | .option value => .option (Ty.substitute arguments value)
   | .except error value => .except (Ty.substitute arguments error) (Ty.substitute arguments value)
   | .list element => .list (Ty.substitute arguments element)
+  | .array element => .array (Ty.substitute arguments element)
+  | .pair first second =>
+      .pair (Ty.substitute arguments first) (Ty.substitute arguments second)
+  | .hashMap key value =>
+      .hashMap (Ty.substitute arguments key) (Ty.substitute arguments value)
+  | .treeMap key value =>
+      .treeMap (Ty.substitute arguments key) (Ty.substitute arguments value)
   | .function parameters result =>
       .function (Ty.substituteList arguments parameters) (Ty.substitute arguments result)
 
@@ -598,6 +782,11 @@ def Program.constructorsOf (program : Program) : Ty → Option (List Constructor
   | .except error value => some [⟨"error", [⟨"error", error⟩]⟩, ⟨"ok", [⟨"value", value⟩]⟩]
   | .list element =>
       some [⟨"nil", []⟩, ⟨"cons", [⟨"head", element⟩, ⟨"tail", .list element⟩]⟩]
+  | .pair first second => some [⟨"mk", [⟨"fst", first⟩, ⟨"snd", second⟩]⟩]
+  | .json =>
+      some [⟨"null", []⟩, ⟨"bool", [⟨"value", .boolean⟩]⟩, ⟨"int", [⟨"value", .int⟩]⟩,
+        ⟨"string", [⟨"value", .string⟩]⟩, ⟨"array", [⟨"value", .list .json⟩]⟩,
+        ⟨"object", [⟨"value", .list (.pair .string .json)⟩]⟩]
   | .named name arguments =>
       match program.find? name with
       | some (.enum _ constructors) =>
@@ -606,7 +795,8 @@ def Program.constructorsOf (program : Program) : Ty → Option (List Constructor
       | some (.record _ constructor fields) =>
           some [⟨constructor, substituteFields arguments fields⟩]
       | _ => none
-  | .boolean | .nat | .string | .parameter _ | .function _ _ => none
+  | .boolean | .nat | .string | .parameter _ | .function _ _ | .int | .char | .bytes
+  | .array _ | .hashMap _ _ | .treeMap _ _ => none
 
 /--
 An enum no constructor of which carries a field. `emitter.ts` represents such a type by its own tag

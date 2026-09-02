@@ -34,13 +34,14 @@ open Ir Assumption
 -- Three declaration families, spelled as the decoder spells them.
 #guard Family.all.map Family.kind = ["enum", "record", "function"]
 
--- Nine type forms, and every one of them enumerated.
-#guard TyKind.all.length = 9
+-- Seventeen type forms, and every one of them enumerated.
+#guard TyKind.all.length = 17
 
 -- The enumeration has no repeats, and spells the kinds the decoder decodes.
 #guard TyKind.all.Nodup
 #guard TyKind.all.map TyKind.kind =
-  ["boolean", "nat", "string", "parameter", "named", "option", "except", "list", "function"]
+  ["boolean", "nat", "string", "parameter", "named", "option", "except", "list", "function", "int",
+    "char", "bytes", "json", "array", "pair", "hashMap", "treeMap"]
 
 -- Every expression form reports the registry entry it belongs to.
 #guard [Expr.op (.varRef 0), Expr.op (.boolLit true), Expr.op (.natLit 0),
@@ -55,7 +56,9 @@ open Ir Assumption
 -- Every type form reports the registry entry it belongs to.
 #guard [Ty.kind .boolean, Ty.kind .nat, Ty.kind .string, Ty.kind (.parameter 0),
     Ty.kind (.named "T" []), Ty.kind (.option .boolean), Ty.kind (.except .boolean .boolean),
-    Ty.kind (.list .boolean), Ty.kind (.function [] .boolean)] = TyKind.all
+    Ty.kind (.list .boolean), Ty.kind (.function [] .boolean), Ty.kind .int, Ty.kind .char,
+    Ty.kind .bytes, Ty.kind .json, Ty.kind (.array .boolean), Ty.kind (.pair .boolean .nat),
+    Ty.kind (.hashMap .nat .boolean), Ty.kind (.treeMap .nat .boolean)] = TyKind.all
 
 -- Exactly the `list` form holds an element type, which is what decides a dense-array representation
 -- on the source side and on the lowering side alike.
@@ -63,8 +66,35 @@ open Ir Assumption
     (Ty.string : Ty).element?.isSome, (Ty.parameter 0).element?.isSome,
     (Ty.named "T" []).element?.isSome, (Ty.option .boolean).element?.isSome,
     (Ty.except .boolean .boolean).element?.isSome, (Ty.list .boolean).element?.isSome,
-    (Ty.function [] .boolean).element?.isSome] =
-  [false, false, false, false, false, false, false, true, false]
+    (Ty.function [] .boolean).element?.isSome, (Ty.int : Ty).element?.isSome,
+    (Ty.char : Ty).element?.isSome, (Ty.bytes : Ty).element?.isSome,
+    (Ty.json : Ty).element?.isSome, (Ty.array .boolean).element?.isSome,
+    (Ty.pair .boolean .nat).element?.isSome, (Ty.hashMap .nat .boolean).element?.isSome,
+    (Ty.treeMap .nat .boolean).element?.isSome] =
+  [false, false, false, false, false, false, false, true, false, false, false, false, false, false,
+    false, false, false]
+
+-- An `Array` shares the dense-array image with a `List` but is a distinct type form, and it is not
+-- destructurable: its values are decided with the `array.*` opcodes, never taken apart by a match.
+#guard (Ty.array .nat) ≠ (Ty.list .nat)
+#guard ((⟨[]⟩ : Ir.Program).constructorsOf (.array .nat)).isNone
+#guard ((⟨[]⟩ : Ir.Program).constructorsOf (.hashMap .nat .boolean)).isNone
+#guard ((⟨[]⟩ : Ir.Program).constructorsOf (.treeMap .nat .boolean)).isNone
+#guard ((⟨[]⟩ : Ir.Program).constructorsOf .int).isNone
+#guard ((⟨[]⟩ : Ir.Program).constructorsOf .char).isNone
+#guard ((⟨[]⟩ : Ir.Program).constructorsOf .bytes).isNone
+
+-- A pair is a mapped Lean structure: one constructor, own keys `fst` then `snd`, so it reaches the
+-- target through exactly the record machinery rather than a tenth expression form.
+#guard ((⟨[]⟩ : Ir.Program).constructorsOf (.pair .nat .string)).map
+    (fun constructors => constructors.map fun constructor =>
+      (constructor.name, constructor.fields.map Ir.Field.name))
+  = some [("mk", ["fst", "snd"])]
+
+-- `JsonValue` is a mapped Lean inductive carrying the six constructors its union image carries.
+#guard ((⟨[]⟩ : Ir.Program).constructorsOf .json).map
+    (fun constructors => constructors.map Ir.Constructor.name)
+  = some ["null", "bool", "int", "string", "array", "object"]
 
 -- An arrow object's own keys are exactly its captured binders, in scope order. The inline code is
 -- semantic provenance in the closure payload and trace, not a second heap/table identity.
@@ -74,8 +104,8 @@ open Ir Assumption
 
 /-! ## The runtime opcode registry -/
 
--- Twenty-six runtime opcodes, and every one of them enumerated.
-#guard Opcode.all.length = 26
+-- Forty-seven runtime opcodes, and every one of them enumerated.
+#guard Opcode.all.length = 47
 
 -- The enumeration has no repeats.
 #guard Opcode.all.Nodup
@@ -89,7 +119,10 @@ open Ir Assumption
     "nat.less", "nat.lessOrEqual", "nat.equals", "nat.successor", "string.append", "string.equals",
     "list.length", "list.isEmpty", "list.append", "list.reverse", "list.map", "list.filter",
     "list.foldLeft", "list.foldRight", "list.any", "list.all", "list.head", "list.first",
-    "list.rest"]
+    "list.rest", "int.add", "int.subtract", "int.multiply", "int.negate", "int.tdiv", "int.tmod",
+    "int.less", "int.lessOrEqual", "int.equals", "int.ofNat", "int.toNat", "char.toNat",
+    "char.ofNat", "char.equals", "char.less", "string.length", "string.isEmpty", "string.push",
+    "string.singleton", "string.toList", "string.ofList"]
 
 -- Every opcode records the TypeScript it lowers to.
 #guard Opcode.all.all fun code => code.emittedForm ≠ ""
@@ -102,15 +135,20 @@ open Ir Assumption
 #guard Opcode.all.all fun code =>
   code.runtimeSymbolTag == "inline:" || code.runtimeSymbolTag == "helper:"
 
--- Exactly the generated helpers record the semantic components they compose; an inline form has
--- none, because there is no helper body to certify.
-#guard Opcode.all.all fun code =>
-  (code.components ≠ []) == (code.runtimeSymbolTag == "helper:")
+-- Exactly the rows whose model constant is derived record the semantic components it composes; a
+-- primitive engine field composes nothing, so it records nothing.
+#guard Opcode.all.all fun code => (code.components ≠ []) == code.derived
 
--- Two opcodes are generated helpers, and they are the two whose emitted form is a guarded
--- composition rather than one operator or one method.
+-- Seven opcodes are generated helpers, and they are exactly the rows whose emitted form is a
+-- guarded composition rather than one operator or one method.
 #guard (Opcode.all.filter fun code => code.runtimeSymbolTag == "helper:").map Opcode.kind =
-  ["nat.subtract", "list.head"]
+  ["nat.subtract", "list.head", "int.tdiv", "int.tmod", "int.toNat", "char.ofNat", "char.less"]
+
+-- Every generated helper is derived, and four more rows are derived without needing a helper: their
+-- composition is still one expression at the use site.
+#guard (Opcode.all.filter fun code => code.derived).map Opcode.kind =
+  ["nat.subtract", "list.head", "int.tdiv", "int.tmod", "int.ofNat", "int.toNat", "char.ofNat",
+    "char.less", "string.length", "string.push", "string.singleton"]
 
 -- An inline symbol names the opcode it is the emitted form of, which is what makes the join against
 -- `LEAN_RUNTIME_OPCODES` in `src/lean-to-typescript/ir.ts` a bijection rather than a lookup.
@@ -129,8 +167,12 @@ open Ir Assumption
   ["list.map", "list.filter", "list.foldLeft", "list.foldRight", "list.any", "list.all"]
 #guard Opcode.all.all fun code => !(code.callback && code.operator?.isSome)
 
--- Every opcode names at least one assumption: none of them is discharged from nothing.
-#guard Opcode.all.all fun code => code.requires ≠ []
+-- Every opcode is discharged from something recorded: an engine assumption, or — for the two rows
+-- that are identities on the image — the representation fact its components name. `int.ofNat` and
+-- `string.singleton` claim nothing about the engine, and saying they did would be false.
+#guard Opcode.all.all fun code => code.requires ≠ [] || code.components ≠ []
+#guard (Opcode.all.filter fun code => code.requires.isEmpty).map Opcode.kind =
+  ["int.ofNat", "string.singleton"]
 
 -- Every assumption an opcode names is one the plane declares.
 #guard Opcode.all.all fun code => code.requires.all fun id => Id.all.contains id
@@ -140,8 +182,8 @@ open Ir Assumption
 
 /-! ## The assumption plane -/
 
--- Nine assumptions, and every one of them enumerated.
-#guard Id.all.length = 9
+-- Sixteen assumptions, and every one of them enumerated.
+#guard Id.all.length = 16
 
 -- The enumeration has no repeats.
 #guard Id.all.Nodup
@@ -153,7 +195,10 @@ open Ir Assumption
 #guard Id.all.map Id.name =
   ["boolean.logical-operators", "strict-equality.same-type", "bigint.exact-arithmetic",
     "bigint.relational", "conditional.truthy-selection", "string.utf16-concatenation",
-    "array.dense-element-sequence", "bigint.from-length", "option.tagged-object"]
+    "array.dense-element-sequence", "bigint.from-length", "bigint.negation",
+    "bigint.truncated-division", "string.code-point-at", "string.from-code-point",
+    "string.code-point-iteration", "string.empty-code-unit-length", "option.tagged-object",
+    "array.join-empty-separator"]
 
 -- Every assumption records all four provenance fields.
 #guard Id.all.all fun id =>
