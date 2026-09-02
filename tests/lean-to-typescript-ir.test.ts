@@ -1465,3 +1465,79 @@ describe('Lean semantic IR refusals with no representation', () => {
     expect(() => decodeLeanSemanticProgram(mutation)).toThrowError(diagnostic);
   });
 });
+
+describe('emission is the rooted export closure', () => {
+  // `storeGet` is a host boundary: the substrate implements it, so its reference body is never
+  // printed. `shape` is reachable only by walking that body, which makes it dead in the emitted
+  // tree while it stays declared for the model to prove the reference against.
+  const shape = {
+    kind: 'function',
+    name: 'Example.shape',
+    module: 'Example',
+    namespace: 'Example',
+    typeParameters: [],
+    span: identitySpan,
+    parameters: [{ name: 'value', type: { kind: 'nat' } }],
+    result: { kind: 'nat' },
+    recursion: null,
+    body: { kind: 'variable', index: 0 },
+  };
+  const storeGet = {
+    kind: 'foreign',
+    name: 'Example.storeGet',
+    module: 'Example',
+    namespace: 'Example',
+    typeParameters: [],
+    span: identitySpan,
+    host: 'host.store.get',
+    parameters: [{ name: 'store', type: { kind: 'nat' } }],
+    result: { kind: 'nat' },
+    reference: { kind: 'call', function: 'Example.shape', typeArguments: [], arguments: [{ kind: 'variable', index: 0 }] },
+  };
+  const caller = {
+    kind: 'function',
+    name: 'Example.caller',
+    module: 'Example',
+    namespace: 'Example',
+    typeParameters: [],
+    span: identitySpan,
+    parameters: [{ name: 'value', type: { kind: 'nat' } }],
+    result: { kind: 'nat' },
+    recursion: null,
+    body: { kind: 'call', function: 'Example.shape', typeArguments: [], arguments: [{ kind: 'variable', index: 0 }] },
+  };
+  const entry = (name: string) => ({ declaration: name, module: 'Example', role: 'emitted', reason: '' });
+  const emit = (declarations: readonly object[], roots: readonly string[]) =>
+    emitTypeScriptPackage(
+      decodeLeanSemanticProgram(
+        program(
+          declarations,
+          declarations
+            .map((declaration) => entry((declaration as { name: string }).name))
+            .sort((left, right) => (left.declaration < right.declaration ? -1 : 1)),
+          roots,
+        ),
+      ),
+      { ...provenance, semantic: { ...provenance.semantic, declarations: [...roots].sort() } },
+    );
+
+  test('a helper only a host reference body reaches is declared but not printed', () => {
+    const emitted = emit([shape, storeGet], ['Example.storeGet']);
+    const code = emitted.modules.map((module) => module.code).join('\n');
+    // The boundary itself is reachable, so it is imported and re-exported.
+    expect(code).toContain('export { storeGet };');
+    // The helper is not: nothing printed can reach it, so printing it would be dead code the
+    // generated package's own type check rejects.
+    expect(code).not.toContain('function shape');
+  });
+
+  test('the same helper is printed when printed code also reaches it', () => {
+    const emitted = emit([shape, storeGet, caller], ['Example.storeGet', 'Example.caller']);
+    const code = emitted.modules.map((module) => module.code).join('\n');
+    expect(code).toContain('export { storeGet };');
+    // Reached through `caller`, which is printed, so the prune must not take it: the closure is
+    // over the emitted tree, not over the host boundary alone.
+    expect(code).toContain('function shape');
+    expect(code).toContain('export function caller');
+  });
+});

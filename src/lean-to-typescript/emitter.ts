@@ -125,7 +125,13 @@ export function emitTypeScriptPackage(
   provenance: LeanToTypeScriptProvenance,
 ): LeanToTypeScriptPackage {
   const context = planProgram(program);
-  const drafts = emitModuleDeclarations(program, context);
+  // The emitted package is the rooted export closure, and this is the one source of truth for it:
+  // module emission, the printed tree and the certificate obligations all read the same program, so
+  // an opcode can never be certified for code the package does not contain, and a helper the tree
+  // cannot reach cannot leave a certificate behind. The model keeps proving over the full declared
+  // graph, which is why the prune lives here and not in the decoder.
+  const contained = pruneToEmissionClosure(program, context);
+  const drafts = emitModuleDeclarations(contained, context);
   appendGeneratedDecoders(drafts, context);
   const runtime = placeBoundaryPrimitives(drafts, context);
   // One canonical order for every emitted module, the shared runtime included: the manifest, the
@@ -133,8 +139,8 @@ export function emitTypeScriptPackage(
   const ordered = [...drafts, ...(runtime === undefined ? [] : [runtime])].sort((left, right) =>
     compareGeneratedPaths(left.path, right.path),
   );
-  const printed = printPackage(ordered, program, context, provenance);
-  const certificates = emittedRuntimeCertificates(program, provenance.certificates, printed);
+  const printed = printPackage(ordered, contained, context, provenance);
+  const certificates = emittedRuntimeCertificates(contained, provenance.certificates, printed);
   const manifest = canonicalManifest({
     schemaVersion: LEAN_TO_TYPESCRIPT_MANIFEST_SCHEMA_VERSION,
     semantic: {
@@ -4503,6 +4509,60 @@ function orderedDeclarations(program: LeanSemanticProgram): readonly LeanDeclara
   return [...types, ...ordered, ...foreign];
 }
 
+/**
+ * The program the emitted package contains: the declared graph pruned to what its roots reach.
+ *
+ * Data declarations are kept whatever reaches them, because each is exported — a caller outside the
+ * package reaches it by name, so it is never dead — and its generated decoder is part of the decode
+ * boundary rather than of any one call graph. What is pruned is the functions, which are private
+ * unless they are roots, and so are exactly what a dead edge would leave behind.
+ */
+function pruneToEmissionClosure(program: LeanSemanticProgram, context: EmitContext): LeanSemanticProgram {
+  const live = reachableFunctions(program, context);
+  return {
+    ...program,
+    declarations: program.declarations.filter(
+      (declaration) => declaration.kind !== 'function' || live.has(declaration.name),
+    ),
+  };
+}
+
+/**
+ * The functions the emitted tree can reach from the package's roots.
+ *
+ * A generated module is pruned to that closure, because a declaration nothing printed reaches is
+ * dead code the package's own type check rejects. A host boundary contributes no expression edges:
+ * its reference body is never printed, since the substrate owns the implementation and the body
+ * exists so the model can prove `HostSubstrate` against it. A helper only that body traverses is
+ * therefore dead in the emitted tree while remaining declared for the model, which is the one place
+ * the two graphs differ. A dot-notation method is printed inside its receiver rather than as a
+ * statement of its own, so its body is walked even though it never becomes one.
+ */
+function reachableFunctions(program: LeanSemanticProgram, context: EmitContext): ReadonlySet<string> {
+  const functions = new Map(
+    program.declarations
+      .filter((declaration): declaration is LeanFunction => declaration.kind === 'function')
+      .map((declaration) => [declaration.name, declaration]),
+  );
+  const live = new Set<string>();
+  const pending = [...program.roots];
+  for (const plan of context.types.values()) {
+    for (const method of plan.methods) pending.push(method.declaration.name);
+  }
+  while (pending.length > 0) {
+    const name = pending.pop();
+    if (name === undefined || live.has(name)) continue;
+    live.add(name);
+    const declaration = functions.get(name);
+    if (declaration === undefined) continue;
+    const recursion = declaration.recursion;
+    // A mutual block is emitted whole: its members name each other, and a member reached only
+    // through the group is still printed beside the one that reached it.
+    if (recursion?.kind === 'mutual') for (const member of recursion.group) pending.push(member);
+    for (const called of calledFunctions(declaration.body)) pending.push(called);
+  }
+  return live;
+}
 function calledFunctions(expression: LeanExpression | undefined): readonly string[] {
   const names = new Set<string>();
   const visit = (node: LeanExpression): void => {
