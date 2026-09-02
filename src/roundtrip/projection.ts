@@ -33,7 +33,7 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as ts from '../typescript-api/index.js';
-import { forget, openProject, printNode, renderDiagnostic } from '../typescript-api/session.js';
+import { forget, openProject, parseSource, printNode, renderDiagnostic } from '../typescript-api/session.js';
 import { profileModule, type ModuleProfile, type ProfileDeclaration } from './profile.js';
 
 export interface ProjectedModule {
@@ -185,13 +185,15 @@ function narrowImport(
  *
  * The projection is assembled out of ranges rather than rendered, so the one thing that
  * could go wrong is arithmetic: a range that starts or ends in the wrong place produces
- * text no parser accepts. Reading the text back through the compiler turns that into a
- * failure here instead of a puzzling diagnostic several stages later. Diagnostics belong to
- * a project, so the text is handed to one as a virtual file under a path nothing else reads,
- * and the session's reading of that path is dropped again afterwards.
+ * text no parser accepts. `parseSource` first opens that text through the session's
+ * syntax-only path; a syntax-only project over the same virtual file then supplies the
+ * compiler diagnostics that a parsed SourceFile does not carry itself. That turns a bad
+ * range into a failure here instead of a puzzling diagnostic several stages later. The
+ * session's reading of the private check path is dropped again afterwards.
  */
 function requireTypeScript(projected: string, path: string): void {
   const checkPath = join(CHECK_ROOT, path);
+  parseSource(checkPath, projected);
   const project = openProject({
     files: [checkPath],
     settings: { noLib: true, noResolve: true },
