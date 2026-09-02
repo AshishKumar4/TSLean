@@ -672,7 +672,7 @@ interface TypePlan {
 interface PreludeNames {
   readonly dataBoundary: string;
   readonly isDataObject: string;
-  readonly dataFields: string;
+  readonly requireDataFields: string;
   readonly requireBoolean: string;
   readonly requireNat: string;
   readonly requireString: string;
@@ -936,7 +936,7 @@ function planProgram(program: LeanSemanticProgram): EmitContext {
   const prelude: PreludeNames = {
     dataBoundary: allocator.allocate('GeneratedData'),
     isDataObject: allocator.allocate('isDataObject'),
-    dataFields: allocator.allocate('dataFields'),
+    requireDataFields: allocator.allocate('requireDataFields'),
     requireBoolean: allocator.allocate('requireBoolean'),
     requireNat: allocator.allocate('requireNat'),
     requireString: allocator.allocate('requireString'),
@@ -1560,7 +1560,7 @@ function emitCaseClass(entry: CasePlan, plan: TypePlan, nullary: boolean, contex
     );
   }
   return ts.factory.createClassDeclaration(
-    undefined,
+    [modifier(ts.SyntaxKind.ExportKeyword)],
     entry.className,
     typeParameterDeclarations(plan.typeParameters),
     [
@@ -1854,7 +1854,7 @@ function emitDataDecoder(
 ): readonly ts.Statement[] {
   const keys =
     taggedKind === undefined ? fields.map((field) => field.name) : ['kind', ...fields.map((field) => field.name)];
-  const validated = callPrelude(context, context.prelude.dataFields, [
+  const validated = callPrelude(context, context.prelude.requireDataFields, [
     ts.factory.createIdentifier(context.locals.value),
     ts.factory.createStringLiteral(owner),
     ts.factory.createArrayLiteralExpression(keys.map((key) => ts.factory.createStringLiteral(key))),
@@ -2348,12 +2348,12 @@ function emitBoundaryPrimitives(context: EmitContext): readonly ts.Statement[] {
       ),
     );
   }
-  if (context.used.has(prelude.dataFields)) {
+  if (context.used.has(prelude.requireDataFields)) {
     statements.push(
       ts.factory.createFunctionDeclaration(
         undefined,
         undefined,
-        prelude.dataFields,
+        prelude.requireDataFields,
         undefined,
         [
           dataParameter(locals.value, context),
@@ -3126,7 +3126,7 @@ function emitTaggedValidator(
         ts.factory.createBlock(
           [
             ts.factory.createExpressionStatement(
-              callPrelude(context, context.prelude.dataFields, [
+              callPrelude(context, context.prelude.requireDataFields, [
                 value,
                 ts.factory.createIdentifier(locals.name),
                 ts.factory.createArrayLiteralExpression([ts.factory.createStringLiteral('kind')]),
@@ -3143,7 +3143,7 @@ function emitTaggedValidator(
         [
           constantStatement(
             locals.data,
-            callPrelude(context, context.prelude.dataFields, [
+            callPrelude(context, context.prelude.requireDataFields, [
               value,
               ts.factory.createIdentifier(locals.name),
               ts.factory.createArrayLiteralExpression([
@@ -3310,7 +3310,7 @@ function emitPairValidator(context: EmitContext): ts.Statement {
     block(
       constantStatement(
         locals.data,
-        callPrelude(context, prelude.dataFields, [
+        callPrelude(context, prelude.requireDataFields, [
           ts.factory.createIdentifier(locals.value),
           ts.factory.createIdentifier(locals.name),
           ts.factory.createArrayLiteralExpression([

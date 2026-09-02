@@ -1330,9 +1330,11 @@ function selfTest() {
     remainingHosts,
     `host opcodes: the Lean semantics admits ${firstHost} but ir.ts does not`,
   );
+  const withoutHostInventory = cloneJson(registry);
+  delete withoutHostInventory.hostOpcodes;
   expectHostFailure(
     'a Lean report with no host inventory beside a foreign declaration family',
-    cloneJson(registry),
+    withoutHostInventory,
     hostWires,
     'carries no hostOpcodes',
   );
