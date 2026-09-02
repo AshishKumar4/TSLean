@@ -247,12 +247,23 @@ termination_by expression => (sizeOf expression, 1)
 
 end
 
-/-- Lowers one declaration. A record or an enum has no runtime image: `emitter.ts` gives it an
-interface or a type alias, and both erase. -/
+/--
+Lowers one declaration. A record or an enum has no runtime image: `emitter.ts` gives it an interface
+or a type alias, and both erase.
+
+A `foreign` declaration lowers to a function carrying its *reference* body. The emitted module does
+not declare that function — it imports the substrate's implementation under the same name — so what
+this model proves is that a target module whose binding at that name behaves like the compiled
+reference refines the source program. That the substrate's binding does behave like it is the named
+premise `Program.HostSubstrate`, and it is discharged one row per host operation rather than assumed
+here.
+-/
 def declaration (program : Ir.Program) : Ir.Decl → Except Fault (Option Target.Function)
   | .enum _ _ | .record _ _ _ => pure none
-  | .function name parameters _ _ bodyExpr => do
-      pure (some ⟨name, parameters.length, ← body program bodyExpr⟩)
+  | .function name parameters _ _ bodyExpr =>
+      do pure (some ⟨name, parameters.length, ← body program bodyExpr⟩)
+  | .foreign name _ parameters _ reference =>
+      do pure (some ⟨name, parameters.length, ← body program reference⟩)
 
 
 /-- Lowers a declaration list to the functions it contributes. -/
@@ -266,7 +277,7 @@ def declarations (program : Ir.Program) : List Ir.Decl → Except Fault (List Ta
 /-- Refuses every declared type this model does not represent. -/
 def checkRepresentations (program : Ir.Program) : List Ir.Decl → Except Fault Unit
   | [] => pure ()
-  | .function _ _ _ _ _ :: rest => checkRepresentations program rest
+  | .function _ _ _ _ _ :: rest | .foreign _ _ _ _ _ :: rest => checkRepresentations program rest
   | declaration :: rest =>
       if behavioural program declaration.name then throw (.behaviouralType declaration.name)
       else checkRepresentations program rest

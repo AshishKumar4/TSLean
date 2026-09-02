@@ -512,6 +512,120 @@ def Opcode.callback : Opcode → Bool
   | .stringToList | .stringOfList => false
 
 
+/-! ## The host-effect registry
+
+A `HostEffect` reaches the target as a call to a substrate function the emitted module imports. The
+call itself is an ordinary `call` to a declared name — effects are store passing, so a host call is a
+function of its payload and the store and nothing else — and this registry is what fixes the
+*identity* of the host operation the name stands for.
+
+The spellings are shared with `AgentCore.Substrate.Opcode.wire`, which is a separate Lean library in
+a separate repository; the two are joined by `spec/semantics/registry.json` and the substrate
+contract gate rather than by an import, so neither library depends on the other's build.
+-/
+
+/-- The closed set of host operations the substrate seam exposes. -/
+inductive HostOp where
+  | storeGet
+  | storePut
+  | storeDelete
+  | storeList
+  | storeTxn
+  | alarmSet
+  | alarmGet
+  | alarmDelete
+  | contentPut
+  | contentGet
+  | contentHead
+  | contentRange
+  | queueSend
+  | queueAck
+  | queueRetry
+  | isolateLoad
+  | isolateCall
+  | rpcCall
+  | rpcDispose
+  deriving DecidableEq, Repr
+
+/-- The wire spelling the IR carries, and the name the emitted module imports. -/
+def HostOp.wire : HostOp → String
+  | .storeGet => "host.store.get"
+  | .storePut => "host.store.put"
+  | .storeDelete => "host.store.delete"
+  | .storeList => "host.store.list"
+  | .storeTxn => "host.store.txn"
+  | .alarmSet => "host.alarm.set"
+  | .alarmGet => "host.alarm.get"
+  | .alarmDelete => "host.alarm.delete"
+  | .contentPut => "host.content.put"
+  | .contentGet => "host.content.get"
+  | .contentHead => "host.content.head"
+  | .contentRange => "host.content.range"
+  | .queueSend => "host.queue.send"
+  | .queueAck => "host.queue.ack"
+  | .queueRetry => "host.queue.retry"
+  | .isolateLoad => "host.isolate.load"
+  | .isolateCall => "host.isolate.call"
+  | .rpcCall => "host.rpc.call"
+  | .rpcDispose => "host.rpc.dispose"
+
+/-- Every admitted host operation. -/
+def HostOp.all : List HostOp :=
+  [ .storeGet, .storePut, .storeDelete, .storeList, .storeTxn, .alarmSet, .alarmGet, .alarmDelete,
+    .contentPut, .contentGet, .contentHead, .contentRange, .queueSend, .queueAck, .queueRetry,
+    .isolateLoad, .isolateCall, .rpcCall, .rpcDispose]
+
+theorem HostOp.mem_all (host : HostOp) : host ∈ HostOp.all := by
+  cases host <;> simp [HostOp.all]
+
+/-- Distinct host operations have distinct wire spellings, so the join against the substrate
+contract is a bijection. -/
+theorem HostOp.wire_injective {left right : HostOp} (equal : left.wire = right.wire) :
+    left = right := by
+  cases left <;> cases right <;> simp_all [HostOp.wire]
+
+/-! ## The recursion discipline
+
+Which discipline Lean proved for a definition. The source semantics ignores it: `enter` resolves a
+callee by name against the whole program, so mutual and well-founded recursion already terminate
+under the fuel machine model and need no new machinery. The field is what lets the emitter choose a
+legal emission order — a mutual group has to be emitted as hoisted `function` declarations, because a
+`const` arrow is not initialised when its sibling refers to it — and what lets the gate check that it
+did.
+-/
+
+/-- The recursion discipline Lean proved for a definition. -/
+inductive Recursion where
+  /-- Not recursive. -/
+  | nonrecursive
+  /-- Structurally recursive on the parameter at this index. -/
+  | structural (parameter : Nat)
+  /-- Well founded on a measure Lean discharged; the exporter read the equational form. -/
+  | wellFounded
+  /-- One member of a mutual block, which lists every member in Lean's declaration order. -/
+  | mutualGroup (group : List String)
+  deriving DecidableEq, Repr
+
+/-- The wire spelling `Export.lean` writes and `ir.ts` decodes. -/
+def Recursion.kind : Recursion → String
+  | .nonrecursive => "none"
+  | .structural _ => "structural"
+  | .wellFounded => "wellFounded"
+  | .mutualGroup _ => "mutual"
+
+/-- Every admitted recursion discipline, at a witness for each payload. -/
+def Recursion.allKinds : List String := ["none", "structural", "wellFounded", "mutual"]
+
+/-- The four disciplines spell the four wire kinds. -/
+theorem Recursion.kind_mem (recursion : Recursion) : recursion.kind ∈ Recursion.allKinds := by
+  cases recursion <;> simp [Recursion.kind, Recursion.allKinds]
+
+/-- The members of the mutual block a definition belongs to, and none for every other
+discipline. -/
+def Recursion.group : Recursion → List String
+  | .mutualGroup group => group
+  | .nonrecursive | .structural _ | .wellFounded => []
+
 /-- One declared field: its emitted property key and its type. -/
 structure Field where
   name : String
@@ -674,10 +788,22 @@ inductive Decl where
   /-- `record`: a structure with declared fields in declaration order. `constructor` names the Lean
   constructor a match on the structure decides. -/
   | record (name : String) (constructor : String) (fields : List Field)
-  /-- `function`: a first-order definition. `recursion` names the parameter Lean proved it
-  recurses structurally on, and is absent for a non-recursive definition. -/
+  /-- `function`: a first-order definition. `recursion` records the discipline Lean proved, which
+  the emitter needs to choose a legal emission order for a mutual block. -/
   | function (name : String) (parameters : List Field) (result : Ty)
-      (recursion : Option Nat) (body : Expr)
+      (recursion : Recursion) (body : Expr)
+  /--
+  `foreign`: a host-effect boundary.
+
+  The emitted module imports the substrate's implementation of `host` under this name. `reference`
+  is the exported reference implementation of that operation, in IR, and is what the model runs on
+  both sides. The gap between the two — that the substrate's implementation computes what the
+  reference computes — is the named premise `Program.HostSubstrate`, discharged by one substrate
+  conformance row per host operation. It is a hypothesis, never an axiom, and nothing in this
+  library proves it.
+  -/
+  | foreign (name : String) (host : HostOp) (parameters : List Field) (result : Ty)
+      (reference : Expr)
   deriving Repr
 
 /-- The three declaration families the fragment admits, as a closed registry. -/
@@ -685,6 +811,7 @@ inductive Family where
   | enum
   | record
   | function
+  | foreign
   deriving DecidableEq, Repr
 
 /-- The wire spelling `Export.lean` writes and `ir.ts` decodes. -/
@@ -692,9 +819,10 @@ def Family.kind : Family → String
   | .enum => "enum"
   | .record => "record"
   | .function => "function"
+  | .foreign => "foreign"
 
 /-- Every admitted declaration family. -/
-def Family.all : List Family := [.enum, .record, .function]
+def Family.all : List Family := [.enum, .record, .function, .foreign]
 
 theorem Family.mem_all (family : Family) : family ∈ Family.all := by
   cases family <;> simp [Family.all]
@@ -709,10 +837,21 @@ def Decl.family : Decl → Family
   | .enum _ _ => .enum
   | .record _ _ _ => .record
   | .function _ _ _ _ _ => .function
+  | .foreign _ _ _ _ _ => .foreign
 
 /-- The declared name of a declaration. -/
 def Decl.name : Decl → String
-  | .enum name _ | .record name _ _ | .function name _ _ _ _ => name
+  | .enum name _ | .record name _ _ | .function name _ _ _ _ | .foreign name _ _ _ _ => name
+
+/-- The host operation a declaration is the boundary for, and `none` for every other family. -/
+def Decl.host? : Decl → Option HostOp
+  | .foreign _ host _ _ _ => some host
+  | .enum _ _ | .record _ _ _ | .function _ _ _ _ _ => none
+
+/-- Exactly a `foreign` declaration names a host operation. -/
+theorem Decl.host?_isSome_iff (declaration : Decl) :
+    declaration.host?.isSome = true ↔ declaration.family = .foreign := by
+  cases declaration <;> simp [Decl.host?, Decl.family]
 
 /-- One compilation unit: the declarations reachable from the exported roots. -/
 structure Program where
@@ -762,10 +901,17 @@ def substituteFields (arguments : List Ty) (fields : List Field) : List Field :=
 
 /-- The function declaration carrying a name. -/
 def Program.function? (program : Program) (name : String) :
-    Option (List Field × Ty × Option Nat × Expr) :=
+    Option (List Field × Ty × Recursion × Expr) :=
   match program.find? name with
-  | some (.function _ parameters result recursion body) => some (parameters, result, recursion, body)
+  | some (.function _ parameters result recursion body) =>
+      some (parameters, result, recursion, body)
+  | some (.foreign _ _ parameters result reference) =>
+      some (parameters, result, .nonrecursive, reference)
   | _ => none
+
+/-- The host operations a program declares boundaries for, in declaration order. -/
+def Program.hosts (program : Program) : List HostOp :=
+  program.declarations.filterMap Decl.host?
 
 /--
 The constructors of a type, instantiated at that type's own arguments, mirroring `constructorsOf`

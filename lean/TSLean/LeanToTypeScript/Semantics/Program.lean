@@ -24,10 +24,32 @@ program declarations; their exact body lowering is carried by the closure repres
 -/
 structure LoweredProgram (program : Ir.Program) (target : Target.Program) : Prop where
   functions : ∀ (name : String) (parameters : List Ir.Field) (result : Ir.Ty)
-    (recursion : Option Nat) (body : Ir.Expr),
+    (recursion : Ir.Recursion) (body : Ir.Expr),
     program.function? name = some (parameters, result, recursion, body) →
     ∃ emitted, target.find? name = some emitted ∧ emitted.parameters = parameters.length ∧
       Compile.body program body = .ok emitted.body
+
+/--
+The one premise a host boundary adds to the trusted computing base.
+
+Inside this model a `foreign` declaration lowers to a function carrying its exported reference body,
+so `loweredProgram_of_compile` discharges `LoweredProgram` for it exactly as it does for a
+`function`. In deployment that binding is *replaced*: the emitted module imports the substrate's
+implementation under the host name instead of declaring the reference. `HostSubstrate` is that
+replacement's requirement, stated on the same equation `LoweredProgram` uses — the target module's
+binding at the host name has the boundary's arity and the lowering of the reference body as its
+body.
+
+Nothing here proves it, and no axiom asserts it. It is discharged one row per host operation by the
+substrate's own laws (`AgentCore.Substrate.<Seam>Laws`) and the conformance gate that binds those
+laws to the adapter, which is why the compiler's audit stays at the three standard axioms while the
+host boundary remains an explicit, countable premise.
+-/
+def HostSubstrate (program : Ir.Program) (target : Target.Program) : Prop :=
+  ∀ (name : String) (parameters : List Ir.Field) (result : Ir.Ty) (reference : Ir.Expr),
+    (∃ host, program.find? name = some (.foreign name host parameters result reference)) →
+    ∃ emitted, target.find? name = some emitted ∧ emitted.parameters = parameters.length ∧
+      Compile.body program reference = .ok emitted.body
 
 /--
 Every admitted opcode's recorded assumption closure holds of the engine.
@@ -46,6 +68,19 @@ theorem lowered_of_loweredProgram {program : Ir.Program} {target : Target.Progra
   obtain ⟨emitted, found, arity, _⟩ :=
     lowered.functions name parameters result recursion body declared
   exact ⟨emitted, found, arity⟩
+
+/--
+A lowered program satisfies the host premise. This is what makes `HostSubstrate` a *replacement*
+requirement rather than a second idea of what a host boundary owes: the model's own lowering already
+meets it, so the premise says exactly that the substrate's binding meets what the reference binding
+met, and nothing more.
+-/
+theorem hostSubstrate_of_loweredProgram {program : Ir.Program} {target : Target.Program}
+    (lowered : LoweredProgram program target) : HostSubstrate program target := by
+  intro name parameters result reference boundary
+  obtain ⟨host, found⟩ := boundary
+  exact lowered.functions name parameters result .nonrecursive reference
+    (by simp only [Ir.Program.function?, found])
 
 /-- An option is absent or holds a value, without generalising the goal. -/
 theorem option_cases {α : Type} (value : Option α) :
@@ -994,7 +1029,7 @@ end
 
 /-- Lowering a function declaration yields an emitted function with that name, arity and body. -/
 theorem declaration_function {program : Ir.Program} {name : String} {parameters : List Ir.Field}
-    {result : Ir.Ty} {recursion : Option Nat} {body : Ir.Expr} {emitted : Option Target.Function}
+    {result : Ir.Ty} {recursion : Ir.Recursion} {body : Ir.Expr} {emitted : Option Target.Function}
     (compiled : Compile.declaration program (.function name parameters result recursion body)
       = .ok emitted) :
     ∃ emittedBody, emitted = some ⟨name, parameters.length, emittedBody⟩ ∧
@@ -1005,32 +1040,64 @@ theorem declaration_function {program : Ir.Program} {name : String} {parameters 
   injection shape with emittedEq
   exact ⟨emittedBody, emittedEq.symm, bodyCompiled⟩
 
+/-- Lowering a host boundary yields an emitted function with that name, arity and reference body.
+The emitted module imports the substrate's implementation at that name instead; `HostSubstrate` is
+the premise that the two agree, and it is stated separately rather than assumed here. -/
+theorem declaration_foreign {program : Ir.Program} {name : String} {host : Ir.HostOp}
+    {parameters : List Ir.Field} {result : Ir.Ty} {reference : Ir.Expr}
+    {emitted : Option Target.Function}
+    (compiled : Compile.declaration program (.foreign name host parameters result reference)
+      = .ok emitted) :
+    ∃ emittedBody, emitted = some ⟨name, parameters.length, emittedBody⟩ ∧
+      Compile.body program reference = .ok emittedBody := by
+  simp only [Compile.declaration] at compiled
+  obtain ⟨emittedBody, bodyCompiled, shape⟩ := bind_ok compiled
+  simp only [pure, Except.pure] at shape
+  injection shape with emittedEq
+  exact ⟨emittedBody, emittedEq.symm, bodyCompiled⟩
+
 /--
-The lowering of a declaration list carries every declared function through with its name, its arity
+The lowering of a declaration list carries every declared callable through with its name, its arity
 and its lowered body, and the first emitted function of a name is the lowering of the first declared
-function of that name.
+callable of that name.
+
+A callable is a `function` declaration or a `foreign` host boundary: the two lower identically, which
+is exactly why the model runs one body on both sides of a host call and the substrate's own agreement
+with that body is a separate, named premise.
 -/
 theorem lowered_of_declarations {program : Ir.Program} :
     ∀ (declarations : List Ir.Decl) (functions : List Target.Function),
       Compile.declarations program declarations = .ok functions →
-      ∀ (name : String) (parameters : List Ir.Field) (result : Ir.Ty) (recursion : Option Nat)
+      ∀ (name : String) (parameters : List Ir.Field) (result : Ir.Ty) (recursion : Ir.Recursion)
         (body : Ir.Expr),
-        (declarations.find? fun declaration => declaration.name == name)
-            = some (.function name parameters result recursion body) →
+        ((declarations.find? fun declaration => declaration.name == name)
+              = some (.function name parameters result recursion body) ∨
+          ∃ host, (declarations.find? fun declaration => declaration.name == name)
+              = some (.foreign name host parameters result body)) →
         ∃ emitted, (functions.find? fun emitted => emitted.name == name) = some emitted ∧
           emitted.parameters = parameters.length ∧ Compile.body program body = .ok emitted.body
-  | [], functions, _, name, _, _, _, _, found => by simp at found
+  | [], functions, _, name, _, _, _, _, found => by
+      rcases found with found | ⟨_, found⟩ <;> simp at found
   | declaration :: rest, functions, compiled, name, parameters, result, recursion, body, found => by
       simp only [Compile.declarations] at compiled
       obtain ⟨head, headCompiled, more⟩ := bind_ok compiled
       simp only [List.find?_cons] at found
       cases matched : declaration.name == name with
       | true =>
-        rw [matched] at found
-        dsimp only at found
-        injection found with declarationEq
-        subst declarationEq
-        obtain ⟨emittedBody, headEq, bodyCompiled⟩ := declaration_function headCompiled
+        obtain ⟨emittedBody, headEq, bodyCompiled⟩ : ∃ emittedBody,
+            head = some ⟨name, parameters.length, emittedBody⟩ ∧
+              Compile.body program body = .ok emittedBody := by
+          rcases found with found | ⟨host, found⟩
+          · rw [matched] at found
+            dsimp only at found
+            injection found with declarationEq
+            subst declarationEq
+            exact declaration_function headCompiled
+          · rw [matched] at found
+            dsimp only at found
+            injection found with declarationEq
+            subst declarationEq
+            exact declaration_foreign headCompiled
         subst headEq
         simp only at more
         obtain ⟨tail, tailCompiled, shape⟩ := bind_ok more
@@ -1046,8 +1113,11 @@ theorem lowered_of_declarations {program : Ir.Program} :
         cases head with
         | none =>
             simp only at more
-            exact lowered_of_declarations rest functions more name parameters result recursion body
-              found
+            refine lowered_of_declarations rest functions more name parameters result recursion
+              body ?_
+            rcases found with found | ⟨host, found⟩
+            · exact Or.inl found
+            · exact Or.inr ⟨host, found⟩
         | some emittedHead =>
             simp only at more
             obtain ⟨tail, tailCompiled, shape⟩ := bind_ok more
@@ -1069,9 +1139,17 @@ theorem lowered_of_declarations {program : Ir.Program} :
                   injection headEq with headEq
                   subst headEq
                   rfl
-            obtain ⟨emitted, emittedFound, arity, bodyCompiled⟩ :=
-              lowered_of_declarations rest tail tailCompiled name parameters result recursion body
-                found
+              | foreign declaredName _ _ _ _ =>
+                  obtain ⟨_, headEq, _⟩ := declaration_foreign headCompiled
+                  injection headEq with headEq
+                  subst headEq
+                  rfl
+            obtain ⟨emitted, emittedFound, arity, bodyCompiled⟩ := by
+              refine lowered_of_declarations rest tail tailCompiled name parameters result recursion
+                body ?_
+              rcases found with found | ⟨host, found⟩
+              · exact Or.inl found
+              · exact Or.inr ⟨host, found⟩
             refine ⟨emitted, ?_, arity, bodyCompiled⟩
             simp only [List.find?_cons]
             rw [show (emittedHead.name == name) = false from by
@@ -1113,7 +1191,23 @@ theorem loweredProgram_of_compile {program : Ir.Program} {target : Target.Progra
         subst nameEq
         obtain ⟨emitted, emittedFound, arity, bodyCompiled⟩ :=
           lowered_of_declarations program.declarations functions functionsCompiled declaredName
-            declaredParameters declaredResult declaredRecursion declaredBody lookup
+            declaredParameters declaredResult declaredRecursion declaredBody (Or.inl lookup)
+        exact ⟨emitted, emittedFound, arity, bodyCompiled⟩
+    | foreign declaredName declaredHost declaredParameters declaredResult declaredReference =>
+        simp only [Option.some.injEq, Prod.mk.injEq] at declared
+        obtain ⟨parametersEq, resultEq, recursionEq, referenceEq⟩ := declared
+        subst parametersEq
+        subst resultEq
+        subst recursionEq
+        subst referenceEq
+        have nameEq : declaredName = name := by
+          have := List.find?_some lookup
+          simpa [Ir.Decl.name] using this
+        subst nameEq
+        obtain ⟨emitted, emittedFound, arity, bodyCompiled⟩ :=
+          lowered_of_declarations program.declarations functions functionsCompiled declaredName
+            declaredParameters declaredResult .nonrecursive declaredReference
+            (Or.inr ⟨declaredHost, lookup⟩)
         exact ⟨emitted, emittedFound, arity, bodyCompiled⟩
 
 /-! ## Entering a declared function, and applying an inline closure -/
@@ -1131,7 +1225,7 @@ obligation at lower fuel by `everywhereBody`.
 theorem entering {program : Ir.Program} {target : Target.Program} {runtime : Runtime}
     (lowered : LoweredProgram program target) (laws : RuntimeLaws runtime)
     (listsFit : ListsFit program) (fuel : Nat) (name : String)
-    (parameters : List Ir.Field) (result : Ir.Ty) (recursion : Option Nat) (body : Ir.Expr)
+    (parameters : List Ir.Field) (result : Ir.Ty) (recursion : Ir.Recursion) (body : Ir.Expr)
     (declared : program.function? name = some (parameters, result, recursion, body))
     (arguments : List Source.Value) (targets : List Value) (trace : Source.Trace)
     (state : Target.State) (heapValid : state.heap.WellFormed)

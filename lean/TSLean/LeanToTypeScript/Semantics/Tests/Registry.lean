@@ -31,9 +31,6 @@ open Ir Assumption
   ["variable", "boolean", "nat", "string", "let", "field", "if", "operation", "variant", "record",
     "match", "lambda", "apply", "call"]
 
--- Three declaration families, spelled as the decoder spells them.
-#guard Family.all.map Family.kind = ["enum", "record", "function"]
-
 -- Seventeen type forms, and every one of them enumerated.
 #guard TyKind.all.length = 17
 
@@ -180,6 +177,52 @@ open Ir Assumption
 -- Every declared assumption is named by at least one opcode, so the plane carries no dead assumption.
 #guard Id.all.all fun id => Opcode.all.any fun code => code.requires.contains id
 
+/-! ## The host-effect registry -/
+
+-- Nineteen host operations, and every one of them enumerated.
+#guard HostOp.all.length = 19
+
+-- The enumeration has no repeats, and every spelling is distinct.
+#guard HostOp.all.Nodup
+#guard (HostOp.all.map HostOp.wire).Nodup
+
+-- The spellings are exactly the ones `AgentCore.Substrate.Opcode.wire` emits and
+-- `spec/semantics/registry.json` joins on. The two libraries are in separate repositories, so this
+-- list is the tslean side of that join, checked here rather than assumed.
+#guard HostOp.all.map HostOp.wire =
+  ["host.store.get", "host.store.put", "host.store.delete", "host.store.list", "host.store.txn",
+    "host.alarm.set", "host.alarm.get", "host.alarm.delete", "host.content.put",
+    "host.content.get", "host.content.head", "host.content.range", "host.queue.send",
+    "host.queue.ack", "host.queue.retry", "host.isolate.load", "host.isolate.call",
+    "host.rpc.call", "host.rpc.dispose"]
+
+-- Every host spelling is namespaced, so a host name cannot collide with an exported function name:
+-- an emitted identifier never contains a dot.
+#guard HostOp.all.all fun host => host.wire.startsWith "host."
+
+-- Exactly a `foreign` declaration names a host operation, and it resolves to its reference body, so
+-- the source semantics and the lowering run one body rather than two.
+#guard (Ir.Decl.foreign "host.store.get" .storeGet [] .bytes (.natLit 0)).host?.isSome
+#guard (Ir.Decl.function "f" [] .nat .nonrecursive (.natLit 0)).host?.isNone
+#guard ((⟨[.foreign "host.store.get" .storeGet [] .bytes (.natLit 7)]⟩ : Ir.Program).function?
+    "host.store.get").isSome
+#guard (⟨[.foreign "host.store.get" .storeGet [] .bytes (.natLit 7)]⟩ : Ir.Program).hosts
+  = [.storeGet]
+
+-- Four declaration families, spelled as the decoder spells them.
+#guard Family.all.map Family.kind = ["enum", "record", "function", "foreign"]
+
+/-! ## The recursion discipline -/
+
+-- The four disciplines spell the four wire kinds the decoder decodes.
+#guard [Ir.Recursion.nonrecursive, .structural 2, .wellFounded, .mutualGroup ["f", "g"]].map
+    Ir.Recursion.kind = ["none", "structural", "wellFounded", "mutual"]
+
+-- Only a mutual member carries a group, and it carries every member of its block.
+#guard (Ir.Recursion.mutualGroup ["f", "g"]).group = ["f", "g"]
+#guard [Ir.Recursion.nonrecursive, .structural 0, .wellFounded].all fun recursion =>
+  recursion.group.isEmpty
+
 /-! ## The assumption plane -/
 
 -- Sixteen assumptions, and every one of them enumerated.
@@ -250,6 +293,20 @@ theorem whole_program_closed {program : Ir.Program} {target : Target.Program} {r
         Preservation.EverywhereBody program target runtime fuel body emitted) :=
   ⟨fun fuel => Preservation.everywhere lowered laws listsFit fuel,
     fun fuel => Preservation.everywhereBody lowered laws listsFit fuel⟩
+
+/--
+The host boundary's premise is derivable from the program's lowering, so it is a replacement
+requirement on the substrate's binding and not an extra assumption about the model.
+-/
+theorem host_premise_closed {program : Ir.Program} {target : Target.Program}
+    (lowered : Preservation.LoweredProgram program target) :
+    Preservation.HostSubstrate program target :=
+  Preservation.hostSubstrate_of_loweredProgram lowered
+
+/-- The proof registry is closed over the four declaration families, the fourth being the host
+boundary. -/
+theorem foreign_family_closed (runtime : Runtime) :
+    Preservation.Family.Preserves runtime .foreign := Preservation.familyRegistry runtime .foreign
 
 /-- The three example-critical opcodes are discharged from the one assumption they name. -/
 theorem example_critical_opcodes (runtime : Runtime)

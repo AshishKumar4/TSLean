@@ -89,7 +89,7 @@ def EverywhereBody (program : Ir.Program) (target : Target.Program)
 
 /-- Every declared function has a lowered counterpart, declaring the same number of parameters. -/
 def Lowered (program : Ir.Program) (target : Target.Program) : Prop :=
-  ∀ (name : String) (parameters : List Ir.Field) (result : Ir.Ty) (recursion : Option Nat)
+  ∀ (name : String) (parameters : List Ir.Field) (result : Ir.Ty) (recursion : Ir.Recursion)
     (body : Ir.Expr),
     program.function? name = some (parameters, result, recursion, body) →
     ∃ emitted, target.find? name = some emitted ∧ emitted.parameters = parameters.length
@@ -97,7 +97,7 @@ def Lowered (program : Ir.Program) (target : Target.Program) : Prop :=
 /-- Every declared function's lowered body refines it, at this fuel. -/
 def EveryFunction (program : Ir.Program) (target : Target.Program) (runtime : Runtime)
     (fuel : Nat) : Prop :=
-  ∀ (name : String) (parameters : List Ir.Field) (result : Ir.Ty) (recursion : Option Nat)
+  ∀ (name : String) (parameters : List Ir.Field) (result : Ir.Ty) (recursion : Ir.Recursion)
     (body : Ir.Expr) (emitted : Target.Function),
     program.function? name = some (parameters, result, recursion, body) →
     target.find? name = some emitted →
@@ -4160,13 +4160,34 @@ def Family.Preserves (runtime : Runtime) : Ir.Family → Prop
           entries.map Prod.fst = values.map Prod.fst ∧
           state.heap.ownPropertyKeys ref = .ok ((values.map Prod.fst).map Ir.propertyKey)
   | .function => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat) (name : String)
-      (parameters : List Ir.Field) (result : Ir.Ty) (recursion : Option Nat) (body : Ir.Expr)
+      (parameters : List Ir.Field) (result : Ir.Ty) (recursion : Ir.Recursion) (body : Ir.Expr)
       (emittedBody : Target.Body) (emitted : Target.Function),
       Compile.body program body = .ok emittedBody →
       Compile.declaration program (.function name parameters result recursion body)
         = .ok (some emitted) →
       emitted.name = name ∧ emitted.parameters = parameters.length ∧
         emitted.body = emittedBody ∧
+        ∀ (arguments : List Value) (state : Target.State) (declaration : Target.Function),
+          target.find? name = some declaration →
+          declaration.parameters = arguments.length →
+          Target.enter target runtime (fuel + 1) state name arguments
+            = Target.evalBody target runtime fuel arguments.reverse
+                (state.record (.function name arguments)) declaration.body
+  | .foreign => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat) (name : String)
+      (host : Ir.HostOp) (parameters : List Ir.Field) (result : Ir.Ty) (reference : Ir.Expr)
+      (emittedReference : Target.Body) (emitted : Target.Function),
+      Compile.body program reference = .ok emittedReference →
+      Compile.declaration program (.foreign name host parameters result reference)
+        = .ok (some emitted) →
+      emitted.name = name ∧ emitted.parameters = parameters.length ∧
+        emitted.body = emittedReference ∧
+        program.function? name
+          = (match program.find? name with
+            | some (.function _ functionParameters functionResult functionRecursion functionBody) =>
+                some (functionParameters, functionResult, functionRecursion, functionBody)
+            | some (.foreign _ _ foreignParameters foreignResult foreignReference) =>
+                some (foreignParameters, foreignResult, .nonrecursive, foreignReference)
+            | _ => none) ∧
         ∀ (arguments : List Value) (state : Target.State) (declaration : Target.Function),
           target.find? name = some declaration →
           declaration.parameters = arguments.length →
@@ -4240,11 +4261,28 @@ theorem registry (runtime : Runtime) : (op : Ir.Op) → Op.Preserves runtime op
   | .apply => apply
   | .call => call
 
-/-- The closure over the declaration-family registry, total on `Ir.Family`. -/
+/--
+A host boundary lowers to a function carrying its reference body, and entering it is entering that
+body. The source semantics resolves the name to the same reference, so the two sides run one body;
+what the substrate's own implementation does is the separate premise `Program.HostSubstrate`.
+-/
+theorem familyForeign {runtime : Runtime} : Family.Preserves runtime .foreign := by
+  intro program target fuel name host parameters result reference emittedReference emitted lowered
+    declared
+  simp only [Compile.declaration, lowered] at declared
+  injection declared with emittedEq
+  injection emittedEq with emittedEq
+  subst emittedEq
+  refine ⟨rfl, rfl, rfl, rfl, ?_⟩
+  intro arguments state emittedDeclaration found arity
+  simp only [Target.enter, found]
+  rw [bindArguments_exact arguments emittedDeclaration.parameters arity]
+
 theorem familyRegistry (runtime : Runtime) : (family : Ir.Family) → Family.Preserves runtime family
   | .enum => familyEnum
   | .record => familyRecord
   | .function => familyFunction
+  | .foreign => familyForeign
 
 end Preservation
 
