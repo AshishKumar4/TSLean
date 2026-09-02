@@ -10,3 +10,5 @@ import TSLean.LeanToTypeScript.Semantics.Preservation
 import TSLean.LeanToTypeScript.Semantics.Tests.Registry
 import TSLean.LeanToTypeScript.Semantics.Program
 import TSLean.LeanToTypeScript.Semantics.Closure
+import TSLean.LeanToTypeScript.Semantics.Erasure
+import TSLean.LeanToTypeScript.Semantics.Effect
