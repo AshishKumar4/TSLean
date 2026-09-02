@@ -14,11 +14,12 @@
  * about the compiler, and nothing here reports one.
  */
 
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import ts from 'typescript';
 import { leanRun, type LeanCheckOptions, type LeanModuleSource } from '../lean-check.js';
 import type { ProfileType } from './profile.js';
 import {
@@ -142,20 +143,15 @@ interface ObservationPlan {
 
 // ─── TypeScript side ────────────────────────────────────────────────────────────
 
-/** Transpile the projected sources, import them, and apply every input. */
+/** Emit the projected sources as JavaScript, import them, and apply every input. */
 async function evaluateJavaScript(
   sources: ReadonlyMap<string, string>,
   plans: readonly ObservationPlan[],
 ): Promise<readonly (readonly string[])[]> {
   const root = mkdtempSync(join(tmpdir(), 'tslean-roundtrip-js-'));
+  const javaScript = join(root, 'js');
   try {
-    for (const [path, source] of sources) {
-      const file = join(root, path.replace(/\.ts$/u, '.js'));
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, ts.transpileModule(source, {
-        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-      }).outputText, 'utf8');
-    }
+    emitJavaScript(sources, join(root, 'ts'), javaScript);
 
     // A structure declared in one module is constructed from another, so construction reads
     // the whole package while a call still goes through the module that declares it. The
@@ -173,9 +169,9 @@ async function evaluateJavaScript(
       // The module under observation is written to a scratch directory by this call, so its
       // specifier does not exist at author time and no static import can name it. The cast
       // records what a generated module offers a caller: names of unknown type.
-      const exported = (await import(pathToFileURL(join(root, path.replace(/\.ts$/u, '.js'))).href)) as Readonly<
-        Record<string, unknown>
-      >;
+      const exported = (await import(
+        pathToFileURL(join(javaScript, path.replace(/\.ts$/u, '.js'))).href
+      )) as Readonly<Record<string, unknown>>;
       loaded.set(path, exported);
       for (const [name, value] of Object.entries(exported)) {
         if (!requiredConstructors.has(name)) continue;
@@ -197,6 +193,63 @@ async function evaluateJavaScript(
     return rows;
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The compiler binary this package runs, resolved next to this module rather than by name,
+ * so the observation runs the same compiler version the rest of the pipeline reads with.
+ */
+const COMPILER = join(dirname(createRequire(import.meta.url).resolve('typescript/package.json')), 'bin', 'tsc');
+
+/**
+ * Emit every projected source as JavaScript in one run of the compiler.
+ *
+ * `noCheck` is what makes the run transpile-only. The observation executes the projected
+ * package to see what it computes, and whether that package type-checks is a separate
+ * verdict the round trip reports on its own; an emit that depended on checking would turn
+ * one failed check into two and would leave the comparison unable to run at all.
+ *
+ * The emitted tree keeps the input layout with only the extension changed, because a
+ * generated module's own import specifiers already name `.js` siblings.
+ */
+function emitJavaScript(
+  sources: ReadonlyMap<string, string>,
+  typeScript: string,
+  javaScript: string,
+): void {
+  if (sources.size === 0) return;
+  for (const [path, source] of sources) {
+    const file = join(typeScript, path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, source, 'utf8');
+  }
+  const configuration = join(typeScript, 'tsconfig.json');
+  writeFileSync(
+    configuration,
+    JSON.stringify({
+      compilerOptions: {
+        target: 'ES2022',
+        module: 'ESNext',
+        moduleResolution: 'Bundler',
+        outDir: javaScript,
+        rootDir: typeScript,
+        noCheck: true,
+      },
+      files: [...sources.keys()],
+    }),
+    'utf8',
+  );
+  const run = spawnSync(process.execPath, [COMPILER, '-p', configuration], { encoding: 'utf8' });
+  if (run.error !== undefined) {
+    throw new TypeError(`the compiler could not be run over the projected package: ${run.error.message}`);
+  }
+  if (run.status !== 0) {
+    // The compiler reports refusals on its output stream and only crashes on its error
+    // stream, so whichever one spoke is what the failure carries.
+    throw new TypeError(
+      `the compiler refused to emit the projected package: ${run.stderr === '' ? run.stdout : run.stderr}`,
+    );
   }
 }
 

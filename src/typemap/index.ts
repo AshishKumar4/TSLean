@@ -3,7 +3,7 @@
  *
  * Type mapper: TypeScript compiler types → IR types.
  *
- * Uses the TypeChecker for fully-resolved types, handling generics, mapped
+ * Uses the checker for fully-resolved types, handling generics, mapped
  * types, branded newtypes, discriminated unions, and conditional types.
  *
  * Key mappings, into the IR — the Lean carrier for each is chosen later, by
@@ -24,7 +24,7 @@
  * Pipeline position:  TS AST → **Type Mapper** → IR types → Codegen
  */
 
-import * as ts from 'typescript';
+import * as ts from '../typescript-api/index.js';
 import {
   IRType, Pure,
   TyInt, TyFloat, TyString, TyBool, TyUnit, TyNever,
@@ -63,7 +63,7 @@ const TS_ANON_NAMES = new Set(['__type', '__object']);
  *     so they could not be measured either way and are kept as declared intent.
  *
  * Deliberately absent: `Generator`, `AsyncGenerator`, `IterableIterator`,
- * `AsyncIterableIterator` and TypeScript 6's `MapIterator`.  Iteration reads the
+ * `AsyncIterableIterator` and the standard library's `MapIterator`.  Iteration reads the
  * element type out of their arguments, so erasing them loses it — with
  * `MapIterator<Info>` collapsed, `for (const u of m.values())` lowers to
  * `pure ()`.  The former reference-path set omitted them for the same reason.
@@ -107,12 +107,19 @@ const LEAN_CARRIER_TYPES = new Set([
   'URL',
 ]);
 
-/** Files inside the TypeScript package: its standard library and its compiler API. */
-const TYPESCRIPT_PACKAGE_FILE = /[/\\]node_modules[/\\]typescript[/\\]/;
+/**
+ * Files TypeScript itself declares. The compiler ships in two packages: `typescript` holds the
+ * compiler and its API declarations, and a per-platform `@typescript/typescript-<os>-<arch>`
+ * holds the native compiler alongside the `lib.*.d.ts` standard library, so provenance has to
+ * name both to mean "declared by TypeScript". The scope is matched as a whole path segment, so
+ * a package that merely starts with the name — `typescript-eslint`, `@typescript-eslint/*` — is
+ * a program's own dependency and stays a program's own type.
+ */
+const TYPESCRIPT_PACKAGE_FILE = /[/\\]node_modules[/\\](?:@typescript[/\\][^/\\]+[/\\]|typescript[/\\])/;
 
 /**
  * Is every declaration of this symbol TypeScript's own — its `lib.*.d.ts`
- * standard library, or the `typescript.d.ts` compiler API?
+ * standard library, or its compiler API declarations?
  *
  * This is the authoritative test for "has no Lean carrier", because it asks where
  * a type came from rather than what it is called. `ts.SourceFile` collapses while
@@ -133,13 +140,17 @@ const TYPESCRIPT_PACKAGE_FILE = /[/\\]node_modules[/\\]typescript[/\\]/;
  * and the loop body lowers to `pure ()`. A generic type with no carrier is named
  * instead.
  *
+ * A declaration arrives as a handle rather than as a node, and the handle carries the path of
+ * the file it was parsed from — the very path resolving it would look that file up by — so
+ * provenance reads the path and never asks the compiler server for the node.
+ *
  * When TypeScript is not installed under `node_modules` the test simply does not
  * fire, and the name set answers as it did before.
  */
 function declaredByTypeScriptItself(sym: ts.Symbol | undefined): boolean {
   const decls = sym?.declarations;
   if (decls === undefined || decls.length === 0) return false;
-  return decls.every(d => TYPESCRIPT_PACKAGE_FILE.test(d.getSourceFile().fileName));
+  return decls.every(d => TYPESCRIPT_PACKAGE_FILE.test(d.path));
 }
 
 // ─── Main entry ─────────────────────────────────────────────────────────────────
@@ -151,11 +162,11 @@ function declaredByTypeScriptItself(sym: ts.Symbol | undefined): boolean {
  * generic references, conditional types, and branded newtypes.
  *
  * @param t       - The TypeScript type from the type checker.
- * @param checker - The TypeChecker instance for the program.
+ * @param checker - The checker over the program the type belongs to.
  * @param depth   - Current recursion depth (guards against circular types).
  * @returns The corresponding IR type.
  */
-export function mapType(t: ts.Type, checker: ts.TypeChecker, depth = 0): IRType {
+export function mapType(t: ts.Type, checker: ts.Checker, depth = 0): IRType {
   if (depth > MAX_TYPE_DEPTH) return TyRef('TSAny');
 
   const f = t.flags;
@@ -172,30 +183,27 @@ export function mapType(t: ts.Type, checker: ts.TypeChecker, depth = 0): IRType 
   if (f & ts.TypeFlags.StringLiteral)  return TyString;
   if (f & ts.TypeFlags.NumberLiteral)  return TyFloat;
   if (f & ts.TypeFlags.BooleanLiteral) return TyBool;
-  if (f & ts.TypeFlags.TypeParameter)  return TyVar(t.symbol?.name ?? FALLBACK_TYPE_VAR);
+  if (f & ts.TypeFlags.TypeParameter)  return TyVar(t.getSymbol()?.name ?? FALLBACK_TYPE_VAR);
   if (f & ts.TypeFlags.TemplateLiteral) return TyString;
   if (f & ts.TypeFlags.StringMapping)   return TyString;
 
-  if (t.isUnion())        return mapUnion(t, checker, depth);
-  if (t.isIntersection()) return mapIntersection(t, checker, depth);
+  if (t.isUnionType())        return mapUnion(t, checker, depth);
+  if (t.isIntersectionType()) return mapIntersection(t, checker, depth);
 
   if (checker.isArrayType(t)) {
-    const elem = checker.getTypeArguments(t as ts.TypeReference)[0];
+    // `getTypeArguments` is defined only for a reference — the compiler server faults when
+    // handed anything else — and `isTypeReference` is itself that `ObjectFlags.Reference` test.
+    const elem = ts.isTypeReference(t) ? checker.getTypeArguments(t)[0] : undefined;
     return TyArray(elem ? mapType(elem, checker, depth + 1) : TyRef('TSAny'));
   }
   if (checker.isTupleType(t)) {
-    const args = checker.getTypeArguments(t as ts.TypeReference);
+    const args = ts.isTypeReference(t) ? checker.getTypeArguments(t) : [];
     return TyTuple(args.map(a => mapType(a, checker, depth + 1)));
   }
 
-  if (f & ts.TypeFlags.Object) return mapObject(t as ts.ObjectType, checker, depth);
-  if (f & ts.TypeFlags.Conditional) {
-    // Access the resolved true branch — this is an internal TS API property
-    // that's stable across TS versions but not in the public typings.
-    const c = t as ts.ConditionalType;
-    const resolved = (c as { resolvedTrueType?: ts.Type }).resolvedTrueType;
-    return mapType(resolved ?? c.checkType, checker, depth + 1);
-  }
+  if (t.isObjectType()) return mapObject(t, checker, depth);
+  // The true branch, which the checker resolves on demand rather than holding on the type.
+  if (t.isConditionalType()) return mapType(t.getTrueType(), checker, depth + 1);
   if (f & ts.TypeFlags.Index) return TyString;
 
   return TyRef(checker.typeToString(t));
@@ -203,15 +211,17 @@ export function mapType(t: ts.Type, checker: ts.TypeChecker, depth = 0): IRType 
 
 // ─── Union types ────────────────────────────────────────────────────────────────
 
-function mapUnion(t: ts.UnionType, checker: ts.TypeChecker, depth: number): IRType {
-  const types = t.types;
+function mapUnion(t: ts.UnionType, checker: ts.Checker, depth: number): IRType {
+  const types = t.getTypes() ?? [];
 
   // T | undefined/null → Option T. TypeScript flattens the union when T is itself a
   // union, so the members no longer say which alias was written; rebuilding the
   // non-nullable type recovers it, and recovers nothing when there was no alias.
   const withoutNil = types.filter(x => !(x.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)));
+  // `getNonNullableType` answers nothing when the checker cannot rebuild the type; the first
+  // non-nil member is then the closest reading of what was written.
   if (withoutNil.length > 0 && withoutNil.length < types.length)
-    return TyOption(mapType(checker.getNonNullableType(t), checker, depth + 1));
+    return TyOption(mapType(checker.getNonNullableType(t) ?? withoutNil[0], checker, depth + 1));
 
   // The generated tagged encoding of `Option A` denotes the same Lean type as `A | undefined`.
   // Without this it would become a second, locally declared inductive that shadows Lean's own.
@@ -219,7 +229,7 @@ function mapUnion(t: ts.UnionType, checker: ts.TypeChecker, depth: number): IRTy
   if (element !== null) return TyOption(mapType(element, checker, depth + 1));
   // All string literals → use the alias name if available
   if (types.every(x => x.flags & ts.TypeFlags.StringLiteral)) {
-    const alias = getAliasName(t);
+    const alias = t.getAliasSymbol()?.name;
     return alias ? TyRef(alias) : TyString;
   }
 
@@ -228,17 +238,17 @@ function mapUnion(t: ts.UnionType, checker: ts.TypeChecker, depth: number): IRTy
     return TyBool;
 
   // Named alias (e.g. `type Status = "active" | "inactive"`, `Tree<T>`)
-  const aliasSymbol = getAliasSymbol(t);
+  const aliasSymbol = t.getAliasSymbol();
   const alias = aliasSymbol?.name;
   if (alias) {
     // A union alias is neither an object nor a reference, so this is the only
     // place `PropertyKey` (string | number | symbol) and `ArrayBufferLike`
     // (ArrayBuffer | SharedArrayBuffer) can be collapsed.
-    const aliasArgs = t.aliasTypeArguments;
-    if (!LEAN_CARRIER_TYPES.has(alias) && (aliasArgs === undefined || aliasArgs.length === 0) &&
+    const aliasArgs = t.getAliasTypeArguments();
+    if (!LEAN_CARRIER_TYPES.has(alias) && aliasArgs.length === 0 &&
         declaredByTypeScriptItself(aliasSymbol)) return TyRef('TSAny');
     // Propagate alias type arguments (e.g. Tree<T> → TyRef('Tree', [TyVar('T')]))
-    if (aliasArgs && aliasArgs.length > 0) {
+    if (aliasArgs.length > 0) {
       return TyRef(alias, aliasArgs.map(a => mapType(a, checker, depth + 1)));
     }
     return TyRef(alias);
@@ -249,31 +259,33 @@ function mapUnion(t: ts.UnionType, checker: ts.TypeChecker, depth: number): IRTy
 
 // ─── Intersection types ─────────────────────────────────────────────────────────
 
-function mapIntersection(t: ts.IntersectionType, checker: ts.TypeChecker, depth: number): IRType {
+function mapIntersection(t: ts.IntersectionType, checker: ts.Checker, depth: number): IRType {
+  const types = t.getTypes() ?? [];
+  const alias = t.getAliasSymbol()?.name;
+
   // Branded newtype: `string & { __brand: "UserId" }`
-  const base  = t.types.find(x => x.flags & (ts.TypeFlags.String | ts.TypeFlags.Number));
-  const brand = t.types.find(x => (x.flags & ts.TypeFlags.Object) &&
-    (x as ts.ObjectType).getProperties().some(p => p.name.startsWith('__brand') || p.name.startsWith('_brand')));
+  const base  = types.find(x => x.flags & (ts.TypeFlags.String | ts.TypeFlags.Number));
+  const brand = types.find(x => (x.flags & ts.TypeFlags.Object) &&
+    checker.getPropertiesOfType(x).some(p => p.name.startsWith('__brand') || p.name.startsWith('_brand')));
   if (base && brand) {
-    const alias = getAliasName(t);
     return alias ? TyRef(alias) : (base.flags & ts.TypeFlags.String ? TyString : TyFloat);
   }
 
-  const alias = getAliasName(t);
   if (alias) return TyRef(alias);
 
-  const concrete = t.types.find(x => !(x.flags & ts.TypeFlags.Object) ||
-    (x as ts.ObjectType).getProperties().length > 0);
+  const concrete = types.find(x => !(x.flags & ts.TypeFlags.Object) ||
+    checker.getPropertiesOfType(x).length > 0);
   return concrete ? mapType(concrete, checker, depth + 1) : TyRef('TSAny');
 }
 
 // ─── Object types ───────────────────────────────────────────────────────────────
 
-function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IRType {
-  if (t.objectFlags & ts.ObjectFlags.Reference)
-    return mapTypeRef(t as ts.TypeReference, checker, depth);
+function mapObject(t: ts.ObjectType, checker: ts.Checker, depth: number): IRType {
+  // A reference is an object type carrying `ObjectFlags.Reference`, which is exactly what this
+  // predicate tests; asking it here also narrows `t`, which is what `getTypeArguments` demands.
+  if (ts.isTypeReference(t)) return mapTypeRef(t, checker, depth);
 
-  const sym = t.symbol;
+  const sym = t.getSymbol();
   if (!sym) return TyRef('TSAny');
 
   // Call signatures → function type
@@ -281,13 +293,15 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
   if (calls.length > 0) {
     const sig = calls[0];
     const params = sig.getParameters().map(p => {
-      const declaration = p.valueDeclaration ?? p.declarations?.[0];
+      // A declaration is a handle into the program the symbol came from; one that no longer
+      // resolves falls back to the symbol's own type, as a symbol with no declaration does.
+      const declaration = (p.valueDeclaration ?? p.declarations[0])?.resolve();
       const pt = declaration
         ? checker.getTypeOfSymbolAtLocation(p, declaration)
         : checker.getTypeOfSymbol(p);
-      return mapType(pt, checker, depth + 1);
+      return mapTypeOrAny(pt, checker, depth + 1);
     });
-    return TyFn(params, mapType(checker.getReturnTypeOfSignature(sig), checker, depth + 1), Pure);
+    return TyFn(params, mapTypeOrAny(checker.getReturnTypeOfSignature(sig), checker, depth + 1), Pure);
   }
 
   // Anonymous object types (e.g. { name: string }) → AssocMap String TSAny.
@@ -295,12 +309,12 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
   const name = sym.name;
   if (TS_ANON_NAMES.has(name)) {
     // Check if the type has named properties → use AssocMap for field access support
-    const props = t.getProperties();
+    const props = checker.getPropertiesOfType(t);
     if (props.length > 0) return TyMap(TyString, TyRef('TSAny'));
     // Check for index signatures (e.g. {[k: string]: T}) → Map
     const indexInfo = checker.getIndexInfosOfType(t);
     if (indexInfo.length > 0) {
-      const valType = indexInfo[0].type ? mapType(indexInfo[0].type, checker, depth + 1) : TyRef('TSAny');
+      const valType = mapType(indexInfo[0].valueType, checker, depth + 1);
       return TyMap(TyString, valType);
     }
     // Check call signatures → function type (already handled above, this is fallback)
@@ -315,8 +329,9 @@ function mapObject(t: ts.ObjectType, checker: ts.TypeChecker, depth: number): IR
 
 // ─── Generic type references ────────────────────────────────────────────────────
 
-function mapTypeRef(t: ts.TypeReference, checker: ts.TypeChecker, depth: number): IRType {
-  const name = t.target.symbol?.name ?? '';
+function mapTypeRef(t: ts.TypeReference, checker: ts.Checker, depth: number): IRType {
+  const target = t.getTarget().getSymbol();
+  const name = target?.name ?? '';
   const args = checker.getTypeArguments(t);
   const map1 = () => args[0] ? mapType(args[0], checker, depth + 1) : TyRef('TSAny');
   const map2 = (i: number) => args[i] ? mapType(args[i], checker, depth + 1) : TyRef('TSAny');
@@ -335,7 +350,7 @@ function mapTypeRef(t: ts.TypeReference, checker: ts.TypeChecker, depth: number)
         return args.length === 0 ? TyRef(name) : TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
       }
       // no arguments to lose, so provenance can answer; a generic one is named
-      if (args.length === 0 && declaredByTypeScriptItself(t.target.symbol)) return TyRef('TSAny');
+      if (args.length === 0 && declaredByTypeScriptItself(target)) return TyRef('TSAny');
       if (NO_LEAN_CARRIER_NAMES.has(name)) return TyRef('TSAny');
       return args.length === 0 ? TyRef(name) : TyRef(name, args.map(a => mapType(a, checker, depth + 1)));
     }
@@ -360,16 +375,17 @@ export interface StructField {
  */
 export function extractStructFields(
   node: ts.InterfaceDeclaration | ts.ClassDeclaration,
-  checker: ts.TypeChecker,
+  checker: ts.Checker,
 ): StructField[] {
   const out: StructField[] = [];
   for (const m of node.members) {
-    const isMethod = ts.isMethodSignature(m);
-    if (!ts.isPropertySignature(m) && !ts.isPropertyDeclaration(m) && !isMethod) continue;
-    const name = m.name?.getText() ?? '';
+    const isMethod = ts.isMethodSignatureDeclaration(m);
+    if (!ts.isPropertySignatureDeclaration(m) && !ts.isPropertyDeclaration(m) && !isMethod) continue;
+    const name = m.name.getText();
     const sym  = checker.getSymbolAtLocation(m.name);
-    const ty   = sym ? checker.getTypeOfSymbol(sym) : checker.getAnyType();
-    const opt  = !!m.questionToken;
+    const ty   = (sym ? checker.getTypeOfSymbol(sym) : undefined) ?? checker.getAnyType();
+    // One postfix token spells both `?` and `!`, so only the question mark means optional.
+    const opt  = m.postfixToken?.kind === ts.SyntaxKind.QuestionToken;
     const mut  = !m.modifiers?.some(mod => mod.kind === ts.SyntaxKind.ReadonlyKeyword);
     // Method signatures: use actual function type if it's concrete (no universe issues),
     // fall back to TSAny for complex/generic methods
@@ -377,8 +393,8 @@ export function extractStructFields(
     if (isMethod) {
       const sig = checker.getSignaturesOfType(ty, ts.SignatureKind.Call)[0];
       if (sig) {
-        const params = sig.parameters.map(p => mapType(checker.getTypeOfSymbol(p), checker));
-        const ret = mapType(checker.getReturnTypeOfSignature(sig), checker);
+        const params = sig.getParameters().map(p => mapTypeOrAny(checker.getTypeOfSymbol(p), checker));
+        const ret = mapTypeOrAny(checker.getReturnTypeOfSignature(sig), checker);
         // Only use concrete function type if params are simple (no TypeVars)
         const hasTypeVar = (t: IRType): boolean =>
           t.tag === 'TypeVar' || (t.tag === 'Array' && hasTypeVar(t.elem)) ||
@@ -395,8 +411,8 @@ export function extractStructFields(
     } else {
       mapped = mapType(ty, checker);
     }
-    // Avoid Option double-wrapping: if TypeChecker already resolved T | undefined
-    // as Option T, don't wrap again for questionToken
+    // Avoid Option double-wrapping: when the checker already resolved T | undefined
+    // as Option T, the postfix `?` must not wrap it a second time.
     const needsWrap = opt && mapped.tag !== 'Option';
     out.push({
       name,
@@ -425,14 +441,14 @@ export interface DiscriminantInfo {
  * the first field for which every union member has a unique string literal value.
  *
  * @param t       - The TypeScript union type.
- * @param checker - The TypeChecker for resolving field types.
+ * @param checker - The checker for resolving field types.
  * @returns Discriminant info if detected, or `null`.
  */
 export function detectDiscriminatedUnion(
   t: ts.UnionType,
-  checker: ts.TypeChecker,
+  checker: ts.Checker,
 ): DiscriminantInfo | null {
-  const objTypes = t.types.filter(x => x.flags & ts.TypeFlags.Object) as ts.ObjectType[];
+  const objTypes = (t.getTypes() ?? []).filter(x => (x.flags & ts.TypeFlags.Object) !== 0);
   if (objTypes.length < 2) return null;
 
   for (const field of DISCRIMINANT_FIELDS) {
@@ -461,11 +477,11 @@ export interface StringEnumeration {
  * an enumeration rather than getting a renamed case that no longer corresponds.
  */
 export function stringEnumerationMembers(t: ts.Type): readonly string[] | null {
-  if (!t.isUnion()) return null;
+  if (!t.isUnionType()) return null;
   const members: string[] = [];
-  for (const member of t.types) {
-    if ((member.flags & ts.TypeFlags.StringLiteral) === 0) return null;
-    const literal = (member as ts.StringLiteralType).value;
+  for (const member of t.getTypes() ?? []) {
+    if (!member.isStringLiteralType()) return null;
+    const literal = member.value;
     if (!isLeanIdentifier(literal)) return null;
     members.push(literal);
   }
@@ -478,9 +494,9 @@ export function stringEnumerationMembers(t: ts.Type): readonly string[] | null {
  * alias is not an enumeration, so both answer `null`.
  */
 export function describeStringEnumeration(t: ts.Type): StringEnumeration | null {
-  const alias = getAliasSymbol(t);
+  const alias = t.getAliasSymbol();
   if (alias === undefined || !isLeanIdentifier(alias.name)) return null;
-  if ((t.aliasTypeArguments?.length ?? 0) > 0) return null;
+  if (t.getAliasTypeArguments().length > 0) return null;
   const members = stringEnumerationMembers(t);
   return members === null ? null : { name: alias.name, members };
 }
@@ -501,24 +517,29 @@ export const TAGGED_OPTION = Object.freeze({
  * spellings denote the same Lean `Option`, so this recognises the tagged one structurally
  * and never by the name a module happened to give the alias.
  */
-export function taggedOptionElement(t: ts.Type, checker: ts.TypeChecker): ts.Type | null {
-  if (!t.isUnion() || t.types.length !== 2) return null;
+export function taggedOptionElement(t: ts.Type, checker: ts.Checker): ts.Type | null {
+  if (!t.isUnionType()) return null;
+  const members = t.getTypes() ?? [];
+  if (members.length !== 2) return null;
   let absent = false;
   let present: ts.Type | null = null;
-  for (const member of t.types) {
-    const tag = member.getProperty(TAGGED_OPTION.tag);
+  for (const member of members) {
+    const tag = checker.getPropertyOfType(member, TAGGED_OPTION.tag);
     if (tag === undefined) return null;
     const tagType = checker.getTypeOfSymbol(tag);
-    if (!tagType.isStringLiteral()) return null;
-    const properties = member.getProperties();
+    if (tagType === undefined || !tagType.isStringLiteralType()) return null;
+    const properties = checker.getPropertiesOfType(member);
     if (tagType.value === TAGGED_OPTION.absent && properties.length === 1) {
       absent = true;
       continue;
     }
     if (tagType.value !== TAGGED_OPTION.present || properties.length !== 2) return null;
-    const value = member.getProperty(TAGGED_OPTION.value);
+    const value = checker.getPropertyOfType(member, TAGGED_OPTION.value);
     if (value === undefined) return null;
-    present = checker.getTypeOfSymbol(value);
+    // A value whose type the checker declines to give is not a recognisable encoding.
+    const element = checker.getTypeOfSymbol(value);
+    if (element === undefined) return null;
+    present = element;
   }
   return absent && present !== null ? present : null;
 }
@@ -530,27 +551,28 @@ export function taggedOptionElement(t: ts.Type, checker: ts.TypeChecker): ts.Typ
  * and TypeScript flattens that union so the members alone no longer name `E`. Rebuilding the
  * non-nullable type recovers the name.
  */
-export function expectedStringEnumeration(t: ts.Type, checker: ts.TypeChecker): StringEnumeration | null {
+export function expectedStringEnumeration(t: ts.Type, checker: ts.Checker): StringEnumeration | null {
   const direct = describeStringEnumeration(t);
   if (direct !== null) return direct;
-  if (!t.isUnion() || !t.types.some((member) => (member.flags & ts.TypeFlags.Undefined) !== 0)) return null;
-  return describeStringEnumeration(checker.getNonNullableType(t));
+  if (!t.isUnionType()) return null;
+  if (!(t.getTypes() ?? []).some((member) => (member.flags & ts.TypeFlags.Undefined) !== 0)) return null;
+  const nonNullable = checker.getNonNullableType(t);
+  return nonNullable === undefined ? null : describeStringEnumeration(nonNullable);
 }
 
-function tryField(types: ts.ObjectType[], field: string, checker: ts.TypeChecker): DiscriminantInfo | null {
+function tryField(types: readonly ts.Type[], field: string, checker: ts.Checker): DiscriminantInfo | null {
   const variants: DiscriminantInfo['variants'] = [];
   for (const t of types) {
-    const prop = t.getProperty(field);
+    const prop = checker.getPropertyOfType(t, field);
     if (!prop) return null;
     const pt = checker.getTypeOfSymbol(prop);
-    if (!(pt.flags & ts.TypeFlags.StringLiteral)) return null;
-    const lit = (pt as ts.StringLiteralType).value;
+    if (pt === undefined || !pt.isStringLiteralType()) return null;
+    const lit = pt.value;
     const fields: StructField[] = [];
-    for (const sym of t.getProperties()) {
+    for (const sym of checker.getPropertiesOfType(t)) {
       if (sym.name === field) continue;
-      const st = checker.getTypeOfSymbol(sym);
       const opt = !!(sym.flags & ts.SymbolFlags.Optional);
-      const mapped = mapType(st, checker);
+      const mapped = mapTypeOrAny(checker.getTypeOfSymbol(sym), checker);
       const needsWrap = opt && mapped.tag !== 'Option';
       fields.push({
         name: sym.name,
@@ -573,14 +595,14 @@ function tryField(types: ts.ObjectType[], field: string, checker: ts.TypeChecker
 export function extractTypeParams(
   node: ts.InterfaceDeclaration | ts.ClassDeclaration | ts.TypeAliasDeclaration |
         ts.FunctionDeclaration | ts.MethodDeclaration | ts.ArrowFunction | ts.FunctionExpression,
-  checker?: ts.TypeChecker,
+  checker?: ts.Checker,
 ): TypeParam[] {
   return (node.typeParameters ?? []).map(tpNode => {
     const name = tpNode.name.text;
     const constraint = checker && tpNode.constraint
       ? safeMapType(checker, tpNode.constraint) : undefined;
-    const default_ = checker && tpNode.default
-      ? safeMapType(checker, tpNode.default) : undefined;
+    const default_ = checker && tpNode.defaultType
+      ? safeMapType(checker, tpNode.defaultType) : undefined;
     return { name, constraint, default_ };
   });
 }
@@ -588,21 +610,14 @@ export function extractTypeParams(
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
 /**
- * Access the `aliasSymbol` on a TypeScript type.
- *
- * This property is not in the public TS API typings but is stable across
- * TypeScript versions (4.x–5.x).  It gives the declared alias for union and
- * intersection types — its name, and where it was declared.
+ * A type the checker declines to give maps as `TSAny`, which is where an unresolvable type
+ * landed when the checker answered with its error type instead: that type's flags say `any`.
  */
-function getAliasSymbol(t: ts.Type): ts.Symbol | undefined {
-  return (t as { aliasSymbol?: ts.Symbol }).aliasSymbol;
+function mapTypeOrAny(t: ts.Type | undefined, checker: ts.Checker, depth = 0): IRType {
+  return t === undefined ? TyRef('TSAny') : mapType(t, checker, depth);
 }
 
-function getAliasName(t: ts.Type): string | undefined {
-  return getAliasSymbol(t)?.name;
-}
-
-function safeMapType(checker: ts.TypeChecker, node: ts.TypeNode): IRType | undefined {
+function safeMapType(checker: ts.Checker, node: ts.TypeNode): IRType | undefined {
   const type = checker.getTypeAtLocation(node);
   return type ? mapType(type, checker, 0) : undefined;
 }

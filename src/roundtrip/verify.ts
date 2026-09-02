@@ -31,7 +31,14 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import ts from 'typescript';
+import * as ts from '../typescript-api/index.js';
+import {
+  forget,
+  openProject,
+  renderDiagnostic,
+  type CompilerSettings,
+  type ReadProject,
+} from '../typescript-api/session.js';
 import { generateLeanTracked } from '../codegen/index.js';
 import type { LeanFile } from '../codegen/lean-ast.js';
 import { buildLeanFile } from '../codegen/v2.js';
@@ -108,28 +115,34 @@ export async function verifyLeanToTypeScriptRoundtrip(
   const generatedPaths = manifest.semantic.modules.map((module) => module.path);
 
   const generated = openProgram(root, generatedPaths);
-  checks.push(typeScriptCheck('generated typescript accepts', generated.program, counterexamples));
-
-  // Every module the package ships is projected, not only the ones carrying a Lean module.
-  // A package layout puts the shared option encoding in its own runtime artifact, and a
-  // module that names an option imports the encoding from there, so dropping that artifact
-  // would leave the projection unable to compile. A module contributing nothing admitted
-  // projects to nothing and is left out.
   const projections = new Map<string, ProjectedModule>();
-  for (const module of manifest.semantic.modules) {
-    const source = generated.program.getSourceFile(join(root, module.path));
-    if (source === undefined) throw new TypeError(`the package has no module at ${module.path}`);
-    const projection = projectModule(source, generated.checker, module.path);
-    if (module.leanModule === '' && projection.profile.admitted.length === 0) continue;
-    projections.set(module.path, projection);
+  try {
+    checks.push(typeScriptCheck('generated typescript accepts', generated, counterexamples));
+
+    // Every module the package ships is projected, not only the ones carrying a Lean module.
+    // A package layout puts the shared option encoding in its own runtime artifact, and a
+    // module that names an option imports the encoding from there, so dropping that artifact
+    // would leave the projection unable to compile. A module contributing nothing admitted
+    // projects to nothing and is left out.
+    for (const module of manifest.semantic.modules) {
+      const source = generated.program.getSourceFile(join(root, module.path));
+      if (source === undefined) throw new TypeError(`the package has no module at ${module.path}`);
+      const projection = projectModule(source, generated.checker, module.path);
+      if (module.leanModule === '' && projection.profile.admitted.length === 0) continue;
+      projections.set(module.path, projection);
+    }
+  } finally {
+    // Nothing is read through the generated package's program after this point: a projection
+    // carries the text it copied and the profile's classifications, not the nodes it cut.
+    generated.close();
   }
   checks.push(declaredIntersectionCheck(manifest, projections, counterexamples));
 
   const projected = new Map([...projections].map(([path, entry]) => [path, entry.source]));
   const workspace = materialise(projected);
+  const reprojected = openProgram(workspace, [...projected.keys()]);
   try {
-    const reprojected = openProgram(workspace, [...projected.keys()]);
-    checks.push(typeScriptCheck('projection accepts', reprojected.program, counterexamples));
+    checks.push(typeScriptCheck('projection accepts', reprojected, counterexamples));
 
     const recovered = recoverLean(workspace, [...projected.keys()]);
     checks.push(placeholderCheck(recovered, counterexamples));
@@ -217,6 +230,7 @@ export async function verifyLeanToTypeScriptRoundtrip(
       ...(source === undefined ? {} : { sourceBehaviour: source }),
     };
   } finally {
+    reprojected.close();
     rmSync(workspace, { recursive: true, force: true });
   }
 }
@@ -240,119 +254,131 @@ export async function verifyTypeScriptToLeanRoundtrip(
   const paths = sources.map((source) => relative(root, source));
 
   const opened = openProgram(root, paths);
-  checks.push(typeScriptCheck('source typescript accepts', opened.program, counterexamples));
-  checks.push(profileCheck(opened, root, paths, counterexamples));
-  const recovered = recoverLean(root, paths);
-  checks.push(placeholderCheck(recovered, counterexamples));
-  const recoveredCheck = leanCheck(recovered.modules, options, counterexamples);
-  checks.push(recoveredCheck);
+  try {
+    checks.push(typeScriptCheck('source typescript accepts', opened, counterexamples));
+    checks.push(profileCheck(opened, root, paths, counterexamples));
+    const recovered = recoverLean(root, paths);
+    checks.push(placeholderCheck(recovered, counterexamples));
+    const recoveredCheck = leanCheck(recovered.modules, options, counterexamples);
+    checks.push(recoveredCheck);
 
-  // Acceptance by both checkers says the two artifacts are well formed. Only running them
-  // says they compute the same function, so this direction executes both as well.
-  const sourceTexts = new Map(paths.map((path) => [path, readFileSync(join(root, path), 'utf8')]));
-  const recoveredBehaviour = recoveredCheck.holds
-    ? await attemptBehaviour(() => ({
-        typescript: sourceTexts,
-        lean: recovered.modules,
-        functions: observableFunctions(opened, root, recovered),
-        typeModules: declaringModules(opened, root, recovered),
-        ...(options.leanProjectRoot === undefined ? {} : { projectRoot: options.leanProjectRoot }),
-        ...(options.behaviourLimit === undefined ? {} : { limit: options.behaviourLimit }),
-      }), 'both sides compute the same function', counterexamples)
-    : { report: undefined, failure: 'the recovered Lean was not accepted' };
-  const behaviour = recoveredBehaviour.report;
-  checks.push(behaviour === undefined
-    ? unavailableBehaviourCheck('both sides compute the same function', recoveredBehaviour.failure ?? 'the behavior runner failed')
-    : behaviourCheck(behaviour, 'both sides compute the same function', counterexamples));
+    // Acceptance by both checkers says the two artifacts are well formed. Only running them
+    // says they compute the same function, so this direction executes both as well.
+    const sourceTexts = new Map(paths.map((path) => [path, readFileSync(join(root, path), 'utf8')]));
+    const recoveredBehaviour = recoveredCheck.holds
+      ? await attemptBehaviour(() => ({
+          typescript: sourceTexts,
+          lean: recovered.modules,
+          functions: observableFunctions(opened, root, recovered),
+          typeModules: declaringModules(opened, root, recovered),
+          ...(options.leanProjectRoot === undefined ? {} : { projectRoot: options.leanProjectRoot }),
+          ...(options.behaviourLimit === undefined ? {} : { limit: options.behaviourLimit }),
+        }), 'both sides compute the same function', counterexamples)
+      : { report: undefined, failure: 'the recovered Lean was not accepted' };
+    const behaviour = recoveredBehaviour.report;
+    checks.push(behaviour === undefined
+      ? unavailableBehaviourCheck('both sides compute the same function', recoveredBehaviour.failure ?? 'the behavior runner failed')
+      : behaviourCheck(behaviour, 'both sides compute the same function', counterexamples));
 
-  /**
-   * One lap: compile the Lean back to TypeScript, project the result, and compile that back
-   * to Lean. The generated package carries the emitter's data boundary just as the first one
-   * did, so the projection runs on every lap.
-   */
-  const lap = (
-    from: RecoveredLean,
-    onRegenerated?: (opened: OpenedProgram, workspace: string, paths: readonly string[]) => void,
-  ): RecoveredLean | null => {
-    const leanProject = stageLeanProject(options.leanProjectRoot ?? PACKAGED_LEAN_PROJECT, from.modules);
-    const workspace = materialise(new Map());
-    const projectedWorkspace = materialise(new Map());
-    try {
-      const regenerated = regenerateTypeScript(leanProject, from, counterexamples);
-      if (onRegenerated !== undefined) checks.push(regenerated.check);
-      if (regenerated.sources === null) return null;
-      writeInto(workspace, regenerated.sources);
-      const regeneratedPaths = [...regenerated.sources.keys()];
-      const reopened = openProgram(workspace, regeneratedPaths);
-      onRegenerated?.(reopened, workspace, regeneratedPaths);
+    /**
+     * One lap: compile the Lean back to TypeScript, project the result, and compile that back
+     * to Lean. The generated package carries the emitter's data boundary just as the first one
+     * did, so the projection runs on every lap.
+     */
+    const lap = (
+      from: RecoveredLean,
+      onRegenerated?: (opened: ReadProject, workspace: string, paths: readonly string[]) => void,
+    ): RecoveredLean | null => {
+      const leanProject = stageLeanProject(options.leanProjectRoot ?? PACKAGED_LEAN_PROJECT, from.modules);
+      const workspace = materialise(new Map());
+      const projectedWorkspace = materialise(new Map());
+      try {
+        const regenerated = regenerateTypeScript(leanProject, from, counterexamples);
+        if (onRegenerated !== undefined) checks.push(regenerated.check);
+        if (regenerated.sources === null) return null;
+        writeInto(workspace, regenerated.sources);
+        const regeneratedPaths = [...regenerated.sources.keys()];
+        const reopened = openProgram(workspace, regeneratedPaths);
+        try {
+          onRegenerated?.(reopened, workspace, regeneratedPaths);
 
-      const projected = new Map<string, string>();
-      for (const path of regeneratedPaths) {
-        const source = reopened.program.getSourceFile(join(workspace, path));
-        if (source === undefined) throw new TypeError(`the regenerated package has no module at ${path}`);
-        projected.set(path, projectModule(source, reopened.checker, path).source);
+          const projected = new Map<string, string>();
+          for (const path of regeneratedPaths) {
+            const source = reopened.program.getSourceFile(join(workspace, path));
+            if (source === undefined) throw new TypeError(`the regenerated package has no module at ${path}`);
+            projected.set(path, projectModule(source, reopened.checker, path).source);
+          }
+          writeInto(projectedWorkspace, projected);
+          return recoverLean(projectedWorkspace, [...projected.keys()]);
+        } finally {
+          reopened.close();
+        }
+      } finally {
+        rmSync(leanProject, { recursive: true, force: true });
+        rmSync(workspace, { recursive: true, force: true });
+        rmSync(projectedWorkspace, { recursive: true, force: true });
       }
-      writeInto(projectedWorkspace, projected);
-      return recoverLean(projectedWorkspace, [...projected.keys()]);
-    } finally {
-      rmSync(leanProject, { recursive: true, force: true });
-      rmSync(workspace, { recursive: true, force: true });
-      rmSync(projectedWorkspace, { recursive: true, force: true });
-    }
-  };
+    };
 
-  const second = lap(recovered, (reopened, workspace, regeneratedPaths) => {
-    checks.push(typeScriptCheck('regenerated typescript accepts', reopened.program, counterexamples));
-    checks.push(declarationParityCheck(
-      opened, root, paths, reopened, workspace, regeneratedPaths, counterexamples,
-    ));
-  });
-  if (second === null) {
+    const second = lap(recovered, (reopened, workspace, regeneratedPaths) => {
+      checks.push(typeScriptCheck('regenerated typescript accepts', reopened, counterexamples));
+      checks.push(declarationParityCheck(
+        opened, root, paths, reopened, workspace, regeneratedPaths, counterexamples,
+      ));
+    });
+    if (second === null) {
+      return {
+        direction: 'typescript-to-lean-to-typescript',
+        subject: paths.join(', '),
+        holds: false,
+        checks,
+        counterexamples,
+        behaviour,
+      };
+    }
+
+    // The compiler chooses its own declaration order, so the first Lean and the second differ
+    // in order alone. A fixed point is `f (f x) = f x`, so the comparison is between the second
+    // lap and the third.
+    const third = lap(second);
+    checks.push(third === null
+      ? { name: 'the trip reaches a fixed point', holds: false, detail: 'a further lap did not compile' }
+      : leanFixedPointCheck(second, third, counterexamples));
+
     return {
       direction: 'typescript-to-lean-to-typescript',
       subject: paths.join(', '),
-      holds: false,
+      holds: checks.every((check) => check.holds),
       checks,
       counterexamples,
       behaviour,
     };
+  } finally {
+    opened.close();
   }
-
-  // The compiler chooses its own declaration order, so the first Lean and the second differ
-  // in order alone. A fixed point is `f (f x) = f x`, so the comparison is between the second
-  // lap and the third.
-  const third = lap(second);
-  checks.push(third === null
-    ? { name: 'the trip reaches a fixed point', holds: false, detail: 'a further lap did not compile' }
-    : leanFixedPointCheck(second, third, counterexamples));
-
-  return {
-    direction: 'typescript-to-lean-to-typescript',
-    subject: paths.join(', '),
-    holds: checks.every((check) => check.holds),
-    checks,
-    counterexamples,
-    behaviour,
-  };
 }
 
 // ─── Checks ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Whether the compiler accepts a program.
+ *
+ * The project reports every diagnostic it has before an emit — its configuration, the
+ * program, each file's syntax, the globals and the types — so a program that only fails to
+ * be configured is as much a counterexample as one that fails to type-check.
+ */
 function typeScriptCheck(
   name: string,
-  program: ts.Program,
+  project: ReadProject,
   counterexamples: RoundtripCounterexample[],
 ): RoundtripCheck {
-  const diagnostics = [
-    ...program.getSemanticDiagnostics(),
-    ...program.getSyntacticDiagnostics(),
-  ];
+  const diagnostics = project.diagnostics();
   for (const diagnostic of diagnostics) {
     counterexamples.push({
       check: name,
-      subject: diagnostic.file?.fileName ?? '(program)',
+      subject: diagnostic.fileName ?? '(program)',
       expected: 'no TypeScript diagnostic',
-      actual: ts.flattenDiagnosticMessageText(diagnostic.messageText, ' '),
+      actual: renderDiagnostic(diagnostic, ' '),
     });
   }
   return {
@@ -402,7 +428,7 @@ function declaredIntersectionCheck(
 
 /** Every declaration of a source module has to be inside the profile. */
 function profileCheck(
-  opened: OpenedProgram,
+  opened: ReadProject,
   root: string,
   paths: readonly string[],
   counterexamples: RoundtripCounterexample[],
@@ -550,7 +576,7 @@ async function attemptBehaviour(
 
 /** Sending the projection round again has to produce the same projection and the same Lean. */
 function fixedPointCheck(
-  reprojected: OpenedProgram,
+  reprojected: ReadProject,
   workspace: string,
   projected: ReadonlyMap<string, string>,
   recovered: RecoveredLean,
@@ -653,10 +679,10 @@ function leanFixedPointCheck(
 
 /** The two sides must declare the same enumerations, structures and signatures. */
 function declarationParityCheck(
-  opened: OpenedProgram,
+  opened: ReadProject,
   root: string,
   paths: readonly string[],
-  regenerated: OpenedProgram,
+  regenerated: ReadProject,
   regeneratedRoot: string,
   regeneratedPaths: readonly string[],
   counterexamples: RoundtripCounterexample[],
@@ -704,23 +730,32 @@ function declarationParityCheck(
 
 // ─── Stages ─────────────────────────────────────────────────────────────────────
 
-interface OpenedProgram {
-  readonly program: ts.Program;
-  readonly checker: ts.TypeChecker;
-}
-
-const COMPILER_OPTIONS: ts.CompilerOptions = {
-  target: ts.ScriptTarget.ES2022,
-  module: ts.ModuleKind.NodeNext,
-  moduleResolution: ts.ModuleResolutionKind.NodeNext,
+/**
+ * The options the round trip reads every program with, spelled the way a `tsconfig.json`
+ * writes them, because that is what the compiler session hands the compiler.
+ */
+const COMPILER_SETTINGS: CompilerSettings = {
+  target: 'es2022',
+  module: 'nodenext',
+  moduleResolution: 'nodenext',
   strict: true,
   skipLibCheck: true,
-  lib: ['lib.es2022.d.ts'],
+  lib: ['es2022'],
 };
 
-function openProgram(root: string, paths: readonly string[]): OpenedProgram {
-  const program = ts.createProgram(paths.map((path) => join(root, path)), COMPILER_OPTIONS);
-  return { program, checker: program.getTypeChecker() };
+/**
+ * A program over the named modules of one workspace.
+ *
+ * The round trip writes the files it reads: a projection is materialised into a workspace, a
+ * lap regenerates a package into another, and both directions read module names they have
+ * already read on an earlier lap. A path is read once per compiler session, so the session's
+ * reading of these paths is dropped first; without that the program answers with the bytes an
+ * earlier lap left behind and every check over it passes on stale text.
+ */
+function openProgram(root: string, paths: readonly string[]): ReadProject {
+  const files = paths.map((path) => join(root, path));
+  forget(files);
+  return openProject({ files, settings: COMPILER_SETTINGS });
 }
 
 interface RecoveredLean {
@@ -741,6 +776,9 @@ interface RecoveredLean {
 
 /** Compile every module of a workspace to Lean, keeping the module graph. */
 function recoverLean(root: string, paths: readonly string[]): RecoveredLean {
+  // The parser reads through the same compiler session, so the same rewritten-in-place
+  // hazard applies here as in `openProgram`, and for the same reason.
+  forget(paths.map((path) => join(root, path)));
   const parsed = paths.map((path) => ({
     path,
     module: rewriteModule(parseFile({ fileName: join(root, path), projectRoot: root })),
@@ -920,7 +958,7 @@ function originalSourceRoot(
  */
 function originalTypeModules(
   manifest: LeanToTypeScriptManifest,
-  opened: OpenedProgram,
+  opened: ReadProject,
   workspace: string,
   recovered: RecoveredLean,
 ): ReadonlyMap<string, string> {
@@ -946,7 +984,7 @@ function originalTypeModules(
 
 /** Which recovered Lean module declares each profile type name. */
 function declaringModules(
-  opened: OpenedProgram,
+  opened: ReadProject,
   workspace: string,
   recovered: RecoveredLean,
 ): ReadonlyMap<string, string> {
@@ -989,7 +1027,7 @@ function registerTypeModule(
  * observation.
  */
 function observableFunctions(
-  opened: OpenedProgram,
+  opened: ReadProject,
   workspace: string,
   recovered: RecoveredLean,
 ): readonly ObservedFunction[] {
@@ -1009,15 +1047,17 @@ function observableFunctions(
 
 function observeDeclaration(
   declaration: ProfileDeclaration,
-  checker: ts.TypeChecker,
+  checker: ts.Checker,
   path: string,
   leanModule: string,
 ): ObservedFunction | null {
   if (declaration.kind !== 'function' && declaration.kind !== 'method') return null;
-  const node = declaration.node as ts.FunctionDeclaration | ts.MethodDeclaration;
+  const node = declaration.node;
+  if (!ts.isFunctionDeclaration(node) && !ts.isMethodDeclaration(node)) return null;
   const signature = checker.getSignatureFromDeclaration(node);
   if (signature === undefined) return null;
-  const result = resolveProfileType(signature.getReturnType(), checker);
+  const returned = checker.getReturnTypeOfSignature(signature);
+  const result = returned === undefined ? null : resolveProfileType(returned, checker);
   if (result === null) return null;
 
   const parameters: ProfileType[] = [];
@@ -1029,7 +1069,8 @@ function observeDeclaration(
     parameters.push(receiver);
   }
   for (const parameter of node.parameters) {
-    const type = resolveProfileType(checker.getTypeAtLocation(parameter), checker);
+    const declared = checker.getTypeAtLocation(parameter);
+    const type = declared === undefined ? null : resolveProfileType(declared, checker);
     if (type === null) return null;
     parameters.push(type);
   }
@@ -1143,7 +1184,7 @@ function stageLeanProject(projectRoot: string, modules: readonly LeanModuleSourc
  */
 function declaredShapes(
   profile: { readonly admitted: readonly ProfileDeclaration[] },
-  checker: ts.TypeChecker,
+  checker: ts.Checker,
   module: string,
 ): ReadonlyMap<string, string> {
   const shapes = new Map<string, string>();
@@ -1151,21 +1192,27 @@ function declaredShapes(
     // The option encoding declares no type of its own, so it has no shape to compare.
     if (declaration.kind === 'encoding') continue;
     const identity = `${module}#${declaration.name}`;
+    const node = declaration.node;
     if (declaration.kind === 'enumeration' || declaration.kind === 'structure') {
-      const name = declaration.node as ts.TypeAliasDeclaration | ts.InterfaceDeclaration | ts.ClassDeclaration;
-      if (name.name === undefined) continue;
-      const type = resolveProfileType(checker.getDeclaredTypeOfSymbol(requireSymbol(name.name, checker)), checker);
+      const named =
+        ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node) || ts.isClassDeclaration(node)
+          ? node.name
+          : undefined;
+      if (named === undefined) continue;
+      const type = resolveProfileType(checker.getDeclaredTypeOfSymbol(requireSymbol(named, checker)), checker);
       if (type !== null) shapes.set(identity, describeType(type));
       continue;
     }
-    const node = declaration.node as ts.FunctionDeclaration | ts.MethodDeclaration;
+    if (!ts.isFunctionDeclaration(node) && !ts.isMethodDeclaration(node)) continue;
     const signature = checker.getSignatureFromDeclaration(node);
     if (signature === undefined) continue;
     const parameters = node.parameters.map((parameter) => {
-      const type = resolveProfileType(checker.getTypeAtLocation(parameter), checker);
+      const declared = checker.getTypeAtLocation(parameter);
+      const type = declared === undefined ? null : resolveProfileType(declared, checker);
       return type === null ? '?' : describeType(type);
     });
-    const result = resolveProfileType(signature.getReturnType(), checker);
+    const returned = checker.getReturnTypeOfSignature(signature);
+    const result = returned === undefined ? null : resolveProfileType(returned, checker);
     shapes.set(identity, `(${parameters.join(', ')}) => ${result === null ? '?' : describeType(result)}`);
   }
   return shapes;
@@ -1194,7 +1241,7 @@ function describeType(type: ProfileType): string {
   }
 }
 
-function requireSymbol(name: ts.Identifier, checker: ts.TypeChecker): ts.Symbol {
+function requireSymbol(name: ts.Identifier, checker: ts.Checker): ts.Symbol {
   const symbol = checker.getSymbolAtLocation(name);
   if (symbol === undefined) throw new TypeError(`${name.text} has no symbol`);
   return symbol;

@@ -9,7 +9,7 @@
  * Pipeline position:  TS AST → **Effect inference** → IR (effect-annotated)
  */
 
-import * as ts from 'typescript';
+import * as ts from '../typescript-api/index.js';
 import {
   Effect, IRType, IO, Async, stateEffect, exceptEffect, combineEffects,
   TyString, TyUnit,
@@ -46,7 +46,7 @@ const FALLBACK_ERROR_TYPE = 'TSError';
  * @param checker - The TypeScript type checker for the program.
  * @returns The combined effect — Pure if no side effects were detected.
  */
-export function inferNodeEffect(node: ts.Node, checker: ts.TypeChecker): Effect {
+export function inferNodeEffect(node: ts.Node, checker: ts.Checker): Effect {
   void checker;
   const target = getFunctionBody(node) ?? node;
   const effects: Effect[] = [];
@@ -132,12 +132,16 @@ export function effectSubsumes(a: Effect, b: Effect): boolean {
 // Each `bodyContains*` function walks the AST looking for a specific pattern,
 // but never recurses into nested function scopes (lambdas, arrow functions,
 // method declarations) — those are separate effect boundaries.
+//
+// A node names its children through `forEachChild`, which answers with the first child
+// result the visitor found truthy and with nothing when no child answered, so a search
+// that found nothing reads as `false`.
 
 function getFunctionBody(node: ts.Node): ts.Node | null {
   if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) ||
       ts.isMethodDeclaration(node))
-    return (node as ts.FunctionDeclaration).body ?? null;
-  if (ts.isArrowFunction(node)) return (node as ts.ArrowFunction).body;
+    return node.body ?? null;
+  if (ts.isArrowFunction(node)) return node.body;
   if (ts.isVariableStatement(node)) {
     const d = node.declarationList.declarations[0];
     if (d?.initializer && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer)))
@@ -149,13 +153,13 @@ function getFunctionBody(node: ts.Node): ts.Node | null {
 function bodyContainsAwait(node: ts.Node): boolean {
   if (ts.isAwaitExpression(node)) return true;
   if (isNestedFnScope(node)) return false;
-  return node.getChildren().some(bodyContainsAwait);
+  return node.forEachChild(bodyContainsAwait) ?? false;
 }
 
 function bodyContainsThrow(node: ts.Node): boolean {
   if (ts.isThrowStatement(node)) return true;
   if (isNestedFnScope(node)) return false;
-  return node.getChildren().some(bodyContainsThrow);
+  return node.forEachChild(bodyContainsThrow) ?? false;
 }
 
 function bodyContainsMutation(node: ts.Node): boolean {
@@ -163,7 +167,7 @@ function bodyContainsMutation(node: ts.Node): boolean {
   if (ts.isPrefixUnaryExpression(node)  && isIncrDecr(node.operator))  return true;
   if (ts.isPostfixUnaryExpression(node) && isIncrDecr(node.operator))  return true;
   if (isNestedFnScope(node)) return false;
-  return node.getChildren().some(bodyContainsMutation);
+  return node.forEachChild(bodyContainsMutation) ?? false;
 }
 
 function bodyContainsIO(node: ts.Node): boolean {
@@ -173,7 +177,7 @@ function bodyContainsIO(node: ts.Node): boolean {
       return true;
   }
   if (isNestedFnScope(node)) return false;
-  return node.getChildren().some(bodyContainsIO);
+  return node.forEachChild(bodyContainsIO) ?? false;
 }
 
 function isNestedFnScope(node: ts.Node): boolean {

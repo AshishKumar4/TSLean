@@ -20,7 +20,7 @@
  * nothing the emitter recorded as a Lean declaration was dropped with them.
  */
 
-import ts from 'typescript';
+import * as ts from '../typescript-api/index.js';
 import {
   describeStringEnumeration,
   expectedStringEnumeration,
@@ -94,7 +94,7 @@ export interface ModuleProfile {
  */
 export function resolveProfileType(
   type: ts.Type,
-  checker: ts.TypeChecker,
+  checker: ts.Checker,
   seen: ReadonlySet<string> = new Set(),
 ): ProfileType | null {
   if ((type.flags & ts.TypeFlags.Boolean) !== 0) return { kind: 'boolean' };
@@ -104,7 +104,7 @@ export function resolveProfileType(
     return { kind: 'enumeration', name: enumeration.name, members: enumeration.members };
   }
 
-  if (type.isUnion()) {
+  if (type.isUnionType()) {
     // Both spellings of an option denote the same Lean type, so both resolve to the same
     // profile type. The generated encoding tags its cases; the written one uses `undefined`.
     const tagged = taggedOptionElement(type, checker);
@@ -117,8 +117,9 @@ export function resolveProfileType(
     // `T | undefined` flattens when `T` is itself a union, so the members no longer say
     // which alias was written. `getNonNullableType` rebuilds the written type, alias and
     // all, which is what names the Lean `Option` argument.
-    if (!type.types.some((member) => (member.flags & ts.TypeFlags.Undefined) !== 0)) return null;
-    const inner = resolveProfileType(checker.getNonNullableType(type), checker, seen);
+    if (!type.getTypes().some((member) => (member.flags & ts.TypeFlags.Undefined) !== 0)) return null;
+    const written = checker.getNonNullableType(type);
+    const inner = written === undefined ? null : resolveProfileType(written, checker, seen);
     return inner === null || inner.kind === 'option'
       ? null
       : { kind: 'option', inner, encoding: 'undefined' };
@@ -138,14 +139,17 @@ export function resolveProfileType(
  */
 function resolveStructure(
   type: ts.Type,
-  checker: ts.TypeChecker,
+  checker: ts.Checker,
   seen: ReadonlySet<string>,
 ): ProfileType | null {
   const symbol = type.getSymbol();
   if (symbol === undefined) return null;
   // A generated structure name is also the name of its codec value, so the symbol carries
-  // both declarations. Only the type-space one describes the structure.
-  const declarations = (symbol.declarations ?? [])
+  // both declarations. Only the type-space one describes the structure. A symbol names its
+  // declarations by handle, so each one is resolved back to a node before it is read.
+  const declarations = symbol.declarations
+    .map((handle) => handle.resolve())
+    .filter((entry) => entry !== undefined)
     .filter((entry) => ts.isInterfaceDeclaration(entry) || ts.isClassDeclaration(entry));
   if (declarations.length !== 1) return null;
   const declaration = declarations[0];
@@ -157,14 +161,16 @@ function resolveStructure(
   const nested = new Set([...seen, name]);
 
   const fields: ProfileField[] = [];
-  for (const property of type.getProperties()) {
-    const propertyDeclarations = property.declarations ?? [];
+  for (const property of checker.getPropertiesOfType(type)) {
+    const propertyDeclarations = property.declarations
+      .map((handle) => handle.resolve())
+      .filter((entry) => entry !== undefined);
     if (propertyDeclarations.length !== 1) return null;
     const member = propertyDeclarations[0];
-    if (ts.isMethodDeclaration(member) || ts.isMethodSignature(member)) continue;
-    if (!ts.isPropertyDeclaration(member) && !ts.isPropertySignature(member)) return null;
+    if (ts.isMethodDeclaration(member) || ts.isMethodSignatureDeclaration(member)) continue;
+    if (!ts.isPropertyDeclaration(member) && !ts.isPropertySignatureDeclaration(member)) return null;
     if ((property.flags & ts.SymbolFlags.Optional) !== 0) return null;
-    if ((ts.getCombinedModifierFlags(member) & ts.ModifierFlags.Readonly) === 0) return null;
+    if (!hasModifier(member, ts.SyntaxKind.ReadonlyKeyword)) return null;
     if (!isLeanIdentifier(property.name)) return null;
     const fieldType = resolveProfileType(checker.getTypeOfSymbolAtLocation(property, member), checker, nested);
     if (fieldType === null) return null;
@@ -185,7 +191,7 @@ function resolveStructure(
  * Classify every top-level declaration of a module, and every member of an admitted
  * class, as inside or outside the profile.
  */
-export function profileModule(source: ts.SourceFile, checker: ts.TypeChecker): ModuleProfile {
+export function profileModule(source: ts.SourceFile, checker: ts.Checker): ModuleProfile {
   const admitted: ProfileDeclaration[] = [];
   const refused: ProfileRefusal[] = [];
   const context: TermContext = { checker };
@@ -199,7 +205,7 @@ export function profileModule(source: ts.SourceFile, checker: ts.TypeChecker): M
 
 /** What a term needs to be checked against. */
 interface TermContext {
-  readonly checker: ts.TypeChecker;
+  readonly checker: ts.Checker;
 }
 
 function classifyStatement(
@@ -211,11 +217,11 @@ function classifyStatement(
   if (ts.isTypeAliasDeclaration(statement)) {
     const name = statement.name.text;
     const declared = context.checker.getTypeAtLocation(statement.name);
-    if (taggedOptionElement(declared, context.checker) !== null) {
+    if (declared !== undefined && taggedOptionElement(declared, context.checker) !== null) {
       admitted.push({ name, kind: 'encoding', exported: isExported(statement), node: statement });
       return;
     }
-    const enumeration = describeStringEnumeration(declared);
+    const enumeration = declared === undefined ? null : describeStringEnumeration(declared);
     if (enumeration === null || enumeration.name !== name) {
       refused.push({ name, reason: 'a type alias is in the profile only as an enumeration of string literals' });
       return;
@@ -293,13 +299,17 @@ function classifyClass(
 
   for (const member of declaration.members) {
     if (ts.isConstructorDeclaration(member) || ts.isPropertyDeclaration(member)) continue;
-    const memberName = member.name === undefined ? '(unnamed)' : member.name.getText(declaration.getSourceFile());
+    // Only a method or an accessor carries a name of its own; every other class element is
+    // reported by its syntax kind alone.
+    const memberName = ts.isMethodDeclaration(member) || ts.isAccessorDeclaration(member)
+      ? member.name.getText(declaration.getSourceFile())
+      : '(unnamed)';
     const qualified = `${name}.${memberName}`;
     if (!ts.isMethodDeclaration(member)) {
       refused.push({ name: qualified, reason: `${ts.SyntaxKind[member.kind]} is outside the profile` });
       continue;
     }
-    if (member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) === true) {
+    if (hasModifier(member, ts.SyntaxKind.StaticKeyword)) {
       refused.push({ name: qualified, reason: 'a static member has no Lean counterpart in the profile' });
       continue;
     }
@@ -326,7 +336,7 @@ function isCanonicalConstructor(
   if (declaration.parameters.length !== 1) return false;
   const parameter = declaration.parameters[0];
   if (!ts.isIdentifier(parameter.name)) return false;
-  const initialiser = resolveProfileType(context.checker.getTypeAtLocation(parameter), context.checker);
+  const initialiser = profileTypeAt(parameter, context);
   if (initialiser === null || initialiser.kind !== 'structure') return false;
   if (!sameFields(initialiser.fields, shape.fields)) return false;
 
@@ -379,7 +389,7 @@ function refuseFunction(
 ): string | null {
   if ((declaration.typeParameters?.length ?? 0) > 0) return 'a profile function takes no type parameters';
   if (declaration.asteriskToken !== undefined) return 'a generator has no profile counterpart';
-  if (declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true) {
+  if (hasModifier(declaration, ts.SyntaxKind.AsyncKeyword)) {
     return 'an async function has no profile counterpart';
   }
   for (const parameter of declaration.parameters) {
@@ -388,13 +398,14 @@ function refuseFunction(
     if (parameter.questionToken !== undefined || parameter.initializer !== undefined) {
       return 'an optional parameter has no profile counterpart';
     }
-    if (resolveProfileType(context.checker.getTypeAtLocation(parameter), context.checker) === null) {
+    if (profileTypeAt(parameter, context) === null) {
       return `parameter ${parameter.name.text} has no profile type`;
     }
   }
   const signature = context.checker.getSignatureFromDeclaration(declaration);
   if (signature === undefined) return 'the signature does not resolve';
-  if (resolveProfileType(signature.getReturnType(), context.checker) === null) {
+  const returned = context.checker.getReturnTypeOfSignature(signature);
+  if (returned === undefined || resolveProfileType(returned, context.checker) === null) {
     return 'the return type has no profile type';
   }
   const body = declaration.body;
@@ -435,7 +446,7 @@ function refuseStatement(statement: ts.Statement, context: TermContext, last: bo
       if (declaration.initializer === undefined) return 'a profile binding has an initialiser';
       const reason = refuseTerm(declaration.initializer, context);
       if (reason !== null) return reason;
-      if (resolveProfileType(context.checker.getTypeAtLocation(declaration.name), context.checker) === null) {
+      if (profileTypeAt(declaration.name, context) === null) {
         return `binding ${declaration.name.text} has no profile type`;
       }
     }
@@ -493,9 +504,7 @@ function refuseTerm(node: ts.Expression, context: TermContext): string | null {
   if (ts.isIdentifier(node)) {
     // `undefined` is the profile's `none`; its own type carries no other information.
     if (node.text === 'undefined') return null;
-    return resolveProfileType(declaredTypeOf(node, context), context.checker) === null
-      ? `${node.text} has no profile type`
-      : null;
+    return profileTypeOfDeclared(node, context) === null ? `${node.text} has no profile type` : null;
   }
 
   if (ts.isStringLiteral(node)) {
@@ -524,9 +533,7 @@ function refuseTerm(node: ts.Expression, context: TermContext): string | null {
   if (ts.isPropertyAccessExpression(node)) {
     const reason = refuseTerm(node.expression, context);
     if (reason !== null) return reason;
-    return resolveProfileType(declaredTypeOf(node, context), context.checker) === null
-      ? `${node.name.text} has no profile type`
-      : null;
+    return profileTypeOfDeclared(node, context) === null ? `${node.name.text} has no profile type` : null;
   }
 
   if (ts.isCallExpression(node)) return refuseCall(node, context);
@@ -547,10 +554,21 @@ function isEnumerationLiteral(node: ts.StringLiteral, context: TermContext): boo
   return enumeration !== null && enumeration.members.includes(node.text);
 }
 
-/** The type a name was declared with, which narrowing at a use site does not change. */
-function declaredTypeOf(node: ts.Expression, context: TermContext): ts.Type {
+/**
+ * The profile type a name was declared with, which narrowing at a use site does not change.
+ *
+ * A symbol names its value declaration by handle, so the declaration is resolved back to a
+ * node before the checker is asked for the type it holds there. A name the checker cannot
+ * type at all is outside the profile, exactly as a type with no carrier is.
+ */
+function profileTypeOfDeclared(node: ts.Expression, context: TermContext): ProfileType | null {
+  const declared = declaredTypeOf(node, context);
+  return declared === undefined ? null : resolveProfileType(declared, context.checker);
+}
+
+function declaredTypeOf(node: ts.Expression, context: TermContext): ts.Type | undefined {
   const symbol = context.checker.getSymbolAtLocation(node);
-  const declaration = symbol?.valueDeclaration;
+  const declaration = symbol?.valueDeclaration?.resolve();
   return declaration !== undefined && symbol !== undefined
     ? context.checker.getTypeOfSymbolAtLocation(symbol, declaration)
     : context.checker.getTypeAtLocation(node);
@@ -561,7 +579,7 @@ function declaredTypeOf(node: ts.Expression, context: TermContext): ts.Type {
  * the profile. A call into a library reaches semantics the round trip never checked.
  */
 function refuseCall(node: ts.CallExpression, context: TermContext): string | null {
-  const target = context.checker.getResolvedSignature(node)?.getDeclaration();
+  const target = context.checker.getResolvedSignature(node)?.declaration?.resolve();
   if (target === undefined) return 'the call target does not resolve';
   if (!ts.isFunctionDeclaration(target) && !ts.isMethodDeclaration(target)) {
     return 'a profile call names a function or a method';
@@ -584,7 +602,7 @@ function refuseCall(node: ts.CallExpression, context: TermContext): string | nul
 
 /** `new S({ … })` introduces a profile structure, exactly as a Lean structure literal does. */
 function refuseConstruction(node: ts.NewExpression, context: TermContext): string | null {
-  const constructed = resolveProfileType(context.checker.getTypeAtLocation(node), context.checker);
+  const constructed = profileTypeAt(node, context);
   if (constructed === null || constructed.kind !== 'structure') return 'construction builds a profile structure';
   const argumentList = node.arguments ?? [];
   if (argumentList.length !== 1 || !ts.isObjectLiteralExpression(argumentList[0])) {
@@ -626,7 +644,7 @@ function refuseOptionLiteral(node: ts.ObjectLiteralExpression, context: TermCont
   const field = (name: string): ts.Expression | undefined => assignments
     .find((entry) => ts.isIdentifier(entry.name) && entry.name.text === name)?.initializer;
   const tag = field(TAGGED_OPTION.tag);
-  if (tag === undefined || !ts.isStringLiteralLike(tag)) return 'a profile option carries its tag';
+  if (tag === undefined || !ts.isStringLiteralLikeNode(tag)) return 'a profile option carries its tag';
   const value = field(TAGGED_OPTION.value);
   if (tag.text === TAGGED_OPTION.absent) {
     return assignments.length === 1 && value === undefined ? null : 'an absent option carries only its tag';
@@ -638,9 +656,26 @@ function refuseOptionLiteral(node: ts.ObjectLiteralExpression, context: TermCont
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
+/**
+ * The profile type of the type the checker holds at a node, or `null` when there is none.
+ * A node the checker cannot type is outside the profile, exactly as a type with no carrier is.
+ */
+function profileTypeAt(node: ts.Node, context: TermContext): ProfileType | null {
+  const type = context.checker.getTypeAtLocation(node);
+  return type === undefined ? null : resolveProfileType(type, context.checker);
+}
+
+/**
+ * Whether a node carries one modifier keyword. TypeScript 7 holds modifiers and decorators
+ * in the same array, so a decorator is skipped rather than compared.
+ */
+function hasModifier(node: ts.ModifiersBase, kind: ts.ModifierSyntaxKind): boolean {
+  return (node.modifiers ?? []).some((modifier) => ts.isModifier(modifier) && modifier.kind === kind);
+}
+
 /** Whether a consumer of the module can reach the declaration by name. */
-function isExported(declaration: ts.Declaration): boolean {
-  return (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Export) !== 0;
+function isExported(declaration: ts.ModifiersBase): boolean {
+  return hasModifier(declaration, ts.SyntaxKind.ExportKeyword);
 }
 
 function symbolOf(name: ts.Identifier, context: TermContext): ts.Symbol {
@@ -649,13 +684,19 @@ function symbolOf(name: ts.Identifier, context: TermContext): ts.Symbol {
   return symbol;
 }
 
+/**
+ * The name a refusal reports for a statement the profile did not classify by kind.
+ *
+ * Only the statement kinds that reach a refusal here carry a name of their own: a binding
+ * names its first identifier, an enumeration and a namespace name themselves, and anything
+ * else has no name to report and is reported by its syntax kind.
+ */
 function statementName(statement: ts.Statement): string {
   if (ts.isVariableStatement(statement)) {
     const first = statement.declarationList.declarations[0]?.name;
     if (first !== undefined && ts.isIdentifier(first)) return first.text;
   }
-  const named = statement as { name?: ts.Node };
-  return named.name !== undefined && ts.isIdentifier(named.name as ts.Node)
-    ? (named.name as ts.Identifier).text
-    : ts.SyntaxKind[statement.kind];
+  if (ts.isEnumDeclaration(statement)) return statement.name.text;
+  if (ts.isModuleDeclaration(statement) && ts.isIdentifier(statement.name)) return statement.name.text;
+  return ts.SyntaxKind[statement.kind];
 }
