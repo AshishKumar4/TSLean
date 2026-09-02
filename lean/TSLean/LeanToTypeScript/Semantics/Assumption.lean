@@ -151,6 +151,8 @@ structure Runtime where
   listFirst : List Value → Value
   /-- `value.slice(1)`, emitted only under a `length === 0` guard -/
   listRest : List Value → List Value
+  /-- `[...value, element]` -/
+  listPush : List Value → Value → List Value
   /-- `-operand` on a bigint -/
   intNegate : Value → Value
   /-- raw bigint quotient `left / right`; the generated zero-guarded helper is derived below. -/
@@ -196,6 +198,14 @@ def intToNat (runtime : Runtime) (operand : Value) : Value :=
   runtime.conditionalValue (runtime.natLess operand (Encode.int 0))
     (fun () => Encode.nat 0)
     (fun () => operand)
+
+/-- `Array.toList` and `List.toArray` reach the target as the operand itself: an `Array` and a
+`List` share the dense-array image, which is what makes the higher-order `list.*` rows reachable
+from an `Array` without a second callback family. -/
+def arrayToList (_runtime : Runtime) (value : Value) : Value := value
+
+/-- The dual, at the same identity. -/
+def arrayOfList (_runtime : Runtime) (value : Value) : Value := value
 
 /-- `Int.ofNat` reaches the target as the operand itself: a `Nat` and an `Int` share the bigint
 representation, so the widening is the identity on the image rather than an engine operation. -/
@@ -399,11 +409,11 @@ def Id.provenance : Id → Provenance
           "sec-array.prototype.reduce", "sec-array.prototype.reduceright",
           "sec-array.prototype.some", "sec-array.prototype.every", "sec-array.prototype.reverse",
           "sec-array.prototype.slice"]
-        statement := "An array literal, a spread of an array, and length, indexing, slice, reverse, map, filter, reduce, reduceRight, some and every over it observe and produce exactly the dense element sequence, including the length === 0 comparison the emitted guards perform."
+        statement := "An array literal, a spread of an array, a spread followed by one more element, and length, indexing, slice, reverse, map, filter, reduce, reduceRight, some and every over it observe and produce exactly the dense element sequence, including the length === 0 comparison the emitted guards perform."
         oracle := "semantics-probes/array.dense-element-sequence"
         coverage := ["array-length", "array-spread", "array-reverse", "array-map", "array-filter",
             "array-reduce", "array-reduce-right", "array-some", "array-every", "array-index",
-            "array-slice"] }
+            "array-slice", "array-spread-append"] }
   | .bigintFromLength =>
       { clauses := ["sec-bigint-constructor-number-value"]
         statement := "The BigInt constructor applied to an array length yields that length as an exact integer."
@@ -515,7 +525,9 @@ def Id.statement (runtime : Runtime) : Id → Prop
           runtime.listAll holds values
             = Encode.bool (values.all fun value => (holds value).toBoolean)) ∧
       (∀ (head : Value) (tail : List Value), runtime.listFirst (head :: tail) = head) ∧
-      (∀ (head : Value) (tail : List Value), runtime.listRest (head :: tail) = tail)
+      (∀ (head : Value) (tail : List Value), runtime.listRest (head :: tail) = tail) ∧
+      (∀ (values : List Value) (element : Value),
+          runtime.listPush values element = values ++ [element])
   | .bigintFromLength =>
       ∀ values : List Value, runtime.listLength values = Encode.nat values.length
   | .optionTaggedObject =>

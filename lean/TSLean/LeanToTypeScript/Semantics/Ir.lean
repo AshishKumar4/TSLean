@@ -358,6 +358,13 @@ inductive Opcode where
   | stringSingleton
   | stringToList
   | stringOfList
+  | arraySize
+  | arrayIsEmpty
+  | arrayPush
+  | arrayAppend
+  | arrayReverse
+  | arrayToList
+  | arrayOfList
   deriving DecidableEq, Repr
 
 /-- The wire spelling the IR carries. -/
@@ -409,6 +416,13 @@ def Opcode.kind : Opcode → String
   | .stringSingleton => "string.singleton"
   | .stringToList => "string.toList"
   | .stringOfList => "string.ofList"
+  | .arraySize => "array.size"
+  | .arrayIsEmpty => "array.isEmpty"
+  | .arrayPush => "array.push"
+  | .arrayAppend => "array.append"
+  | .arrayReverse => "array.reverse"
+  | .arrayToList => "array.toList"
+  | .arrayOfList => "array.ofList"
 
 
 /-- Every admitted opcode. -/
@@ -419,7 +433,8 @@ def Opcode.all : List Opcode :=
     .listAny, .listAll, .listHead, .listFirst, .listRest, .intAdd, .intSubtract, .intMultiply,
     .intNegate, .intTruncatedDivide, .intTruncatedModulo, .intLess, .intLessOrEqual, .intEquals,
     .intOfNat, .intToNat, .charToNat, .charOfNat, .charEquals, .charLess, .stringLength,
-    .stringIsEmpty, .stringPush, .stringSingleton, .stringToList, .stringOfList]
+    .stringIsEmpty, .stringPush, .stringSingleton, .stringToList, .stringOfList, .arraySize,
+    .arrayIsEmpty, .arrayPush, .arrayAppend, .arrayReverse, .arrayToList, .arrayOfList]
 
 theorem Opcode.mem_all (code : Opcode) : code ∈ Opcode.all := by
   cases code <;> simp [Opcode.all]
@@ -471,7 +486,9 @@ def Opcode.operator? : Opcode → Option OperatorForm
   | .listHead | .listFirst | .listRest | .intAdd | .intSubtract | .intMultiply | .intNegate
   | .intTruncatedDivide | .intTruncatedModulo | .intLess | .intLessOrEqual | .intEquals
   | .intOfNat | .intToNat | .charToNat | .charOfNat | .charEquals | .charLess | .stringLength
-  | .stringIsEmpty | .stringPush | .stringSingleton | .stringToList | .stringOfList => none
+  | .stringIsEmpty | .stringPush | .stringSingleton | .stringToList | .stringOfList
+  | .arraySize | .arrayIsEmpty | .arrayPush | .arrayAppend | .arrayReverse
+  | .arrayToList | .arrayOfList => none
 
 /-- Exactly `bool.and` is spelled `&&`. -/
 theorem Opcode.eq_boolAnd_of_operator? {code : Opcode}
@@ -509,7 +526,8 @@ def Opcode.callback : Opcode → Bool
   | .intSubtract | .intMultiply | .intNegate | .intTruncatedDivide | .intTruncatedModulo
   | .intLess | .intLessOrEqual | .intEquals | .intOfNat | .intToNat | .charToNat | .charOfNat
   | .charEquals | .charLess | .stringLength | .stringIsEmpty | .stringPush | .stringSingleton
-  | .stringToList | .stringOfList => false
+  | .stringToList | .stringOfList | .arraySize | .arrayIsEmpty | .arrayPush
+  | .arrayAppend | .arrayReverse | .arrayToList | .arrayOfList => false
 
 
 /-! ## The host-effect registry

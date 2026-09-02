@@ -101,8 +101,8 @@ open Ir Assumption
 
 /-! ## The runtime opcode registry -/
 
--- Forty-seven runtime opcodes, and every one of them enumerated.
-#guard Opcode.all.length = 47
+-- Fifty-four runtime opcodes, and every one of them enumerated.
+#guard Opcode.all.length = 54
 
 -- The enumeration has no repeats.
 #guard Opcode.all.Nodup
@@ -119,7 +119,8 @@ open Ir Assumption
     "list.rest", "int.add", "int.subtract", "int.multiply", "int.negate", "int.tdiv", "int.tmod",
     "int.less", "int.lessOrEqual", "int.equals", "int.ofNat", "int.toNat", "char.toNat",
     "char.ofNat", "char.equals", "char.less", "string.length", "string.isEmpty", "string.push",
-    "string.singleton", "string.toList", "string.ofList"]
+    "string.singleton", "string.toList", "string.ofList", "array.size", "array.isEmpty",
+    "array.push", "array.append", "array.reverse", "array.toList", "array.ofList"]
 
 -- Every opcode records the TypeScript it lowers to.
 #guard Opcode.all.all fun code => code.emittedForm ≠ ""
@@ -145,7 +146,8 @@ open Ir Assumption
 -- composition is still one expression at the use site.
 #guard (Opcode.all.filter fun code => code.derived).map Opcode.kind =
   ["nat.subtract", "list.head", "int.tdiv", "int.tmod", "int.ofNat", "int.toNat", "char.ofNat",
-    "char.less", "string.length", "string.push", "string.singleton"]
+    "char.less", "string.length", "string.push", "string.singleton", "array.toList",
+    "array.ofList"]
 
 -- An inline symbol names the opcode it is the emitted form of, which is what makes the join against
 -- `LEAN_RUNTIME_OPCODES` in `src/lean-to-typescript/ir.ts` a bijection rather than a lookup.
@@ -169,7 +171,15 @@ open Ir Assumption
 -- `string.singleton` claim nothing about the engine, and saying they did would be false.
 #guard Opcode.all.all fun code => code.requires ≠ [] || code.components ≠ []
 #guard (Opcode.all.filter fun code => code.requires.isEmpty).map Opcode.kind =
-  ["int.ofNat", "string.singleton"]
+  ["int.ofNat", "string.singleton", "array.toList", "array.ofList"]
+
+-- An `Array` and a `List` share the dense-array image, so five array rows name the very `Runtime`
+-- constants the list rows name and two are identities. That is what makes the higher-order list
+-- rows reachable from an `Array` through `array.toList` without a second callback family.
+#guard (Opcode.all.filter fun code =>
+    ["array.size", "array.isEmpty", "array.push", "array.append",
+      "array.reverse"].contains code.kind).map Opcode.modelField =
+  ["listLength", "listIsEmpty", "listPush", "listAppend", "listReverse"]
 
 -- Every assumption an opcode names is one the plane declares.
 #guard Opcode.all.all fun code => code.requires.all fun id => Id.all.contains id

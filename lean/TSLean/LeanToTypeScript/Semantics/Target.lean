@@ -587,6 +587,29 @@ def runOperation (program : Program) (runtime : Runtime) (fuel : Nat) (state : S
       match readArray state subject with
       | .error fault => .fault fault state
       | .ok elements => .ok (runtime.stringOfList elements) state
+  | .arraySize, [subject] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => .ok (runtime.listLength elements) state
+  | .arrayIsEmpty, [subject] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => .ok (runtime.listIsEmpty elements) state
+  | .arrayReverse, [subject] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => allocateArray state (runtime.listReverse elements)
+  | .arrayPush, [subject, element] =>
+      match readArray state subject with
+      | .error fault => .fault fault state
+      | .ok elements => allocateArray state (runtime.listPush elements element)
+  | .arrayAppend, [left, right] =>
+      match readArray state left, readArray state right with
+      | .ok first, .ok second => allocateArray state (runtime.listAppend first second)
+      | .error fault, _ => .fault fault state
+      | _, .error fault => .fault fault state
+  | .arrayToList, [subject] => .ok (runtime.arrayToList subject) state
+  | .arrayOfList, [subject] => .ok (runtime.arrayOfList subject) state
   | .boolAnd, _ | .boolOr, _ | .boolNot, _ | .boolEquals, _ =>
       .fault (.structuralOpcode opcode) state
   | opcode, operands => .fault (.operandCount opcode operands.length) state

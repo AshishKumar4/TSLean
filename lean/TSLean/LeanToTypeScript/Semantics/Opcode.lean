@@ -79,6 +79,13 @@ def emittedForm : Opcode → String
   | .stringSingleton => "character"
   | .stringToList => "[...value]"
   | .stringOfList => "value.join(\"\")"
+  | .arraySize => "BigInt(value.length)"
+  | .arrayIsEmpty => "value.length === 0"
+  | .arrayPush => "[...value, element]"
+  | .arrayAppend => "[...left, ...right]"
+  | .arrayReverse => "[...value].reverse()"
+  | .arrayToList => "value"
+  | .arrayOfList => "value"
 
 /-- The theorem that discharges the opcode, by name inside this namespace. `registry` pairs each
 opcode with that theorem, so a name recorded here and a clause naming a different theorem is a
@@ -131,6 +138,13 @@ def theoremName : Opcode → String
   | .stringSingleton => "stringSingletonModelsSingleton"
   | .stringToList => "stringToListModelsToList"
   | .stringOfList => "stringOfListModelsOfList"
+  | .arraySize => "arraySizeModelsSize"
+  | .arrayIsEmpty => "arrayIsEmptyModelsIsEmpty"
+  | .arrayPush => "arrayPushModelsPush"
+  | .arrayAppend => "arrayAppendModelsAppend"
+  | .arrayReverse => "arrayReverseModelsReverse"
+  | .arrayToList => "arrayToListModelsToList"
+  | .arrayOfList => "arrayOfListModelsOfList"
 
 /-- The fully named model constant the opcode's theorem constrains. Most are primitive Runtime
 fields; generated helpers such as natSubtract and listHead are derived Runtime definitions. -/
@@ -182,6 +196,13 @@ def modelField : Opcode → String
   | .stringSingleton => "stringSingleton"
   | .stringToList => "stringToList"
   | .stringOfList => "stringOfList"
+  | .arraySize => "listLength"
+  | .arrayIsEmpty => "listIsEmpty"
+  | .arrayPush => "listPush"
+  | .arrayAppend => "listAppend"
+  | .arrayReverse => "listReverse"
+  | .arrayToList => "arrayToList"
+  | .arrayOfList => "arrayOfList"
 
 /--
 The emitted role the opcode's form is built from, tagged by how it reaches the target.
@@ -230,6 +251,7 @@ def components : Opcode → List String
   | .stringLength => ["inline:string.toList", "inline:list.length"]
   | .stringPush => ["inline:string.append", "representation:char.one-code-point-string"]
   | .stringSingleton => ["representation:char.one-code-point-string"]
+  | .arrayToList | .arrayOfList => ["representation:array.shared-dense-image"]
   | _ => []
 
 /--
@@ -243,13 +265,15 @@ reaches it as a declared helper.
 -/
 def derived : Opcode → Bool
   | .natSubtract | .listHead | .intTruncatedDivide | .intTruncatedModulo | .intToNat | .intOfNat
-  | .charOfNat | .charLess | .stringLength | .stringPush | .stringSingleton => true
+  | .charOfNat | .charLess | .stringLength | .stringPush | .stringSingleton
+  | .arrayToList | .arrayOfList => true
   | .boolAnd | .boolOr | .boolNot | .boolEquals | .natAdd | .natMultiply | .natLess
   | .natLessOrEqual | .natEquals | .natSuccessor | .stringAppend | .stringEquals | .listLength
   | .listIsEmpty | .listAppend | .listReverse | .listMap | .listFilter | .listFoldLeft
   | .listFoldRight | .listAny | .listAll | .listFirst | .listRest | .intAdd | .intSubtract
   | .intMultiply | .intNegate | .intLess | .intLessOrEqual | .intEquals | .charToNat | .charEquals
-  | .stringIsEmpty | .stringToList | .stringOfList => false
+  | .stringIsEmpty | .stringToList | .stringOfList | .arraySize | .arrayIsEmpty
+  | .arrayPush | .arrayAppend | .arrayReverse => false
 
 /-- Exactly the opcodes whose model constant is derived record the semantic components it composes;
 a primitive field has none, because there is nothing to certify. -/
@@ -307,6 +331,9 @@ def requires : Opcode → List Assumption.Id
   | .stringSingleton => []
   | .stringToList => [.stringCodePointIteration]
   | .stringOfList => [.arrayJoinEmptySeparator]
+  | .arraySize => [.bigintFromLength]
+  | .arrayIsEmpty | .arrayPush | .arrayAppend | .arrayReverse => [.arrayDenseElementSequence]
+  | .arrayToList | .arrayOfList => []
 
 /--
 What the opcode's theorem states. The left side is the source operation, encoded; the right side is
@@ -440,6 +467,19 @@ def Preserves (runtime : Runtime) : Opcode → Prop
   | .stringOfList => ∀ characters : List Char,
       Encode.string (String.ofList characters)
         = runtime.stringOfList (characters.map Encode.char)
+  | .arraySize => ∀ {α : Type} (encode : α → Value) (values : List α),
+      Encode.nat values.length = runtime.listLength (values.map encode)
+  | .arrayIsEmpty => ∀ {α : Type} (encode : α → Value) (values : List α),
+      Encode.bool values.isEmpty = runtime.listIsEmpty (values.map encode)
+  | .arrayPush => ∀ {α : Type} (encode : α → Value) (values : List α) (element : α),
+      (values ++ [element]).map encode
+        = runtime.listPush (values.map encode) (encode element)
+  | .arrayAppend => ∀ {α : Type} (encode : α → Value) (left right : List α),
+      (left ++ right).map encode = runtime.listAppend (left.map encode) (right.map encode)
+  | .arrayReverse => ∀ {α : Type} (encode : α → Value) (values : List α),
+      values.reverse.map encode = runtime.listReverse (values.map encode)
+  | .arrayToList => ∀ image : Value, image = runtime.arrayToList image
+  | .arrayOfList => ∀ image : Value, image = runtime.arrayOfList image
 
 /-- The obligation one opcode carries: its ordered assumption closure entails its statement. -/
 def Obligation (runtime : Runtime) (code : Opcode) : Prop :=
@@ -764,7 +804,7 @@ theorem listRestModelsTail (runtime : Runtime)
     (holds : Assumption.Holds runtime Opcode.listRest.requires) :
     Opcode.listRest.Preserves runtime := by
   intro α encode head tail
-  rw [List.map_cons, holds.1.2.2.2.2.2.2.2.2.2.2 (encode head) (List.map encode tail)]
+  rw [List.map_cons, holds.1.2.2.2.2.2.2.2.2.2.2.1 (encode head) (List.map encode tail)]
 
 
 /-! ### `Int`
@@ -1078,6 +1118,67 @@ theorem stringOfListModelsOfList (runtime : Runtime)
   intro characters
   rw [holds.1 characters]
 
+/-! ### `Array`
+
+An `Array` and a `List` share the dense-array image, so five of these rows name the engine
+operations the `list.*` rows name and two are identities. That sharing is the point: it is what makes
+`list.map`, `list.filter` and the folds reachable from an `Array` through `array.toList` without a
+second higher-order family and a second set of callback proofs.
+-/
+
+/-- `BigInt(value.length)` denotes `Array.size`. -/
+theorem arraySizeModelsSize (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.arraySize.requires) :
+    Opcode.arraySize.Preserves runtime := by
+  intro α encode values
+  rw [holds.1 (values.map encode), List.length_map]
+
+/-- `value.length === 0` denotes `Array.isEmpty`. -/
+theorem arrayIsEmptyModelsIsEmpty (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.arrayIsEmpty.requires) :
+    Opcode.arrayIsEmpty.Preserves runtime := by
+  intro α encode values
+  rw [holds.1.1 (values.map encode)]
+  cases values <;> simp
+
+/-- `[...value, element]` denotes `Array.push`. -/
+theorem arrayPushModelsPush (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.arrayPush.requires) :
+    Opcode.arrayPush.Preserves runtime := by
+  intro α encode values element
+  rw [holds.1.2.2.2.2.2.2.2.2.2.2.2 (values.map encode) (encode element),
+    List.map_append]
+  rfl
+
+/-- `[...left, ...right]` denotes `Array.append`. -/
+theorem arrayAppendModelsAppend (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.arrayAppend.requires) :
+    Opcode.arrayAppend.Preserves runtime := by
+  intro α encode left right
+  rw [holds.1.2.1 (left.map encode) (right.map encode), List.map_append]
+
+/-- `[...value].reverse()` denotes `Array.reverse`. -/
+theorem arrayReverseModelsReverse (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.arrayReverse.requires) :
+    Opcode.arrayReverse.Preserves runtime := by
+  intro α encode values
+  rw [holds.1.2.2.1 (values.map encode), List.map_reverse]
+
+/-- `Array.toList` reaches the target as the operand itself, because the two share the dense-array
+image. This row claims nothing about the engine, and saying it did would be false. -/
+theorem arrayToListModelsToList (runtime : Runtime)
+    (_holds : Assumption.Holds runtime Opcode.arrayToList.requires) :
+    Opcode.arrayToList.Preserves runtime := by
+  intro image
+  rfl
+
+/-- `List.toArray` reaches the target as the operand itself, at the same identity. -/
+theorem arrayOfListModelsOfList (runtime : Runtime)
+    (_holds : Assumption.Holds runtime Opcode.arrayOfList.requires) :
+    Opcode.arrayOfList.Preserves runtime := by
+  intro image
+  rfl
+
 /--
 The closure over the opcode registry. It is a total function on `Opcode`, so an opcode with no theorem
 is a build failure rather than an unproved row, and a theorem whose assumption closure differs from
@@ -1131,6 +1232,13 @@ theorem registry (runtime : Runtime) : (code : Opcode) → code.Obligation runti
   | .stringSingleton => stringSingletonModelsSingleton runtime
   | .stringToList => stringToListModelsToList runtime
   | .stringOfList => stringOfListModelsOfList runtime
+  | .arraySize => arraySizeModelsSize runtime
+  | .arrayIsEmpty => arrayIsEmptyModelsIsEmpty runtime
+  | .arrayPush => arrayPushModelsPush runtime
+  | .arrayAppend => arrayAppendModelsAppend runtime
+  | .arrayReverse => arrayReverseModelsReverse runtime
+  | .arrayToList => arrayToListModelsToList runtime
+  | .arrayOfList => arrayOfListModelsOfList runtime
 
 /-- Every admitted opcode is discharged from its own recorded assumption closure. -/
 theorem registry_total (runtime : Runtime) (code : Opcode)

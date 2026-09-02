@@ -202,6 +202,14 @@ def applyStrict (opcode : Ir.Opcode) (values : List Value) : Except Fault Value 
   | .stringSingleton, [.char character] => .ok (.string (String.singleton character))
   | .stringToList, [.string operand] =>
       .ok (.array .char (operand.toList.map Value.char))
+  | .arraySize, [.array _ elements] => .ok (.nat elements.length)
+  | .arrayIsEmpty, [.array _ elements] => .ok (.boolean elements.isEmpty)
+  | .arrayReverse, [.array element elements] => .ok (.array element elements.reverse)
+  | .arrayPush, [.array element elements, value] => .ok (.array element (elements ++ [value]))
+  | .arrayAppend, [.array element first, .array _ second] =>
+      .ok (.array element (first ++ second))
+  | .arrayToList, [.array element elements] | .arrayOfList, [.array element elements] =>
+      .ok (.array element elements)
   | .stringOfList, [.array _ elements] =>
       match charList? elements with
       | some characters => .ok (.string (String.ofList characters))

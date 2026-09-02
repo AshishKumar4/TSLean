@@ -1764,6 +1764,42 @@ theorem strict_stringPush {values : List Source.Value} {value : Source.Value}
   unfold Source.applyStrict at produced
   split at produced <;> simp_all
 
+/-- The unary `Array` opcodes accept one array operand. -/
+theorem strict_unaryArrayOf {opcode : Ir.Opcode} {values : List Source.Value}
+    {value : Source.Value}
+    (unary : opcode = .arraySize ∨ opcode = .arrayIsEmpty ∨ opcode = .arrayReverse ∨
+      opcode = .arrayToList ∨ opcode = .arrayOfList)
+    (produced : Source.applyStrict opcode values = .ok value) :
+    ∃ element elements, values = [.array element elements] := by
+  cases values with
+  | nil => rcases unary with rfl | rfl | rfl | rfl | rfl <;> simp [Source.applyStrict] at produced
+  | cons head rest =>
+      cases rest with
+      | cons _ _ =>
+          rcases unary with rfl | rfl | rfl | rfl | rfl <;> simp [Source.applyStrict] at produced
+      | nil =>
+          cases head with
+          | array element elements => exact ⟨element, elements, rfl⟩
+          | boolean _ | nat _ | int _ | string _ | char _ | record _ _ | variant _ _ _
+          | closure _ _ _ =>
+              rcases unary with rfl | rfl | rfl | rfl | rfl <;>
+                simp [Source.applyStrict] at produced
+
+/-- `array.push` accepts an array and one further value. -/
+theorem strict_arrayPush {values : List Source.Value} {value : Source.Value}
+    (produced : Source.applyStrict .arrayPush values = .ok value) :
+    ∃ element elements pushed, values = [.array element elements, pushed] := by
+  unfold Source.applyStrict at produced
+  split at produced <;> simp_all
+
+/-- `array.append` accepts two array operands. -/
+theorem strict_arrayAppend {values : List Source.Value} {value : Source.Value}
+    (produced : Source.applyStrict .arrayAppend values = .ok value) :
+    ∃ firstElement first secondElement second,
+      values = [.array firstElement first, .array secondElement second] := by
+  unfold Source.applyStrict at produced
+  split at produced <;> simp_all
+
 /-- `string.ofList` accepts one array operand, and refuses it unless every element is a
 character. -/
 theorem strict_stringOfList {values : List Source.Value} {value : Source.Value}
@@ -2710,6 +2746,167 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         refine refines_inPlace heapValid closuresValid ?_ traceRefines
         unfold Relation.Represents
         exact (law characters).symm
+  case arraySize =>
+    cases strict : Source.applyStrict Ir.Opcode.arraySize values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨element, elements, valuesEq⟩ := strict_unaryArrayOf (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .nat elements.length := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨subject, operandsEq, subjectRelated⟩ := representsList_one related
+        subst operandsEq
+        obtain ⟨images, read, listRelated⟩ := readArray_of_represents subjectRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation, read]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        have denoted := law (α := Value) id images
+        simp only [List.map_id] at denoted
+        rw [← denoted, representsList_length elements images listRelated]
+        rfl
+  case arrayIsEmpty =>
+    cases strict : Source.applyStrict Ir.Opcode.arrayIsEmpty values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨element, elements, valuesEq⟩ := strict_unaryArrayOf (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .boolean elements.isEmpty := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨subject, operandsEq, subjectRelated⟩ := representsList_one related
+        subst operandsEq
+        obtain ⟨images, read, listRelated⟩ := readArray_of_represents subjectRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation, read]
+        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        unfold Relation.Represents
+        have denoted := law (α := Value) id images
+        simp only [List.map_id] at denoted
+        rw [← denoted, representsList_isEmpty elements images listRelated]
+        rfl
+  case arrayReverse =>
+    cases strict : Source.applyStrict Ir.Opcode.arrayReverse values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨element, elements, valuesEq⟩ := strict_unaryArrayOf (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .array element elements.reverse := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨subject, operandsEq, subjectRelated⟩ := representsList_one related
+        subst operandsEq
+        obtain ⟨images, read, listRelated⟩ := readArray_of_represents subjectRelated
+        have sourceRun := applyOperation_of_strict_ok (program := program) (fuel := fuel)
+          (trace := trace) (typeArguments := typeArguments) firstOrder strict
+        rw [sourceRun]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation, read]
+        have denoted := law (α := Value) id images
+        simp only [List.map_id] at denoted
+        rw [← denoted]
+        exact refines_allocateArray heapValid closuresValid
+          (represents_reverse elements images listRelated) traceRefines
+          (fits element elements.reverse trace sourceRun)
+  case arrayPush =>
+    cases strict : Source.applyStrict Ir.Opcode.arrayPush values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨element, elements, pushed, valuesEq⟩ := strict_arrayPush strict
+        subst valuesEq
+        have producedEq : produced = .array element (elements ++ [pushed]) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨subject, pushedImage, operandsEq, subjectRelated, pushedRelated⟩ :=
+          representsList_two related
+        subst operandsEq
+        obtain ⟨images, read, listRelated⟩ := readArray_of_represents subjectRelated
+        have sourceRun := applyOperation_of_strict_ok (program := program) (fuel := fuel)
+          (trace := trace) (typeArguments := typeArguments) firstOrder strict
+        rw [sourceRun]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation, read]
+        have denoted := law (α := Value) id images pushedImage
+        simp only [List.map_id, List.map_append, List.map_cons, List.map_nil, id_eq] at denoted
+        rw [← denoted]
+        exact refines_allocateArray heapValid closuresValid
+          (represents_append elements images [pushed] [pushedImage] listRelated
+            (represents_singleton pushedRelated))
+          traceRefines (fits element (elements ++ [pushed]) trace sourceRun)
+  case arrayAppend =>
+    cases strict : Source.applyStrict Ir.Opcode.arrayAppend values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨firstElement, first, secondElement, second, valuesEq⟩ := strict_arrayAppend strict
+        subst valuesEq
+        have producedEq : produced = .array firstElement (first ++ second) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨firstSubject, secondSubject, operandsEq, firstRelated, secondRelated⟩ :=
+          representsList_two related
+        subst operandsEq
+        obtain ⟨firstImages, firstRead, firstList⟩ := readArray_of_represents firstRelated
+        obtain ⟨secondImages, secondRead, secondList⟩ := readArray_of_represents secondRelated
+        have sourceRun := applyOperation_of_strict_ok (program := program) (fuel := fuel)
+          (trace := trace) (typeArguments := typeArguments) firstOrder strict
+        rw [sourceRun]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation, firstRead, secondRead]
+        have denoted := law (α := Value) id firstImages secondImages
+        simp only [List.map_id] at denoted
+        rw [← denoted]
+        exact refines_allocateArray heapValid closuresValid
+          (represents_append first firstImages second secondImages firstList secondList)
+          traceRefines (fits firstElement (first ++ second) trace sourceRun)
+  case arrayToList =>
+    cases strict : Source.applyStrict Ir.Opcode.arrayToList values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨element, elements, valuesEq⟩ := strict_unaryArrayOf (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .array element elements := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨subject, operandsEq, subjectRelated⟩ := representsList_one related
+        subst operandsEq
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        rw [← law subject]
+        exact refines_inPlace heapValid closuresValid subjectRelated traceRefines
+  case arrayOfList =>
+    cases strict : Source.applyStrict Ir.Opcode.arrayOfList values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨element, elements, valuesEq⟩ := strict_unaryArrayOf (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .array element elements := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨subject, operandsEq, subjectRelated⟩ := representsList_one related
+        subst operandsEq
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        rw [← law subject]
+        exact refines_inPlace heapValid closuresValid subjectRelated traceRefines
   case listHead =>
     cases strict : Source.applyStrict Ir.Opcode.listHead values with
     | error fault =>
