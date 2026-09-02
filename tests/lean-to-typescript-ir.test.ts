@@ -11,7 +11,7 @@ import {
   type LeanOpcode,
 } from '../src/lean-to-typescript/ir.js';
 import { createHash } from 'node:crypto';
-import ts from 'typescript';
+import { emitted as ts } from '../src/typescript-api/emitted-syntax.js';
 import { loadRuntimeCertificateRegistry, loadRuntimeProbeCorpus } from '../src/lean-to-typescript/certificates.js';
 import { emitTypeScriptPackage, leanToTypeScriptHelperBindings } from '../src/lean-to-typescript/emitter.js';
 import { declaredNames, moduleImports } from '../src/lean-to-typescript/package-layout.js';
@@ -158,6 +158,7 @@ const provenance = {
   environment: {
     runtime: 'node:test',
     typescriptVersion: ts.version,
+    printerVersion: ts.version,
     platform: 'test',
     inputs: environmentInputs,
     inputClosureSha256: inputClosure(environmentInputs),

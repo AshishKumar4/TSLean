@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { SourceMapConsumer, type RawSourceMap } from 'source-map-js';
-import ts from 'typescript';
+import { emitted as ts } from '../src/typescript-api/emitted-syntax.js';
 import { describe, expect, test } from 'vitest';
 import {
   compileLeanToTypeScript,
@@ -505,9 +505,7 @@ describe('Lean package to TypeScript module tree', () => {
             declarations: ['Fixture.read'],
             outputDirectory: join(fixture.projectRoot, 'out'),
           }),
-        ).toThrowError(
-          /Fixture\.Right\.Config: emitted declaration name Config collides with Fixture\.Left\.Config/u,
-        );
+        ).toThrowError(/Fixture\.Right\.Config: emitted declaration name Config collides with Fixture\.Left\.Config/u);
       } finally {
         fixture.dispose();
       }
