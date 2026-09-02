@@ -116,7 +116,7 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     expect(code).toContain('export type Placement = "bundled" | "provider" | "dynamic";');
     expect(code).toContain('export class PlacementSet {');
     expect(code).toContain('export function choosePlacement(');
-    expect(first.manifest.schemaVersion).toBe(4001);
+    expect(first.manifest.schemaVersion).toBe(5001);
     expect(first.manifest.semantic.entryModule).toBe('TSLean.Examples.Placement');
     expect(first.manifest.semantic.modules.map((module) => module.path)).toEqual(['TSLean/Examples/Placement.ts']);
     expect(first.manifest.semantic.leanToolchain.identity).toBe('leanprover/lean4:v4.33.1');
@@ -819,7 +819,6 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     ['Fixture.unsupportedOpaque', 'Fixture.unsupportedOpaque'],
     ['Fixture.unsupportedAxiom', 'Fixture.unsupportedAxiom'],
     ['Fixture.unsupportedOptionEquality', 'Fixture.unsupportedOptionEquality'],
-    ['Fixture.hygienicEquationBinder', 'Fixture.hygienicEquationBinder'],
     ['Fixture.throughImplementedBy', 'Fixture.implementedByDependency'],
     ['Fixture.unsupportedNoncomputable', 'Fixture.unsupportedNoncomputable'],
     ['Fixture.unsupportedExtern', 'Fixture.unsupportedExtern'],
@@ -855,6 +854,17 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
         'return value;',
       ],
     ],
+    // An equation-compiler definition with no explicit binder: v6 reads the body from the
+    // kernel-checked unfolding equation, so the hygienic binder Lean invented reaches TypeScript
+    // as an ordinary parameter rather than refusing the declaration.
+    [
+      'Fixture.hygienicEquationBinder',
+      [
+        'export type Choice = "first" | "second";',
+        'export function hygienicEquationBinder(x: Choice): boolean {',
+        'if (x === "first") {',
+      ],
+    ],
     // A csimp replacement on a constant OUTSIDE the frozen target module closure changes nothing
     // the compiler emits: that constant is a runtime boundary whose TypeScript image comes from
     // the compiler's own mapping. The same replacement on a target-module constant still refuses,
@@ -887,15 +897,15 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     }
   });
 
-  test.each([
-    ['Int', 'def rejected (value : Int) : Int := value'],
-    ['Float', 'def rejected (value : Float) : Float := value'],
-    ['Char', 'def rejected (value : Char) : Char := value'],
-  ])('rejects unsupported built-in data type %s in the Lean exporter', (type, declarationSource) => {
-    expect(unsupportedSourceError(declarationSource, 'Fixture.rejected')).toMatchObject({
+  test('refuses Float, which no v6 type form carries', () => {
+    // The one built-in numeric type still outside the surface, and the refusal says why rather
+    // than only that it was refused: `Int` reaches the target as an exact bigint, and no type form
+    // carries an IEEE double.
+    expect(unsupportedSourceError('def rejected (value : Float) : Float := value', 'Fixture.rejected')).toMatchObject({
       code: 'UNSUPPORTED_LEAN_FRAGMENT',
       declaration: 'Fixture.rejected',
-      diagnostic: `data type ${type} is outside the frozen target module closure`,
+      diagnostic:
+        'Float is outside the surface: no type form carries an IEEE double, and Int reaches the target as an exact bigint at every magnitude instead',
     });
   });
 
@@ -965,12 +975,6 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
   test.each([
     ['reserved declaration', 'def «default» (value : Bool) : Bool := value', 'Fixture.default', 'Fixture.default'],
     [
-      'reserved parameter',
-      'def rejected (undefined : Bool) : Bool := undefined',
-      'Fixture.rejected',
-      'Fixture.rejected',
-    ],
-    [
       'Unicode declaration dependency',
       ['def «café» (value : Bool) : Bool := value', 'def rejected (value : Bool) : Bool := «café» value'].join('\n'),
       'Fixture.rejected',
@@ -986,7 +990,6 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       'Fixture.rejected',
       'Fixture.UnicodeField',
     ],
-    ['Unicode parameter', 'def rejected («café» : Bool) : Bool := «café»', 'Fixture.rejected', 'Fixture.rejected'],
     [
       'Unicode let binder',
       'def rejected (value : Bool) : Bool := let «café» := value; «café»',
@@ -998,6 +1001,19 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       code: 'UNSUPPORTED_LEAN_FRAGMENT',
       declaration,
     });
+  });
+
+  test.each([
+    ['reserved by TypeScript', 'def positional (undefined : Bool) : Bool := undefined'],
+    ['outside the ASCII identifier subset', 'def positional («café» : Bool) : Bool := «café»'],
+  ])('lowers a parameter name %s to its position rather than refusing it', (_case, source) => {
+    // A parameter name decides nothing an external caller can see, because the generated signature
+    // is positional: v6 emits `parameter0` instead of refusing the declaration. A declaration name,
+    // a structure field and a `let` binder stay refusals above, because each of those is a name a
+    // consumer reads.
+    const code = admittedSourceCode(source, ['Fixture.positional']);
+    expect(code).toContain('export function positional(parameter0: boolean): boolean {');
+    expect(code).toContain('return parameter0;');
   });
 
   test('rejects colliding TypeScript declaration bindings in the Lean exporter', () => {
@@ -1800,6 +1816,264 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
     } finally {
       fixture.dispose();
     }
+  });
+});
+
+/**
+ * The v6 kernel surface, read from the fixture the exporter itself is written against.
+ *
+ * `lean/TSLean/Examples/KernelSurface.lean` carries one declaration per surface feature, so these
+ * cases compile real elaborated Lean rather than a hand-built IR document: what they assert is the
+ * lowering a caller receives, not the shape of an intermediate the compiler happens to build.
+ */
+describe('the v6 kernel surface lowers onto its exact target images', () => {
+  const surfaceModule = 'TSLean.Examples.KernelSurface';
+  const surfaceSource = join(leanRoot, 'TSLean', 'Examples', 'KernelSurface.lean');
+  /** Every surface root that reaches an emitted package, compiled once. */
+  const SURFACE_ROOTS = [
+    'appended',
+    'assembled',
+    'carrierOf',
+    'countDown',
+    'decided',
+    'describedEntry',
+    'evenCount',
+    'letterAt',
+    'letters',
+    'netChange',
+    'oddCount',
+    'reweighed',
+    'roundTripped',
+    'settled',
+    'share',
+    'total',
+    'width',
+    'widthOf',
+  ] as const;
+
+  let surface: LeanToTypeScriptPackage;
+  let surfaceCode = '';
+
+  beforeAll(() => {
+    surface = compileLeanToTypeScript({
+      projectRoot: leanRoot,
+      moduleName: surfaceModule,
+      sourcePath: surfaceSource,
+      declarations: SURFACE_ROOTS.map((root) => `${surfaceModule}.${root}`),
+    });
+    const module = surface.modules.find((entry) => entry.path === 'TSLean/Examples/KernelSurface.ts');
+    if (module === undefined) throw new TypeError('the surface compilation produced no entry module');
+    surfaceCode = module.code;
+  }, 300_000);
+
+  /** The one Lean declaration a case needs, compiled on its own so a refusal names it. */
+  function surfaceRoot(root: string): LeanToTypeScriptPackage {
+    return compileLeanToTypeScript({
+      projectRoot: leanRoot,
+      moduleName: surfaceModule,
+      sourcePath: surfaceSource,
+      declarations: [`${surfaceModule}.${root}`],
+    });
+  }
+
+  test('publishes the v6 fragment and manifest schema, not the retired v5 pair', () => {
+    expect(surface.manifest.semantic.fragmentVersion).toBe('tslean-semantic-typed-v6');
+    expect(surface.manifest.schemaVersion).toBe(5001);
+    expect(surfaceCode).toContain(' * Fragment: tslean-semantic-typed-v6');
+  });
+
+  test('lowers Int onto the bigint image, guarding only what Lean defines differently', () => {
+    // `Int` and `Nat` share one bigint image, so subtraction is the primitive. Truncating division
+    // and the `Nat` clamp are the two rows whose Lean semantics the target does not already have.
+    expect(surfaceCode).toContain('export function netChange(deposits: bigint, withdrawals: bigint): bigint {');
+    expect(surfaceCode).toContain('return deposits - withdrawals;');
+    expect(surfaceCode).toContain('return intTruncatedDivide(total$2, parts);');
+    expect(surfaceCode).toContain('return intToNat(balance);');
+    expect(surfaceCode).toContain('function intTruncatedDivide(left: bigint, right: bigint): bigint {');
+    expect(surfaceCode).toContain('return right === 0n ? 0n : left / right;');
+    expect(surfaceCode).toContain('function intToNat(operand: bigint): bigint {');
+    expect(surfaceCode).toContain('return operand < 0n ? 0n : operand;');
+
+    const generated = evaluateGeneratedModuleExports(surfaceCode);
+    expect(requireFunction(generated, 'netChange')(3n, 5n)).toBe(-2n);
+    // Lean's `Int.tdiv` truncates toward zero and is total: a zero divisor answers zero.
+    expect([requireFunction(generated, 'share')(-7n, 2n), requireFunction(generated, 'share')(7n, 0n)]).toEqual([
+      -3n,
+      0n,
+    ]);
+    // `Int.toNat` clamps rather than wrapping.
+    expect([requireFunction(generated, 'settled')(-4n), requireFunction(generated, 'settled')(4n)]).toEqual([0n, 4n]);
+  });
+
+  test('lowers Char and the code-point String rows onto one-code-point strings', () => {
+    expect(surfaceCode).toContain('export function letterAt(code: bigint): string {');
+    expect(surfaceCode).toContain('export function width(text: string): bigint {');
+    expect(surfaceCode).toContain('return BigInt([...text].length);');
+    expect(surfaceCode).toContain('export function letters(text: string): readonly string[] {');
+    expect(surfaceCode).toContain('return [...text];');
+    expect(surfaceCode).toContain('export function assembled(source: readonly string[]): string {');
+    expect(surfaceCode).toContain('return source.join("");');
+
+    const generated = evaluateGeneratedModuleExports(surfaceCode);
+    // `String.length` counts code points, which is what Lean counts — not UTF-16 code units.
+    expect(requireFunction(generated, 'width')('a\u{1F600}b')).toBe(3n);
+    expect(requireFunction(generated, 'letters')('a\u{1F600}')).toEqual(['a', '\u{1F600}']);
+    expect(requireFunction(generated, 'assembled')(['a', '\u{1F600}'])).toBe('a\u{1F600}');
+    // `Char.ofNat` is total: a surrogate is not a scalar value, so Lean answers U+0000.
+    expect([requireFunction(generated, 'letterAt')(65n), requireFunction(generated, 'letterAt')(0xd800n)]).toEqual([
+      'A',
+      '\u0000',
+    ]);
+  });
+
+  test('lowers Array onto the dense image List already has', () => {
+    // `array.toList` and `array.ofList` are identities on the shared dense image, so a round trip
+    // through both emits no conversion at all, while `push`/`reverse` copy rather than mutate.
+    expect(surfaceCode).toContain('export function roundTripped(values: readonly bigint[]): readonly bigint[] {');
+    expect(surfaceCode).toContain('return values;');
+    expect(surfaceCode).toContain('return [...[...values, value]].reverse();');
+
+    const generated = evaluateGeneratedModuleExports(surfaceCode);
+    const source = [1n, 2n, 3n];
+    expect(requireFunction(generated, 'appended')(source, 4n)).toEqual([4n, 3n, 2n, 1n]);
+    expect(source).toEqual([1n, 2n, 3n]);
+  });
+
+  test('reads a pair through its own fst and snd keys', () => {
+    expect(surfaceCode).toContain('export function describedEntry(entry: {');
+    expect(surfaceCode).toContain('readonly fst: bigint;');
+    expect(surfaceCode).toContain('readonly snd: string;');
+    expect(surfaceCode).toContain('const snd = entry.snd;');
+    // The decoder for the form names the same two keys, so a pair crossing the boundary is parsed
+    // rather than asserted past. A single-Lean-module package carries its prelude in that module.
+    expect(surface.modules.map((module) => module.path)).toEqual(['TSLean/Examples/KernelSurface.ts']);
+    expect(surfaceCode).toContain('const data = requireDataFields(value, name, ["fst", "snd"]);');
+  });
+
+  test('emits each of the three recursion disciplines Lean proved', () => {
+    // Structural: the decrease is restated as the destructuring the emitted body walks.
+    expect(surfaceCode).toContain('export function total(x: readonly bigint[]): bigint {');
+    expect(surfaceCode).toContain('const head = x[0];');
+    expect(surfaceCode).toContain('return head + total(tail);');
+    // Mutual: both members are hoisted, so the forward reference inside the group is legal.
+    expect(surfaceCode).toContain('return oddCount(tail);');
+    expect(surfaceCode).toContain('return evenCount(tail);');
+    // Well founded: the measure is Lean's, and the emitted self-call passes the guarded subtraction
+    // rather than a constructor field.
+    expect(surfaceCode).toContain('return 1n + countDown(natSubtract(value, 1n));');
+
+    const generated = evaluateGeneratedModuleExports(surfaceCode);
+    expect(requireFunction(generated, 'total')([1n, 2n, 3n])).toBe(6n);
+    expect([requireFunction(generated, 'evenCount')([1n, 2n]), requireFunction(generated, 'oddCount')([1n, 2n])]).toEqual(
+      [true, false],
+    );
+    expect(requireFunction(generated, 'countDown')(3n)).toBe(3n);
+  });
+
+  test('erases proof binders, subtypes and decidability instances from the emitted arity', () => {
+    // A proof binder carries no data, so it is dropped from the signature and from every call site;
+    // a subtype is its carrier; a `Decidable` argument is the Bool its own decision produces.
+    expect(surfaceCode).toContain('export function widthOf(measure: bigint): bigint {');
+    expect(surfaceCode).not.toContain('widthOf(measure: bigint, ');
+    expect(surfaceCode).toContain('export function carrierOf(bounded: bigint): bigint {');
+    expect(surfaceCode).toContain('export function decided(left: bigint, right: bigint): boolean {');
+    expect(surfaceCode).toContain('return left === right;');
+
+    const generated = evaluateGeneratedModuleExports(surfaceCode);
+    expect(requireFunction(generated, 'widthOf')(7n)).toBe(7n);
+    expect(requireFunction(generated, 'carrierOf')(7n)).toBe(7n);
+    expect([requireFunction(generated, 'decided')(1n, 1n), requireFunction(generated, 'decided')(1n, 2n)]).toEqual([
+      true,
+      false,
+    ]);
+    // The erased binder is dropped at the call site too, so the two arities agree.
+    const applied = surfaceRoot('widthOfThree');
+    const appliedModule = applied.modules.find((module) => module.path === 'TSLean/Examples/KernelSurface.ts');
+    expect(appliedModule?.code).toContain('return widthOf(3n);');
+  });
+
+  test('parses a record through requireDataFields and publishes its codec frozen', () => {
+    // The shape helper refuses a shape rather than merely reading one, which is what its name says
+    // and what a consumer's error rule reads.
+    expect(surfaceCode).toContain('const data = requireDataFields(value, "Ticket", ["code", "weight"]);');
+    expect(surfaceCode).toContain('export const Ticket = Object.freeze({');
+    expect(surfaceCode).toContain('export interface Ticket {');
+
+    const generated = evaluateGeneratedModuleExports(surfaceCode);
+    const ticket = generated['Ticket'];
+    if (typeof ticket !== 'object' || ticket === null) throw new TypeError('generated Ticket codec is not an object');
+    expect(Object.isFrozen(ticket)).toBe(true);
+    const fromData = Reflect.get(ticket, 'fromData');
+    if (typeof fromData !== 'function') throw new TypeError('generated Ticket codec has no fromData');
+    expect(fromData({ code: 'a', weight: 2n })).toEqual({ code: 'a', weight: 2n });
+    expect(() => fromData({ code: 'a' })).toThrowError(/Ticket/u);
+  });
+});
+
+/**
+ * End-to-end contracts for the v6 rows that the frozen compiler has not yet delivered.
+ *
+ * These intentionally stay as normal positive tests: every root is in the v6 registry and its
+ * fixture elaborates in Lean, so a compiler refusal is a residual red rather than an accepted
+ * limitation. When CompilerCompletion lands its repairs these tests will exercise the public
+ * compile/verify boundary rather than a hand-built intermediate document.
+ */
+describe('the remaining v6 surface contracts', () => {
+  const surfaceModule = 'TSLean.Examples.KernelSurface';
+  const surfaceSource = join(leanRoot, 'TSLean', 'Examples', 'KernelSurface.lean');
+
+  function compileSurface(module: string, source: string, declaration: string): LeanToTypeScriptPackage {
+    return compileLeanToTypeScript({
+      projectRoot: leanRoot,
+      moduleName: module,
+      sourcePath: source,
+      declarations: [declaration],
+    });
+  }
+
+  test.each([
+    ['codePoint', 'A', 65n],
+    ['precedes', ['A', 'B'], true],
+  ])('compiles the Char opcode root %s and preserves its behavior', (declaration, inputs, expected) => {
+    const emitted = compileSurface(surfaceModule, surfaceSource, `${surfaceModule}.${declaration}`);
+    expect(() => verifyLeanToTypeScriptPackage(emitted)).not.toThrow();
+    const generated = evaluateGeneratedModuleExports(entryCode(emitted));
+    const callable = requireFunction(generated, declaration);
+    const actual = Array.isArray(inputs) ? callable(...inputs) : callable(inputs);
+    expect(actual).toBe(expected);
+  });
+
+  test('compiles a pair construction and preserves both canonical fields', () => {
+    const emitted = compileSurface(surfaceModule, surfaceSource, `${surfaceModule}.swapped`);
+    expect(() => verifyLeanToTypeScriptPackage(emitted)).not.toThrow();
+    const generated = evaluateGeneratedModuleExports(entryCode(emitted));
+    expect(requireFunction(generated, 'swapped')({ fst: 2n, snd: 'two' })).toEqual({ fst: 'two', snd: 2n });
+  });
+
+  test('compiles the mapped JsonValue form and dispatches its fixed constructors', () => {
+    const emitted = compileSurface(surfaceModule, surfaceSource, `${surfaceModule}.documentTag`);
+    expect(() => verifyLeanToTypeScriptPackage(emitted)).not.toThrow();
+    const generated = evaluateGeneratedModuleExports(entryCode(emitted));
+    expect(requireFunction(generated, 'documentTag')({ kind: 'int', value: 2n })).toBe('int');
+  });
+
+  test('compiles a type-class projection applied to its concrete dictionary', () => {
+    const emitted = compileSurface(surfaceModule, surfaceSource, `${surfaceModule}.ticketLabel`);
+    expect(() => verifyLeanToTypeScriptPackage(emitted)).not.toThrow();
+    const generated = evaluateGeneratedModuleExports(entryCode(emitted));
+    expect(requireFunction(generated, 'ticketLabel')({ code: 'T-1', weight: 1n })).toBe('T-1');
+  });
+
+  test('compiles and verifies a foreign declaration as a host-bound package', () => {
+    const emitted = compileSurface(
+      'TSLean.Examples.KernelSurfaceHost',
+      join(leanRoot, 'TSLean', 'Examples', 'KernelSurfaceHost.lean'),
+      'TSLean.LeanToTypeScript.Host.storeGet',
+    );
+    expect(() => verifyLeanToTypeScriptPackage(emitted)).not.toThrow();
+    expect(emitted.manifest.semantic.modules.flatMap((module) => module.hosts).map((entry) => entry.host)).toContain(
+      'host.store.get',
+    );
   });
 });
 

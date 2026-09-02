@@ -14,12 +14,12 @@
   "counts": {
     "tests": {
       "files": 53,
-      "passed": 2052,
+      "passed": 2076,
       "failed": 0,
       "todo": 10
     },
     "lean": {
-      "jobs": 184,
+      "jobs": 221,
       "status": "passed"
     },
     "corpus": {
@@ -54,11 +54,11 @@
     },
     "semanticsGate": {
       "expressionOperations": 14,
-      "declarationFamilies": 3,
-      "typeForms": 9,
-      "opcodes": 26,
-      "assumptions": 9,
-      "probeGroups": 9
+      "declarationFamilies": 4,
+      "typeForms": 17,
+      "opcodes": 54,
+      "assumptions": 16,
+      "probeGroups": 16
     }
   },
   "refinementProofs": {
@@ -179,8 +179,8 @@
     }
   ],
   "hashes": {
-    "source": "sha256:34cff6d69af273e0c6e6c1ed8533163c938777f54e0b0510c35e41b124eaad93",
-    "semanticsGate": "sha256:c3409553903483d9d5ec3f56da84b4a0b5b73661faeb4b8d01ee0fbcf37f95f4",
+    "source": "sha256:3006b476e8fb5b442cc0b776fb5b039e3526f9c83f1075d1335d0f7eba246a37",
+    "semanticsGate": "sha256:ebc95968c9e0b8aa5f92cdac3f03086e1a02dc7889518841876fb3d23de49f35",
     "jsRuntime": "sha256:03f43c01641fd7379f87e7e2a56ad4fc92528c129efa2c736e289e70a3283deb",
     "refinementRuntimeAndBarrel": "sha256:3c4badb33a92287e32a4156353ca3ac594fa575336a633ce98cdcd21e82e1ae2",
     "refinementTestsAuditRegistry": "sha256:442fe58d68dc9252b1622506eeecbcd9cb57f400ff4474f385f3bbb8cf9a311c",

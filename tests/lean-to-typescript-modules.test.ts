@@ -89,11 +89,11 @@ describe('Lean package to TypeScript module tree', () => {
 
   test('states the module graph as deterministic relative imports', () => {
     expect(importBlock('TSLean/Examples/Package/Capability.ts')).toEqual([
-      'import { type GeneratedData, dataFields, requireBoolean } from "../../../tslean-runtime.js";',
+      'import { type GeneratedData, requireBoolean, requireDataFields } from "../../../tslean-runtime.js";',
     ]);
     expect(importBlock('TSLean/Examples/Package/Policy.ts')).toEqual([
       'import { type Capability, Grant, type GrantData, requireCapability } from "./Capability.js";',
-      'import { type GeneratedData, dataFields, requireBoolean } from "../../../tslean-runtime.js";',
+      'import { type GeneratedData, requireBoolean, requireDataFields } from "../../../tslean-runtime.js";',
     ]);
     expect(importBlock('TSLean/Examples/Package/Decision.ts')).toEqual([
       'import { type Capability } from "./Capability.js";',

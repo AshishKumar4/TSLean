@@ -5,12 +5,12 @@
   "counts": {
     "tests": {
       "files": 53,
-      "passed": 2052,
+      "passed": 2076,
       "failed": 0,
       "todo": 10
     },
     "lean": {
-      "jobs": 184,
+      "jobs": 221,
       "status": "passed"
     },
     "corpus": {
@@ -45,11 +45,11 @@
     },
     "semanticsGate": {
       "expressionOperations": 14,
-      "declarationFamilies": 3,
-      "typeForms": 9,
-      "opcodes": 26,
-      "assumptions": 9,
-      "probeGroups": 9
+      "declarationFamilies": 4,
+      "typeForms": 17,
+      "opcodes": 54,
+      "assumptions": 16,
+      "probeGroups": 16
     }
   },
   "refinementProofs": {

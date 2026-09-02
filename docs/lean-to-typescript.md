@@ -63,27 +63,35 @@ Unsupported input produces a typed refusal before publication. The compiler emit
 
 ## Current fragment
 
-The semantic IR admits a total, pure Lean fragment named `tslean-semantic-typed-v5`. The Lean
+The semantic IR admits a total, pure Lean fragment named `tslean-semantic-typed-v6`. The Lean
 exporter and the semantic IR validator decide what the fragment admits, and they are the source of
 truth. The compiler registry under `spec/lean-to-typescript/` binds the checked models to their
 oracles and bounds. This document does not expand the fragment.
 
 These families are admitted:
 
-- `Bool`, `Nat` and `String`. `Nat` is a non-negative `bigint`, so subtraction truncates at zero
-  through one shared helper.
+- `Bool`, `Nat`, `Int`, `Char` and `String`. `Nat` is a non-negative `bigint` and `Int` the shared
+  `bigint` image, so `Int` arithmetic is the primitive and only the rows whose Lean semantics
+  differ — truncated division, the `Nat` clamp, `Char` conversions — carry a guard. `String`
+  operations count code points, which is what Lean counts.
 - Type parameters on functions and on data types. The generated type parameters are positional, so
   a Lean binder name never decides a generated signature.
 - Structures and finite inductives. A type whose namespace carries dot-notation methods becomes an
   immutable class; a type with no methods stays structural.
-- Pattern matching on a user inductive, a structure, a `List`, an `Option` and an `Except`.
-- `Option` and `Except`, each as one tagged union in the shared runtime module.
-- `List`, as a readonly array, with the collection operations the runtime opcode registry names.
+- `List` and `Array`, each as a readonly array over the dense image they share. `ByteArray`,
+  `HashMap` and `TreeMap` are admitted as type forms only: their values cross the boundary
+  unread, because the registry carries no opcode for them.
+- A pair, read through its own `fst` and `snd` keys.
+- `JsonValue`, mapped to its fixed six-constructor union rather than emitted as a declaration.
 - Function values, as uncurried arrows at their full Lean arity. An abstraction may capture the
   binders in scope at its own position.
-- Recursion Lean proved. A single structural recursion is re-verified against the emitted program;
-  a mutual group or a well-founded measure is carried as Lean's own evidence, read from the
-  kernel-checked unfolding equation, and no call may leave the recorded group.
+- Recursion Lean proved, as one of three disciplines the descriptor names: a single structural
+  recursion is re-verified against the emitted program; a mutual group or a well-founded measure
+  is carried as Lean's own evidence, read from the kernel-checked unfolding equation, and no call
+  may leave the recorded group.
+- A foreign declaration, which is the boundary of one host operation: the emitted module imports
+  the substrate's implementation under the declaration's own name and the exported reference body
+  is what the model runs against.
 - Modules and namespaces. One Lean module becomes one TypeScript file, and cross-module references
   become relative imports.
 
@@ -110,12 +118,13 @@ Differential agreement finds counterexamples. It is not a proof.
 ## What the compiler refuses
 
 A construct with no deterministic representation fails before publication, with a typed diagnostic
-that names the declaration it was reading. The refused set includes `Int`, `Float`, the sized
-integer types, `Char`, `Nat` division, matching on a `Nat`, string length and indexing, anything
-that needs an instance dictionary, instance parameters, universe-polymorphic declarations,
-dependent result types, dependent matches, matches on more than one discriminant, a `let` inside an
-argument, `partial`, `unsafe`, `opaque`, `axiom`, `noncomputable`, and a declaration whose
-executable form was replaced inside the target module closure.
+that names the declaration it was reading. The refused set includes `Float`, the sized integer
+types, `Nat` division, `String` positions and ordering, matching on a `Nat`, a `String` compared
+against Lean's code-point order, anything that needs an instance dictionary, instance parameters,
+universe-polymorphic declarations, dependent result types, dependent matches, matches on more than
+one discriminant, a `let` inside an argument, `partial`, `unsafe`, `opaque`, `axiom`,
+`noncomputable`, and a declaration whose executable form was replaced inside the target module
+closure.
 
 Two audits run over the whole reachable closure. A declaration that rests on an axiom outside
 `propext`, `Classical.choice` and `Quot.sound` is refused, and so is one whose unfolding proof
@@ -153,10 +162,10 @@ Each external effect must enter through a modeled port. Generated pure code must
 
 The Lean 4.33.1 repository gate includes:
 
-- 1,932 passing tests and 10 explicit todo tests;
+- 2,076 passing tests and 10 explicit todo tests;
 - 7,587 differential vectors;
-- a complete 184-job Lean build;
-- four executable target checks;
+- a complete 221-job Lean build;
+- five executable target checks;
 - strict generated-tree TypeScript compilation;
 - deterministic double generation;
 - source-map consumer validation;

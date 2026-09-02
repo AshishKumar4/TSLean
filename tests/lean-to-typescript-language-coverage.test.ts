@@ -261,16 +261,28 @@ describe('admitted Lean families lower into one organized TypeScript package', (
   test('emits a payload-carrying inductive as an abstract base with dispatched overrides', () => {
     const code = moduleCode('Library/Report.ts');
     expect(code).toContain('public abstract collect(): readonly Diagnostic[];');
-    expect(code).toContain('class LeafCheck extends Check {');
+    // Every case class is exported alongside its abstract base: the cases are what a discriminated
+    // union is for, so a consumer codec can name them instead of reaching a module-private class.
+    expect(code).toContain('export class LeafCheck extends Check {');
+    expect(code).toContain('export class BothCheck extends Check {');
     expect(code).toContain('return [this.diagnostic];');
     expect(code).toContain('return [...this.left.collect(), ...this.right.collect()];');
     expect(code).toContain('public count(): bigint {\n        return BigInt(this.collect().length);');
   });
 
+  test('freezes every emitted value object, including each nullary singleton', () => {
+    // A value object is immutable, so each constructor freezes the instance it built. A nullary
+    // case is reached through a getter over one frozen singleton rather than a fresh allocation.
+    const core = moduleCode('Library/Core.ts');
+    expect(core).toContain('export class InfoSeverity extends Severity {');
+    expect(core).toContain('Object.freeze(this);');
+    expect(core).toContain('public static get failure(): Severity {');
+  });
+
   test('parses external input at the boundary instead of asserting past it', () => {
     const report = moduleCode('Library/Report.ts');
     expect(report).toContain('public static fromData(value: GeneratedData): Check {');
-    expect(report).toContain('const data = dataFields(value, "Check.leaf", ["kind", "diagnostic"]);');
+    expect(report).toContain('const data = requireDataFields(value, "Check.leaf", ["kind", "diagnostic"]);');
     const runtime = moduleCode('tslean-runtime.ts');
     expect(runtime).toContain('export function requireString(value: GeneratedData, name: string): string {');
     expect(runtime).toContain('export function requireNat(value: GeneratedData, name: string): bigint {');
@@ -500,9 +512,11 @@ describe('constructs with no deterministic representation fail before publicatio
     ['a dependent result type', 'Adversarial.dependentResult', /outside the (?:checked fragment|frozen target)/u],
     ['an instance parameter', 'Adversarial.withInstance', /instance parameters/u],
     ['an effectful definition', 'Adversarial.effectful', /outside the (?:checked fragment|frozen target)/u],
-    ['an Int', 'Adversarial.usesInt', /outside the (?:checked fragment|frozen target)/u],
-    ['a Float', 'Adversarial.usesFloat', /outside the (?:checked fragment|frozen target)/u],
-    ['a Char', 'Adversarial.usesChar', /outside the (?:checked fragment|frozen target)/u],
+    [
+      'a Float',
+      'Adversarial.usesFloat',
+      /Float is outside the surface: no type form carries an IEEE double/u,
+    ],
     ['a match on Nat', 'Adversarial.natMatched', /a match on Nat is outside this fragment version/u],
     [
       'a match on more than one discriminant',
@@ -514,8 +528,7 @@ describe('constructs with no deterministic representation fail before publicatio
       'Adversarial.letInArgument',
       /a let inside an argument is outside the checked fragment/u,
     ],
-    ['an unadmitted String operation', 'Adversarial.stringLength', /outside the frozen target module closure/u],
-    ['a proof as a root', 'Adversarial.proved', /outside the checked fragment/u],
+    ['a proof as a root', 'Adversarial.proved', /root is not a function/u],
     ['a polymorphic root', 'Adversarial.polymorphicRoot', /a root's boundary is monomorphic/u],
   ])('refuses %s', (_label, declaration, diagnostic) => {
     let thrown: unknown;
@@ -526,6 +539,25 @@ describe('constructs with no deterministic representation fail before publicatio
     }
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).message).toMatch(diagnostic);
+  }, 300_000);
+
+  test.each([
+    // The three rows the surface gained in v6, taken from the same adversarial fixture that used
+    // to prove them refused. Each one has an exact target image rather than an approximation.
+    ['an Int', 'Adversarial.usesInt', 'export function usesInt(value: bigint): bigint {', 'return value + 1n;'],
+    ['a Char', 'Adversarial.usesChar', 'export function usesChar(value: string): string {', 'return value;'],
+    [
+      'a String length',
+      'Adversarial.stringLength',
+      'export function stringLength(value: string): bigint {',
+      'return BigInt([...value].length);',
+    ],
+  ])('admits %s, which v6 carries with an exact image', (_label, declaration, signature, body) => {
+    const compiled = compile(declaration);
+    const [module] = compiled.modules;
+    if (module === undefined) throw new TypeError('the compilation produced no module');
+    expect(module.code).toContain(signature);
+    expect(module.code).toContain(body);
   }, 300_000);
 
   test('admits a well-founded recursion Lean proved, and emits the same call graph', () => {
@@ -574,17 +606,17 @@ describe('generated names never collide with the representation or with the runt
         'namespace Fixture',
         'structure Box where',
         '  flag : Bool',
-        '-- `dataFields` is the name of a generated boundary validator the same body reaches.',
-        'def reads (dataFields : Box) : Bool := dataFields.flag',
+        '-- `requireDataFields` is the generated boundary validator the same body reaches.',
+        'def reads (requireDataFields : Box) : Bool := requireDataFields.flag',
         'end Fixture',
         '',
       ].join('\n'),
       ['Fixture.reads'],
     );
-    expect(code).toContain('function dataFields(value: GeneratedData, name: string, fields: readonly string[])');
-    expect(code).toContain('export function reads(dataFields$2: Box): boolean {');
-    expect(code).toContain('return dataFields$2.flag;');
-    expect(code).not.toContain('return dataFields.flag;');
+    expect(code).toContain('function requireDataFields(value: GeneratedData, name: string, fields: readonly string[])');
+    expect(code).toContain('export function reads(requireDataFields$2: Box): boolean {');
+    expect(code).toContain('return requireDataFields$2.flag;');
+    expect(code).not.toContain('return requireDataFields.flag;');
   }, 300_000);
 
   test('a Lean binder named after a global the emitted code reads does not shadow it', () => {
@@ -761,7 +793,7 @@ describe('generated names never collide with the representation or with the runt
     expect((thrown as Error).message).toMatch(/rename it in the Lean source/u);
   }, 300_000);
 
-  test('refuses a projection applied to more than the value it reads', () => {
+  test('refuses an applied projection, which is a field read where a bound function belongs', () => {
     let thrown: unknown;
     try {
       compileSource(
@@ -779,7 +811,9 @@ describe('generated names never collide with the representation or with the runt
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(Error);
-    expect((thrown as Error).message).toMatch(/is applied to 2 arguments; a field read takes exactly 1/u);
+    // v6 states the refusal at the apply rather than at the field's arity: what an `apply` admits
+    // is a bound function value, and a projection of a record is not one.
+    expect((thrown as Error).message).toMatch(/target is not a bound function value/u);
   }, 300_000);
 
   test('refuses a termination proof that was admitted rather than checked', () => {

@@ -659,9 +659,9 @@ describe('source identity boundaries', () => {
   it('reads a manifest one minor revision ahead within the same major', () => {
     const manifestPath = join(process.cwd(), 'examples/lean-to-typescript/generated/tslean.manifest.json');
     const parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
-    const tolerated = { ...parsed, schemaVersion: 4002 };
+    const tolerated = { ...parsed, schemaVersion: 5002 };
     expect(() => decodeManifest(tolerated)).not.toThrow();
-    const refused = { ...parsed, schemaVersion: 5001 };
+    const refused = { ...parsed, schemaVersion: 6001 };
     expect(() => decodeManifest(refused)).toThrowError('unsupported Lean to TypeScript manifest schema');
   });
 

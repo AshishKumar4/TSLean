@@ -23,11 +23,19 @@ describe('Lean-to-TypeScript runtime certificates', () => {
     for (const certificate of catalog.certificates) {
       expect(certificate.relation).toBe('source = model');
       expect(certificate.runtimeSymbol).toMatch(/^(?:inline|helper):/u);
-      expect(certificate.assumptions.length).toBeGreaterThan(0);
+      // A row stands on an engine assumption, or — where its emitted form is an identity on an
+      // image two Lean types share — on the ordered model composition that makes it one. A row
+      // with neither is a lowering nothing accounts for, which the gate below refuses.
+      expect(certificate.assumptions.length + certificate.components.length).toBeGreaterThan(0);
       for (const id of certificate.assumptions) {
         expect(catalog.assumptions.some((assumption) => assumption.id === id)).toBe(true);
       }
     }
+    // The four representation identities: each is the same value read at the other Lean type, so
+    // each carries a composition and no engine assumption at all.
+    expect(
+      catalog.certificates.filter((certificate) => certificate.assumptions.length === 0).map((row) => row.opcode),
+    ).toEqual(['int.ofNat', 'string.singleton', 'array.toList', 'array.ofList']);
     for (const assumption of catalog.assumptions) {
       expect(assumption.sourceArtifact).toBe('spec/semantics/ecma262-2025.html');
       expect(assumption.clauses.every((clause) => clause.startsWith('sec-'))).toBe(true);
@@ -47,13 +55,20 @@ describe('Lean-to-TypeScript runtime certificates', () => {
       'runtime-certificate-unresolved: nat.uncertified: no Lean certificate names this opcode',
     );
 
-    const withoutAssumptions: RuntimeCertificateCatalog = {
+    // A row with neither an assumption nor a composition is the unresolved case, so stripping only
+    // the assumptions of a row that also composes would still resolve: both have to go.
+    const withoutGrounds: RuntimeCertificateCatalog = {
       ...catalog,
-      certificates: catalog.certificates.map((certificate) => ({ ...certificate, assumptions: [] })),
+      certificates: catalog.certificates.map((certificate) => ({ ...certificate, assumptions: [], components: [] })),
     };
-    expect(() => assertRuntimeOpcodeCertificates([certified.opcode], withoutAssumptions)).toThrowError(
-      `runtime-certificate-unresolved: ${certified.opcode}: certificate names no external assumption`,
+    expect(() => assertRuntimeOpcodeCertificates([certified.opcode], withoutGrounds)).toThrowError(
+      `runtime-certificate-unresolved: ${certified.opcode}: certificate names neither an external assumption nor a model composition`,
     );
+
+    // A representation identity resolves on its composition alone, with no assumption to strip.
+    const identity = catalog.certificates.find((certificate) => certificate.assumptions.length === 0);
+    if (identity === undefined) throw new TypeError('the registry certifies no representation identity');
+    expect(() => assertRuntimeOpcodeCertificates([identity.opcode], catalog)).not.toThrow();
 
     const withoutRecords: RuntimeCertificateCatalog = { ...catalog, assumptions: [] };
     expect(() => assertRuntimeOpcodeCertificates([certified.opcode], withoutRecords)).toThrowError(

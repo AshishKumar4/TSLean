@@ -1,10 +1,13 @@
 import { describe, expect, test } from 'vitest';
 import {
   decodeLeanSemanticProgram,
+  LEAN_HOST_OPCODES,
   LEAN_RUNTIME_ASSUMPTIONS,
+  LEAN_RUNTIME_HELPER_ROLES,
   LEAN_RUNTIME_OPCODES,
   LEAN_TO_TYPESCRIPT_FRAGMENT_VERSION,
   referencedRuntimeOpcodes,
+  runtimeHelperRole,
   type LeanOpcode,
 } from '../src/lean-to-typescript/ir.js';
 import { createHash } from 'node:crypto';
@@ -24,6 +27,10 @@ const identityDeclaration = {
   span: identitySpan,
   parameters: [{ name: 'value', type: { kind: 'boolean' } }],
   result: { kind: 'boolean' },
+  // Every v6 function carries the recursion descriptor explicitly. A non-recursive declaration
+  // spells it as a literal null, so a document that forgot the field is refused rather than read
+  // as "Lean proved nothing to record".
+  recursion: null,
   body: { kind: 'variable', index: 0 },
 };
 
@@ -83,7 +90,7 @@ const depthDeclaration = {
   span: identitySpan,
   parameters: [{ name: 'tree', type: treeType }],
   result: { kind: 'nat' },
-  termination: { kind: 'structural', argument: 0, group: ['Example.depth'], equation: 'Example.depth.eq_def' },
+  recursion: { kind: 'structural', parameter: 0 },
   body: {
     kind: 'match',
     type: treeType,
@@ -107,10 +114,9 @@ const depthDeclaration = {
 
 const depthClosure = { declaration: 'Example.depth', module: 'Example', role: 'emitted', reason: '' };
 
-/** The same declaration with no recorded termination, which is what a guessed recursion looks like. */
-function withoutTermination(declaration: typeof depthDeclaration): object {
-  const { termination: _termination, ...rest } = declaration;
-  return rest;
+/** The same declaration with no recorded recursion, which is what a guessed recursion looks like. */
+function withoutRecursion(declaration: typeof depthDeclaration): object {
+  return { ...declaration, recursion: null };
 }
 
 function recursionProgram(declaration: object = depthDeclaration): object {
@@ -163,7 +169,7 @@ const provenance = {
 describe('Lean semantic IR runtime opcode registry', () => {
   test('is total, closed, and names one Lean symbol and one operand list per opcode', () => {
     const opcodes = Object.keys(LEAN_RUNTIME_OPCODES) as readonly LeanOpcode[];
-    expect(opcodes.length).toBe(26);
+    expect(opcodes.length).toBe(54);
     for (const opcode of opcodes) {
       const row = LEAN_RUNTIME_OPCODES[opcode];
       expect(row.opcode).toBe(opcode);
@@ -173,11 +179,25 @@ describe('Lean semantic IR runtime opcode registry', () => {
         row.parameters(Array.from({ length: row.typeParameters }, () => ({ kind: 'nat' }) as const)).length,
       );
       expect(row.modelTheorem).toMatch(/^TSLean\.LeanToTypeScript\.Semantics\.Opcode\.[A-Za-z]+$/u);
-      expect(row.assumptions.length).toBeGreaterThan(0);
+      // A row stands on an engine assumption, or — where its form is an identity on an image two
+      // Lean types share — on the ordered model composition that makes it one. Neither would be a
+      // lowering nothing accounts for, which is exactly what the certificate gate refuses.
+      expect(row.assumptions.length + (row.components?.length ?? 0)).toBeGreaterThan(0);
       for (const assumption of row.assumptions) {
         expect(LEAN_RUNTIME_ASSUMPTIONS[assumption]).toBeTypeOf('string');
       }
     }
+    // The seven guarded roles, in the fixed print order the emitter allocates them in. A helper
+    // opcode binds its role rather than an inline form, so this is the whole guarded set.
+    expect(
+      opcodes.filter((opcode) => LEAN_RUNTIME_OPCODES[opcode].runtimeSymbol.startsWith('helper:')),
+    ).toEqual(['nat.subtract', 'list.head', 'int.tdiv', 'int.tmod', 'int.toNat', 'char.ofNat', 'char.less']);
+    expect(
+      opcodes
+        .map((opcode) => runtimeHelperRole(LEAN_RUNTIME_OPCODES[opcode].runtimeSymbol))
+        .filter((role): role is NonNullable<typeof role> => role !== undefined)
+        .sort(),
+    ).toEqual([...LEAN_RUNTIME_HELPER_ROLES].sort());
     expect(LEAN_RUNTIME_OPCODES['nat.subtract'].runtimeSymbol).toBe('helper:nat-truncated-subtraction');
     expect(LEAN_RUNTIME_OPCODES['nat.subtract'].components).toEqual([
       'inline:nat.less',
@@ -202,11 +222,47 @@ describe('Lean semantic IR runtime opcode registry', () => {
       'conditional.truthy-selection',
       'option.tagged-object',
     ]);
+    // The truncating Int division helpers guard the zero divisor Lean's `tdiv`/`tmod` define, and
+    // the clamp guards the negative `Int` that has no `Nat` image.
+    expect(LEAN_RUNTIME_OPCODES['int.tdiv'].components).toEqual([
+      'inline:int.equals',
+      'conditional:select',
+      'primitive:bigint.divide',
+    ]);
+    expect(LEAN_RUNTIME_OPCODES['int.toNat'].components).toEqual([
+      'inline:int.less',
+      'conditional:select',
+      'representation:nat.nonnegative-bigint',
+    ]);
+    // A representation identity carries no engine assumption: it stands on the shared image alone.
+    for (const opcode of ['int.ofNat', 'array.toList', 'array.ofList', 'string.singleton'] as const) {
+      expect(LEAN_RUNTIME_OPCODES[opcode].assumptions).toEqual([]);
+      expect(LEAN_RUNTIME_OPCODES[opcode].components?.length).toBeGreaterThan(0);
+    }
     expect(LEAN_RUNTIME_OPCODES['bool.and'].runtimeSymbol).toBe('inline:bool.and');
     expect(LEAN_RUNTIME_OPCODES['bool.and'].components).toBeUndefined();
     // Every model theorem is distinct, so two opcodes can never share one proof obligation.
     expect(new Set(opcodes.map((opcode) => LEAN_RUNTIME_OPCODES[opcode].modelTheorem)).size).toBe(opcodes.length);
-    expect(new Set(Object.keys(LEAN_RUNTIME_ASSUMPTIONS)).size).toBe(9);
+    expect(new Set(Object.keys(LEAN_RUNTIME_ASSUMPTIONS)).size).toBe(16);
+  });
+
+  test('closes the host-operation registry the substrate publishes', () => {
+    const hosts = Object.keys(LEAN_HOST_OPCODES);
+    expect(hosts.length).toBe(19);
+    // Every host identity is a dotted wire name under `host.`, and each row states what the
+    // substrate owes it, so a foreign declaration cannot acquire an unowned boundary.
+    for (const host of hosts) {
+      expect(host).toMatch(/^host\.[a-z]+\.[a-zA-Z]+$/u);
+      expect(LEAN_HOST_OPCODES[host as keyof typeof LEAN_HOST_OPCODES].length).toBeGreaterThan(0);
+    }
+    expect([...new Set(hosts.map((host) => host.split('.')[1]))]).toEqual([
+      'store',
+      'alarm',
+      'content',
+      'queue',
+      'isolate',
+      'rpc',
+    ]);
   });
 
   test('reports exactly the opcodes a program names, including a match destructuring cost', () => {
@@ -221,7 +277,7 @@ describe('Lean semantic IR runtime opcode registry', () => {
       span: identitySpan,
       parameters: [{ name: 'values', type: listType }],
       result: { kind: 'nat' },
-      termination: { kind: 'structural', argument: 0, group: ['Example.total'], equation: 'Example.total.eq_def' },
+      recursion: { kind: 'structural', parameter: 0 },
       body: {
         kind: 'match',
         type: listType,
@@ -278,6 +334,7 @@ describe('emitted binder names survive a hostile semantic program', () => {
         { name: 'values', type: listNat },
       ],
       result: listNat,
+      recursion: null,
       body: {
         kind: 'operation',
         opcode: 'list.map',
@@ -297,6 +354,7 @@ describe('emitted binder names survive a hostile semantic program', () => {
       span: identitySpan,
       parameters: [{ name: 'values', type: listNat }],
       result: listNat,
+      recursion: null,
       body: {
         kind: 'call',
         function: 'Example.mapWith',
@@ -362,6 +420,7 @@ describe('emitted binder names survive a hostile semantic program', () => {
       receiver: { type: 'Example.Foo', parameter: 0 },
       parameters: [{ name: 'foo', type: fooType }],
       result: { kind: 'boolean' },
+      recursion: null,
       body: {
         kind: 'match',
         type: fooType,
@@ -419,6 +478,7 @@ describe('emitted binder names survive a hostile semantic program', () => {
         receiver: { type: recordName, parameter: 0 },
         parameters: [{ name: 'record', type: recordType }],
         result: { kind: 'boolean' },
+        recursion: null,
         body: { kind: 'field', target: { kind: 'variable', index: 0 }, field: 'flag' },
       };
       const decoded = decodeLeanSemanticProgram(
@@ -474,6 +534,7 @@ describe('emitted binder names survive a hostile semantic program', () => {
       receiver: { type: 'Example.kind', parameter: 0 },
       parameters: [{ name: 'value', type: kindType }],
       result: { kind: 'boolean' },
+      recursion: null,
       body: {
         kind: 'match',
         type: kindType,
@@ -633,6 +694,7 @@ describe('Lean semantic IR generated helper bindings', () => {
       span: identitySpan,
       parameters: [{ name: 'values', type: listType }],
       result: { kind: 'option', value: { kind: 'nat' } },
+      recursion: null,
       body: {
         kind: 'operation',
         opcode: 'list.head',
@@ -698,6 +760,7 @@ describe('Lean semantic IR generated helper bindings', () => {
         { name: 'right', type: { kind: 'nat' } },
       ],
       result: { kind: 'boolean' },
+      recursion: null,
       body: {
         kind: 'let',
         name: 'x',
@@ -772,6 +835,7 @@ describe('Lean semantic IR generated helper bindings', () => {
         { name: 'right', type: { kind: 'nat' } },
       ],
       result: { kind: 'boolean' },
+      recursion: null,
       body,
     };
     const decoded = decodeLeanSemanticProgram(
@@ -806,6 +870,7 @@ describe('Lean semantic IR generated helper bindings', () => {
       span: identitySpan,
       parameters: [{ name: 'values', type: listType }],
       result: { kind: 'option', value: { kind: 'nat' } },
+      recursion: null,
       body: {
         kind: 'operation',
         opcode: 'list.head',
@@ -827,55 +892,23 @@ describe('Lean semantic IR generated helper bindings', () => {
 });
 
 describe('Lean semantic IR trust boundary', () => {
-  test('accepts its exact serialized schema', () => {
+  test('accepts its exact serialized schema, and reads a null descriptor as no recursion at all', () => {
     const serialized = JSON.stringify(program());
-    expect(decodeLeanSemanticProgram(JSON.parse(serialized))).toEqual(program());
+    // The wire document spells "Lean proved no recursion here" as a literal `null`; the decoded
+    // program carries no descriptor, so nothing downstream can confuse an absent discipline with
+    // a recorded one.
+    const { recursion: _recursion, ...withoutDescriptor } = identityDeclaration;
+    expect(decodeLeanSemanticProgram(JSON.parse(serialized))).toEqual(program([withoutDescriptor]));
   });
 
   test('accepts a structural recursion whose decrease it can restate', () => {
     expect(() => decodeLeanSemanticProgram(recursionProgram())).not.toThrow();
   });
 
-  test('accepts a recursive group both members record identically', () => {
-    const member = (name: string, peer: string): object => ({
-      kind: 'function',
-      name,
-      module: 'Example',
-      namespace: 'Example',
-      typeParameters: [],
-      span: identitySpan,
-      parameters: [{ name: 'tree', type: treeType }],
-      result: { kind: 'nat' },
-      termination: {
-        kind: 'structural',
-        argument: 0,
-        group: ['Example.even', 'Example.odd'],
-        equation: `${name}.eq_def`,
-      },
-      body: {
-        kind: 'match',
-        type: treeType,
-        scrutinee: { kind: 'variable', index: 0 },
-        cases: [
-          { constructor: 'leaf', value: { kind: 'nat', value: '0' } },
-          {
-            constructor: 'branch',
-            value: { kind: 'call', function: peer, typeArguments: [], arguments: [{ kind: 'variable', index: 0 }] },
-          },
-        ],
-      },
-    });
-    const declarations = [
-      treeDeclaration,
-      member('Example.even', 'Example.odd'),
-      member('Example.odd', 'Example.even'),
-    ];
-    const closure = [
-      { declaration: 'Example.Tree', module: 'Example', role: 'emitted', reason: '' },
-      { declaration: 'Example.even', module: 'Example', role: 'emitted', reason: '' },
-      { declaration: 'Example.odd', module: 'Example', role: 'emitted', reason: '' },
-    ];
-    expect(() => decodeLeanSemanticProgram(program(declarations, closure, ['Example.even']))).not.toThrow();
+  test('rejects the retired v5 fragment by name rather than reading its termination evidence', () => {
+    expect(() =>
+      decodeLeanSemanticProgram({ ...program(), fragmentVersion: 'tslean-semantic-typed-v5' }),
+    ).toThrowError(/Lean fragment tslean-semantic-typed-v5 is retired/u);
   });
 
   test.each([
@@ -1033,6 +1066,7 @@ describe('Lean semantic IR trust boundary', () => {
           span: identitySpan,
           parameters: [{ name: 'value', type: { kind: 'boolean' } }],
           result: { kind: 'boolean' },
+          recursion: null,
           body: { kind: 'variable', index: 0 },
         },
       ]),
@@ -1054,6 +1088,7 @@ describe('Lean semantic IR trust boundary', () => {
           typeParameters: [],
           parameters: [{ name: 'value', type: { kind: 'boolean' } }],
           result: { kind: 'boolean' },
+          recursion: null,
           body: { kind: 'variable', index: 0 },
         },
       ]),
@@ -1107,12 +1142,89 @@ describe('Lean semantic IR trust boundary', () => {
   });
 });
 
-describe('Lean semantic IR termination policy', () => {
+describe('Lean semantic IR recursion policy', () => {
+  /** A mutual pair over `Example.Tree`, which is the only shape a group descriptor admits. */
+  const mutualMember = (name: string, peer: string, recursion: object): object => ({
+    kind: 'function',
+    name,
+    module: 'Example',
+    namespace: 'Example',
+    typeParameters: [],
+    span: identitySpan,
+    parameters: [{ name: 'tree', type: treeType }],
+    result: { kind: 'nat' },
+    recursion: null,
+    recursion,
+    body: {
+      kind: 'match',
+      type: treeType,
+      scrutinee: { kind: 'variable', index: 0 },
+      cases: [
+        { constructor: 'leaf', value: { kind: 'nat', value: '0' } },
+        {
+          constructor: 'branch',
+          value: { kind: 'call', function: peer, typeArguments: [], arguments: [{ kind: 'variable', index: 0 }] },
+        },
+      ],
+    },
+  });
+
+  const mutualProgram = (left: object, right: object): object =>
+    program(
+      [treeDeclaration, left, right],
+      [
+        treeClosure,
+        { declaration: 'Example.even', module: 'Example', role: 'emitted', reason: '' },
+        { declaration: 'Example.odd', module: 'Example', role: 'emitted', reason: '' },
+      ],
+      ['Example.even'],
+    );
+
+  test('admits a well-founded recursion on Lean-s own proof, with no restated decrease', () => {
+    // A measure the emitted program cannot restate is carried as Lean's evidence: the descriptor
+    // names the discipline and nothing else, and the self-call needs no constructor field.
+    expect(() =>
+      decodeLeanSemanticProgram(
+        recursionProgram({
+          ...depthDeclaration,
+          recursion: { kind: 'wellFounded' },
+          body: {
+            kind: 'match',
+            type: treeType,
+            scrutinee: { kind: 'variable', index: 0 },
+            cases: [
+              { constructor: 'leaf', value: { kind: 'nat', value: '0' } },
+              {
+                constructor: 'branch',
+                value: {
+                  kind: 'call',
+                  function: 'Example.depth',
+                  typeArguments: [],
+                  // The parameter itself, which only a well-founded measure can justify.
+                  arguments: [{ kind: 'variable', index: 1 }],
+                },
+              },
+            ],
+          },
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  test('admits a mutual group both members record identically', () => {
+    const group = { kind: 'mutual', group: ['Example.even', 'Example.odd'] };
+    expect(() =>
+      decodeLeanSemanticProgram(
+        mutualProgram(mutualMember('Example.even', 'Example.odd', group), mutualMember('Example.odd', 'Example.even', group)),
+      ),
+    ).not.toThrow();
+  });
+
   test.each([
     [
-      'a self-call with no recorded termination',
-      recursionProgram(withoutTermination(depthDeclaration)),
-      /Example\.depth calls itself without recorded termination evidence/u,
+      'a self-call with no recorded recursion',
+      recursionProgram(withoutRecursion(depthDeclaration)),
+      /Example\.depth calls itself but records no recursion discipline/u,
     ],
     [
       'a structural recursion that does not decrease',
@@ -1149,7 +1261,7 @@ describe('Lean semantic IR termination policy', () => {
       /recurses on Nat, which carries no constructors to decrease on/u,
     ],
     [
-      'recorded termination with no recursion at all',
+      'recorded structural recursion with no recursion at all',
       recursionProgram({
         ...depthDeclaration,
         body: {
@@ -1165,46 +1277,80 @@ describe('Lean semantic IR termination policy', () => {
       /declares a structural recursion argument but never recurses/u,
     ],
     [
-      'a group naming a declaration that was not exported',
+      'a well-founded descriptor over a body that never recurses',
       recursionProgram({
         ...depthDeclaration,
-        termination: {
-          kind: 'structural',
-          argument: 0,
-          group: ['Example.depth', 'Example.height'],
-          equation: 'Example.depth.eq_def',
+        recursion: { kind: 'wellFounded' },
+        body: {
+          kind: 'match',
+          type: treeType,
+          scrutinee: { kind: 'variable', index: 0 },
+          cases: [
+            { constructor: 'leaf', value: { kind: 'nat', value: '0' } },
+            { constructor: 'branch', value: { kind: 'nat', value: '1' } },
+          ],
         },
       }),
-      /names Example\.height in its recursive group, which is not an exported function/u,
+      /records a wellFounded recursion discipline but never recurses/u,
     ],
     [
-      'well-founded recursion carrying a decreasing argument',
-      recursionProgram({
-        ...depthDeclaration,
-        termination: {
-          kind: 'wellFounded',
-          argument: 0,
-          group: ['Example.depth'],
-          equation: 'Example.depth.eq_def',
-        },
-      }),
-      /records a decreasing argument for well-founded recursion/u,
+      'a structural descriptor naming a parameter the declaration does not declare',
+      recursionProgram({ ...depthDeclaration, recursion: { kind: 'structural', parameter: 1 } }),
+      /declarations\[1\]\.recursion\.parameter is not one of the declared parameters/u,
     ],
     [
-      'structural recursion with no decreasing argument',
-      recursionProgram({
-        ...depthDeclaration,
-        termination: { kind: 'structural', group: ['Example.depth'], equation: 'Example.depth.eq_def' },
-      }),
-      /records structural recursion without a decreasing argument/u,
+      'a well-founded descriptor carrying a decreasing parameter',
+      recursionProgram({ ...depthDeclaration, recursion: { kind: 'wellFounded', parameter: 0 } }),
+      /declarations\[1\]\.recursion fields must be exactly kind/u,
     ],
     [
-      'a termination record with no unfolding equation',
+      'a structural descriptor with no decreasing parameter',
+      recursionProgram({ ...depthDeclaration, recursion: { kind: 'structural' } }),
+      /declarations\[1\]\.recursion fields must be exactly kind, parameter/u,
+    ],
+    [
+      'a v5 termination record where v6 carries a recursion descriptor',
+      recursionProgram({
+        ...withoutRecursion(depthDeclaration),
+        termination: { kind: 'structural', argument: 0, group: ['Example.depth'], equation: 'Example.depth.eq_def' },
+      }),
+      /declarations\[1\] fields must be exactly .*recursion/u,
+    ],
+    [
+      'an omitted recursion descriptor, which is not the same as a recorded null',
+      recursionProgram(
+        Object.fromEntries(Object.entries(depthDeclaration).filter(([key]) => key !== 'recursion')),
+      ),
+      /declarations\[1\] fields must be exactly .*recursion/u,
+    ],
+    [
+      'a mutual descriptor naming one member',
+      recursionProgram({ ...depthDeclaration, recursion: { kind: 'mutual', group: ['Example.depth'] } }),
+      /names 1 declaration\(s\); a mutual block has at least two members/u,
+    ],
+    [
+      'a mutual group naming a declaration that was not exported',
       recursionProgram({
         ...depthDeclaration,
-        termination: { kind: 'structural', argument: 0, group: ['Example.depth'] },
+        recursion: { kind: 'mutual', group: ['Example.depth', 'Example.height'] },
       }),
-      /termination fields must be exactly equation, group, kind with optional argument/u,
+      /names Example\.height in its mutual group, which the program does not declare as a function/u,
+    ],
+    [
+      'a mutual pair whose members disagree on the group',
+      mutualProgram(
+        mutualMember('Example.even', 'Example.odd', { kind: 'mutual', group: ['Example.even', 'Example.odd'] }),
+        mutualMember('Example.odd', 'Example.even', { kind: 'mutual', group: ['Example.odd', 'Example.even'] }),
+      ),
+      /disagree on their mutual group/u,
+    ],
+    [
+      'a recursion that leaves the recorded group',
+      mutualProgram(
+        mutualMember('Example.even', 'Example.odd', { kind: 'structural', parameter: 0 }),
+        mutualMember('Example.odd', 'Example.even', { kind: 'structural', parameter: 0 }),
+      ),
+      /recurses through Example\.odd, which Lean did not record in its mutual group/u,
     ],
   ])('refuses %s', (_label, mutation, diagnostic) => {
     expect(() => decodeLeanSemanticProgram(mutation)).toThrowError(diagnostic);
@@ -1233,6 +1379,7 @@ describe('Lean semantic IR dot-notation evidence', () => {
     receiver: { type: 'Example.Config', parameter: 0 },
     parameters: [{ name: 'config', type: valueType }],
     result: { kind: 'boolean' },
+    recursion: null,
     body: { kind: 'field', target: { kind: 'variable', index: 0 }, field: 'enabled' },
   };
   const closure = [
