@@ -4,7 +4,7 @@ namespace TSLean.LeanToTypeScript
 
 open Lean
 
-private def fragmentVersion := "tslean-semantic-typed-v5"
+private def fragmentVersion := "tslean-semantic-typed-v6"
 
 private def array (items : List Json) : Json := .arr items.toArray
 
@@ -136,16 +136,296 @@ private def isTypeSort (expression : Expr) : Bool :=
 private def groundLevels (levels : List Level) : Bool := levels.all (· == Level.zero)
 
 /--
+The Lean type the `json` type form is the image of, owned by `TSLean/LeanToTypeScript/Json.lean`.
+
+It is matched by its literal name because this module imports `Lean` alone: the exporter reads the
+elaborated environment of whatever package it compiles, and that package is what carries the type.
+Its constructor set is fixed by the fragment rather than read, which is why the type is mapped
+instead of emitted.
+-/
+private def jsonValueTypeName : Name := `TSLean.LeanToTypeScript.JsonValue
+
+/-- The namespace the host boundary operations are declared in. -/
+private def hostNamespace : Name := `TSLean.LeanToTypeScript.Host
+
+/--
+The host boundary registry: the declared name of each host operation and the wire string the
+substrate binds it under. The nineteen spellings are `AgentCore.Substrate.Opcode.wire`, frozen with
+the substrate side, and `Ir.HostOp.wire` carries the same nineteen. A declaration in the host
+namespace whose name is absent from this table is refused rather than given a spelling.
+-/
+private def hostOperations : List (String × String) := [
+  ("storeGet", "host.store.get"),
+  ("storePut", "host.store.put"),
+  ("storeDelete", "host.store.delete"),
+  ("storeList", "host.store.list"),
+  ("storeTxn", "host.store.txn"),
+  ("alarmSet", "host.alarm.set"),
+  ("alarmGet", "host.alarm.get"),
+  ("alarmDelete", "host.alarm.delete"),
+  ("contentPut", "host.content.put"),
+  ("contentGet", "host.content.get"),
+  ("contentHead", "host.content.head"),
+  ("contentRange", "host.content.range"),
+  ("queueSend", "host.queue.send"),
+  ("queueAck", "host.queue.ack"),
+  ("queueRetry", "host.queue.retry"),
+  ("isolateLoad", "host.isolate.load"),
+  ("isolateCall", "host.isolate.call"),
+  ("rpcCall", "host.rpc.call"),
+  ("rpcDispose", "host.rpc.dispose")
+]
+
+/-- Whether a declaration belongs to the host namespace, which is what makes it a boundary rather
+than a function the compiler lowers. -/
+private def inHostNamespace (name : Name) : Bool := name.getPrefix == hostNamespace
+
+/-- The host operation a declaration name denotes. -/
+private def hostWire? (name : Name) : Option String :=
+  if inHostNamespace name then
+    (hostOperations.find? fun operation => operation.1 == name.getString!).map (·.2)
+  else none
+
+/-- Drops `count` leading arrows from a telescope, and fails on a telescope that is shorter. -/
+private def dropForalls : Nat → Expr → Option Expr
+  | 0, telescope => some telescope
+  | count + 1, telescope =>
+      match telescope.consumeMData with
+      | .forallE _ _ body _ => dropForalls count body
+      | _ => none
+
+/-- What an arrow chain finally returns. A binder's own type decides what it carries, and a chain
+of arrows carries whatever its result does: `∀ x, P x` is a proposition exactly as `P x` is. -/
+private partial def arrowResult (telescope : Expr) : Expr :=
+  match telescope.consumeMData with
+  | .forallE _ _ body _ => arrowResult body
+  | result => result
+
+/--
+What a binder carries in the emitted program. Erasure (surface §7) is decided here, once, so a
+binder dropped from a declaration's parameter list is dropped at every one of its call sites by the
+same rule and the two arities cannot disagree.
+-/
+private inductive BinderRole where
+  /-- A runtime value: it becomes a parameter and takes an argument. -/
+  | value
+  /-- A `Type 0` binder: it becomes a type argument, not a value. -/
+  | typeArgument
+  /-- A binder whose type is a proposition, so what it takes is a proof. -/
+  | proof
+  /-- A `Decidable p` binder. Its Bool image is read from `decide` at the use site, so the
+  dictionary itself carries nothing. -/
+  | decidable
+  /-- A universe or `Sort` binder. -/
+  | universe
+  deriving DecidableEq
+
+/-- Whether the role carries no data, so the binder and each of its arguments are dropped. -/
+private def BinderRole.erased : BinderRole → Bool
+  | .proof | .decidable | .universe => true
+  | .value | .typeArgument => false
+
+/-- What the role carries, for the diagnostic an erased binder's use produces. -/
+private def BinderRole.description : BinderRole → String
+  | .value => "a value"
+  | .typeArgument => "a type argument"
+  | .proof => "a proof"
+  | .decidable => "a decidability instance"
+  | .universe => "a universe argument"
+
+/--
+Whether a constant applied to `arity` arguments returns a proposition, read from its own declared
+telescope. A head whose declared result is not literally a sort is not classified as a proposition:
+a type whose sort needs unfolding to decide is a type this compiler did not read, and the binder is
+then offered to `typeNode`, which refuses what it cannot map.
+-/
+private def returnsProposition (environment : Environment) (name : Name) (arity : Nat) : Bool :=
+  match environment.find? name with
+  | some info => (dropForalls arity info.type).any fun result => result.consumeMData == .sort .zero
+  | none => false
+
+/-- The role a binder plays, decided from its elaborated type alone. -/
+private def binderRole (environment : Environment) (binderType : Expr) : BinderRole :=
+  let stripped := binderType.consumeMData
+  if isTypeSort stripped then .typeArgument
+  else if stripped.isSort then .universe
+  else
+    match appView (arrowResult stripped) with
+    | (.const name _, arguments) =>
+        if name == ``Decidable then .decidable
+        else if returnsProposition environment name arguments.length then .proof
+        else .value
+    | _ => .value
+
+/--
+The term an erased argument is replaced by while a body is renumbered. It names no constant, so a
+body that still reads an erased binder is refused by name instead of emitted against a parameter
+that is not there.
+-/
+private def erasedMarker : Expr := .const `TSLean.LeanToTypeScript.erasedBinder []
+
+/--
+A map key type and the instances its emitted image is proved at.
+
+The generated `compareKey` decides a key by `<` on a bigint or on a string, and the emitted `Map`
+identifies keys by SameValueZero, so exactly the four Lean types whose image is one of those two
+are admitted, each only at its own standard instances. A custom `BEq`, `Hashable` or `Ord` would
+identify or order the emitted entries differently from the Lean map, which is a disagreement the
+compiler refuses rather than assumes away.
+-/
+private structure KeyInstances where
+  decidableEq : Name
+  hashable : Name
+  order : Name
+
+private def keyInstances? (name : Name) : Option KeyInstances :=
+  if name == ``Nat then
+    some { decidableEq := ``instDecidableEqNat, hashable := ``instHashableNat,
+           order := ``instOrdNat }
+  else if name == ``Int then
+    some { decidableEq := ``Int.instDecidableEq, hashable := ``instHashableInt,
+           order := ``instOrdInt }
+  else if name == ``String then
+    some { decidableEq := ``instDecidableEqString, hashable := ``instHashableString,
+           order := ``String.instOrd }
+  else if name == ``Char then
+    some { decidableEq := ``instDecidableEqChar, hashable := ``instHashableChar,
+           order := ``instOrdChar }
+  else none
+
+/-- The type form a type node carries, which is what the host boundary checks its payloads
+against. -/
+private def typeNodeKind? (type : Json) : Option String :=
+  match type.getObjValAs? String "kind" with
+  | .ok kind => some kind
+  | .error _ => none
+
+/--
+The Lean types the surface deliberately excludes, each with the reason it has no image. The reason
+is the point: a type is absent because its target representation would disagree with Lean's, not
+because this compiler has not reached it.
+-/
+private def unadmittedTypeReason? (name : Name) : Option String :=
+  if name == ``UInt8 || name == ``UInt16 || name == ``UInt32 || name == ``UInt64
+      || name == ``USize then
+    some s!"{name} is outside the surface: its arithmetic wraps at its width, which needs a modular-arithmetic opcode family the v6 registry does not carry; a ByteArray element crosses the boundary as a Nat"
+  else if name == ``String.Pos || name == ``String.Pos.Raw then
+    some s!"{name} is outside the surface: a Lean position is a UTF-8 byte offset while a JavaScript index is a UTF-16 code unit, so the two count different things; String.toList and list indexing is the proved route"
+  else if name == ``Float then
+    some "Float is outside the surface: no type form carries an IEEE double, and Int reaches the target as an exact bigint at every magnitude instead"
+  else if name == ``Decidable then
+    some "a Decidable value has no type image: it is erased, and the Bool it decides is read from decide at the use site"
+  else none
+
+/-- The `ByteArray` operations the surface excludes, listed by their exact constants. -/
+private def byteArrayOperations : List Name :=
+  [``ByteArray.size, ``ByteArray.isEmpty, ``ByteArray.push, ``ByteArray.append,
+    ``ByteArray.toList, ``ByteArray.mk, ``ByteArray.data, ``ByteArray.empty]
+
+/-- The map operations the surface excludes, listed by their exact constants. -/
+private def mapOperations : List Name :=
+  [``Std.HashMap.insert, ``Std.HashMap.erase, ``Std.HashMap.get?, ``Std.HashMap.contains,
+    ``Std.HashMap.size, ``Std.HashMap.isEmpty, ``Std.HashMap.toList,
+    ``Std.HashMap.emptyWithCapacity, ``Std.TreeMap.insert, ``Std.TreeMap.erase,
+    ``Std.TreeMap.get?, ``Std.TreeMap.contains, ``Std.TreeMap.size, ``Std.TreeMap.isEmpty,
+    ``Std.TreeMap.toList, ``Std.TreeMap.empty]
+
+/--
+The Lean operations the surface deliberately excludes, each with the reason it has no emitted form.
+
+Every row names a semantics that disagrees with the target's, or a registry row that does not
+exist: `bytes` and the two map forms are type forms with no opcodes, so their values cross the
+boundary unread, and an operation on one has nothing to be proved against.
+-/
+private def unadmittedOperationReason? (name : Name) : Option String :=
+  if name == ``Int.ediv || name == ``Int.emod || name == ``Int.fdiv || name == ``Int.fmod then
+    some s!"{name} is outside the surface: Lean's Euclidean and flooring division take a non-negative or a floored remainder, while BigInt / and % truncate toward zero and take the dividend's sign; Int.tdiv and Int.tmod are the two rows the surface carries because they agree exactly"
+  else if name == ``HDiv.hDiv || name == ``HMod.hMod then
+    some s!"{name} is outside the surface: on Int it is Int.ediv or Int.emod, whose remainder disagrees with BigInt's, and on Nat the v6 registry carries no division row at all; Int.tdiv and Int.tmod are the surface's two"
+  else if name == ``HPow.hPow then
+    some "exponentiation is outside the surface: the v6 registry carries no power row, and repeating a multiplication needs a loop form Target.Body does not have"
+  else if name == ``String.get || name == ``String.get? || name == ``String.get!
+      || name == ``String.next || name == ``String.prev || name == ``String.atEnd
+      || name == ``String.extract || name == ``String.set
+      || name == ``String.Pos.Raw.get || name == ``String.Pos.Raw.next
+      || name == ``String.Pos.Raw.prev || name == ``String.Pos.Raw.extract then
+    some s!"{name} is outside the surface: a Lean string position is a UTF-8 byte offset while a JavaScript index is a UTF-16 code unit, so the two disagree on every character above U+007F; String.toList plus list indexing is the proved route"
+  else if name == ``Char.val then
+    some "Char.val is outside the surface: its result is a UInt32, a fixed-width type whose arithmetic wraps and which no type form carries; Char.toNat reads the same code point as a Nat"
+  else if name == ``getElem? || name == ``getElem then
+    some "an indexed read is outside the surface: the v6 registry carries no array.get and no bytes.get row, so a read at an index has no emitted form to be proved against; Array.toList with List.head? is the proved route"
+  else if name == ``EmptyCollection.emptyCollection then
+    some "an empty-collection literal is outside the surface at the map forms: the v6 registry carries no map.empty row, so an empty Std.HashMap or Std.TreeMap has no emitted form"
+  else if byteArrayOperations.contains name then
+    some s!"{name} is outside the surface: the v6 runtime registry carries no bytes opcode, so a computation on a ByteArray has no emitted form to be proved against; a bytes value crosses the boundary unread"
+  else if mapOperations.contains name then
+    some s!"{name} is outside the surface: the v6 runtime registry carries no map opcode, so an operation on a Std.HashMap or a Std.TreeMap has no emitted form to be proved against; a map value crosses the boundary unread"
+  else none
+
+/--
+The first-order operations the fragment admits, each by its exact Lean constant and the number of
+value arguments its opcode takes. Every row is a runtime opcode of the frozen registry; a constant
+absent from the table is refused rather than approximated by a neighbouring row.
+-/
+private def scalarOpcode? (name : Name) : Option (String × Nat) :=
+  if name == ``Int.add then some ("int.add", 2)
+  else if name == ``Int.sub then some ("int.subtract", 2)
+  else if name == ``Int.mul then some ("int.multiply", 2)
+  else if name == ``Int.neg then some ("int.negate", 1)
+  else if name == ``Int.tdiv then some ("int.tdiv", 2)
+  else if name == ``Int.tmod then some ("int.tmod", 2)
+  else if name == ``Int.ofNat then some ("int.ofNat", 1)
+  else if name == ``Int.toNat then some ("int.toNat", 1)
+  else if name == ``Char.toNat then some ("char.toNat", 1)
+  else if name == ``Char.ofNat then some ("char.ofNat", 1)
+  else if name == ``String.length then some ("string.length", 1)
+  else if name == ``String.isEmpty then some ("string.isEmpty", 1)
+  else if name == ``String.push then some ("string.push", 2)
+  else if name == ``String.singleton then some ("string.singleton", 1)
+  else if name == ``String.toList then some ("string.toList", 1)
+  else if name == ``String.ofList then some ("string.ofList", 1)
+  -- `String.data` and `String.mk` are the deprecated spellings of the two rows above. They still
+  -- denote the same functions, so they map to the same rows rather than to a refusal.
+  else if name == ``String.data then some ("string.toList", 1)
+  else if name == ``String.mk then some ("string.ofList", 1)
+  else none
+
+/--
+The `Array` operations the fragment admits. Each takes the element type as its one type argument,
+exactly as the `list` rows do, because `List` and `Array` share the dense-array image and the
+registry keeps one operand convention for both.
+-/
+private def arrayOpcode? (name : Name) : Option (String × Nat) :=
+  if name == ``Array.size then some ("array.size", 1)
+  else if name == ``Array.isEmpty then some ("array.isEmpty", 1)
+  else if name == ``Array.push then some ("array.push", 2)
+  else if name == ``Array.append then some ("array.append", 2)
+  else if name == ``Array.reverse then some ("array.reverse", 1)
+  else if name == ``Array.toList then some ("array.toList", 1)
+  else if name == ``Array.mk || name == ``List.toArray then some ("array.ofList", 1)
+  else none
+
+/--
 An inductive data type the fragment admits: declared by the frozen target closure, in `Type 0`,
 with no indices, no universe parameters, and every parameter a `Type 0`. A parameter is what makes
 the generated type generic, so it has to be a type and nothing else.
+
+A type class is admitted here too, because an instance is an elaborated structure value and the
+class is the record it inhabits. A class that dispatches on an output parameter is refused: its
+method call is resolved by the elaborator against a type the emitted program does not carry, so no
+concrete dictionary names it.
 -/
 private def ordinaryDataInfo (environment : Environment) (targetModules : NameSet) (name : Name) :
     Except String InductiveVal := do
+  if name == jsonValueTypeName then
+    throw s!"{name} is the Lean image of the json type form, whose constructor set the fragment fixes rather than reads, so it is mapped instead of emitted; drop its module from the target closure"
   unless declaredInModules environment targetModules name do
     throw s!"data type {name} is outside the frozen target module closure"
   let some (.inductInfo declaration) := environment.find? name
     | throw s!"type {name} is not an inductive data type"
+  if let some outParameters := getOutParamPositions? environment name then
+    unless outParameters.isEmpty do
+      throw s!"class {name} dispatches on output parameter {outParameters}, which no concrete dictionary resolves at export time"
   unless declaration.levelParams.isEmpty do
     throw s!"data type {name} is universe polymorphic, which is outside the checked fragment"
   unless declaration.numIndices = 0 do
@@ -191,8 +471,8 @@ private def Context.typeParameterIndex? (context : Context) (index : Nat) : Opti
     some (context.typeParameters - 1 - (index - context.valueDepth))
   else none
 
-/-- The three Lean data types the compiler maps rather than lowers, plus a user data type applied
-to exactly its declared parameters. One function builds the type node for both, so a constructor
+/-- The Lean data types the compiler maps rather than lowers, plus a user data type applied to
+exactly its declared parameters. One function builds the type node for both, so a constructor
 application and a type annotation can never disagree about a type's image. -/
 private def dataTypeNode (name : Name) (arguments : List Json) : Except String Json :=
   if name == ``Option then
@@ -207,6 +487,14 @@ private def dataTypeNode (name : Name) (arguments : List Json) : Except String J
     match arguments with
     | [element] => pure (node "list" [("element", element)])
     | _ => throw "List takes exactly one type argument"
+  else if name == ``Prod then
+    match arguments with
+    | [first, second] => pure (node "pair" [("first", first), ("second", second)])
+    | _ => throw "Prod takes exactly two type arguments"
+  else if name == jsonValueTypeName then
+    match arguments with
+    | [] => pure (node "json")
+    | _ => throw "JsonValue takes no type arguments"
   else
     pure (node "named" [("name", .str name.toString), ("arguments", array arguments)])
 
@@ -227,6 +515,15 @@ private partial def typeNode (context : Context) (expression : Expr) : Except St
       | some position => pure (node "parameter" [("index", .num position)])
       | none => throw "a value binder appears in a type; dependent types are outside the checked fragment"
   | .const name levels =>
+      -- A subtype is decided before the universe check: `Subtype` abstracts a `Sort u`, so a
+      -- carrier in `Type 0` instantiates it at `u = 1`, and what has to be in the fragment is the
+      -- carrier the subtype erases to rather than the level the abstraction was taken at.
+      if name == ``Subtype then
+        -- Surface §7: a subtype is its carrier, and a `.val` read is the identity on it. The
+        -- predicate is dropped here, which is the same erasure the value side performs.
+        match arguments with
+        | [carrier, _] => return ← typeNode context carrier
+        | _ => throw "Subtype received an unsupported elaborated shape"
       unless groundLevels levels do
         throw s!"type {name} is applied at a universe above Type 0, which is outside the checked fragment"
       if name == ``Bool then
@@ -238,7 +535,27 @@ private partial def typeNode (context : Context) (expression : Expr) : Except St
       else if name == ``String then
         unless arguments.isEmpty do throw "String received unexpected type arguments"
         pure (node "string")
-      else if name == ``Option || name == ``Except || name == ``List then
+      else if name == ``Int then
+        unless arguments.isEmpty do throw "Int received unexpected type arguments"
+        pure (node "int")
+      else if name == ``Char then
+        unless arguments.isEmpty do throw "Char received unexpected type arguments"
+        pure (node "char")
+      else if name == ``ByteArray then
+        unless arguments.isEmpty do throw "ByteArray received unexpected type arguments"
+        pure (node "bytes")
+      else if name == ``Array then
+        match arguments with
+        | [element] => pure (node "array" [("element", ← typeNode context element)])
+        | _ => throw "Array takes exactly one type argument"
+      else if name == ``Std.HashMap then
+        hashMapNode context arguments
+      else if name == ``Std.TreeMap then
+        treeMapNode context arguments
+      else if let some reason := unadmittedTypeReason? name then
+        throw reason
+      else if name == ``Option || name == ``Except || name == ``List || name == ``Prod
+          || name == jsonValueTypeName then
         dataTypeNode name (← arguments.mapM (typeNode context))
       else
         let declaration ← ordinaryDataInfo context.environment context.targetModules name
@@ -262,16 +579,67 @@ private partial def arrowChain (context : Context) (expression : Expr) :
       pure (parameter :: parameters, result)
   | result => pure ([], ← typeNode context result)
 
+/--
+`Std.HashMap κ ν` at its key type's own instances.
+
+The emitted `Map` identifies a key by SameValueZero and keeps its entry sequence sorted by
+`compareKey`, so the key type has to be one whose order is proved and the equality has to be the
+one that agrees with SameValueZero. The `Hashable` instance is read as well, not because the
+emitted map hashes — it does not — but because a Lean map at a different `Hashable` groups its
+entries differently, and the exporter refuses a difference it cannot represent.
+-/
+private partial def hashMapNode (context : Context) (arguments : List Expr) :
+    Except String Json := do
+  let [key, value, equality, hash] := arguments
+    | throw "Std.HashMap received an unsupported elaborated shape"
+  let some keyName := constHead? key
+    | throw "Std.HashMap at a key type that is not a data type is outside the checked fragment"
+  let some instances := keyInstances? keyName
+    | throw s!"Std.HashMap at key type {keyName}: the sorted-key image is proved for Nat, Int, String and Char keys only, because those are the images the generated compareKey decides"
+  unless isInstance equality ``instBEqOfDecidableEq [keyName, instances.decidableEq] do
+    throw s!"Std.HashMap at key type {keyName} carries a BEq other than that type's own decidable equality; the emitted Map decides keys by SameValueZero, which only that instance agrees with"
+  unless (constHead? hash).any (· == instances.hashable) do
+    throw s!"Std.HashMap at key type {keyName} carries a Hashable other than that type's own; a Lean map at a different Hashable groups its entries differently from the emitted Map"
+  pure (node "hashMap" [("key", ← typeNode context key), ("value", ← typeNode context value)])
+
+/--
+`Std.TreeMap κ ν cmp` at the key type's own `compare`.
+
+The comparator is part of the type, and the emitted entry sequence is sorted by `compareKey`, which
+is proved against `compare` alone. A custom comparator would order the emitted entries differently
+from the Lean map, and iteration order is observable, so it is refused rather than sorted anyway.
+-/
+private partial def treeMapNode (context : Context) (arguments : List Expr) :
+    Except String Json := do
+  let [key, value, comparator] := arguments
+    | throw "Std.TreeMap received an unsupported elaborated shape"
+  let some keyName := constHead? key
+    | throw "Std.TreeMap at a key type that is not a data type is outside the checked fragment"
+  let some instances := keyInstances? keyName
+    | throw s!"Std.TreeMap at key type {keyName}: the sorted-key image is proved for Nat, Int, String and Char keys only, because those are the images the generated compareKey decides"
+  unless isInstance comparator ``Ord.compare [keyName, instances.order] do
+    throw s!"Std.TreeMap at key type {keyName} is applied to a comparator other than that type's own compare; the emitted entry sequence is sorted by compareKey, which is proved against compare, and iteration order is observable"
+  pure (node "treeMap" [("key", ← typeNode context key), ("value", ← typeNode context value)])
+
 end
 
 private structure Parameter where
   name : String
   type : Json
 
+/--
+One declaration's telescope. `binders` carries every value binder Lean declared, in order, with the
+parameter each one contributes: an erased binder contributes none, and its position is kept so the
+declaration's body and every one of its call sites drop the same argument.
+-/
 private structure Signature where
   typeParameterNames : List String
-  parameters : List Parameter
+  binders : List (BinderRole × Option Parameter)
   result : Json
+
+/-- The parameters the emitted declaration takes, which are the binders erasure kept. -/
+private def Signature.parameters (signature : Signature) : List Parameter :=
+  signature.binders.filterMap (·.2)
 
 /-- The leading implicit `Type 0` binders, which are what the generated declaration is generic in. -/
 private partial def peelTypeParameters (expression : Expr) (names : List String) :
@@ -283,15 +651,29 @@ private partial def peelTypeParameters (expression : Expr) (names : List String)
       else (names.reverse, expression.consumeMData)
   | other => (names.reverse, other)
 
+/--
+The value binders of a telescope, each with the role that decides whether it survives.
+
+A binder is pushed onto the type context whether or not it is erased, because the rest of the
+telescope is written under it either way: erasure changes what the emitted declaration takes, never
+what the Lean type means.
+-/
 private partial def peelValueParameters (context : Context) (expression : Expr) :
-    Except String (List Parameter × Json) := do
+    Except String (List (BinderRole × Option Parameter) × Json) := do
   match expression.consumeMData with
   | .forallE binderName binderType body binderInfo =>
-      unless binderInfo == .default do
-        throw "instance parameters, and implicit parameters after the leading type parameters, are outside the checked fragment"
-      let parameterType ← typeNode context binderType
-      let (parameters, result) ← peelValueParameters context.push body
-      pure ({ name := binderName.toString, type := parameterType } :: parameters, result)
+      let role := binderRole context.environment binderType
+      if role.erased then
+        let (binders, result) ← peelValueParameters context.push body
+        pure ((role, none) :: binders, result)
+      else
+        unless binderInfo == .default do
+          throw "instance parameters, and implicit parameters after the leading type parameters, are outside the checked fragment"
+        if role == .typeArgument then
+          throw "a Type 0 parameter after the leading type parameters is outside the checked fragment; declare it among them"
+        let parameterType ← typeNode context binderType
+        let (binders, result) ← peelValueParameters context.push body
+        pure ((role, some { name := binderName.toString, type := parameterType }) :: binders, result)
   | result => pure ([], ← typeNode context result)
 
 private def declarationSignature (environment : Environment) (targetModules : NameSet)
@@ -299,8 +681,8 @@ private def declarationSignature (environment : Environment) (targetModules : Na
   let (typeParameterNames, rest) := peelTypeParameters type []
   let context : Context :=
     { environment, targetModules, typeParameters := typeParameterNames.length, valueDepth := 0 }
-  let (parameters, result) ← peelValueParameters context rest
-  pure { typeParameterNames, parameters, result }
+  let (binders, result) ← peelValueParameters context rest
+  pure { typeParameterNames, binders, result }
 
 /-- The binder names a value abstracts, peeling exactly the declared arity. -/
 private partial def peelBinderNames (count : Nat) (expression : Expr) :
@@ -336,6 +718,49 @@ private def structureFieldNames (environment : Environment) (name : Name) : Exce
     ensureAsciiIdentifier field.getString! "structure field"
   pure fields.toList
 
+/--
+The de Bruijn renumbering that drops one declaration's erased binders.
+
+A value abstracts every binder Lean declared, erased ones included, so the kept binders have to be
+renumbered against the emitted parameter list. The layout the rest of the compiler reads is: the
+kept value binders innermost, the type parameters outside them, which is what
+`Context.typeParameterIndex?` decides. An erased binder is checked to be unused before it is
+dropped, so a body that reads a proof is refused rather than emitted against a parameter that is
+not there.
+
+`none` means nothing was erased and the body is already numbered as the emitted declaration needs.
+-/
+private def erasureSubstitution (name : Name) (typeParameters : Nat)
+    (binders : List (BinderRole × Option Parameter)) (body : Expr) :
+    Except String (Option (Array Expr)) := do
+  let valueCount := binders.length
+  let keptCount := (binders.filter fun binder => binder.2.isSome).length
+  if keptCount = valueCount then return none
+  let mut substitution := Array.replicate (typeParameters + valueCount) erasedMarker
+  let mut kept := 0
+  for position in [0 : valueCount] do
+    let some (role, parameter) := binders[position]?
+      | throw s!"{name} does not expose the binder at position {position}"
+    let index := valueCount - 1 - position
+    match parameter with
+    | some _ =>
+        substitution := substitution.set! index (.bvar (keptCount - 1 - kept))
+        kept := kept + 1
+    | none =>
+        if body.hasLooseBVar index then
+          throw s!"{name} reads its binder at position {position}, which carries {role.description} and is erased, so the emitted declaration has no parameter for it"
+  for position in [0 : typeParameters] do
+    let offset := typeParameters - 1 - position
+    substitution := substitution.set! (valueCount + offset) (.bvar (keptCount + offset))
+  pure (some substitution)
+
+/-- One declaration's body, renumbered for the parameters erasure kept. -/
+private def eraseBinders (name : Name) (typeParameters : Nat)
+    (binders : List (BinderRole × Option Parameter)) (body : Expr) : Except String Expr := do
+  match ← erasureSubstitution name typeParameters binders body with
+  | some substitution => pure (body.instantiate substitution)
+  | none => pure body
+
 mutual
 
 /--
@@ -368,13 +793,26 @@ private partial def expressionNode (context : Context) (returnPosition : Bool) (
         ("body", ← expressionNode context.push true body)
       ])
   | .proj typeName index subject =>
-      let fields ← structureFieldNames context.environment typeName
-      let some field := fields[index]?
-        | throw s!"structure {typeName} has no field at index {index}"
-      pure (node "field" [
-        ("target", ← expressionNode context false subject),
-        ("field", .str field.getString!)
-      ])
+      if typeName == ``Subtype then
+        -- Surface §7: the carrier read is the identity, and the proof field carries nothing.
+        if index = 0 then expressionNode context returnPosition subject
+        else throw "a Subtype's property field is a proof, which has no runtime image; erasure keeps its carrier alone"
+      else if typeName == ``ByteArray then
+        throw "a ByteArray field read is outside the surface: its field is an Array UInt8, and no type form carries a fixed-width integer"
+      else if typeName == ``Char then
+        throw "a Char field read is outside the surface: its fields are a UInt32 and a proof; Char.toNat reads the same code point as a Nat"
+      else if typeName == ``String then
+        throw "a String field read is outside the surface: its fields are the UTF-8 bytes and a validity proof; String.toList reads the code points"
+      else if typeName == ``Array then
+        throw "an Array field read reaches the exporter without the element type its opcode carries; write Array.toList, which is the array.toList row"
+      else
+        let fields ← structureFieldNames context.environment typeName
+        let some field := fields[index]?
+          | throw s!"structure {typeName} has no field at index {index}"
+        pure (node "field" [
+          ("target", ← expressionNode context false subject),
+          ("field", .str field.getString!)
+        ])
   | .fvar _ => throw "free variables are outside the checked fragment"
   | .mvar _ => throw "metavariables are outside the checked fragment"
   | .sort _ | .forallE _ _ _ _ => throw "type-level expressions are outside the checked fragment"
@@ -401,9 +839,13 @@ private partial def functionValueNode (context : Context) (functionType : Expr) 
   ])
 
 /--
-The arguments of one elaborated application, split by the telescope of what is applied. A binder
-whose type is `Type 0` carries a type argument; every other binder carries a value argument, read
-against its own instantiated binder type so a function-typed argument knows its arity.
+The arguments of one elaborated application, split by the telescope of what is applied.
+
+Each binder is classified by the same rule that classified the callee's own parameters, so an
+argument erasure drops at the definition is dropped here too and the two arities agree: a proof, a
+`Decidable` dictionary and a universe argument all disappear, a `Type 0` binder carries a type
+argument, and every remaining binder carries a value argument read against its own instantiated
+binder type so a function-typed argument knows its arity.
 -/
 private partial def applicationArguments (context : Context) (telescope : Expr)
     (arguments : List Expr) : Except String (List Json × List Json) := do
@@ -413,18 +855,32 @@ private partial def applicationArguments (context : Context) (telescope : Expr)
       match telescope.consumeMData with
       | .forallE _ binderType body binderInfo =>
           let remaining := body.instantiate1 argument
-          if isTypeSort binderType then
-            let typeArgument ← typeNode context argument
-            let (types, values) ← applicationArguments context remaining rest
-            pure (typeArgument :: types, values)
-          else if binderInfo == .default then
-            let valueArgument ←
-              if binderType.consumeMData.isForall then functionValueNode context binderType argument
-              else expressionNode context false argument
-            let (types, values) ← applicationArguments context remaining rest
-            pure (types, valueArgument :: values)
-          else
-            throw "an instance argument is outside the checked fragment"
+          match binderRole context.environment binderType with
+          | .typeArgument =>
+              let typeArgument ← typeNode context argument
+              let (types, values) ← applicationArguments context remaining rest
+              pure (typeArgument :: types, values)
+          | .proof | .decidable | .universe =>
+              applicationArguments context remaining rest
+          | .value =>
+              unless binderInfo == .default do
+                throw "an instance argument is outside the checked fragment"
+              let valueArgument ←
+                if binderType.consumeMData.isForall then functionValueNode context binderType argument
+                else expressionNode context false argument
+              let (types, values) ← applicationArguments context remaining rest
+              pure (types, valueArgument :: values)
+      | _ => throw "an application is longer than the telescope of what it applies"
+
+/-- The telescope that remains after a prefix of arguments is applied, with each of them
+substituted, which is what a field read's own remaining arrow type is. -/
+private partial def instantiateTelescope (telescope : Expr) (arguments : List Expr) :
+    Except String Expr := do
+  match arguments with
+  | [] => pure telescope
+  | argument :: rest =>
+      match telescope.consumeMData with
+      | .forallE _ _ body _ => instantiateTelescope (body.instantiate1 argument) rest
       | _ => throw "an application is longer than the telescope of what it applies"
 
 /--
@@ -467,20 +923,53 @@ private partial def decisionNode (context : Context) (proposition : Expr) (decis
         ("typeArguments", array []),
         ("arguments", array [← expressionNode context false left, ← expressionNode context false right])
       ])
+    else if compared.isConstOf ``Int
+        && (isDecisionFor decision ``Int.instDecidableEq left right
+            || isDecisionFor decision ``Int.decEq left right) then
+      pure (node "operation" [
+        ("opcode", .str "int.equals"),
+        ("typeArguments", array []),
+        ("arguments", array [← expressionNode context false left, ← expressionNode context false right])
+      ])
+    else if compared.isConstOf ``Char && isDecisionFor decision ``instDecidableEqChar left right then
+      pure (node "operation" [
+        ("opcode", .str "char.equals"),
+        ("typeArguments", array []),
+        ("arguments", array [← expressionNode context false left, ← expressionNode context false right])
+      ])
     else
       throw s!"equality on {compared} has no admitted decision procedure in this fragment version"
   else if name == ``LT.lt || name == ``LE.le then
     let [comparedType, instanceTerm, left, right] := arguments
       | throw s!"{name} received an unsupported elaborated shape"
     let less := name == ``LT.lt
-    let expectedInstance := if less then ``instLTNat else ``instLENat
-    let expectedDecision := if less then ``Nat.decLt else ``Nat.decLe
-    unless comparedType.consumeMData.isConstOf ``Nat && instanceTerm.consumeMData.isConstOf expectedInstance do
-      throw s!"{name} is admitted only on Nat in this fragment version"
+    let compared := comparedType.consumeMData
+    -- The compared type decides the row: `nat.less`, `int.less` and `char.less` are registry rows,
+    -- `char.lessOrEqual` is not, and String ordering is outside the surface for a reason the
+    -- message names rather than hides behind "unsupported".
+    let (opcode, expectedInstance, expectedDecision) ←
+      if compared.isConstOf ``Nat then
+        pure (if less then "nat.less" else "nat.lessOrEqual",
+          if less then ``instLTNat else ``instLENat,
+          if less then ``Nat.decLt else ``Nat.decLe)
+      else if compared.isConstOf ``Int then
+        pure (if less then "int.less" else "int.lessOrEqual",
+          if less then ``Int.instLTInt else ``Int.instLEInt,
+          if less then ``Int.decLt else ``Int.decLe)
+      else if compared.isConstOf ``Char then
+        unless less do
+          throw "Char ≤ is outside the surface: the v6 registry carries char.less and no char.lessOrEqual row, so the ordering has one proved emitted form only"
+        pure ("char.less", ``Char.instLT, ``Char.instDecidableLt)
+      else if compared.isConstOf ``String then
+        throw "String ordering is outside the surface: Lean compares code-point lists while JavaScript < compares UTF-16 code units, and the two disagree for an astral character against U+E000..U+FFFF; a correct emitted form needs a code-point loop, which Target.Body has no form for"
+      else
+        throw s!"{name} on {compared} has no admitted decision procedure in this fragment version"
+    unless instanceTerm.consumeMData.isConstOf expectedInstance do
+      throw s!"{name} on {compared} is taken at an instance other than {expectedInstance}, so the emitted comparison would not be the one that was proved"
     unless isDecisionFor decision expectedDecision left right do
-      throw s!"{name} on Nat is decided by an unadmitted procedure"
+      throw s!"{name} on {compared} is decided by a procedure other than {expectedDecision}"
     pure (node "operation" [
-      ("opcode", .str (if less then "nat.less" else "nat.lessOrEqual")),
+      ("opcode", .str opcode),
       ("typeArguments", array []),
       ("arguments", array [← expressionNode context false left, ← expressionNode context false right])
     ])
@@ -548,23 +1037,36 @@ private partial def applicationNode (context : Context) (returnPosition : Bool)
     let [left, right] := arguments | throw "String.append received an unsupported elaborated shape"
     pure (operationNode "string.append" [] [← expressionNode context false left, ← expressionNode context false right])
   else if name == ``OfNat.ofNat then
-    let [ofType, literal, instanceTerm] := arguments | throw "OfNat.ofNat received an unsupported elaborated shape"
-    unless ofType.consumeMData.isConstOf ``Nat do
-      throw "numeric literals are admitted only at type Nat in this fragment version"
+    let [ofType, literal, instanceTerm] := arguments
+      | throw "OfNat.ofNat received an unsupported elaborated shape"
     let .lit (.natVal value) := literal.consumeMData
-      | throw "a Nat literal that is not a raw natural is outside the checked fragment"
-    unless isInstance instanceTerm ``instOfNatNat [Name.anonymous] do
-      throw "a Nat literal built by an unadmitted OfNat instance is outside the checked fragment"
-    pure (node "nat" [("value", .str (toString value))])
+      | throw "a numeric literal that is not a raw natural is outside the checked fragment"
+    let literalNode := node "nat" [("value", .str (toString value))]
+    if ofType.consumeMData.isConstOf ``Nat then
+      unless isInstance instanceTerm ``instOfNatNat [Name.anonymous] do
+        throw "a Nat literal built by an unadmitted OfNat instance is outside the checked fragment"
+      pure literalNode
+    else if ofType.consumeMData.isConstOf ``Int then
+      -- The IR carries one integer literal form, at `Nat`. An `Int` literal is that literal at the
+      -- `int.ofNat` row, which is the identity on the bigint image the two types share.
+      unless isInstance instanceTerm ``instOfNat [Name.anonymous] do
+        throw "an Int literal built by an unadmitted OfNat instance is outside the checked fragment"
+      pure (operationNode "int.ofNat" [] [literalNode])
+    else
+      throw "numeric literals are admitted at types Nat and Int in this fragment version"
   else if name == ``HAdd.hAdd || name == ``HSub.hSub || name == ``HMul.hMul then
     let [_, _, _, instanceTerm, left, right] := arguments
       | throw s!"{name} received an unsupported elaborated shape"
-    let (wrapper, natInstance, opcode) :=
-      if name == ``HAdd.hAdd then (``instHAdd, ``instAddNat, "nat.add")
-      else if name == ``HSub.hSub then (``instHSub, ``instSubNat, "nat.subtract")
-      else (``instHMul, ``instMulNat, "nat.multiply")
-    unless isInstance instanceTerm wrapper [``Nat, natInstance] do
-      throw s!"{name} is admitted only on Nat in this fragment version"
+    let (wrapper, natInstance, natOpcode, intInstance, intOpcode) :=
+      if name == ``HAdd.hAdd then
+        (``instHAdd, ``instAddNat, "nat.add", ``Int.instAdd, "int.add")
+      else if name == ``HSub.hSub then
+        (``instHSub, ``instSubNat, "nat.subtract", ``Int.instSub, "int.subtract")
+      else (``instHMul, ``instMulNat, "nat.multiply", ``Int.instMul, "int.multiply")
+    let opcode ←
+      if isInstance instanceTerm wrapper [``Nat, natInstance] then pure natOpcode
+      else if isInstance instanceTerm wrapper [``Int, intInstance] then pure intOpcode
+      else throw s!"{name} is admitted on Nat and on Int in this fragment version"
     pure (operationNode opcode [] [← expressionNode context false left, ← expressionNode context false right])
   else if name == ``HAppend.hAppend then
     let [appendedType, _, _, instanceTerm, left, right] := arguments
@@ -577,8 +1079,13 @@ private partial def applicationNode (context : Context) (returnPosition : Bool)
       let [element] := elementArguments | throw "list append received an unsupported element type"
       pure (operationNode "list.append" [← typeNode context element]
         [← expressionNode context false left, ← expressionNode context false right])
+    else if isInstance instanceTerm ``instHAppendOfAppend [``Array, ``Array.instAppend] then
+      let (_, elementArguments) := appView appendedType.consumeMData
+      let [element] := elementArguments | throw "array append received an unsupported element type"
+      pure (operationNode "array.append" [← typeNode context element]
+        [← expressionNode context false left, ← expressionNode context false right])
     else
-      throw "append is admitted only on String and List in this fragment version"
+      throw "append is admitted on String, List and Array in this fragment version"
   else if name == ``BEq.beq then
     let [comparedType, instanceTerm, left, right] := arguments
       | throw "BEq.beq received an unsupported elaborated shape"
@@ -590,9 +1097,45 @@ private partial def applicationNode (context : Context) (returnPosition : Bool)
         pure "nat.equals"
       else if compared.isConstOf ``String && isInstance instanceTerm ``instBEqOfDecidableEq [``String, ``instDecidableEqString] then
         pure "string.equals"
+      else if compared.isConstOf ``Int && isInstance instanceTerm ``instBEqOfDecidableEq [``Int, ``Int.instDecidableEq] then
+        pure "int.equals"
+      else if compared.isConstOf ``Char && isInstance instanceTerm ``instBEqOfDecidableEq [``Char, ``instDecidableEqChar] then
+        pure "char.equals"
       else
         throw s!"equality on {compared} has no admitted decision procedure in this fragment version"
     pure (operationNode opcode [] [← expressionNode context false left, ← expressionNode context false right])
+  else if let some reason := unadmittedOperationReason? name then
+    throw reason
+  else if let some (opcode, arity) := scalarOpcode? name then
+    unless arguments.length = arity do
+      throw s!"{name} is applied to {arguments.length} arguments; the {opcode} row takes {arity}"
+    pure (operationNode opcode [] (← arguments.mapM (expressionNode context false)))
+  else if let some (opcode, values) := arrayOpcode? name then
+    typedOperationNode context opcode name levels 1 values arguments
+  else if name == ``Neg.neg then
+    let [negatedType, instanceTerm, operand] := arguments
+      | throw "Neg.neg received an unsupported elaborated shape"
+    unless negatedType.consumeMData.isConstOf ``Int
+        && instanceTerm.consumeMData.isConstOf ``Int.instNegInt do
+      throw "negation is admitted only on Int at its own instance in this fragment version"
+    pure (operationNode "int.negate" [] [← expressionNode context false operand])
+  else if name == ``Nat.cast then
+    -- `(n : Int)` elaborates to a cast at `instNatCastInt`, which is exactly the `int.ofNat` row.
+    let [castType, instanceTerm, operand] := arguments
+      | throw "Nat.cast received an unsupported elaborated shape"
+    unless castType.consumeMData.isConstOf ``Int
+        && instanceTerm.consumeMData.isConstOf ``instNatCastInt do
+      throw "a numeric cast is admitted only from Nat to Int in this fragment version"
+    pure (operationNode "int.ofNat" [] [← expressionNode context false operand])
+  else if name == ``Subtype.val then
+    -- Surface §7: the subtype is its carrier, so reading the carrier is the identity.
+    let [_, _, subject] := arguments
+      | throw "Subtype.val received an unsupported elaborated shape"
+    expressionNode context returnPosition subject
+  else if name == ``Subtype.mk then
+    let [_, _, value, _] := arguments
+      | throw "Subtype.mk received an unsupported elaborated shape"
+    expressionNode context returnPosition value
   else if let some opcode := listOpcode? name then
     listOperationNode context opcode name levels arguments
   else if let some matcherInfo := Meta.getMatcherInfoCore? context.environment name then
@@ -643,6 +1186,23 @@ private partial def listOperationNode (context : Context) (opcode : String) (nam
   unless valueArguments.length = expectedValues do
     throw s!"{name} received {valueArguments.length} arguments; expected {expectedValues}"
   pure (operationNode opcode ordered valueArguments)
+
+/--
+An operation whose opcode carries type arguments, at exactly the arity the registry row declares.
+The arguments are split by the constant's own telescope, so the element type an `Array` row carries
+is the one Lean instantiated rather than one the exporter guessed from the operands.
+-/
+private partial def typedOperationNode (context : Context) (opcode : String) (name : Name)
+    (levels : List Level) (types values : Nat) (arguments : List Expr) : Except String Json := do
+  let some info := context.environment.find? name
+    | throw s!"constant {name} is absent from the elaborated environment"
+  let (typeArguments, valueArguments) ←
+    applicationArguments context (info.instantiateTypeLevelParams levels) arguments
+  unless typeArguments.length = types do
+    throw s!"{name} received {typeArguments.length} type arguments; the {opcode} row takes {types}"
+  unless valueArguments.length = values do
+    throw s!"{name} received {valueArguments.length} arguments; the {opcode} row takes {values}"
+  pure (operationNode opcode typeArguments valueArguments)
 
 /--
 A `match`, read from the elaborated matcher. The discriminant type comes from the motive's own
@@ -722,14 +1282,24 @@ private partial def discriminantTypeName (_context : Context) (discriminantType 
   | _ => throw "a match on a value whose type is not a data type is outside the checked fragment"
 
 /--
-The constructors a match has to decide, in declaration order. The three mapped Lean types keep
-their own constructors, because their TypeScript representation carries exactly those cases.
+The constructors a match has to decide, in declaration order. The mapped Lean types keep their own
+constructors, because their TypeScript representation carries exactly those cases: `Prod` carries
+one, so a match on a pair is decided by field reads, and `JsonValue` carries the six the `json`
+form fixes.
+
+A type form with no constructors is refused by name. `int`, `char`, `array`, `bytes` and the two
+map forms are decided with opcodes rather than destructured, so there is no case analysis for a
+match to be total over.
 -/
 private partial def discriminantConstructors (context : Context) (name : Name) :
     Except String (List Name) := do
   if name == ``Nat then
     throw "a match on Nat is outside this fragment version; decide it with a comparison"
-  if name == ``Option || name == ``Except || name == ``List then
+  if name == ``Int || name == ``Char || name == ``Array || name == ``ByteArray
+      || name == ``Std.HashMap || name == ``Std.TreeMap then
+    throw s!"a match on {name} is outside the surface: its type form carries no constructors, because its values are decided with opcodes rather than destructured"
+  if name == ``Option || name == ``Except || name == ``List || name == ``Prod
+      || name == jsonValueTypeName then
     let some (.inductInfo declaration) := context.environment.find? name
       | throw s!"type {name} is not an inductive data type"
     pure declaration.ctors
@@ -790,20 +1360,42 @@ private partial def matcherAlternativeConstructors (environment : Environment) (
     | _ => throw s!"matcher {matcherName} does not expose the expected alternative telescope"
   pure constructors.reverse
 
-/-- An application of a constant that is neither an admitted operation nor a matcher. -/
+/--
+An application of a constant that is neither an admitted operation nor a matcher.
+
+A projection applied to exactly its subject is a field read. A projection applied to more than that
+is a method call: a type class is a structure, an instance is an elaborated value of it, and
+`Class.method dictionary arguments…` is the dictionary's field read applied to the arguments. Both
+lower through the forms the IR already has — `field` then `apply` — so a class needs no new
+expression form, and the extra arguments are read against the field's own remaining arrow type so a
+function-valued argument still knows its arity.
+-/
 private partial def constantApplicationNode (context : Context) (name : Name) (levels : List Level)
     (arguments : List Expr) : Except String Json := do
   let some info := context.environment.find? name
     | throw s!"constant {name} is absent from the elaborated environment"
   if let some projection := context.environment.getProjectionFnInfo? name then
-    unless arguments.length = projection.numParams + 1 do
-      throw s!"projection {name} is applied to {arguments.length} arguments; a field read takes exactly {projection.numParams + 1}"
-    let some target := arguments[projection.numParams]?
+    let subjectPosition := projection.numParams
+    if arguments.length < subjectPosition + 1 then
+      throw s!"projection {name} is applied to {arguments.length} arguments; a field read takes at least {subjectPosition + 1}"
+    let some target := arguments[subjectPosition]?
       | throw s!"projection {name} received an unsupported elaborated shape"
     ensureAsciiIdentifier name.getString! "structure field"
-    return node "field" [
+    let field := node "field" [
       ("target", ← expressionNode context false target),
       ("field", .str name.getString!)
+    ]
+    let applied := arguments.drop (subjectPosition + 1)
+    if applied.isEmpty then return field
+    let consumed := arguments.take (subjectPosition + 1)
+    let remaining ←
+      instantiateTelescope (info.instantiateTypeLevelParams levels) consumed
+    let (typeArguments, valueArguments) ← applicationArguments context remaining applied
+    unless typeArguments.isEmpty do
+      throw s!"method {name} is applied to a type argument beyond its dictionary, which is outside the checked fragment"
+    return node "apply" [
+      ("target", field),
+      ("arguments", array valueArguments)
     ]
   match info with
   | .ctorInfo constructor =>
@@ -844,6 +1436,14 @@ private partial def constantApplicationNode (context : Context) (name : Name) (l
 
 end
 
+/--
+One declared field of a record.
+
+A field whose type carries no data is refused rather than erased: the codec surface (§8) generates
+`toData` and `fromData` over exactly the declared fields, and `fromData` would have to rebuild the
+proof a `Prop` field holds. Erasure drops a proof from a parameter list, where the caller supplies
+it; it cannot drop one from a record, where the record is what supplies it.
+-/
 private def fieldDeclaration (context : Context) (structureName fieldName : Name) :
     Except String Json := do
   let some fieldInfo := getFieldInfo? context.environment structureName fieldName
@@ -858,11 +1458,15 @@ private def fieldDeclaration (context : Context) (structureName fieldName : Name
     match telescope.consumeMData with
     | .forallE _ _ body _ => telescope := body
     | _ => throw s!"structure field projection {fieldInfo.projFn} does not expose its telescope"
+  let role := binderRole context.environment telescope
+  if role.erased then
+    throw s!"structure field {structureName}.{fieldName} carries {role.description}, which holds no data; the record codec's fromData would have to rebuild it"
   let fieldType ← typeNode { context with valueDepth := 1 } telescope
   pure (object ([("name", .str fieldName.getString!), ("type", fieldType)]
     ++ documentationFields context.environment fieldInfo.projFn))
 
-/-- The fields a constructor carries, read from its own declared type behind its type parameters. -/
+/-- The fields a constructor carries, read from its own declared type behind its type parameters. A
+field that carries no data is refused for the reason `fieldDeclaration` names. -/
 private def constructorFields (context : Context) (constructorName : Name) :
     Except String (List Parameter) := do
   let some (.ctorInfo constructor) := context.environment.find? constructorName
@@ -874,7 +1478,11 @@ private def constructorFields (context : Context) (constructorName : Name) :
     match telescope.consumeMData with
     | .forallE _ _ body _ => telescope := body
     | _ => throw s!"constructor {constructorName} does not expose its parameter telescope"
-  let (fields, _) ← peelValueParameters context telescope
+  let (binders, _) ← peelValueParameters context telescope
+  for (role, parameter) in binders do
+    if parameter.isNone then
+      throw s!"constructor {constructorName} carries {role.description}, which holds no data; the enum codec's fromData would have to rebuild it"
+  let fields := binders.filterMap (·.2)
   unless fields.length = constructor.numFields do
     throw s!"constructor {constructorName} does not expose its fields as first-order parameters"
   let mut seen : Std.HashSet String := {}
@@ -928,10 +1536,14 @@ private def dataDeclaration (environment : Environment) (targetModules : NameSet
     ] ++ documentationFields environment name))
 
 /--
-How Lean discharged a definition's termination, read from the elaborator's own record. Structural
-recursion names the parameter it decreases on; well-founded recursion names none, because its
-measure has no image in the generated call. Both name the whole recursive group, which is what the
-generated program is allowed to recurse through.
+Which recursion discipline Lean proved for a definition, read from the elaborator's own record.
+
+Structural recursion names the binder it decreases on. Well-founded recursion names none, because
+its measure has no image in the generated call. A group of more than one member is a mutual block,
+which the descriptor reports as such: the emitter has to hoist every member of a group, and the
+parameter a mutual member decreases on is not what makes that legal, so the wire carries the group
+instead. `structural` therefore always describes a single declaration, which is exactly the case a
+decoder can re-verify against the emitted program.
 -/
 private structure Recursion where
   kind : String
@@ -941,10 +1553,19 @@ private structure Recursion where
 private def recursionOf? (environment : Environment) (name : Name) : Option Recursion :=
   match Lean.Elab.Structural.eqnInfoExt.find? environment name with
   | some info =>
-      some { kind := "structural", argument? := some info.recArgPos, group := info.declNames.toList }
+      let group := info.declNames.toList
+      if group.length > 1 then
+        some { kind := "mutual", argument? := none, group }
+      else
+        some { kind := "structural", argument? := some info.recArgPos, group }
   | none =>
       match Lean.Elab.WF.eqnInfoExt.find? environment name with
-      | some info => some { kind := "wellFounded", argument? := none, group := info.declNames.toList }
+      | some info =>
+          let group := info.declNames.toList
+          if group.length > 1 then
+            some { kind := "mutual", argument? := none, group }
+          else
+            some { kind := "wellFounded", argument? := none, group }
       | none => none
 
 /-- The pre-compilation body of a recursive definition, which still names itself. -/
@@ -1007,8 +1628,50 @@ private def receiverField? (environment : Environment) (targetModules : NameSet)
     throw s!"dot-notation method is declared by {methodModule} but its receiver {owner} is declared by {ownerModule}; declare it beside its type"
   pure (some ("receiver", object [("type", .str owner.toString), ("parameter", .num position)]))
 
-private def functionDeclaration (environment : Environment) (targetModules : NameSet) (name : Name)
-    (unfoldingEquation? : Option Expr) : Except String Json := do
+/--
+The names the emitted parameters carry.
+
+A definition written in match style has no named binders, so its equation abstracts hygienic ones,
+and a hygienic name is not a TypeScript identifier. Such a binder takes its position instead. That
+is a label rather than a meaning: the IR refers to a parameter by de Bruijn index, so what a
+parameter name has to be is ASCII, unbound elsewhere, and the same on every run. Two parameters
+that would end up sharing a name are refused, because the emitted declaration binds both.
+-/
+private def parameterNames (owner : Name) (binderNames : List Name) :
+    Except String (List String) := do
+  let mut names : List String := []
+  let mut seen : Std.HashSet String := {}
+  for position in [0 : binderNames.length] do
+    let some binderName := binderNames[position]?
+      | throw s!"{owner} does not expose its binder at position {position}"
+    let declared := binderName.eraseMacroScopes.toString
+    let candidate :=
+      if isAsciiIdentifier declared && !reservedBindingNames.contains declared
+          && !seen.contains declared then
+        declared
+      else
+        s!"parameter{position}"
+    if seen.contains candidate then
+      throw s!"{owner} has two parameters the emitted declaration would name {candidate}; rename one, because the generated function binds both"
+    seen := seen.insert candidate
+    names := candidate :: names
+  pure names.reverse
+
+/--
+One definition's emitted shape: the parameters erasure kept, the result, the §3 recursion
+descriptor and the body. A host boundary and an ordinary function are read the same way and differ
+only in the row they are written into, so they cannot disagree about what a definition means.
+-/
+private structure DefinitionShape where
+  signature : Signature
+  parameters : List Json
+  namedParameters : List Parameter
+  recursion : Json
+  body : Json
+  typeParameterCount : Nat
+
+private def definitionShape (environment : Environment) (targetModules : NameSet) (name : Name)
+    (unfoldingEquation? : Option Expr) : Except String DefinitionShape := do
   let some info := environment.find? name
     | throw s!"declaration {name} is absent from the elaborated environment"
   let .defnInfo declaration := info
@@ -1021,59 +1684,126 @@ private def functionDeclaration (environment : Environment) (targetModules : Nam
     throw "universe polymorphic definitions are outside the checked fragment"
   let signature ← declarationSignature environment targetModules declaration.type
   let typeParameterCount := signature.typeParameterNames.length
-  let binderCount := typeParameterCount + signature.parameters.length
+  let binderCount := typeParameterCount + signature.binders.length
+  let keptParameters := signature.parameters
   let recursion? := recursionOf? environment name
   let selfReferential := declaration.value.getUsedConstants.contains name
     || (recursionValue? environment name).any (·.getUsedConstants.contains name)
-  let (binderNames, body, terminationFields) ←
+  let (binderNames, declaredBody, recursion) ←
     match recursion?, unfoldingEquation? with
     | some recursion, some equationType =>
-        let argumentFields ← match recursion.argument? with
+        let (names, body) ← unfoldingEquationBody name binderCount equationType
+        let descriptor ← match recursion.argument? with
           | some argument =>
+              -- The parameter a structural recursion decreases on is reported against the emitted
+              -- parameter list, which is what a decoder can re-verify, so an erased binder before
+              -- it shifts the index and an erased binder at it is refused.
               if argument < typeParameterCount then
                 throw s!"{name} recurses on a type parameter, which carries no data"
               let valueArgument := argument - typeParameterCount
-              unless valueArgument < signature.parameters.length do
-                throw s!"structural recursion argument {argument} is outside {name}'s parameters"
-              pure [("argument", Json.num valueArgument)]
-          | none => pure []
-        let (names, body) ← unfoldingEquationBody name binderCount equationType
-        let equationName := name ++ `eq_def
-        pure (names, body, [("termination", object ([("kind", .str recursion.kind)]
-          ++ argumentFields
-          ++ [("group", array (recursion.group.map fun member => .str member.toString)),
-              ("equation", .str equationName.toString)]))])
+              let some (role, parameter) := signature.binders[valueArgument]?
+                | throw s!"structural recursion argument {argument} is outside {name}'s parameters"
+              if parameter.isNone then
+                throw s!"{name} recurses on its binder at position {valueArgument}, which carries {role.description} and is erased, so the emitted declaration has no parameter to decrease"
+              let position := (signature.binders.take valueArgument).countP fun binder =>
+                binder.2.isSome
+              pure (object [("kind", .str recursion.kind), ("parameter", .num position)])
+          | none =>
+              if recursion.kind == "mutual" then
+                pure (object [("kind", .str recursion.kind),
+                  ("group", array (recursion.group.map fun member => .str member.toString))])
+              else
+                pure (object [("kind", .str recursion.kind)])
+        pure (names, body, descriptor)
     | some _, none => throw s!"unfolding theorem for {name} is unavailable"
     | none, _ =>
         if selfReferential then
           throw "recursion Lean established by neither structural nor well-founded means is outside the checked fragment"
         let (names, body) ← peelBinderNames binderCount declaration.value
-        pure (names, body, [])
-  let valueNames := binderNames.drop typeParameterCount
-  for binderName in valueNames do
-    ensureBindingIdentifier binderName.toString "parameter name"
-  let parameters := List.zipWith (fun (parameter : Parameter) (binderName : Name) =>
-    object [("name", .str binderName.toString), ("type", parameter.type)])
-    signature.parameters valueNames
+        pure (names, body, Json.null)
+  let body ← eraseBinders name typeParameterCount signature.binders declaredBody
+  let valueBinderNames := binderNames.drop typeParameterCount
+  let keptNames := (List.zip signature.binders valueBinderNames).filterMap
+    fun (binder, binderName) => binder.2.map fun _ => binderName
+  let names ← parameterNames name keptNames
+  let parameters := List.zipWith (fun (parameter : Parameter) (parameterName : String) =>
+    object [("name", .str parameterName), ("type", parameter.type)])
+    keptParameters names
   let namedParameters := List.zipWith
-    (fun (parameter : Parameter) (binderName : Name) => { parameter with name := binderName.toString })
-    signature.parameters valueNames
-  let receiverFields ←
-    match ← receiverField? environment targetModules name typeParameterCount namedParameters with
-    | some field => pure [field]
-    | none => pure []
+    (fun (parameter : Parameter) (parameterName : String) => { parameter with name := parameterName })
+    keptParameters names
   let context : Context :=
     { environment, targetModules, typeParameters := typeParameterCount,
-      valueDepth := signature.parameters.length }
+      valueDepth := keptParameters.length }
+  pure {
+    signature, parameters, namedParameters, recursion, typeParameterCount,
+    body := ← expressionNode context true body
+  }
+
+private def functionDeclaration (environment : Environment) (targetModules : NameSet) (name : Name)
+    (unfoldingEquation? : Option Expr) : Except String Json := do
+  let shape ← definitionShape environment targetModules name unfoldingEquation?
+  let receiverFields ←
+    match ← receiverField? environment targetModules name shape.typeParameterCount
+        shape.namedParameters with
+    | some field => pure [field]
+    | none => pure []
   pure (node "function" ([
     ("name", .str name.toString),
     ← declarationModuleField environment name,
     namespaceField name,
-    typeParameterField signature.typeParameterNames,
-    ("parameters", array parameters),
-    ("result", signature.result)
-  ] ++ receiverFields ++ terminationFields ++ [
-    ("body", ← expressionNode context true body)
+    typeParameterField shape.signature.typeParameterNames,
+    ("parameters", array shape.parameters),
+    ("result", shape.signature.result)
+  ] ++ receiverFields ++ [
+    ("recursion", shape.recursion),
+    ("body", shape.body)
+  ] ++ documentationFields environment name))
+
+/-- The type forms a host payload may take (§4). The substrate encodes exactly these, so a payload
+of any other form is refused rather than given an encoding this compiler cannot name. -/
+private def hostPayloadForms : List String := ["bytes", "nat", "string", "list", "option", "pair"]
+
+/--
+A host boundary declaration.
+
+A host operation is not lowered. The emitted module imports the substrate's implementation under
+the host name, and what this compiler exports is the reference implementation that implementation
+has to agree with — the named premise, never an axiom. §4 fixes the calling convention: the
+parameters are the payloads and then the store, and the result is a pair of reply and store. The
+shape is checked here, because a declaration whose store is not threaded is not the boundary the
+premise is about, and calling it one would make the premise say something else.
+-/
+private def foreignDeclaration (environment : Environment) (targetModules : NameSet) (name : Name)
+    (host : String) (unfoldingEquation? : Option Expr) : Except String Json := do
+  let shape ← definitionShape environment targetModules name unfoldingEquation?
+  unless shape.signature.typeParameterNames.isEmpty do
+    throw s!"host operation {name} is generic; the substrate binds one implementation per host operation, so a boundary declaration is monomorphic"
+  unless shape.recursion == Json.null do
+    throw s!"host operation {name} is recursive; a boundary is entered once, and a reference body that recurses has to do it through a named call the emitted program carries"
+  let some store := shape.namedParameters.getLast?
+    | throw s!"host operation {name} takes no parameters; §4 gives a host declaration its payloads and then the store it threads"
+  let some resultForm := typeNodeKind? shape.signature.result
+    | throw s!"host operation {name} has a result whose type form the exporter could not read"
+  unless resultForm == "pair" do
+    throw s!"host operation {name} returns a {resultForm}; §4 fixes the result as a pair of reply and store, which is what makes the boundary synchronous store passing"
+  let some threadedStore := (shape.signature.result.getObjVal? "second").toOption
+    | throw s!"host operation {name} returns a pair with no second component"
+  unless threadedStore == store.type do
+    throw s!"host operation {name} returns a store of a different type from the one it takes; the store is threaded through the boundary, not replaced by it"
+  for payload in shape.namedParameters.dropLast do
+    let some form := typeNodeKind? payload.type
+      | throw s!"host operation {name} takes a payload whose type form the exporter could not read"
+    unless hostPayloadForms.contains form do
+      throw s!"host operation {name} takes a payload of form {form}; §4 admits bytes, nat, string, list, option and pair payloads, because those are the forms the substrate encodes"
+  pure (node "foreign" ([
+    ("name", .str name.toString),
+    ← declarationModuleField environment name,
+    namespaceField name,
+    ("host", .str host),
+    ("parameters", array shape.parameters),
+    ("result", shape.signature.result),
+    ("reference", shape.body)
   ] ++ documentationFields environment name))
 
 /--
@@ -1264,7 +1994,10 @@ private partial def collectDeclarationsAux (environment : Environment) (targetMo
         | .inductInfo _ =>
             collectDeclarationsAux environment targetModules
               (localDependencies environment targetModules name ++ rest) seen (name :: ordered)
-        | .recInfo _ => collectDeclarationsAux environment targetModules rest seen ordered
+        -- A recursor and a proof are erased scaffolding, not declarations. A proof reaches the
+        -- walk because erasure drops proof arguments at their call sites (§7), so the proof term
+        -- the caller passed is a dependency of the caller's text and of nothing that is emitted.
+        | .recInfo _ | .thmInfo _ => collectDeclarationsAux environment targetModules rest seen ordered
         | .opaqueInfo _ =>
             throw s!"{name}: opaque or partial definitions are outside the checked fragment"
         | _ => throw s!"declaration dependency {name} is outside the checked fragment"
@@ -1328,7 +2061,15 @@ private def exportPackage (entryModule : Name) (targetModules : NameSet) (roots 
     let encoded ← match info with
       | .inductInfo _ => pure (dataDeclaration environment targetModules name)
       | .defnInfo _ =>
-          pure (functionDeclaration environment targetModules name unfoldingEquations[name]?)
+          -- A declaration in the host namespace is a boundary, not a function the compiler lowers.
+          match hostWire? name with
+          | some host =>
+              pure (foreignDeclaration environment targetModules name host unfoldingEquations[name]?)
+          | none =>
+              if inHostNamespace name then
+                pure (.error s!"{name} is declared in the host namespace but names none of the nineteen host operations, so no wire spelling identifies it")
+              else
+                pure (functionDeclaration environment targetModules name unfoldingEquations[name]?)
       | _ => pure (.error s!"declaration {name} has an unsupported kind")
     match encoded with
     | .ok value => declarations := value :: declarations
