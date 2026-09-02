@@ -38,7 +38,7 @@ private def opcodeEntry (code : Ir.Opcode) : Json :=
 
 private def hostEntry (host : Ir.HostOp) : Json :=
   Json.mkObj [
-    ("host", .str host.wire),
+    ("kind", .str host.wire),
     ("constructor", .str (toString (repr host)))
   ]
 

@@ -378,6 +378,84 @@
       "kind": "call"
     }
   ],
+  "hostOpcodes": [
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.storeGet",
+      "kind": "host.store.get"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.storePut",
+      "kind": "host.store.put"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.storeDelete",
+      "kind": "host.store.delete"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.storeList",
+      "kind": "host.store.list"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.storeTxn",
+      "kind": "host.store.txn"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.alarmSet",
+      "kind": "host.alarm.set"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.alarmGet",
+      "kind": "host.alarm.get"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.alarmDelete",
+      "kind": "host.alarm.delete"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.contentPut",
+      "kind": "host.content.put"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.contentGet",
+      "kind": "host.content.get"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.contentHead",
+      "kind": "host.content.head"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.contentRange",
+      "kind": "host.content.range"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.queueSend",
+      "kind": "host.queue.send"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.queueAck",
+      "kind": "host.queue.ack"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.queueRetry",
+      "kind": "host.queue.retry"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.isolateLoad",
+      "kind": "host.isolate.load"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.isolateCall",
+      "kind": "host.isolate.call"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.rpcCall",
+      "kind": "host.rpc.call"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.HostOp.rpcDispose",
+      "kind": "host.rpc.dispose"
+    }
+  ],
   "opcodes": [
     {
       "components": [],
@@ -873,7 +951,7 @@
         "primitive:string.fromCodePoint",
         "representation:char.scalar-value"
       ],
-      "emittedForm": "operand >= 0n && operand <= 1114111n && !(operand >= 55296n && operand <= 57343n) ? String.fromCodePoint(Number(operand)) : \"\\u0000\"",
+      "emittedForm": "operand >= 0n && operand <= 1114111n && !(operand >= 55296n && operand <= 57343n) ? String.fromCodePoint(Number(operand)) : \"\\0\"",
       "model": "TSLean.LeanToTypeScript.Semantics.Runtime.charOfNat",
       "opcode": "char.ofNat",
       "relation": "source = model",
