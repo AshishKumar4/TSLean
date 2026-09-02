@@ -1,7 +1,8 @@
 // Build and validate the module dependency graph.
 // Implements Tarjan's SCC algorithm for cycle detection and Kahn's algorithm for topological sort.
 
-import * as ts from 'typescript';
+import * as ts from '../typescript-api/index.js';
+import { readSourceFile } from '../typescript-api/session.js';
 import * as path from 'path';
 import { fileToLeanModule, resolveImportModule, isExternalModule, type ModuleResolverOpts } from './module-resolver.js';
 
@@ -79,16 +80,28 @@ interface RawImport {
   isTypeOnly: boolean;
 }
 
-/** Extract import module specifiers from a TS file using the compiler API. */
+/**
+ * Import module specifiers of one TS file, read with the compiler's own parser and no checker.
+ *
+ * A file the compiler cannot read contributes no edges: the reader refuses the path outright, and
+ * a graph edge is not the place to report a missing or unreadable source. The file itself is
+ * reported where it is read for lowering, which is the stage that can say what was expected of it.
+ */
 function extractImports(filePath: string, opts: ModuleResolverOpts): RawImport[] {
-  const sourceText = ts.sys.readFile(filePath) ?? '';
-  const sf = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.ES2022, true);
+  let sf: ts.SourceFile;
+  try {
+    sf = readSourceFile(path.resolve(filePath));
+  } catch {
+    return [];
+  }
   const result: RawImport[] = [];
 
   for (const stmt of sf.statements) {
     if (ts.isImportDeclaration(stmt) && ts.isStringLiteral(stmt.moduleSpecifier)) {
       const spec = stmt.moduleSpecifier.text;
-      const isTypeOnly = !!(stmt.importClause?.isTypeOnly);
+      // `import type` is a phase modifier on the clause; the other phase, `import defer`, is a
+      // value import and so is a real dependency.
+      const isTypeOnly = stmt.importClause?.phaseModifier === ts.SyntaxKind.TypeKeyword;
       const resolved = resolveImportModule(spec, filePath, opts);
       if (resolved && !isExternalModule(resolved)) {
         result.push({ module: resolved, isTypeOnly });
@@ -98,7 +111,7 @@ function extractImports(filePath: string, opts: ModuleResolverOpts): RawImport[]
     // export { X } from './mod' and export * from './mod'
     if (ts.isExportDeclaration(stmt) && stmt.moduleSpecifier && ts.isStringLiteral(stmt.moduleSpecifier)) {
       const spec = stmt.moduleSpecifier.text;
-      const isTypeOnly = !!stmt.isTypeOnly;
+      const isTypeOnly = stmt.isTypeOnly;
       const resolved = resolveImportModule(spec, filePath, opts);
       if (resolved && !isExternalModule(resolved)) {
         result.push({ module: resolved, isTypeOnly });

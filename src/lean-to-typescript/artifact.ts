@@ -145,10 +145,20 @@ export interface LeanToTypeScriptSemanticIdentity {
   readonly codecs: readonly LeanToTypeScriptCodecSurface[];
 }
 
-/** The machine that produced the artifact. Recorded, never binding on the artifact bytes. */
+/**
+ * The machine that produced the artifact. Recorded, never binding on the artifact bytes.
+ *
+ * Two TypeScript versions appear because two compilers do the work: `printerVersion` is the one
+ * that built and printed the emitted syntax, so it is the version the bytes came out of, and
+ * `typescriptVersion` is the one that read and type-checked the generated tree, so it is the
+ * version whose acceptance the package claims. They are separate fields because they answer
+ * separate questions, and a reader that only knows one of them knows the wrong thing about the
+ * other.
+ */
 export interface LeanToTypeScriptEnvironmentAttestation {
   readonly runtime: string;
   readonly typescriptVersion: string;
+  readonly printerVersion: string;
   readonly platform: string;
   readonly inputs: readonly LeanToTypeScriptInput[];
   readonly inputClosureSha256: string;

@@ -1,4 +1,4 @@
-import ts from 'typescript';
+import * as ts from '../typescript-api/index.js';
 import type { LeanToTypeScriptClosureEntry, LeanToTypeScriptDeclarationRole } from './artifact.js';
 import { compareCodePoints } from './ordering.js';
 
@@ -2986,11 +2986,18 @@ function identifier(value: unknown, location: string): string {
   return decoded;
 }
 
+/**
+ * A name the emitted code may bind. The compiler's own scanner decides: the name must scan as one
+ * `Identifier` and then end, so a keyword, a name that needs an escape, and anything the scanner
+ * splits into more than one token are all refused. Trivia is kept — the scanner's first argument
+ * is `skipTrivia` — so a name carrying whitespace ends the scan on the whitespace rather than on
+ * end-of-file. `arguments` and `eval` scan as identifiers but cannot be bound in strict mode.
+ */
 function bindingIdentifier(value: unknown, location: string): string {
   const decoded = identifier(value, location);
-  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, decoded);
+  const scanner = ts.createScanner(false, ts.LanguageVariant.Standard, decoded);
   const token = scanner.scan();
-  if (token !== ts.SyntaxKind.Identifier || scanner.scan() !== ts.SyntaxKind.EndOfFileToken) {
+  if (token !== ts.SyntaxKind.Identifier || scanner.scan() !== ts.SyntaxKind.EndOfFile) {
     throw new TypeError(`${location} is not a safe TypeScript binding name: ${decoded}`);
   }
   if (decoded === 'arguments' || decoded === 'eval') {

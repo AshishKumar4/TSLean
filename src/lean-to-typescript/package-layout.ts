@@ -1,4 +1,12 @@
-import ts from 'typescript';
+/**
+ * @module lean-to-typescript/package-layout
+ *
+ * The module graph of the generated package, read and rewritten over the statements the emitter
+ * constructed, so it works through the same emission compiler
+ * {@link module:typescript-api/emitted-syntax} holds.
+ */
+
+import { emitted as ts } from '../typescript-api/emitted-syntax.js';
 import { isLeanModuleName, type LeanDeclaration } from './ir.js';
 import { compareCodePoints } from './ordering.js';
 

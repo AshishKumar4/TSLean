@@ -1,9 +1,10 @@
-// Project configuration reader: parse tsconfig.json, discover files, create shared TypeChecker.
-// Uses the TS compiler API for correct include/exclude/paths resolution.
+// Project configuration reader: parse tsconfig.json, discover files, open the shared checker.
+// Uses the TS compiler session for correct include/exclude/paths resolution.
 
-import * as ts from 'typescript';
 import * as path from 'path';
 import * as fs from 'fs';
+import type { Checker, Program, SourceFile } from '../typescript-api/index.js';
+import { configuration, openProject, renderDiagnostics } from '../typescript-api/session.js';
 import type { ModuleResolverOpts } from './module-resolver.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
@@ -19,9 +20,9 @@ export interface ProjectConfig {
 }
 
 export interface SharedCompiler {
-  program: ts.Program;
-  checker: ts.TypeChecker;
-  sourceFiles: Map<string, ts.SourceFile>;
+  program: Program;
+  checker: Checker;
+  sourceFiles: Map<string, SourceFile>;
 }
 
 // ─── tsconfig.json parsing ──────────────────────────────────────────────────────
@@ -37,22 +38,22 @@ export function readProjectConfig(
   }
 
   const configDir = path.dirname(configPath);
-  const configText = fs.readFileSync(configPath, 'utf-8');
-  const { config, error } = ts.parseConfigFileTextToJson(configPath, configText);
-  if (error) {
-    throw new Error(`Failed to parse ${configPath}: ${ts.flattenDiagnosticMessageText(error.messageText, '\n')}`);
-  }
-
-  const parsed = ts.parseJsonConfigFileContent(config, ts.sys, configDir, undefined, configPath);
-  if (parsed.errors.length > 0) {
-    const msgs = parsed.errors.map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n'));
-    throw new Error(`tsconfig.json errors:\n${msgs.join('\n')}`);
+  // The compiler resolves the configuration and reports what it objected to, and both a malformed
+  // file and a bad option arrive through that one channel: the session answers with resolved
+  // options either way, so a truncated `tsconfig.json` reads as "no options at all" rather than as
+  // a failure, and these objections are what stands between a broken configuration and a build
+  // that silently used defaults.
+  const parsed = configuration(configPath);
+  if (parsed.diagnostics.length > 0) {
+    throw new Error(`tsconfig.json errors:\n${renderDiagnostics(parsed.diagnostics, '\n')}`);
   }
 
   // Determine rootDir: explicit in tsconfig or inferred from configDir
-  const sourceDir = parsed.options.rootDir
-    ? path.resolve(configDir, parsed.options.rootDir)
-    : configDir;
+  const rootDirOption = parsed.options['rootDir'];
+  if (rootDirOption !== undefined && typeof rootDirOption !== 'string') {
+    throw new Error(`tsconfig.json rootDir must be a directory path: ${configPath}`);
+  }
+  const sourceDir = rootDirOption ? path.resolve(configDir, rootDirOption) : configDir;
 
   // Filter to .ts/.tsx files, exclude .d.ts and node_modules
   const files = parsed.fileNames.filter(f =>
@@ -62,10 +63,12 @@ export function readProjectConfig(
   );
 
   // Extract path aliases
-  const pathAliases = parsed.options.paths;
-  const baseUrl = parsed.options.baseUrl
-    ? path.resolve(configDir, parsed.options.baseUrl)
-    : undefined;
+  const pathAliases = readPathAliases(parsed.options, configPath);
+  const baseUrlOption = parsed.options['baseUrl'];
+  if (baseUrlOption !== undefined && typeof baseUrlOption !== 'string') {
+    throw new Error(`tsconfig.json baseUrl must be a directory path: ${configPath}`);
+  }
+  const baseUrl = baseUrlOption ? path.resolve(configDir, baseUrlOption) : undefined;
 
   // Determine namespace: from package.json name, or explicit option
   const leanNamespace = opts.namespace ?? inferNamespace(configDir);
@@ -109,32 +112,35 @@ export function readProjectDir(
   };
 }
 
-// ─── Shared TypeChecker ─────────────────────────────────────────────────────────
+// ─── Shared checker ─────────────────────────────────────────────────────────────
 
-/** Create a single ts.Program for all project files, enabling cross-file type resolution. */
+/**
+ * Open one project over all project files, enabling cross-file type resolution. The project stays
+ * open for the caller's lifetime: the program, the checker and every source file below are read
+ * through it, so it is the caller's own scope that decides when the reading is done.
+ */
 export function createSharedCompiler(config: ProjectConfig): SharedCompiler {
-  const compilerOpts: ts.CompilerOptions = {
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.NodeNext,
-    moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    strict: true,
-    skipLibCheck: true,
-    rootDir: config.sourceDir,
-    baseUrl: config.baseUrl,
-    paths: config.pathAliases,
-  };
+  const project = openProject({
+    files: config.files,
+    settings: {
+      target: 'es2022',
+      module: 'nodenext',
+      moduleResolution: 'nodenext',
+      strict: true,
+      skipLibCheck: true,
+      rootDir: config.sourceDir,
+      baseUrl: config.baseUrl,
+      paths: config.pathAliases,
+    },
+  });
 
-  const host = ts.createCompilerHost(compilerOpts);
-  const program = ts.createProgram(config.files, compilerOpts, host);
-  const checker = program.getTypeChecker();
-
-  const sourceFiles = new Map<string, ts.SourceFile>();
+  const sourceFiles = new Map<string, SourceFile>();
   for (const f of config.files) {
-    const sf = program.getSourceFile(f);
+    const sf = project.sourceFile(f);
     if (sf) sourceFiles.set(f, sf);
   }
 
-  return { program, checker, sourceFiles };
+  return { program: project.program, checker: project.checker, sourceFiles };
 }
 
 /** Convert a ProjectConfig to ModuleResolverOpts. */
@@ -150,6 +156,37 @@ export function toResolverOpts(config: ProjectConfig): ModuleResolverOpts {
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
 const IGNORED_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'out', '.next', '.tslean-cache']);
+
+/**
+ * The `paths` table the compiler resolved. The session answers with the configuration's own values
+ * as unknowns, so the shape is checked here rather than assumed: an alias that is not a list of
+ * strings is a configuration the module resolver cannot honour, and refusing it beats resolving an
+ * import against something that is not a path.
+ */
+function readPathAliases(
+  options: Readonly<Record<string, unknown>>,
+  configPath: string,
+): Record<string, string[]> | undefined {
+  const configured = options['paths'];
+  if (configured === undefined) return undefined;
+  if (typeof configured !== 'object' || configured === null || Array.isArray(configured)) {
+    throw new Error(`tsconfig.json paths must be an object: ${configPath}`);
+  }
+  const entries: readonly (readonly [string, unknown])[] = Object.entries(configured);
+  const aliases: Record<string, string[]> = {};
+  for (const [pattern, targets] of entries) {
+    if (!Array.isArray(targets)) {
+      throw new Error(`tsconfig.json paths entry ${pattern} must be a list of paths: ${configPath}`);
+    }
+    aliases[pattern] = targets.map((target: unknown) => {
+      if (typeof target !== 'string') {
+        throw new Error(`tsconfig.json paths entry ${pattern} must be a list of paths: ${configPath}`);
+      }
+      return target;
+    });
+  }
+  return aliases;
+}
 
 function discoverTsFiles(dir: string): string[] {
   const out: string[] = [];

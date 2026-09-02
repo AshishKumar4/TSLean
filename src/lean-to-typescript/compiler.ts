@@ -19,7 +19,9 @@ import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertRuntimeInputsUnchanged, runtimeInputSnapshots } from './runtime-provenance.js';
-import ts from 'typescript';
+import * as ts from '../typescript-api/index.js';
+import { emitted as printer } from '../typescript-api/emitted-syntax.js';
+import { openProject, renderDiagnostics } from '../typescript-api/session.js';
 import {
   LEAN_TO_TYPESCRIPT_INPUT_PLANES,
   type LeanToTypeScriptEnvironmentAttestation,
@@ -933,6 +935,12 @@ function isQualifiedLeanName(value: string): boolean {
  * cross-module import that does not resolve is a compilation failure rather than a later surprise.
  * `noUnusedLocals` is on: an import the module does not need would mean the reference analysis
  * over-approximated, and that is a compiler defect, not a style question.
+ *
+ * The modules are written immediately before they are read, and an earlier compilation in this
+ * process may have written the same paths: opening a project carries a change notice for every
+ * path the session has already read, so the check grades the bytes just written rather than the
+ * ones an earlier call left behind. The project is released afterwards because nothing outside
+ * this check reads the generated tree.
  */
 function assertPackageTypeChecks(emitted: LeanToTypeScriptPackage, directory: string): void {
   const root = join(directory, 'package');
@@ -960,19 +968,25 @@ function assertPackageTypeChecks(emitted: LeanToTypeScriptPackage, directory: st
     );
     paths.push(hostPath);
   }
-  const program = ts.createProgram(paths, {
-    module: ts.ModuleKind.NodeNext,
-    moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    noEmit: true,
-    noUnusedLocals: true,
-    lib: ['lib.es2022.d.ts'],
-    strict: true,
-    target: ts.ScriptTarget.ES2022,
+  const project = openProject({
+    files: paths,
+    settings: {
+      module: 'nodenext',
+      moduleResolution: 'nodenext',
+      noEmit: true,
+      noUnusedLocals: true,
+      lib: ['es2022'],
+      strict: true,
+      target: 'es2022',
+    },
   });
-  const diagnostics = ts.getPreEmitDiagnostics(program);
-  if (diagnostics.length > 0) {
-    const rendered = diagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
-    throw new TypeError(`generated TypeScript failed type checking:\n${rendered.join('\n')}`);
+  try {
+    const diagnostics = project.diagnostics();
+    if (diagnostics.length > 0) {
+      throw new TypeError(`generated TypeScript failed type checking:\n${renderDiagnostics(diagnostics)}`);
+    }
+  } finally {
+    project.close();
   }
 }
 
@@ -997,11 +1011,18 @@ function leanSourcePaths(
   return sources;
 }
 
+/**
+ * The machine this compilation ran on. Two TypeScript versions are recorded because two compilers
+ * did the work: the printer built and wrote the emitted syntax, so it is the version the generated
+ * bytes came out of, and the reader type-checked that tree, so it is the version whose acceptance
+ * the package claims.
+ */
 function hostEnvironmentAttestation(inputs: readonly LeanToTypeScriptInput[]): LeanToTypeScriptEnvironmentAttestation {
   const bunVersion = process.versions['bun'];
   return {
     runtime: bunVersion === undefined ? `node:${process.version}` : `bun:${bunVersion}`,
     typescriptVersion: ts.version,
+    printerVersion: printer.version,
     platform: `${process.platform}-${process.arch}`,
     inputs,
     inputClosureSha256: sha256(JSON.stringify(inputs)),

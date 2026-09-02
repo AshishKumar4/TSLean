@@ -5,7 +5,8 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { argv, stdout } from 'node:process';
 import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
+import { API } from 'typescript/unstable/sync';
+import * as ts from 'typescript/unstable/ast';
 
 /**
  * The source and target semantics gate.
@@ -78,6 +79,59 @@ function leanRegistry() {
   return JSON.parse(result.stdout);
 }
 
+/** The two sources this gate reads: the IR decoder, and the emitter it is joined against. */
+const irFile = join(root, 'src/lean-to-typescript/ir.ts');
+const emitterFile = join(root, 'src/lean-to-typescript/emitter.ts');
+
+/**
+ * The compiler session every one of those reads goes through. TypeScript 7 builds a program only
+ * from a configuration file, so the configuration is synthetic and lives in the session's own
+ * filesystem next to the text each read hands over. The two sources are its roots; a `--self-test`
+ * fixture is text with no file behind it, and joins them the first time it is read. Every read here
+ * is syntactic, so the project carries no lib.
+ */
+const gateConfigPath = join(root, 'tsconfig.semantics-gate.json');
+const sessionFiles = new Map();
+const projectRoots = new Set([irFile, emitterFile]);
+let session;
+
+/** The session, started on the first read so importing this module starts no compiler. */
+function compilerSession() {
+  session ??= new API({
+    cwd: root,
+    fs: {
+      readFile: (file) => sessionFiles.get(file),
+      fileExists: (file) => (sessionFiles.has(file) ? true : undefined),
+    },
+  });
+  return session;
+}
+
+/**
+ * The AST of one gate input, parsed from the text the caller hands over: a live read passes the
+ * bytes it read off the disk, and a fixture passes text of its own. Text the session already read
+ * is not read again, and text it has not seen carries a change notice.
+ */
+function parsedSource(file, text) {
+  const path = resolve(root, file);
+  const changed = sessionFiles.get(path) === text ? [] : [path];
+  if (!projectRoots.has(path)) {
+    if (sessionFiles.has(gateConfigPath)) changed.push(gateConfigPath);
+    projectRoots.add(path);
+  }
+  sessionFiles.set(path, text);
+  sessionFiles.set(
+    gateConfigPath,
+    JSON.stringify({ compilerOptions: { noLib: true, strict: true }, files: [...projectRoots], include: [] }),
+  );
+  const project = compilerSession()
+    .updateSnapshot({ openProjects: [gateConfigPath], fileChanges: { changed } })
+    .getProject(gateConfigPath);
+  const source = project?.program.getSourceFile(path);
+  if (source === undefined) fail(`the compiler session holds no source file for ${file}`);
+  return source;
+}
+
 /**
  * The kinds one declaration's own dispatch admits, keyed on the declaration and on the value it
  * discriminates.
@@ -91,11 +145,11 @@ function leanRegistry() {
  * exercise the reader on sources of its own.
  */
 export function readDispatchedKinds(file, text, functionName, discriminant) {
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, true);
+  const source = parsedSource(file, text);
   const declarations = [];
   const visit = (node) => {
     if (ts.isFunctionDeclaration(node) && node.name?.text === functionName) declarations.push(node);
-    ts.forEachChild(node, visit);
+    node.forEachChild(visit);
   };
   visit(source);
   if (declarations.length === 0) fail(`${file} declares no function ${functionName}`);
@@ -148,9 +202,9 @@ function ownSwitches(body) {
       return;
     }
     if (ts.isSwitchStatement(node)) switches.push(node);
-    ts.forEachChild(node, collect);
+    node.forEachChild(collect);
   };
-  ts.forEachChild(body, collect);
+  body.forEachChild(collect);
   return switches;
 }
 
@@ -179,7 +233,6 @@ function dispatchedKinds(file, functionName, discriminant) {
  * discriminant is the binding rather than a property read.
  */
 function decoderKinds() {
-  const irFile = join(root, 'src/lean-to-typescript/ir.ts');
   return {
     expressions: dispatchedKinds(irFile, 'decodeExpression', 'kind'),
     declarations: dispatchedKinds(irFile, 'decodeDeclaration', 'kind'),
@@ -206,7 +259,7 @@ function literalConstants(source) {
     ) {
       constants.set(node.name.text, node.initializer.text);
     }
-    ts.forEachChild(node, visit);
+    node.forEachChild(visit);
   };
   visit(source);
   return constants;
@@ -256,7 +309,7 @@ function literalText(node, label, constants) {
  * is what lets `--self-test` exercise this reader on a source of its own.
  */
 export function readDeclaredOpcodes(file, text) {
-  const source = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, true);
+  const source = parsedSource(file, text);
   const constants = literalConstants(source);
   let table;
   const visit = (node) => {
@@ -264,7 +317,7 @@ export function readDeclaredOpcodes(file, text) {
       table = node.initializer;
       return;
     }
-    ts.forEachChild(node, visit);
+    node.forEachChild(visit);
   };
   visit(source);
   if (table === undefined) return undefined;
@@ -317,8 +370,7 @@ export function readDeclaredOpcodes(file, text) {
 
 /** The runtime opcode table the live `ir.ts` declares. */
 function declaredOpcodes() {
-  const file = join(root, 'src/lean-to-typescript/ir.ts');
-  return readDeclaredOpcodes(file, readFileSync(file, 'utf8'));
+  return readDeclaredOpcodes(irFile, readFileSync(irFile, 'utf8'));
 }
 
 /**
@@ -517,7 +569,7 @@ function declaredHostOpcodes() {
 
 /** Every expression kind the emitter lowers. */
 function emitterKinds() {
-  return dispatchedKinds(join(root, 'src/lean-to-typescript/emitter.ts'), 'emitExpression', 'expression.kind');
+  return dispatchedKinds(emitterFile, 'emitExpression', 'expression.kind');
 }
 
 function sortedUnique(values, label) {

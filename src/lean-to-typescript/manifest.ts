@@ -237,6 +237,9 @@ export function environmentAttestationDrift(
   if (recorded.typescriptVersion !== observed.typescriptVersion) {
     drift.push(`typescript ${recorded.typescriptVersion} -> ${observed.typescriptVersion}`);
   }
+  if (recorded.printerVersion !== observed.printerVersion) {
+    drift.push(`typescript printer ${recorded.printerVersion} -> ${observed.printerVersion}`);
+  }
   if (recorded.platform !== observed.platform) drift.push(`platform ${recorded.platform} -> ${observed.platform}`);
   const observedInputs = new Map(observed.inputs.map((input) => [input.identity, input.sha256]));
   for (const input of recorded.inputs) {
@@ -376,6 +379,7 @@ function canonicalEnvironmentAttestation(
   return {
     runtime: environment.runtime,
     typescriptVersion: environment.typescriptVersion,
+    printerVersion: environment.printerVersion,
     platform: environment.platform,
     inputs: environment.inputs,
     inputClosureSha256: environment.inputClosureSha256,
@@ -584,12 +588,21 @@ function decodeEnvironmentAttestation(value: unknown): LeanToTypeScriptEnvironme
   const environment = record(value, location);
   exactKeys(
     environment,
-    ['runtime', 'typescriptVersion', 'platform', 'inputs', 'inputClosureSha256', 'runtimeConformance'],
+    [
+      'runtime',
+      'typescriptVersion',
+      'printerVersion',
+      'platform',
+      'inputs',
+      'inputClosureSha256',
+      'runtimeConformance',
+    ],
     location,
   );
   return {
     runtime: string(environment['runtime'], `${location} runtime`),
     typescriptVersion: string(environment['typescriptVersion'], `${location} TypeScript version`),
+    printerVersion: string(environment['printerVersion'], `${location} TypeScript printer version`),
     platform: string(environment['platform'], `${location} platform`),
     ...decodeInputClosure(environment, 'environment', location),
     runtimeConformance: decodeRuntimeConformance(environment['runtimeConformance'], `${location} runtime conformance`),

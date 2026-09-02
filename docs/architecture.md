@@ -338,10 +338,12 @@ For project mode (`tslean ts-to-lean <dir>`):
 
 ## Type Checker Integration
 
-TSLean relies heavily on the TypeScript compiler API (`ts.TypeChecker`) rather than doing its own type inference. This gives several advantages:
+TSLean relies heavily on the TypeScript compiler's own checker rather than doing its own type inference. This gives several advantages:
 
 - **Full type resolution**: generics, overloads, conditional types, and mapped types are all resolved by the TS compiler before we see them.
 - **Accurate union discrimination**: the checker tells us exactly which properties exist on each union member.
 - **Branded type detection**: intersection types like `string & { __brand: "UserId" }` are visible through the checker.
 
-The parser creates a `ts.Program` (with `ts.createProgram` or `readProjectConfig`), obtains the checker, and passes it to `mapType()` for every type and `inferNodeEffect()` for every function. The `do-model/ambient.ts` module injects virtual `.d.ts` declarations for Cloudflare types when DO patterns are detected, so the checker resolves them without requiring `@cloudflare/workers-types` to be installed.
+The checker is TypeScript 7's, which is a client to a separate native compiler server rather than an in-process library, so every stage that reads TypeScript goes through the one session in `src/typescript-api/session.ts`: `openProject({ files, settings, virtual })` hands back a project with its own program, checker and printer, and `parseSource`/`readSourceFile` answer the readers that need syntax without types. The parser opens a project over the file under compilation (plus whatever `extraFiles` a caller supplies), obtains the checker, and passes it to `mapType()` for every type and `inferNodeEffect()` for every function. Cloudflare ambient declarations are text with no file behind them: `do-model/ambient.ts` supplies `CF_AMBIENT` and the parser hands it to the session as overlay text when DO patterns are detected, so the checker resolves those types without `@cloudflare/workers-types` being installed and without a compiler host.
+
+The one thing that does not read through that session is the construction and printing of emitted syntax, which stays on TypeScript 6.0.2 behind `src/typescript-api/emitted-syntax.ts` because TypeScript 7 cannot attach a comment to constructed syntax and every emitted declaration carries its Lean docstring. `docs/trust.md` records that pin and the condition that removes it.

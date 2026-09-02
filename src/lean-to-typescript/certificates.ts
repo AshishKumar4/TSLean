@@ -1,9 +1,18 @@
+/**
+ * @module lean-to-typescript/certificates
+ *
+ * A runtime declaration's digest is defined by the printer that wrote the declaration, so the
+ * re-parse and re-print that take one run on the emission compiler
+ * {@link module:typescript-api/emitted-syntax} holds — the compiler the emitter printed the
+ * package with.
+ */
+
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import ts from 'typescript';
+import { emitted as ts } from '../typescript-api/emitted-syntax.js';
 import { compareCodePoints } from './ordering.js';
 
 const specRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'spec');

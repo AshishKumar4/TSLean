@@ -1,4 +1,12 @@
-import ts from 'typescript';
+/**
+ * @module lean-to-typescript/emitter
+ *
+ * Builds and prints the generated TypeScript through the emission compiler
+ * {@link module:typescript-api/emitted-syntax} holds, which is the one printer that can carry a
+ * Lean docstring onto constructed syntax.
+ */
+
+import { emitted as ts } from '../typescript-api/emitted-syntax.js';
 import { createHash } from 'node:crypto';
 import type {
   LeanToTypeScriptCodecSurface,

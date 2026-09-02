@@ -51,15 +51,15 @@
     "build": "rm -rf dist && tsc",
     "test": "vitest run",
     "lean:gate": "vitest run tests/lean-build-gate.test.ts",
-    "lint": "tsc --noEmit && tsc --project tsconfig.examples.json && oxlint src/lean-to-typescript tests/lean-to-typescript.test.ts tests/lean-to-typescript-ir.test.ts tests/lean-to-typescript-modules.test.ts tests/lean-to-typescript-package.test.ts tests/heap-scale.test.ts tests/helpers/lean-project-fixture.ts examples/lean-to-typescript/placement.adapter.ts src/lean-to-typescript/package-layout.ts --deny-warnings && eslint src/ scripts/*.mjs",
+    "lint": "tsc --noEmit && tsc --project tsconfig.examples.json && oxlint src scripts tests examples/lean-to-typescript/placement.adapter.ts --deny-warnings",
     "format": "prettier --write 'src/**/*.ts' 'tests/lean-to-typescript*.test.ts' 'tests/helpers/lean-project-fixture.ts'",
     "format:check": "prettier --check 'src/**/*.ts' 'tests/lean-to-typescript*.test.ts' 'tests/helpers/lean-project-fixture.ts'",
     "format:check:foundation": "prettier --check 'scripts/*.mjs' 'evidence/*.json' package.json",
     "differential:generate": "bun scripts/generate-differential-manifest.mjs",
     "differential:check": "bun scripts/generate-differential-manifest.mjs --check && bun scripts/check-differential-inventory.mjs",
-    "semantics:generate": "bun scripts/check-semantics-registry.mjs --generate",
-    "semantics:check": "bun scripts/check-semantics-registry.mjs --check",
-    "semantics:self-test": "bun scripts/check-semantics-registry.mjs --self-test",
+    "semantics:generate": "node scripts/check-semantics-registry.mjs --generate",
+    "semantics:check": "node scripts/check-semantics-registry.mjs --check",
+    "semantics:self-test": "node scripts/check-semantics-registry.mjs --self-test",
     "lean-to-typescript:generate": "node dist/cli.js lean-to-ts --project-root lean --module TSLean.Examples.Placement --source lean/TSLean/Examples/Placement.lean --declaration TSLean.Examples.Placement.choosePlacement --out-dir examples/lean-to-typescript/generated --manifest examples/lean-to-typescript/generated/tslean.manifest.json",
     "lean-to-typescript:check": "bun run lean-to-typescript:generate --check",
     "lean-to-typescript:enforcement:generate": "node dist/cli.js lean-to-ts --project-root lean --module AgentCore.Facets.Enforcement --source lean/AgentCore/Facets/Enforcement.lean --declaration AgentCore.Facets.enforcementFloor --declaration AgentCore.Facets.claimHonorsEnforcementFloor --out-dir examples/agent-core/facets/generated --manifest examples/agent-core/facets/generated/tslean.manifest.json",
@@ -163,18 +163,15 @@
     "linux"
   ],
   "dependencies": {
-    "typescript": "6.0.2"
+    "typescript": "7.0.2",
+    "typescript-emitter": "npm:typescript@6.0.2"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
     "@types/node": "^25.5.2",
-    "eslint": "^10.2.0",
-    "eslint-config-prettier": "^10.1.8",
     "oxlint": "1.78.0",
     "prettier": "^3.8.2",
     "source-map-js": "^1.2.1",
     "tsx": "^4.21.0",
-    "typescript-eslint": "^8.58.1",
     "vitest": "^4.1.2"
   }
 }
