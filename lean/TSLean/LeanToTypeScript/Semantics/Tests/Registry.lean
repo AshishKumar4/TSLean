@@ -1,3 +1,5 @@
+import TSLean.LeanToTypeScript.Semantics.Effect
+import TSLean.LeanToTypeScript.Semantics.Erasure
 import TSLean.LeanToTypeScript.Semantics.Opcode
 import TSLean.LeanToTypeScript.Semantics.Program
 
@@ -264,6 +266,78 @@ open Ir Assumption
 
 -- Distinct assumptions have distinct canonical wordings.
 #guard (Id.all.map Id.canonicalWording).Nodup
+
+/-! ## Discrimination
+
+A test that passes under a wrong representation is not evidence. These are the statements a drifted
+lowering fails: each one is false for a plausible alternative representation, so it discriminates
+rather than merely agreeing.
+-/
+
+/-- A `Char` is a one-code-point string, not a number. A lowering that emitted the code point would
+satisfy `char.toNat` and fail here. -/
+theorem char_image_is_not_numeric (character : Char) :
+    Encode.char character ≠ Encode.nat character.toNat := by
+  unfold Encode.char Encode.string Encode.jsString Encode.nat Encode.bigint
+  simp
+
+/-- A `Nat` and an `Int` *do* share the bigint image, which is what makes `int.ofNat` an identity.
+A lowering that boxed one of them would fail here. -/
+theorem nat_and_int_share_image (value : Nat) :
+    Encode.int (Int.ofNat value) = Encode.nat value := rfl
+
+/-- A `Char`'s image is its singleton string's image, so `string.singleton` cannot be anything but
+the identity. A lowering that wrapped a character would fail here. -/
+theorem char_image_is_singleton (character : Char) :
+    Encode.char character = Encode.string (String.singleton character) := rfl
+
+/-- Own-key order is observable, so a pair's field order is part of its representation: the two
+orders give different key sequences. A lowering that emitted `snd` first would fail here. -/
+theorem pair_key_order_discriminates (first second : Value) :
+    ([("fst", first), ("snd", second)].map fun entry => Ir.propertyKey entry.1)
+      ≠ ([("snd", second), ("fst", first)].map fun entry => Ir.propertyKey entry.1) := by
+  simp only [List.map_cons, List.map_nil, ne_eq, List.cons.injEq, not_and]
+  intro keys
+  exact absurd (Ir.propertyKey_injective keys) (by decide)
+
+/-- Entering a declared function at no fuel is exhaustion, not an answer. A model that treated
+exhaustion as a value would fail here, and so would one that entered the body anyway. -/
+theorem entering_at_no_fuel_exhausts (program : Ir.Program) (trace : Source.Trace)
+    (name : String) (parameters : List Ir.Field) (result : Ir.Ty) (recursion : Ir.Recursion)
+    (body : Ir.Expr) (values : List Source.Value)
+    (declared : program.find? name = some (.function name parameters result recursion body))
+    (arity : parameters.length = values.length) :
+    Source.enter program 0 trace name values = .exhausted trace := by
+  rw [Source.enter]
+  simp only [Ir.Program.function?, declared, arity, if_pos]
+
+/-- Exhaustion is not a value and not a fault, so a refinement cannot satisfy the value case by
+running out of fuel. -/
+theorem exhausted_is_not_a_value (value : Source.Value) (trace : Source.Trace) :
+    Source.Outcome.exhausted trace ≠ .value value trace := by simp
+
+/-- The emitted bind reads the *next* store, not the one it was handed. A lowering that passed the
+original store to the continuation would agree with `bind_threads` only when the computation left the
+store alone, and this is the statement that separates them. -/
+theorem bind_reads_the_next_store (value store : Ir.Ty) (answer first second : Source.Value)
+    (different : first ≠ second) :
+    Effect.pairValue value store answer first ≠ Effect.pairValue value store answer second := by
+  unfold Effect.pairValue
+  intro same
+  injection same with _ fields
+  injection fields with _ tail
+  injection tail with entry _
+  injection entry with _ stores
+  exact different stores
+
+/-- A `foreign` declaration is not a `function` declaration: it names a host operation, and the
+registry's four families are distinct. A decoder that accepted a host boundary as an ordinary
+function would lose the premise that boundary carries. -/
+theorem foreign_family_discriminates (name : String) (host : Ir.HostOp)
+    (parameters : List Ir.Field) (result : Ir.Ty) (reference : Ir.Expr) :
+    (Ir.Decl.foreign name host parameters result reference).family
+      ≠ (Ir.Decl.function name parameters result .nonrecursive reference).family := by
+  simp [Ir.Decl.family]
 
 /-! ## Closure -/
 
