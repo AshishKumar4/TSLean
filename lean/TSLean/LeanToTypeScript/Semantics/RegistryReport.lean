@@ -36,6 +36,12 @@ private def opcodeEntry (code : Ir.Opcode) : Json :=
     ("requires", .arr ((code.requires.map fun id => Json.str id.name).toArray))
   ]
 
+private def hostEntry (host : Ir.HostOp) : Json :=
+  Json.mkObj [
+    ("host", .str host.wire),
+    ("constructor", .str (toString (repr host)))
+  ]
+
 private def assumptionEntry (id : Id) : Json :=
   Json.mkObj [
     ("id", .str id.name),
@@ -60,6 +66,7 @@ def registryReport : Json :=
     ("typeForms", .arr ((TyKind.all.map fun form =>
       kindEntry (toString (repr form)) form.kind).toArray)),
     ("opcodes", .arr ((Ir.Opcode.all.map opcodeEntry).toArray)),
+    ("hostOpcodes", .arr ((Ir.HostOp.all.map hostEntry).toArray)),
     ("assumptions", .arr ((Id.all.map assumptionEntry).toArray))
   ]
 

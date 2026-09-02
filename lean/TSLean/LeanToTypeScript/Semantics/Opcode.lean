@@ -70,7 +70,7 @@ def emittedForm : Opcode → String
   | .intToNat => "operand < 0n ? 0n : operand"
   | .charToNat => "BigInt(operand.codePointAt(0))"
   | .charOfNat =>
-      "operand >= 0n && operand <= 1114111n && !(operand >= 55296n && operand <= 57343n) ? String.fromCodePoint(Number(operand)) : \"\\u0000\""
+      "operand >= 0n && operand <= 1114111n && !(operand >= 55296n && operand <= 57343n) ? String.fromCodePoint(Number(operand)) : \"\\0\""
   | .charEquals => "left === right"
   | .charLess => "left.codePointAt(0) < right.codePointAt(0)"
   | .stringLength => "BigInt([...value].length)"
