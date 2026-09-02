@@ -68,11 +68,11 @@ def emittedForm : Opcode → String
   | .intEquals => "left === right"
   | .intOfNat => "operand"
   | .intToNat => "operand < 0n ? 0n : operand"
-  | .charToNat => "BigInt(operand.codePointAt(0))"
+  | .charToNat => "BigInt(operand.codePointAt(0) ?? 0)"
   | .charOfNat =>
       "operand >= 0n && operand <= 1114111n && !(operand >= 55296n && operand <= 57343n) ? String.fromCodePoint(Number(operand)) : \"\\0\""
   | .charEquals => "left === right"
-  | .charLess => "left.codePointAt(0) < right.codePointAt(0)"
+  | .charLess => "(left.codePointAt(0) ?? 0) < (right.codePointAt(0) ?? 0)"
   | .stringLength => "BigInt([...value].length)"
   | .stringIsEmpty => "value.length === 0"
   | .stringPush => "value + character"

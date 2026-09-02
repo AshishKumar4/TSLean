@@ -624,18 +624,6 @@ theorem lambda_captures_enclosing_scope (program : Ir.Program) (fuel : Nat)
       = .value (.closure scope parameters body) trace := by
   simp only [Source.eval]
 
-/--
-An application's callee is a bound variable. `src/lean-to-typescript/ir.ts` admits nothing else, and
-the lowering refuses anything else rather than inventing a form for it, so every application the
-model lowers is one the `apply` theorem covers.
--/
-theorem apply_callee_is_bound {program : Ir.Program} {callee : Ir.Expr}
-    {arguments : List Ir.Expr} {emitted : Target.Expr}
-    (compiled : Compile.expr program (.apply callee arguments) = .ok emitted) :
-    ∃ index, callee = .varRef index := by
-  cases callee
-  case varRef index => exact ⟨index, rfl⟩
-  all_goals simp [Compile.expr, throw, throwThe, MonadExceptOf.throw] at compiled
 
 /-! ## The whole-program theorem -/
 
@@ -877,18 +865,34 @@ theorem everywhere {program : Ir.Program} {target : Target.Program} {runtime : R
       exact lambda program target fuel parameters body emittedBody bodyCompiled
         (everywhereBody lowered laws listsFit fuel body emittedBody bodyCompiled)
   | .apply callee arguments, emitted, compiled => by
-      obtain ⟨index, calleeEq⟩ := apply_callee_is_bound compiled
-      subst calleeEq
-      simp only [Compile.expr] at compiled
-      obtain ⟨emittedArguments, argumentsCompiled, shape⟩ := bind_ok compiled
-      simp only [pure, Except.pure] at shape
-      injection shape with emittedEq
-      subst emittedEq
-      refine apply program target fuel index arguments emittedArguments
-        (everywhereList lowered laws listsFit fuel arguments emittedArguments argumentsCompiled) ?_
-      intro smaller step body emittedBody bodyCompiled
-      subst step
-      exact everywhereBody lowered laws listsFit smaller body emittedBody bodyCompiled
+      cases callee with
+      | varRef index =>
+          simp only [Compile.expr] at compiled
+          obtain ⟨emittedArguments, argumentsCompiled, shape⟩ := bind_ok compiled
+          simp only [pure, Except.pure] at shape
+          injection shape with emittedEq
+          subst emittedEq
+          refine (apply (runtime := runtime)).1 program target fuel index arguments emittedArguments
+            (everywhereList lowered laws listsFit fuel arguments emittedArguments argumentsCompiled) ?_
+          intro smaller step body emittedBody bodyCompiled
+          subst step
+          exact everywhereBody lowered laws listsFit smaller body emittedBody bodyCompiled
+      | fieldGet subject field =>
+          simp only [Compile.expr] at compiled
+          obtain ⟨emittedSubject, subjectCompiled, more⟩ := bind_ok compiled
+          obtain ⟨emittedArguments, argumentsCompiled, shape⟩ := bind_ok more
+          simp only [pure, Except.pure] at shape
+          injection shape with emittedEq
+          subst emittedEq
+          refine applyField program target fuel subject field emittedSubject arguments emittedArguments
+            (everywhere lowered laws listsFit fuel subject emittedSubject subjectCompiled)
+            (everywhereList lowered laws listsFit fuel arguments emittedArguments argumentsCompiled) ?_
+          intro smaller step body emittedBody bodyCompiled
+          subst step
+          exact everywhereBody lowered laws listsFit smaller body emittedBody bodyCompiled
+      | boolLit _ | natLit _ | stringLit _ | letBind _ _ _ | ifThenElse _ _ _ | operation _ _ _
+      | variant _ _ _ | record _ _ | matchOn _ _ _ | lambda _ _ | apply _ _ | call _ _ _ =>
+          simp [Compile.expr, throw, throwThe, MonadExceptOf.throw] at compiled
   | .call function typeArguments arguments, emitted, compiled => by
       rw [Compile.expr.eq_def] at compiled
       dsimp only at compiled

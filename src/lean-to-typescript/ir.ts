@@ -1925,16 +1925,25 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
       }
       case 'field': {
         const targetType = check(expression.target, scope, undefined, `${location}.target`);
-        if (targetType.kind !== 'named') throw new TypeError(`${location}.target is not a record`);
-        const declaration = declarations.get(targetType.name);
-        if (declaration === undefined || declaration.kind !== 'record') {
-          throw new TypeError(`${location}.target is not a record`);
+        let fields: readonly LeanField[];
+        if (targetType.kind === 'pair') {
+          fields = [
+            { name: 'fst', type: targetType.first },
+            { name: 'snd', type: targetType.second },
+          ];
+        } else {
+          if (targetType.kind !== 'named') {
+            throw new TypeError(`${location}.target is not a record or pair`);
+          }
+          const declaration = declarations.get(targetType.name);
+          if (declaration === undefined || declaration.kind !== 'record') {
+            throw new TypeError(`${location}.target is not a record or pair`);
+          }
+          fields = substituteFields(declaration.fields, targetType.arguments);
         }
-        const field = substituteFields(declaration.fields, targetType.arguments).find(
-          (candidate) => candidate.name === expression.field,
-        );
+        const field = fields.find((candidate) => candidate.name === expression.field);
         if (field === undefined) {
-          throw new TypeError(`${location} references unknown field ${targetType.name}.${expression.field}`);
+          throw new TypeError(`${location} references unknown field ${renderType(targetType)}.${expression.field}`);
         }
         return requireType(field.type, expected, location);
       }
@@ -2040,21 +2049,33 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
       }
       case 'record': {
         validateType(expression.type, typeParameters, `${location}.type`);
-        if (expression.type.kind !== 'named') {
-          throw new TypeError(`${location} constructs ${renderType(expression.type)}, which is not a record`);
+        let fields: readonly LeanField[];
+        if (expression.type.kind === 'pair') {
+          // A pair is the one mapped Lean structure: it has the same record literal image as a
+          // user record, with the fixed own-key sequence fst then snd. Keep this explicit instead
+          // of pretending it lives in the user declaration index, which makes the decoder refuse a
+          // malformed pair at the boundary rather than inventing a declaration for it.
+          fields = [
+            { name: 'fst', type: expression.type.first },
+            { name: 'snd', type: expression.type.second },
+          ];
+        } else {
+          if (expression.type.kind !== 'named') {
+            throw new TypeError(`${location} constructs ${renderType(expression.type)}, which is not a record or pair`);
+          }
+          const declaration = declarations.get(expression.type.name);
+          if (declaration === undefined || declaration.kind !== 'record') {
+            throw new TypeError(`${location} references unknown record ${expression.type.name}`);
+          }
+          fields = substituteFields(declaration.fields, expression.type.arguments);
         }
-        const declaration = declarations.get(expression.type.name);
-        if (declaration === undefined || declaration.kind !== 'record') {
-          throw new TypeError(`${location} references unknown record ${expression.type.name}`);
-        }
-        const fields = substituteFields(declaration.fields, expression.type.arguments);
         const expectedFields = fields.map((field) => field.name).sort(compareCodePoints);
         const actualFields = expression.fields.map((field) => field.name).sort(compareCodePoints);
         if (
           expectedFields.length !== actualFields.length ||
           expectedFields.some((field, index) => field !== actualFields[index])
         ) {
-          throw new TypeError(`${location} fields do not match record ${expression.type.name}`);
+          throw new TypeError(`${location} fields do not match record ${renderType(expression.type)}`);
         }
         expression.fields.forEach((field, index) => {
           const fieldType = fields.find((candidate) => candidate.name === field.name)?.type;
@@ -2174,7 +2195,7 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
   }
 
   for (const root of program.roots) {
-    const declaration = functions.get(root);
+    const declaration = functions.get(root) ?? callables.get(root);
     if (declaration === undefined) throw new TypeError(`semantic program root is not a function: ${root}`);
     assertDecodableBoundary(declaration, declarations);
   }
@@ -2186,8 +2207,12 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
  * none: its decoder would have to be handed one decoder per type argument, which is a signature a
  * caller cannot use as an entry point, so the boundary is monomorphic and a generic type stays
  * usable everywhere inside the package instead.
+ *
+ * A host boundary is held to the same rule. It is imported rather than defined, but a caller still
+ * has to cross it, and the constraints read only the name, type parameters, parameters and result
+ * that both callable families carry.
  */
-function assertDecodableBoundary(declaration: LeanFunctionDeclaration, declarations: LeanDeclarationIndex): void {
+function assertDecodableBoundary(declaration: LeanCallableDeclaration, declarations: LeanDeclarationIndex): void {
   if (declaration.typeParameters.length > 0) {
     throw new TypeError(
       `root ${declaration.name} is polymorphic in ${declaration.typeParameters.length} type parameter(s); a root's boundary is monomorphic`,
@@ -2898,11 +2923,13 @@ function decodeExpression(value: unknown, location: string): LeanExpression {
     case 'apply': {
       exactKeys(expression, ['kind', 'target', 'arguments'], location);
       const target = decodeExpression(expression['target'], `${location}.target`);
-      // Only a bound function value is applied. A declared function is called through `call`, and
-      // one used as a value is eta-expanded into a `lambda` around that call, so an application
-      // never has to name a target the emitted program computes.
-      if (target.kind !== 'variable') {
-        throw new TypeError(`${location}.target is not a bound function value`);
+      // An application invokes a bound closure or a field projection that evaluates to one. A
+      // declared function is called through `call`; accepting a wider computed target here would
+      // admit evaluation shapes the proved lowering does not model. A dictionary method is exactly
+      // the field case: elaboration has already resolved the dictionary, and the field read itself
+      // remains visible so its evaluation order is preserved.
+      if (target.kind !== 'variable' && target.kind !== 'field') {
+        throw new TypeError(`${location}.target is not a bound function value or field projection`);
       }
       return { kind, target, arguments: decodeExpressionList(expression['arguments'], `${location}.arguments`) };
     }

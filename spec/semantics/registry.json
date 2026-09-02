@@ -933,7 +933,7 @@
     },
     {
       "components": [],
-      "emittedForm": "BigInt(operand.codePointAt(0))",
+      "emittedForm": "BigInt(operand.codePointAt(0) ?? 0)",
       "model": "TSLean.LeanToTypeScript.Semantics.Runtime.charToNat",
       "opcode": "char.toNat",
       "relation": "source = model",
@@ -981,7 +981,7 @@
         "inline:char.toNat",
         "inline:int.less"
       ],
-      "emittedForm": "left.codePointAt(0) < right.codePointAt(0)",
+      "emittedForm": "(left.codePointAt(0) ?? 0) < (right.codePointAt(0) ?? 0)",
       "model": "TSLean.LeanToTypeScript.Semantics.Runtime.charLess",
       "opcode": "char.less",
       "relation": "source = model",

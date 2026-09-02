@@ -1404,9 +1404,7 @@ function selfTest() {
     scenarios,
     'names neither an assumption closure nor a model composition',
   );
-  const identityRow = registry.opcodes.find(
-    (opcode) => opcode.requires.length === 0 && opcode.components.length > 0,
-  );
+  const identityRow = registry.opcodes.find((opcode) => opcode.requires.length === 0 && opcode.components.length > 0);
   if (identityRow === undefined) fail('the registry records no identity row to admit on its composition alone');
   const composedHelper = cloneJson(registry);
   const helperIndex = composedHelper.opcodes.findIndex((opcode) => opcode.runtimeSymbol.startsWith('helper:'));

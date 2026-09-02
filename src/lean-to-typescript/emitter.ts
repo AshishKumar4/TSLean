@@ -430,6 +430,10 @@ function hostImports(draft: ModuleDraft, context: EmitContext): readonly ModuleI
  * Every imported name is exported by the module that owns it. A generated helper is promoted to
  * an export exactly where another module names it, so a reference that cannot be exported is a
  * compiler defect and is refused rather than emitted as a broken import.
+ *
+ * The substrate's host module is the one exception, and not an exemption: the emitted package does
+ * not generate it, so there is no owning draft to check. What the import has to line up with is the
+ * host registry, which the decoder already refused anything outside of.
  */
 function assertImportsAreExported(
   draft: ModuleDraft,
@@ -437,7 +441,9 @@ function assertImportsAreExported(
   drafts: readonly ModuleDraft[],
   owners: ReadonlyMap<string, string>,
 ): void {
+  const hostSpecifier = relativeModuleSpecifier(draft.path, LEAN_TO_TYPESCRIPT_HOST_MODULE_PATH);
   for (const entry of entries) {
+    if (entry.specifier === hostSpecifier) continue;
     for (const name of entry.names) {
       const path = owners.get(name);
       const owner = drafts.find((candidate) => candidate.path === path);
@@ -878,7 +884,9 @@ function planProgram(program: LeanSemanticProgram): EmitContext {
     (declaration): declaration is LeanFunction => declaration.kind === 'function',
   );
   const data = program.declarations
-    .filter((declaration): declaration is LeanData => declaration.kind !== 'function')
+    // Selected positively: a `foreign` declaration is a callable the module imports, not a data
+    // type, and a negative filter would cast it to `LeanData` and read constructors it has none of.
+    .filter((declaration): declaration is LeanData => declaration.kind === 'enum' || declaration.kind === 'record')
     .sort((left, right) => compareCodePoints(left.name, right.name));
   const types = new Map<string, TypePlan>();
   const methods = new Map<string, MethodPlan>();
@@ -1111,8 +1119,23 @@ function emitDeclaration(declaration: LeanDeclaration, context: EmitContext): re
     return [emitFunction(declaration, context)];
   }
   // A host boundary is imported, never defined: the substrate owns the implementation, and the
-  // module that names it carries an import instead of a statement. `hostImports` places it.
-  if (declaration.kind === 'foreign') return [];
+  // module that names it carries an import instead of a statement. `hostImports` places it. A root
+  // is the package's callable surface, so a host boundary that is one is re-exported under the name
+  // the substrate published it under — otherwise a caller could not reach the boundary at all and
+  // the import itself would be unread.
+  if (declaration.kind === 'foreign') {
+    if (!context.roots.has(declaration.name)) return [];
+    const emitted = requiredDeclarationName(context.declarationNames, declaration.name);
+    return [
+      ts.factory.createExportDeclaration(
+        undefined,
+        false,
+        ts.factory.createNamedExports([
+          ts.factory.createExportSpecifier(false, undefined, ts.factory.createIdentifier(emitted)),
+        ]),
+      ),
+    ];
+  }
   const plan = requiredTypePlan(context, declaration.name);
   const scoped = withTypeParameters(context, plan.typeParameters);
   if (declaration.kind === 'enum') {
@@ -2580,13 +2603,25 @@ const HELPER_DECLARATION_HINTS: Readonly<Record<LeanRuntimeHelperRole, string>> 
   'char-less-code-point': 'charLess',
 };
 
-/** `value.codePointAt(0)`: the first code point of a nonempty string, which is a Char's image. */
+/**
+ * The first code point of a Char image.
+ *
+ * A Char image is a one-code-point string, so `codePointAt(0)` is present by construction.
+ * TypeScript cannot express that refinement on `string`, however, and gives the method type
+ * `number | undefined`. The explicit fallback makes the emitted JavaScript total without
+ * introducing a refusal: on the proved Char domain it is unreachable, while outside that domain it
+ * gives the same scalar the Lean `Char.ofNat` fallback uses. The exact `?? 0` is recorded in
+ * the opcode registry and compared byte-for-byte by the semantics gate.
+ */
 function firstCodePoint(value: ts.Expression): ts.Expression {
-  return ts.factory.createCallExpression(ts.factory.createPropertyAccessExpression(value, 'codePointAt'), undefined, [
+  return ts.factory.createBinaryExpression(
+    ts.factory.createCallExpression(ts.factory.createPropertyAccessExpression(value, 'codePointAt'), undefined, [
+      ts.factory.createNumericLiteral(0),
+    ]),
+    ts.SyntaxKind.QuestionQuestionToken,
     ts.factory.createNumericLiteral(0),
-  ]);
+  );
 }
-
 /** `[...value]`: the code points of a string, or a fresh dense copy of an array. */
 function spreadArray(value: ts.Expression): ts.Expression {
   return ts.factory.createArrayLiteralExpression([ts.factory.createSpreadElement(value)], false);
@@ -3498,14 +3533,23 @@ function emitStructuralDecoder(leanName: string, emitted: string, context: EmitC
               ]),
             ),
           ];
+  const body = block(...statements);
+  // A record's decoder labels every field read with its own owner, so it never reads the label it
+  // was handed, while a union's decoder does. Both shapes declare the same signature so a caller
+  // reaches either the same way, and the unread one is marked here rather than dropped, which is
+  // what keeps `noUnusedParameters` clean without making the two decoders different to call.
   return ts.factory.createFunctionDeclaration(
     undefined,
     undefined,
     emitted,
     undefined,
-    [dataParameter(context.locals.value, context), stringParameter(context.locals.name)],
+    markUnreadParameters(
+      [dataParameter(context.locals.value, context), stringParameter(context.locals.name)],
+      body,
+      newAllocator(context),
+    ),
     ts.factory.createTypeReferenceNode(plan.typeName),
-    block(...statements),
+    body,
   );
 }
 
@@ -3908,8 +3952,6 @@ function emitExpression(
     case 'match':
       return emitMatchExpression(expression, scope, allocator, context);
     case 'record': {
-      if (expression.type.kind !== 'named') throw new TypeError('a record construction lost its type');
-      const plan = requiredTypePlan(context, expression.type.name);
       const literal = ts.factory.createObjectLiteralExpression(
         expression.fields.map((field) =>
           ts.factory.createPropertyAssignment(
@@ -3919,6 +3961,12 @@ function emitExpression(
         ),
         true,
       );
+      // A pair is a mapped structure rather than a declared one, so it has no type plan and no
+      // nominal form: its image is the object literal carrying `fst` then `snd` in that order,
+      // which is the representation `Effect.pairValue_represents` proves.
+      if (expression.type.kind === 'pair') return literal;
+      if (expression.type.kind !== 'named') throw new TypeError('a record construction lost its type');
+      const plan = requiredTypePlan(context, expression.type.name);
       return plan.nominal
         ? ts.factory.createNewExpression(ts.factory.createIdentifier(plan.typeName), undefined, [literal])
         : literal;
@@ -4445,7 +4493,14 @@ function orderedDeclarations(program: LeanSemanticProgram): readonly LeanDeclara
   };
   for (const root of program.roots) visit(root);
   for (const name of [...functions.keys()].sort(compareCodePoints)) visit(name);
-  return [...types, ...ordered];
+  // A host boundary emits an import and, when it is a root, a re-export. Neither participates in
+  // the definition-before-use ordering the functions need, so they are appended rather than
+  // threaded through the dependency walk — but they are not dropped, or the boundary a program
+  // declared would never be emitted at all.
+  const foreign = program.declarations
+    .filter((declaration) => declaration.kind === 'foreign')
+    .sort((left, right) => compareCodePoints(left.name, right.name));
+  return [...types, ...ordered, ...foreign];
 }
 
 function calledFunctions(expression: LeanExpression | undefined): readonly string[] {

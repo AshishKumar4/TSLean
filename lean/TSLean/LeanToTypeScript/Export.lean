@@ -1800,6 +1800,7 @@ private def foreignDeclaration (environment : Environment) (targetModules : Name
     ("name", .str name.toString),
     ← declarationModuleField environment name,
     namespaceField name,
+    typeParameterField [],
     ("host", .str host),
     ("parameters", array shape.parameters),
     ("result", shape.signature.result),
@@ -1902,6 +1903,9 @@ account for is refused by name rather than dropped silently.
 private def classifyConstant (environment : Environment) (targetModules : NameSet) (emitted : NameSet)
     (name : Name) (info : ConstantInfo) (viaScaffolding : Bool) : Except String ClosureEntry := do
   let module := moduleText environment name
+  if name == jsonValueTypeName then
+    return ⟨name, module, "erased",
+      "mapped JsonValue type; its constructor set is fixed by the fragment rather than emitted"⟩
   unless declaredInModules environment targetModules name do
     return { name, module, role := "runtime-boundary",
              reason := "constant outside the target module closure; its TypeScript image is fixed by the type mapping" }
@@ -1974,6 +1978,8 @@ private partial def collectDeclarationsAux (environment : Environment) (targetMo
   | name :: rest =>
       if seen.contains name || !declaredInModules environment targetModules name then
         collectDeclarationsAux environment targetModules rest seen ordered
+      else if name == jsonValueTypeName then
+        collectDeclarationsAux environment targetModules rest (seen.insert name) ordered
       else
         let some info := environment.find? name
           | throw s!"declaration {name} is absent from the elaborated environment"

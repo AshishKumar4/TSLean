@@ -578,14 +578,25 @@ def Op.Preserves (runtime : Runtime) : Ir.Op → Prop
       EverywhereBody program target runtime fuel body emittedBody →
       Everywhere program target runtime fuel (.lambda parameters body)
         (.arrow ⟨parameters, body⟩ emittedBody)
-  | .apply => ∀ (program : Ir.Program) (target : Target.Program) (fuel index : Nat)
-      (arguments : List Ir.Expr) (emittedArguments : List Target.Expr),
-      EverywhereList program target runtime fuel arguments emittedArguments →
-      (∀ smaller, smaller + 1 = fuel → ∀ body emittedBody,
-        Compile.body program body = .ok emittedBody →
-        EverywhereBody program target runtime smaller body emittedBody) →
-      Everywhere program target runtime fuel (.apply (.varRef index) arguments)
-        (.callValue (.binding index) emittedArguments)
+  | .apply =>
+      (∀ (program : Ir.Program) (target : Target.Program) (fuel index : Nat)
+        (arguments : List Ir.Expr) (emittedArguments : List Target.Expr),
+        EverywhereList program target runtime fuel arguments emittedArguments →
+        (∀ smaller, smaller + 1 = fuel → ∀ body emittedBody,
+          Compile.body program body = .ok emittedBody →
+          EverywhereBody program target runtime smaller body emittedBody) →
+        Everywhere program target runtime fuel (.apply (.varRef index) arguments)
+          (.callValue (.binding index) emittedArguments)) ∧
+      (∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat)
+        (subject : Ir.Expr) (field : String) (emittedSubject : Target.Expr)
+        (arguments : List Ir.Expr) (emittedArguments : List Target.Expr),
+        Everywhere program target runtime fuel subject emittedSubject →
+        EverywhereList program target runtime fuel arguments emittedArguments →
+        (∀ smaller, smaller + 1 = fuel → ∀ body emittedBody,
+          Compile.body program body = .ok emittedBody →
+          EverywhereBody program target runtime smaller body emittedBody) →
+        Everywhere program target runtime fuel (.apply (.fieldGet subject field) arguments)
+          (.callValue (.member emittedSubject field) emittedArguments))
   | .call => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat) (function : String)
       (typeArguments : List Ir.Ty) (arguments : List Ir.Expr)
       (emittedArguments : List Target.Expr),
@@ -1141,12 +1152,85 @@ theorem invoke_refines {program : Ir.Program} {target : Target.Program} {runtime
     exact refines_fault
 
 /--
-An inline application evaluates the bound closure, then its arguments left to right, reads the
-closure's exact captured own properties, checks them against its internal payload, records one
-anonymous application event carrying the exact lambda code, spends one unit of fuel, and enters the
-stored compiled body with reversed arguments above the captured scope.
+A dictionary method application evaluates its field projection before it evaluates its arguments.
+
+This is distinct from a named call: the dictionary can be an inline record, a captured value or a
+declared instance, and the field read is observable if evaluating its target allocates or faults.
+The theorem therefore uses the existing field-refinement row first and only then enters the closure
+it read. The source and target preserve that order exactly.
 -/
+theorem applyField {runtime : Runtime} : ∀ (program : Ir.Program) (target : Target.Program)
+    (fuel : Nat) (subject : Ir.Expr) (field : String) (emittedSubject : Target.Expr)
+    (arguments : List Ir.Expr) (emittedArguments : List Target.Expr),
+    Everywhere program target runtime fuel subject emittedSubject →
+    EverywhereList program target runtime fuel arguments emittedArguments →
+    (∀ smaller, smaller + 1 = fuel → ∀ body emittedBody,
+      Compile.body program body = .ok emittedBody →
+      EverywhereBody program target runtime smaller body emittedBody) →
+    Everywhere program target runtime fuel (.apply (.fieldGet subject field) arguments)
+      (.callValue (.member emittedSubject field) emittedArguments) := by
+  intro program target fuel subject field emittedSubject arguments emittedArguments subjectStep
+    argumentsStep bodyAtLower sourceScope targetScope trace state aligned
+  rw [Source.eval.eq_def program fuel sourceScope trace (.apply (.fieldGet subject field) arguments)]
+  rw [Target.eval.eq_def target runtime fuel targetScope state
+    (.callValue (.member emittedSubject field) emittedArguments)]
+  simp only
+  have calleeStep := fieldGet program target fuel subject field emittedSubject subjectStep
+  cases calleeRun : Source.eval program fuel sourceScope trace (.fieldGet subject field) with
+  | fault fault next => exact refines_fault
+  | exhausted next =>
+      obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+        refines_exhausted_inv
+          (calleeRun ▸ calleeStep sourceScope targetScope trace state aligned)
+      rw [targetRun]
+      exact refines_exhausted extension closuresValid traceRefines
+  | value callee next =>
+      obtain ⟨calleeImage, targetState, targetRun, extension, closuresValid, calleeRelated,
+        traceRefines⟩ :=
+        refines_value_inv (calleeRun ▸ calleeStep sourceScope targetScope trace state aligned)
+      rw [targetRun]
+      dsimp only
+      cases callee with
+      | boolean _ | nat _ | int _ | string _ | char _ | record _ _ | array _ _ | variant _ _ _ =>
+          exact refines_fault
+      | closure captured parameters body =>
+          have nextAligned := aligned.step extension closuresValid traceRefines
+          change Relation.Refines program state
+            (match Source.evalList program fuel sourceScope next arguments with
+            | .values values last => Source.applyClosure program fuel last captured parameters body values
+            | .fault fault last => .fault fault last
+            | .exhausted last => .exhausted last)
+            (match Target.evalList target runtime fuel targetScope targetState emittedArguments with
+            | .ok values last => Target.invoke target runtime fuel last calleeImage values
+            | .thrown error last => .thrown error last
+            | .fault fault last => .fault fault last
+            | .exhausted last => .exhausted last)
+          cases argumentsRun : Source.evalList program fuel sourceScope next arguments with
+          | fault fault last => exact refines_fault
+          | exhausted last =>
+              obtain ⟨lastState, lastRun, argumentExtension, lastValid, lastTrace⟩ :=
+                refinesList_exhausted_inv
+                  (argumentsRun ▸ argumentsStep sourceScope targetScope next targetState nextAligned)
+              rw [lastRun]
+              dsimp only
+              exact refines_exhausted (extension.trans argumentExtension) lastValid lastTrace
+          | values produced last =>
+              obtain ⟨targets, lastState, lastRun, argumentExtension, lastValid, listRelated,
+                lastTrace⟩ :=
+                refinesList_inv
+                  (argumentsRun ▸ argumentsStep sourceScope targetScope next targetState nextAligned)
+              rw [lastRun]
+              dsimp only
+              refine refines_widen (extension.trans argumentExtension) ?_
+              exact invoke_refines bodyAtLower argumentExtension.nextWellFormed lastValid
+                (Relation.Represents.stable argumentExtension (.closure captured parameters body)
+                  calleeImage calleeRelated)
+                listRelated lastTrace
+
+
+
 theorem apply {runtime : Runtime} : Op.Preserves runtime .apply := by
+  refine ⟨?_, applyField⟩
   intro program target fuel index arguments emittedArguments argumentsStep bodyAtLower
     sourceScope targetScope trace state aligned
   simp only [Source.eval, Target.eval]
@@ -1187,7 +1271,6 @@ theorem apply {runtime : Runtime} : Op.Preserves runtime .apply := by
                 (Relation.Represents.stable extension (.closure captured parameters body)
                   calleeImage calleeRelated)
                 listRelated traceRefines
-
 /-! ### The six per-element loops
 
 Each higher-order opcode enters its callback once per element, in element order. Every entry spends

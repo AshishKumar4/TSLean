@@ -210,6 +210,8 @@ def expr (program : Ir.Program) : Ir.Expr → Except Fault Target.Expr
   | .apply callee arguments => do
       match callee with
       | .varRef index => pure (.callValue (.binding index) (← exprList program arguments))
+      | .fieldGet subject field =>
+          pure (.callValue (.member (← expr program subject) field) (← exprList program arguments))
       | _ => throw .computedCallee
 termination_by expression => (sizeOf expression, 0)
 
