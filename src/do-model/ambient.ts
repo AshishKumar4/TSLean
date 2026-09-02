@@ -1,8 +1,6 @@
 // Cloudflare Workers / Durable Objects ambient declarations.
-// Injected as a virtual file when DO or Workers patterns are detected so the
-// TypeScript checker can resolve types without needing @cloudflare/workers-types.
-
-import * as ts from 'typescript';
+// Handed to the compiler session as overlay text when DO or Workers patterns are detected, so the
+// checker resolves these types without needing @cloudflare/workers-types on disk.
 
 // ─── Detection ────────────────────────────────────────────────────────────────
 
@@ -260,23 +258,6 @@ interface ArrayBuffer {}
 interface ArrayBufferView {}
 interface AbortSignal {}
 `;
-
-// ─── Augmented compiler host ───────────────────────────────────────────────────
-
-export function makeAmbientHost(
-  base: ts.CompilerHost,
-  virtual: Map<string, string>
-): ts.CompilerHost {
-  return {
-    ...base,
-    getSourceFile(name, version, onError, shouldCreate) {
-      if (virtual.has(name)) return ts.createSourceFile(name, virtual.get(name)!, version, true);
-      return base.getSourceFile(name, version, onError, shouldCreate);
-    },
-    fileExists(name) { return virtual.has(name) || base.fileExists(name); },
-    readFile(name)   { return virtual.has(name) ? virtual.get(name) : base.readFile(name); },
-  };
-}
 
 // ─── Required Lean imports for DO files ──────────────────────────────────────
 

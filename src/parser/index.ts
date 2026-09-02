@@ -3,8 +3,9 @@
  *
  * Parser: TypeScript source → fully-typed IR.
  *
- * Uses `ts.createProgram` + `TypeChecker` for fully-resolved types, generics,
- * and type narrowing.  The parser performs several key transformations:
+ * Opens a compiler session project over the file — plus any virtual companions and the
+ * Cloudflare ambient declarations — and reads types through its `Checker`, so generics and
+ * narrowing are fully resolved.  The parser performs several key transformations:
  *
  * - **Early-return CPS**: `if (cond) return x; rest` → `if cond then x else rest`.
  *   This is the continuation-passing transform that converts imperative early
@@ -15,15 +16,17 @@
  * - **this → self**: The `this` keyword is translated to a `self` parameter.
  *
  * - **DO ambient injection**: When `DurableObjectState` is detected in the source,
- *   Cloudflare Workers type declarations are injected as ambient types.
+ *   Cloudflare Workers type declarations are handed to the session as overlay text.
  *
  * - **For/while → tail-recursive helpers**: Loops become `let rec loop i := ...`.
  *
  * Pipeline position:  **TS Source** → Parser → IR → Rewrite → Codegen → Lean 4
  */
 
-import * as ts from 'typescript';
-import * as path from 'path';
+import * as ts from '../typescript-api/index.js';
+import * as path from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { openProject } from '../typescript-api/session.js';
 import {
   IRModule, IRDecl, IRExpr, IRType, IRParam, IRCase, IRPattern,
   IRImport, Effect, BinOp, Span,
@@ -40,7 +43,7 @@ import {
   type StringEnumeration,
 } from '../typemap/index.js';
 import { inferNodeEffect } from '../effects/index.js';
-import { hasDOPattern, CF_AMBIENT, makeAmbientHost, DO_LEAN_IMPORTS } from '../do-model/ambient.js';
+import { hasDOPattern, CF_AMBIENT, DO_LEAN_IMPORTS } from '../do-model/ambient.js';
 import { lookupGlobal } from '../stdlib/index.js';
 import { capitalize } from '../utils.js';
 
@@ -66,7 +69,7 @@ export interface ParseOptions {
 /**
  * Parse a TypeScript source file into a fully-typed IR module.
  *
- * Creates a `ts.Program` with type checking, resolves all types and effects,
+ * Opens a compiler session project with type checking, resolves all types and effects,
  * and produces an `IRModule` ready for the rewrite and codegen passes.
  *
  * @param opts - Parsing options (file path, optional source text).
@@ -80,33 +83,39 @@ export interface ParseOptions {
  */
 export function parseFile(opts: ParseOptions): IRModule {
   const { fileName } = opts;
-  const sourceText = opts.sourceText ?? ts.sys.readFile(fileName) ?? '';
-  const virtual = new Map<string, string>(opts.extraFiles ?? []);
-  virtual.set(fileName, sourceText);
+  const absolutePath = path.resolve(fileName);
+  const sourceText = opts.sourceText ?? readSourceText(absolutePath);
+  const virtual = new Map<string, string>();
+  for (const [name, text] of opts.extraFiles ?? []) virtual.set(path.resolve(name), text);
+  virtual.set(absolutePath, sourceText);
 
   const needsDO = hasDOPattern(sourceText);
-  const ambientFile = '/__cf_ambient.d.ts';
+  // A synthetic path beside the parsed file: the session places its configuration in the deepest
+  // directory holding every root, so a root at the filesystem root would put it there instead.
+  const ambientFile = path.join(path.dirname(absolutePath), '__cf_ambient.d.ts');
   if (needsDO) virtual.set(ambientFile, CF_AMBIENT);
 
-  const compilerOpts: ts.CompilerOptions = {
-    target: ts.ScriptTarget.ES2022,
-    module: ts.ModuleKind.NodeNext,
-    moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    strict: true,
-    skipLibCheck: true,
-    noResolve: false,
-    lib: ['lib.es2022.d.ts'],
-  };
-
-  const baseHost = ts.createCompilerHost(compilerOpts);
-  const host     = makeAmbientHost(baseHost, virtual);
-  const roots    = needsDO ? [fileName, ambientFile] : [fileName];
-  const program  = ts.createProgram(roots, compilerOpts, host);
-  const checker  = program.getTypeChecker();
-  const sf       = program.getSourceFile(fileName);
-  if (!sf) throw new Error(`Cannot get source file: ${fileName}`);
-
-  return new ParserCtx(checker, sf, needsDO, spanPath(fileName, opts.projectRoot)).parseModule();
+  // The compiler session reads a project over an exact root set, so the Cloudflare ambient
+  // declarations travel as overlay text rather than a compiler host: the server reads them the
+  // way it reads any other file, and no host indirection remains to keep honest.
+  const project = openProject({
+    files: needsDO ? [absolutePath, ambientFile] : [absolutePath],
+    settings: {
+      target: 'es2022',
+      module: 'nodenext',
+      moduleResolution: 'nodenext',
+      strict: true,
+      skipLibCheck: true,
+      lib: ['es2022'],
+    },
+    virtual,
+  });
+  const source = project.requireSourceFile(absolutePath);
+  const parsed = new ParserCtx(project.checker, source, needsDO, spanPath(fileName, opts.projectRoot)).parseModule();
+  // Every field of an `IRModule` is plain data — names, IR types, spans — so nothing returned here
+  // reads back through the project, and the project is released rather than left open.
+  project.close();
+  return parsed;
 }
 
 /**
@@ -131,10 +140,19 @@ function spanPath(fileName: string, projectRoot?: string): string {
 function findProjectRoot(file: string): string {
   const own = path.dirname(file);
   for (let dir = own; ; ) {
-    if (PROJECT_MARKERS.some(marker => ts.sys.fileExists(path.join(dir, marker)))) return dir;
+    if (PROJECT_MARKERS.some(marker => existsSync(path.join(dir, marker)))) return dir;
     const parent = path.dirname(dir);
     if (parent === dir) return own;
     dir = parent;
+  }
+}
+
+/** A file's text, or the empty string when there is nothing readable at that path. */
+function readSourceText(file: string): string {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    return '';
   }
 }
 
@@ -158,7 +176,7 @@ class ParserCtx {
   private imports: IRImport[] = [];
 
   constructor(
-    private readonly checker: ts.TypeChecker,
+    private readonly checker: ts.Checker,
     private readonly sf: ts.SourceFile,
     private readonly needsDO: boolean,
     /** Path every `Span` of this file reports — see {@link spanPath}. */
@@ -185,7 +203,31 @@ class ParserCtx {
    * its answer per node (measured 18ms, then 0.01ms).
    */
   private typeOf(node: ts.Expression): IRType {
-    return mapType(this.checker.getTypeAtLocation(node), this.checker);
+    return this.irTypeOf(this.checker.getTypeAtLocation(node));
+  }
+
+  /**
+   * The IR image of a type, and of a type the checker declines to give: that answer used to be
+   * the error type, whose flags said `any`, and `TSAny` is what both map to.
+   */
+  private irTypeOf(type: ts.Type | undefined): IRType {
+    return type === undefined ? TyRef('TSAny') : mapType(type, this.checker);
+  }
+
+  /** The IR return type of a signature, or `fallback` when there is no signature or type to read. */
+  private returnTypeOf(signature: ts.Signature | undefined, fallback: IRType): IRType {
+    if (signature === undefined) return fallback;
+    const returned = this.checker.getReturnTypeOfSignature(signature);
+    return returned === undefined ? fallback : mapType(returned, this.checker);
+  }
+
+  /**
+   * The IR of a function-like body: a block lowers through its statements, an expression body
+   * through the expression, and a declaration with no body stands for a hole of its return type.
+   */
+  private parseBody(body: ts.Block | ts.Expression | undefined, eff: Effect, ret: IRType, span: Span): IRExpr {
+    if (body === undefined) return holeExpr(ret, span);
+    return ts.isBlock(body) ? this.parseBlock(body, eff) : this.parseExpr(body);
   }
 
   /**
@@ -205,13 +247,12 @@ class ParserCtx {
     if (ts.isBinaryExpression(parent) && EQUALITY_TOKENS.has(parent.operatorToken.kind)) {
       const other = parent.left === node ? parent.right : parent.left;
       const symbol = this.checker.getSymbolAtLocation(other);
-      const declaration = symbol?.valueDeclaration;
-      return expectedStringEnumeration(
-        declaration && symbol
-          ? this.checker.getTypeOfSymbolAtLocation(symbol, declaration)
-          : this.checker.getTypeAtLocation(other),
-        this.checker,
-      );
+      // A symbol names its declaration by handle, so the node behind it is resolved here.
+      const declaration = symbol?.valueDeclaration?.resolve();
+      const declared = declaration !== undefined && symbol !== undefined
+        ? this.checker.getTypeOfSymbolAtLocation(symbol, declaration)
+        : this.checker.getTypeAtLocation(other);
+      return declared === undefined ? null : expectedStringEnumeration(declared, this.checker);
     }
     const contextual = this.checker.getContextualType(node);
     return contextual === undefined ? null : expectedStringEnumeration(contextual, this.checker);
@@ -221,7 +262,7 @@ class ParserCtx {
    * A string literal in a position that expects an enumeration denotes that
    * enumeration's constructor; anywhere else it stays a string.
    */
-  private parseStringLiteral(node: ts.StringLiteralLike): IRExpr {
+  private parseStringLiteral(node: ts.StringLiteralLikeNode): IRExpr {
     const enumeration = this.enumerationAt(node);
     if (enumeration === null || !enumeration.members.includes(node.text)) return litStr(node.text);
     return {
@@ -266,7 +307,7 @@ class ParserCtx {
    * import list and its names still have to be known as coming from that module.
    */
   private collectImport(node: ts.ImportDeclaration): void {
-    const spec = (node.moduleSpecifier as ts.StringLiteral).text;
+    const spec = moduleSpecifierText(node.moduleSpecifier, this.sf);
     const lean = this.tsModToLean(spec);
 
     // Side-effect import: `import './setup'`
@@ -278,7 +319,7 @@ class ParserCtx {
     const names: string[] = [];
     const imp: IRImport = { module: lean };
     if (spec.startsWith('.')) imp.isGenerated = true;
-    if (node.importClause.isTypeOnly) imp.isTypeOnly = true;
+    if (node.importClause.phaseModifier === ts.SyntaxKind.TypeKeyword) imp.isTypeOnly = true;
 
     if (node.importClause.name) names.push(node.importClause.name.text);
     if (node.importClause.namedBindings) {
@@ -328,7 +369,7 @@ class ParserCtx {
   // Re-export: export { X } from './mod'  or  export * from './mod'
   private parseExportDecl(node: ts.ExportDeclaration): IRDecl[] | null {
     if (!node.moduleSpecifier) return null;
-    const spec = (node.moduleSpecifier as ts.StringLiteral).text;
+    const spec = moduleSpecifierText(node.moduleSpecifier, this.sf);
     const lean = this.tsModToLean(spec);
     this.imports.push({ module: lean });
     return null;
@@ -346,7 +387,10 @@ class ParserCtx {
     if (ts.isObjectLiteralExpression(expr)) {
       // export default { fetch: handler, ... } → Worker namespace with handler defs
       const isWorkerEntry = expr.properties.some(p => {
-        const n = ts.isIdentifier(p.name!) ? p.name!.text : p.name?.getText(this.sf);
+        // A spread assignment carries no name, so no handler name can match it.
+        const named = 'name' in p ? p.name : undefined;
+        const n = named === undefined ? undefined
+          : ts.isIdentifier(named) ? named.text : named.getText(this.sf);
         return n === 'fetch' || n === 'scheduled' || n === 'queue';
       });
       const decls: IRDecl[] = [];
@@ -356,14 +400,11 @@ class ParserCtx {
           const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
           if (ts.isArrowFunction(prop.initializer) || ts.isFunctionExpression(prop.initializer)) {
             const fn = prop.initializer;
-            const tps = extractTypeParams(fn as ts.ArrowFunction, this.checker);
+            const tps = extractTypeParams(fn, this.checker);
             const ps  = this.parseParams(fn.parameters);
-            const sig = this.checker.getSignatureFromDeclaration(fn);
-            const ret = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
+            const ret = this.returnTypeOf(this.checker.getSignatureFromDeclaration(fn), TyUnit);
             const eff = inferNodeEffect(fn, this.checker);
-            const body = ts.isBlock(fn.body as ts.Node)
-              ? this.parseBlock(fn.body as ts.Block, eff)
-              : this.parseExpr(fn.body as ts.Expression);
+            const body = ts.isBlock(fn.body) ? this.parseBlock(fn.body, eff) : this.parseExpr(fn.body);
             methods.push({ tag: 'FuncDef', name, typeParams: tps, params: ps, retType: ret, effect: eff, body, span: this.spanOf(prop) });
           } else {
             const ty  = this.typeOf(prop.initializer);
@@ -374,11 +415,10 @@ class ParserCtx {
           const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
           const tps  = extractTypeParams(prop, this.checker);
           const ps   = this.parseParams(prop.parameters);
-          const sig  = this.checker.getSignatureFromDeclaration(prop);
-          const ret  = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
+          const ret  = this.returnTypeOf(this.checker.getSignatureFromDeclaration(prop), TyUnit);
           const eff  = inferNodeEffect(prop, this.checker);
           const span = this.spanOf(prop);
-          const body = prop.body ? this.parseBlock(prop.body, eff) : holeExpr(ret, span);
+          const body = this.parseBody(prop.body, eff, ret, span);
           methods.push({ tag: 'FuncDef', name, typeParams: tps, params: ps, retType: ret, effect: eff, body, span });
         } else if (ts.isShorthandPropertyAssignment(prop)) {
           // Shorthand property in export default: { createConfig } — just a re-export, skip
@@ -392,10 +432,10 @@ class ParserCtx {
       return decls;
     }
     if (ts.isFunctionDeclaration(expr) || ts.isFunctionExpression(expr)) {
-      return [this.parseFnDecl(expr as ts.FunctionDeclaration)];
+      return [this.parseFnDecl(expr)];
     }
     if (ts.isClassDeclaration(expr)) {
-      return this.parseClassDecl(expr as ts.ClassDeclaration);
+      return this.parseClassDecl(expr);
     }
     const ty  = this.typeOf(expr);
     const val = this.parseExpr(expr);
@@ -404,15 +444,14 @@ class ParserCtx {
 
   // ─── Function declarations ─────────────────────────────────────────────────
 
-  private parseFnDecl(node: ts.FunctionDeclaration): IRDecl {
+  private parseFnDecl(node: ts.FunctionDeclaration | ts.FunctionExpression): IRDecl {
     const name  = node.name?.text ?? 'anonymous';
     const span  = this.spanOf(node);
     const tps   = extractTypeParams(node, this.checker);
     const params = this.parseParams(node.parameters);
-    const sig   = this.checker.getSignatureFromDeclaration(node);
-    const ret   = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
+    const ret   = this.returnTypeOf(this.checker.getSignatureFromDeclaration(node), TyUnit);
     const eff   = inferNodeEffect(node, this.checker);
-    const body  = node.body ? this.parseBlock(node.body, eff) : holeExpr(ret, span);
+    const body  = this.parseBody(node.body, eff, ret, span);
     const docComment = jsdocComment(node, this.sf);
     return { tag: 'FuncDef', name, typeParams: tps, params, retType: ret, effect: eff, body, comment: leadingComment(node, this.sf), docComment, span };
   }
@@ -422,7 +461,7 @@ class ParserCtx {
       // Rest parameter: ...args → (args : Array T)
       if (p.dotDotDotToken && ts.isIdentifier(p.name)) {
         const sym = this.checker.getSymbolAtLocation(p.name);
-        const elemTy = sym ? mapType(this.checker.getTypeOfSymbol(sym), this.checker) : TyRef('Any');
+        const elemTy = sym ? this.irTypeOf(this.checker.getTypeOfSymbol(sym)) : TyRef('Any');
         const arrTy = elemTy.tag === 'Array' ? elemTy : TyArray(elemTy);
         return { name: p.name.text, type: arrTy, default_: undefined };
       }
@@ -432,8 +471,8 @@ class ParserCtx {
       }
       const name = p.name.text;
       const sym  = this.checker.getSymbolAtLocation(p.name);
-      // Optional param (name?: T) gets Option type via TypeChecker
-      const ty   = sym ? mapType(this.checker.getTypeOfSymbol(sym), this.checker) : TyRef('Any');
+      // Optional param (name?: T) gets Option type from the checker
+      const ty   = sym ? this.irTypeOf(this.checker.getTypeOfSymbol(sym)) : TyRef('Any');
       return { name, type: ty, default_: p.initializer ? this.parseExpr(p.initializer) : undefined };
     });
   }
@@ -453,9 +492,10 @@ class ParserCtx {
     for (const member of node.members) {
       if (ts.isSetAccessorDeclaration(member)) return false;
       if (!ts.isPropertyDeclaration(member)) continue;
-      const modifiers = ts.getCombinedModifierFlags(member);
-      if ((modifiers & ts.ModifierFlags.Static) !== 0) return false;
-      if ((modifiers & ts.ModifierFlags.Readonly) === 0) return false;
+      // One array holds a node's modifiers and its decorators, so a modifier is read by kind.
+      const modifiers = (member.modifiers ?? []).filter(ts.isModifier);
+      if (modifiers.some(modifier => modifier.kind === ts.SyntaxKind.StaticKeyword)) return false;
+      if (!modifiers.some(modifier => modifier.kind === ts.SyntaxKind.ReadonlyKeyword)) return false;
       fields++;
     }
     if (fields === 0) return false;
@@ -470,7 +510,7 @@ class ParserCtx {
     const typeParams = extractTypeParams(node, this.checker);
     const fields = node.members.filter(ts.isPropertyDeclaration).map((member) => ({
       name: member.name.getText(member.getSourceFile()),
-      type: mapType(this.checker.getTypeAtLocation(member), this.checker),
+      type: this.irTypeOf(this.checker.getTypeAtLocation(member)),
     }));
     const decls: IRDecl[] = [{
       tag: 'StructDef', name, typeParams, fields,
@@ -537,8 +577,7 @@ class ParserCtx {
   // Getter: get field() { return this.field; }  →  def get_field (self : T) : RetType := self.field
   private parseGetter(node: ts.GetAccessorDeclaration, className: string, stateType: string): IRDecl | null {
     const fieldName = node.name?.getText(this.sf) ?? 'unknown';
-    const sig  = this.checker.getSignatureFromDeclaration(node);
-    const ret  = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
+    const ret  = this.returnTypeOf(this.checker.getSignatureFromDeclaration(node), TyUnit);
     // Use stateType not className — the struct is e.g. DogState, not Dog
     const self: IRParam = { name: 'self', type: TyRef(stateType) };
     const body = node.body ? this.parseBlock(node.body, Pure) : { tag: 'FieldAccess' as const, obj: varExpr('self', TyRef(stateType)), field: fieldName, type: ret, effect: Pure };
@@ -585,7 +624,7 @@ class ParserCtx {
       const typeStr = m.type?.getText(this.sf) ?? '';
       if (typeStr.includes('DurableObjectState') || typeStr === 'Env') continue;
       const sym = m.name ? this.checker.getSymbolAtLocation(m.name) : undefined;
-      const ty  = sym ? mapType(this.checker.getTypeOfSymbol(sym), this.checker) : TyRef('Any');
+      const ty  = sym ? this.irTypeOf(this.checker.getTypeOfSymbol(sym)) : TyRef('Any');
       out.push({ name, type: ty, mutable: true });
     }
     return out;
@@ -600,7 +639,7 @@ class ParserCtx {
       // For DO classes the constructor initialises persistent state from non-DO params.
       // We synthesise a clean init that returns the state struct, filtering out
       // DurableObjectState/Env params (they go to the Lean runtime, not the app state).
-      const stateFields = this.classStateFields(node.parent as ts.ClassDeclaration);
+      const stateFields = ts.isClassDeclaration(node.parent) ? this.classStateFields(node.parent) : [];
       const appParams   = params.filter(p => {
         const t = p.type;
         if (t.tag === 'TypeRef' && (t.name === 'DurableObjectState' || t.name === 'Env')) return false;
@@ -644,8 +683,7 @@ class ParserCtx {
     // Deduplicate by name, method params take priority over class params
     const seen = new Set<string>();
     const tps = [...methodTPs, ...classTPs].filter(t => { if (seen.has(t.name)) return false; seen.add(t.name); return true; });
-    const sig     = this.checker.getSignatureFromDeclaration(node);
-    const ret     = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
+    const ret     = this.returnTypeOf(this.checker.getSignatureFromDeclaration(node), TyUnit);
     const eff     = inferNodeEffect(node, this.checker);
     const params  = this.parseParams(node.parameters);
     // Fix 3: self type uses the state struct name with class type params applied.
@@ -655,7 +693,7 @@ class ParserCtx {
       : TyRef(stateType);
     const self: IRParam = { name: 'self', type: selfType };
     const allParams = isStatic ? params : [self, ...params];
-    const body = node.body ? this.parseBlock(node.body, eff) : holeExpr(ret, span);
+    const body = this.parseBody(node.body, eff, ret, span);
     // All methods get ClassName.methodName prefix to avoid collisions
     // when multiple classes in the same file have methods with the same name.
     const fullName = `${className}.${name}`;
@@ -682,8 +720,10 @@ class ParserCtx {
     const hasIndex = node.members.some(m => ts.isIndexSignatureDeclaration(m));
     if (hasIndex && fields.length === 0) {
       // Pure index signature → type alias to AssocMap
-      const indexSig = node.members.find(m => ts.isIndexSignatureDeclaration(m)) as ts.IndexSignatureDeclaration | undefined;
-      const valType = indexSig?.type ? mapType(this.checker.getTypeAtLocation(indexSig.type), this.checker) : TyRef('Any');
+      const indexSig = node.members.find(ts.isIndexSignatureDeclaration);
+      const valType = indexSig === undefined
+        ? TyRef('Any')
+        : this.irTypeOf(this.checker.getTypeAtLocation(indexSig.type));
       return { tag: 'TypeAlias', name, typeParams, body: TyMap(TyString, valType), comment };
     }
 
@@ -704,13 +744,14 @@ class ParserCtx {
   private parseTypeAlias(node: ts.TypeAliasDeclaration): IRDecl | IRDecl[] {
     const name = node.name.text;
     const tps  = extractTypeParams(node, this.checker);
-    const ty   = this.checker.getTypeAtLocation(node);
+    // A type the checker declines to give behaves as `any`, which is what its error type was.
+    const ty   = this.checker.getTypeAtLocation(node) ?? this.checker.getAnyType();
 
-    if (ty.isUnion()) {
+    if (ty.isUnionType()) {
       // The generated tagged encoding of `Option A` is Lean's own `Option`, so the alias
       // introduces no type. Declaring one here would shadow `Option` for the whole module.
       if (taggedOptionElement(ty, this.checker) !== null) return [];
-      const disc = detectDiscriminatedUnion(ty as ts.UnionType, this.checker);
+      const disc = detectDiscriminatedUnion(ty, this.checker);
       if (disc) {
         return {
           tag: 'InductiveDef', name, typeParams: tps,
@@ -735,10 +776,10 @@ class ParserCtx {
     }
 
     // Branded type
-    if (ty.isIntersection()) {
-      const isBranded = ty.types.some(t =>
-        (t.flags & ts.TypeFlags.Object) &&
-        (t as ts.ObjectType).getProperties().some(p => p.name.startsWith('__brand') || p.name.startsWith('_brand'))
+    if (ty.isIntersectionType()) {
+      const isBranded = (ty.getTypes() ?? []).some(t =>
+        (t.flags & ts.TypeFlags.Object) !== 0 &&
+        this.checker.getPropertiesOfType(t).some(p => p.name.startsWith('__brand') || p.name.startsWith('_brand'))
       );
       if (isBranded) {
         return {
@@ -752,7 +793,7 @@ class ParserCtx {
     // Tuple types: [A, B, C] → already handled by mapType as Tuple
     // Conditional types: T extends U ? A : B → approximated by the resolved type
     // Template literal types: `prefix${string}` → String (with a comment about the constraint)
-    // Mapped types: { [K in keyof T]: V } → resolved by TypeChecker to a concrete type
+    // Mapped types: { [K in keyof T]: V } → resolved by the checker to a concrete type
     // keyof T → String (type-level list of keys)
 
     // Check if the type alias node has special syntax we want to annotate
@@ -783,10 +824,7 @@ class ParserCtx {
       }
       // Tuple type: [A, B, C]
       if (ts.isTupleTypeNode(typeNode)) {
-        const elems = typeNode.elements.map(e => {
-          const elemType = this.checker.getTypeAtLocation(e);
-          return mapType(elemType, this.checker);
-        });
+        const elems = typeNode.elements.map(e => this.irTypeOf(this.checker.getTypeAtLocation(e)));
         return {
           tag: 'TypeAlias', name, typeParams: tps, body: TyTuple(elems),
           comment: leadingComment(node, this.sf),
@@ -807,14 +845,14 @@ class ParserCtx {
       // Object literal type: { key: string; value: string } → StructDef
       if (ts.isTypeLiteralNode(typeNode)) {
         const members = typeNode.members;
-        const propSigs = members.filter(m => ts.isPropertySignature(m));
+        const propSigs = members.filter(ts.isPropertySignatureDeclaration);
         if (propSigs.length > 0) {
           const fields = propSigs.map(m => {
-            const fieldName = m.name?.getText(this.sf) ?? '';
-            const sym = this.checker.getSymbolAtLocation(m.name!);
-            const fieldTy = sym ? this.checker.getTypeOfSymbol(sym) : this.checker.getAnyType();
-            const opt = !!m.questionToken;
-            const mapped = mapType(fieldTy, this.checker);
+            const fieldName = m.name.getText(this.sf);
+            const sym = this.checker.getSymbolAtLocation(m.name);
+            // A member carries one postfix token, and `?` is the spelling that makes it optional.
+            const opt = m.postfixToken?.kind === ts.SyntaxKind.QuestionToken;
+            const mapped = this.irTypeOf(sym === undefined ? undefined : this.checker.getTypeOfSymbol(sym));
             return { name: fieldName, type: opt ? TyOption(mapped) : mapped };
           });
           // Check for index signatures alongside properties → keep as struct
@@ -826,9 +864,9 @@ class ParserCtx {
           };
         }
         // Pure index signature → AssocMap
-        const indexSig = members.find(m => ts.isIndexSignatureDeclaration(m)) as ts.IndexSignatureDeclaration | undefined;
+        const indexSig = members.find(ts.isIndexSignatureDeclaration);
         if (indexSig) {
-          const valType = indexSig.type ? mapType(this.checker.getTypeAtLocation(indexSig.type), this.checker) : TyRef('TSAny');
+          const valType = this.irTypeOf(this.checker.getTypeAtLocation(indexSig.type));
           return { tag: 'TypeAlias', name, typeParams: tps, body: TyMap(TyString, valType), comment: leadingComment(node, this.sf) };
         }
       }
@@ -857,7 +895,7 @@ class ParserCtx {
 
     // String enum: also emit a toString function
     const toStringCases: IRCase[] = members.map(m => ({
-      pattern: { tag: 'PCtor', ctor: `${enumName}.${m.name}`, args: [] } as IRPattern,
+      pattern: { tag: 'PCtor', ctor: `${enumName}.${m.name}`, args: [] },
       body: litStr(m.value ?? m.name),
     }));
     const toStringFn: IRDecl = {
@@ -879,17 +917,14 @@ class ParserCtx {
       if (!ts.isIdentifier(d.name)) continue;
       const name = d.name.text;
       const span = this.spanOf(d);
-      const ty   = mapType(this.checker.getTypeAtLocation(d), this.checker);
+      const ty   = this.irTypeOf(this.checker.getTypeAtLocation(d));
       if (d.initializer && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))) {
         const fn = d.initializer;
-        const tps = extractTypeParams(fn as ts.ArrowFunction, this.checker);
+        const tps = extractTypeParams(fn, this.checker);
         const ps  = this.parseParams(fn.parameters);
-        const sig = this.checker.getSignatureFromDeclaration(fn);
-        const ret = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : TyUnit;
+        const ret = this.returnTypeOf(this.checker.getSignatureFromDeclaration(fn), TyUnit);
         const eff = inferNodeEffect(fn, this.checker);
-        const body = ts.isBlock(fn.body as ts.Node)
-          ? this.parseBlock(fn.body as ts.Block, eff)
-          : this.parseExpr(fn.body as ts.Expression);
+        const body = ts.isBlock(fn.body) ? this.parseBlock(fn.body, eff) : this.parseExpr(fn.body);
         out.push({ tag: 'FuncDef', name, typeParams: tps, params: ps, retType: ret, effect: eff, body, span });
       } else {
         const val = d.initializer ? this.parseExpr(d.initializer) : defaultForIRType(ty, span);
@@ -956,7 +991,7 @@ class ParserCtx {
        const decl = stmt.declarationList.declarations[0];
        if (decl && ts.isIdentifier(decl.name)) {
          const name = decl.name.text;
-         const ty   = mapType(this.checker.getTypeAtLocation(decl), this.checker);
+         const ty   = this.irTypeOf(this.checker.getTypeAtLocation(decl));
          const val  = decl.initializer ? this.parseExpr(decl.initializer) : defaultForIRType(ty, this.spanOf(decl));
          const body = cont();
          const combined = combineEffects([val.effect, body.effect]);
@@ -1005,9 +1040,9 @@ class ParserCtx {
             let result = body;
             for (let i = elems.length - 1; i >= 0; i--) {
               const el = elems[i];
-              if (ts.isBindingElement(el) && ts.isIdentifier(el.name)) {
+              if (ts.isBindingElement(el) && el.name !== undefined && ts.isIdentifier(el.name)) {
                 const eName = el.name.text;
-                const eType = mapType(this.checker.getTypeAtLocation(el), this.checker);
+                const eType = this.irTypeOf(this.checker.getTypeAtLocation(el));
                 result = {
                   tag: 'Let', name: eName, type: eType, effect: Pure,
                   value: { tag: 'IndexAccess', obj: varExpr(binding), index: litNat(i), type: eType, effect: Pure },
@@ -1025,10 +1060,10 @@ class ParserCtx {
             let result = body;
             for (let i = elems.length - 1; i >= 0; i--) {
               const el = elems[i];
-              if (ts.isIdentifier(el.name)) {
+              if (el.name !== undefined && ts.isIdentifier(el.name)) {
                 const eName = el.name.text;
                 const propName = el.propertyName && ts.isIdentifier(el.propertyName) ? el.propertyName.text : eName;
-                const eType = mapType(this.checker.getTypeAtLocation(el), this.checker);
+                const eType = this.irTypeOf(this.checker.getTypeAtLocation(el));
                 result = {
                   tag: 'Let', name: eName, type: eType, effect: Pure,
                   value: { tag: 'FieldAccess', obj: varExpr(binding), field: propName, type: eType, effect: Pure },
@@ -1042,7 +1077,7 @@ class ParserCtx {
       }
       const rawBody = ts.isBlock(stmt.statement)
         ? this.parseBlock(stmt.statement, eff)
-        : this.parseStmt(stmt.statement as ts.Statement, [], eff);
+        : this.parseStmt(stmt.statement, [], eff);
       const body = desugarBody(rawBody);
       const loop: IRExpr = {
         tag: 'App',
@@ -1064,11 +1099,12 @@ class ParserCtx {
      // for-in: for (const k in obj) — iterate over keys
      if (ts.isForInStatement(stmt)) {
        const obj     = this.parseExpr(stmt.expression);
-       const binding = ts.isVariableDeclarationList(stmt.initializer)
-         ? (stmt.initializer.declarations[0].name as ts.Identifier).text : '_k';
+       const iterated = ts.isVariableDeclarationList(stmt.initializer)
+         ? stmt.initializer.declarations[0].name : undefined;
+       const binding = iterated !== undefined && ts.isIdentifier(iterated) ? iterated.text : '_k';
        const body = ts.isBlock(stmt.statement)
          ? this.parseBlock(stmt.statement, eff)
-         : this.parseStmt(stmt.statement as ts.Statement, [], eff);
+         : this.parseStmt(stmt.statement, [], eff);
        const keysExpr: IRExpr = { tag: 'App', fn: varExpr('AssocMap.keys'), args: [obj], type: TyArray(TyString), effect: Pure };
        const loop: IRExpr = {
          tag: 'App',
@@ -1089,7 +1125,9 @@ class ParserCtx {
 
     // do-while: execute body once, then loop like while
     if (ts.isDoStatement(stmt)) {
-      const body = this.parseBlock(stmt.statement as ts.Block, eff);
+      const body = ts.isBlock(stmt.statement)
+        ? this.parseBlock(stmt.statement, eff)
+        : this.parseStmt(stmt.statement, [], eff);
       const cond = this.parseExpr(stmt.expression);
       // do { body } while (cond) → body; while (cond) { body }
       const whileLoop = this.buildWhileLoop('_dowhile', cond, body);
@@ -1142,20 +1180,20 @@ class ParserCtx {
     const cond  = this.parseExpr(stmt.expression);
     const then_ = ts.isBlock(stmt.thenStatement)
       ? this.parseBlock(stmt.thenStatement, eff)
-      : this.parseStmt(stmt.thenStatement as ts.Statement, [], eff);
+      : this.parseStmt(stmt.thenStatement, [], eff);
 
     const thenRets = branchReturns(then_);
 
     if (thenRets && rest.length > 0) {
       // CPS: if cond then <return> else <rest>
       const else_ = stmt.elseStatement
-        ? (ts.isBlock(stmt.elseStatement) ? this.parseBlock(stmt.elseStatement, eff) : this.parseStmt(stmt.elseStatement as ts.Statement, rest, eff))
+        ? (ts.isBlock(stmt.elseStatement) ? this.parseBlock(stmt.elseStatement, eff) : this.parseStmt(stmt.elseStatement, rest, eff))
         : this.parseStmts(rest, eff);
       return { tag: 'IfThenElse', cond, then: then_, else_, type: else_.type, effect: combineEffects([cond.effect, then_.effect, else_.effect]) };
     }
 
     const else_ = stmt.elseStatement
-      ? (ts.isBlock(stmt.elseStatement) ? this.parseBlock(stmt.elseStatement, eff) : this.parseStmt(stmt.elseStatement as ts.Statement, [], eff))
+      ? (ts.isBlock(stmt.elseStatement) ? this.parseBlock(stmt.elseStatement, eff) : this.parseStmt(stmt.elseStatement, [], eff))
       : litUnit();
 
     const ifExpr: IRExpr = { tag: 'IfThenElse', cond, then: then_, else_, type: else_.type, effect: combineEffects([cond.effect, then_.effect, else_.effect]) };
@@ -1242,10 +1280,12 @@ class ParserCtx {
   private flattenObjectBinding(pattern: ts.ObjectBindingPattern, rhs: IRExpr, body: IRExpr): IRExpr {
     const elems = [...pattern.elements].reverse();
     for (const el of elems) {
+      // A binding element with no name binds nothing, so there is nothing to flatten for it.
+      if (el.name === undefined) continue;
       const propName = el.propertyName
         ? (ts.isIdentifier(el.propertyName) ? el.propertyName.text : el.propertyName.getText(this.sf))
         : (ts.isIdentifier(el.name) ? el.name.text : `_el${el.pos}`);
-      const ty = mapType(this.checker.getTypeAtLocation(el.name), this.checker);
+      const ty = this.irTypeOf(this.checker.getTypeAtLocation(el.name));
       const fieldVal: IRExpr = { tag: 'FieldAccess', obj: rhs, field: propName, type: ty, effect: rhs.effect };
 
       if (ts.isObjectBindingPattern(el.name)) {
@@ -1290,23 +1330,24 @@ class ParserCtx {
     elems.forEach((el, revIdx) => {
       const idx = elems.length - 1 - revIdx;
       if (ts.isOmittedExpression(el)) return;
-      const ty = mapType(this.checker.getTypeAtLocation(el), this.checker);
+      const ty = this.irTypeOf(this.checker.getTypeAtLocation(el));
       const indexVal: IRExpr = { tag: 'IndexAccess', obj: rhs, index: litNat(idx), type: ty, effect: rhs.effect };
 
-      if (ts.isBindingElement(el) && ts.isObjectBindingPattern(el.name)) {
+      if (ts.isBindingElement(el) && el.name !== undefined && ts.isObjectBindingPattern(el.name)) {
         // const [, {a, b}] = arr → let _tmp := arr[1]; let a := _tmp.a; ...
         const tmpName = `_ds_${idx}`;
         const tmpRef: IRExpr = { tag: 'Var', name: tmpName, type: ty, effect: Pure };
         body = this.flattenObjectBinding(el.name, tmpRef, body);
         body = { tag: 'Let', name: tmpName, annot: ty, value: indexVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
-      } else if (ts.isBindingElement(el) && ts.isArrayBindingPattern(el.name)) {
+      } else if (ts.isBindingElement(el) && el.name !== undefined && ts.isArrayBindingPattern(el.name)) {
         // const [[a, b], c] = arr → nested array destructuring
         const tmpName = `_ds_${idx}`;
         const tmpRef: IRExpr = { tag: 'Var', name: tmpName, type: ty, effect: Pure };
         body = this.flattenArrayBinding(el.name, tmpRef, body);
         body = { tag: 'Let', name: tmpName, annot: ty, value: indexVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
       } else {
-        const bindName = ts.isBindingElement(el) && ts.isIdentifier(el.name) ? el.name.text : `_ai${idx}`;
+        const bindName = ts.isBindingElement(el) && el.name !== undefined && ts.isIdentifier(el.name)
+          ? el.name.text : `_ai${idx}`;
         body = { tag: 'Let', name: bindName, annot: ty, value: indexVal, body, type: body.type, effect: combineEffects([rhs.effect, body.effect]) };
       }
     });
@@ -1315,8 +1356,8 @@ class ParserCtx {
 
   private parseTry(node: ts.TryStatement, rest: ReadonlyArray<ts.Statement>, eff: Effect): IRExpr {
     const body = this.parseBlock(node.tryBlock, eff);
-    const errName = node.catchClause?.variableDeclaration?.name
-      ? (node.catchClause.variableDeclaration.name as ts.Identifier).text : '_e';
+    const caught = node.catchClause?.variableDeclaration?.name;
+    const errName = caught !== undefined && ts.isIdentifier(caught) ? caught.text : '_e';
     const handler = node.catchClause?.block
       ? this.parseBlock(node.catchClause.block, eff)
       : varExpr(errName);
@@ -1334,7 +1375,7 @@ class ParserCtx {
     const cond   = node.condition ? this.parseExpr(node.condition) : litBool(true);
     const body   = ts.isBlock(node.statement)
       ? this.parseBlock(node.statement, eff)
-      : this.parseStmt(node.statement as ts.Statement, [], eff);
+      : this.parseStmt(node.statement, [], eff);
     const incrParsed: IRExpr = node.incrementor
       ? this.parseExpr(node.incrementor)
       : { tag: 'BinOp', op: 'Add', left: varExpr(iName, TyNat), right: litNat(1), type: TyNat, effect: Pure };
@@ -1361,7 +1402,7 @@ class ParserCtx {
     const cond = this.parseExpr(node.expression);
     const body = ts.isBlock(node.statement)
       ? this.parseBlock(node.statement, eff)
-      : this.parseStmt(node.statement as ts.Statement, [], eff);
+      : this.parseStmt(node.statement, [], eff);
     return this.buildWhileLoop(`_while_${node.pos}`, cond, body);
   }
 
@@ -1474,7 +1515,7 @@ class ParserCtx {
       const inner = this.parseExpr(node.expression);
       return { tag: 'Await', expr: inner, type: ty, effect: Async };
     }
-    if (ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) {
+    if (ts.isAsExpression(node) || ts.isTypeAssertion(node)) {
       const ty    = this.typeOf(node);
       const inner = this.parseExpr(node.expression);
       // `as const` is transparent
@@ -1674,7 +1715,10 @@ class ParserCtx {
     if (symbol === undefined) return null;
     // An imported class reaches the site as an alias, so the class itself is one hop away.
     const resolved = (symbol.flags & ts.SymbolFlags.Alias) === 0 ? symbol : this.checker.getAliasedSymbol(symbol);
-    const declaration = resolved.declarations?.find(ts.isClassDeclaration);
+    // A declaration is a handle into the program the symbol came from, so it is resolved first.
+    const declaration = resolved.declarations
+      .map(handle => handle.resolve())
+      .find((node): node is ts.ClassDeclaration => node !== undefined && ts.isClassDeclaration(node));
     return declaration !== undefined && this.isValueObjectClass(declaration) ? declaration : null;
   }
 
@@ -1698,7 +1742,7 @@ class ParserCtx {
     // The class may be declared in another file, so each name is read from the file it is in.
     const fields = declaration.members.filter(ts.isPropertyDeclaration).map((member) => {
       const name = member.name.getText(member.getSourceFile());
-      const fieldType = mapType(this.checker.getTypeAtLocation(member), this.checker);
+      const fieldType = this.irTypeOf(this.checker.getTypeAtLocation(member));
       const value = written?.get(name);
       if (value !== undefined) return { name, value: this.parseExpr(value) };
       return {
@@ -1720,11 +1764,8 @@ class ParserCtx {
   private parseLambda(node: ts.ArrowFunction | ts.FunctionExpression): IRExpr {
     const params = this.parseParams(node.parameters);
     const eff    = inferNodeEffect(node, this.checker);
-    const body   = ts.isBlock(node.body as ts.Node)
-      ? this.parseBlock(node.body as ts.Block, eff)
-      : this.parseExpr(node.body as ts.Expression);
-    const sig    = this.checker.getSignatureFromDeclaration(node);
-    const ret    = sig ? mapType(this.checker.getReturnTypeOfSignature(sig), this.checker) : body.type;
+    const body   = ts.isBlock(node.body) ? this.parseBlock(node.body, eff) : this.parseExpr(node.body);
+    const ret    = this.returnTypeOf(this.checker.getSignatureFromDeclaration(node), body.type);
     return { tag: 'Lambda', params, body, type: TyFn(params.map(p => p.type), ret, eff), effect: eff };
   }
 
@@ -1796,10 +1837,11 @@ class ParserCtx {
   /** The type a name was declared with, which narrowing at a use site does not change. */
   private declaredTypeOf(node: ts.Expression): ts.Type {
     const symbol = this.checker.getSymbolAtLocation(node);
-    const declaration = symbol?.valueDeclaration;
+    // A symbol names its declaration by handle, so the node behind it is resolved here.
+    const declaration = symbol?.valueDeclaration?.resolve();
     return declaration !== undefined && symbol !== undefined
       ? this.checker.getTypeOfSymbolAtLocation(symbol, declaration)
-      : this.checker.getTypeAtLocation(node);
+      : this.checker.getTypeAtLocation(node) ?? this.checker.getAnyType();
   }
 
   private parsePrefix(node: ts.PrefixUnaryExpression): IRExpr {
@@ -1839,7 +1881,7 @@ class ParserCtx {
     const named = (field: string): ts.Expression | undefined => assignments
       .find((entry) => ts.isIdentifier(entry.name) && entry.name.text === field)?.initializer;
     const tag = named(TAGGED_OPTION.tag);
-    if (tag === undefined || !ts.isStringLiteralLike(tag)) return null;
+    if (tag === undefined || !ts.isStringLiteralLikeNode(tag)) return null;
     if (tag.text === TAGGED_OPTION.absent) {
       return { ...varExpr('none'), type: TyOption(mapType(element, this.checker)) };
     }
@@ -1857,8 +1899,8 @@ class ParserCtx {
     if (typeName === 'AnonStruct') {
       const ctxType = this.checker.getContextualType(node);
       if (ctxType) {
-        const alias = ctxType.aliasSymbol?.name;
-        const symName = ctxType.symbol?.name;
+        const alias = ctxType.getAliasSymbol()?.name;
+        const symName = ctxType.getSymbol()?.name;
         if (alias && alias !== '__type' && alias !== '__object') typeName = alias;
         else if (symName && symName !== '__type' && symName !== '__object') typeName = symName;
       }
@@ -1883,8 +1925,8 @@ class ParserCtx {
           const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
           namedFields.push({ name, value: this.parseExpr(prop.initializer) });
         }
-      } else if (ts.isShorthandPropertyAssignment(prop)) {
-        // Property shorthand: { name } → { name := name }
+      } else if (ts.isShorthandPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
+        // Property shorthand: { name } → { name := name }; that name is always an identifier.
         const propName = prop.name.text;
         const propTy = this.typeOf(prop.name);
         namedFields.push({ name: propName, value: varExpr(propName, propTy) });
@@ -1893,7 +1935,7 @@ class ParserCtx {
       } else if (ts.isMethodDeclaration(prop)) {
         // Method in object literal: { foo() {} }
         const name = ts.isIdentifier(prop.name) ? prop.name.text : prop.name.getText(this.sf);
-        const body = prop.body ? this.parseBlock(prop.body, Pure) : holeExpr(TyUnit, this.spanOf(prop));
+        const body = this.parseBody(prop.body, Pure, TyUnit, this.spanOf(prop));
         const params = this.parseParams(prop.parameters);
         namedFields.push({ name, value: {
           tag: 'Lambda', params, body,
@@ -1969,7 +2011,7 @@ function assignsToThis(node: ts.Node): boolean {
       writes = true;
       return;
     }
-    ts.forEachChild(current, walk);
+    current.forEachChild(walk);
   };
   walk(node);
   return writes;
@@ -2061,6 +2103,11 @@ function fileToModuleName(filePath: string): string {
   const base  = path.basename(filePath, '.ts');
   const parts = base.split(/[-_]/).map(capitalize);
   return 'TSLean.Generated.' + parts.join('');
+}
+
+/** The module a specifier names: a string literal's own text, and any other expression's source. */
+function moduleSpecifierText(specifier: ts.Expression, sf: ts.SourceFile): string {
+  return ts.isStringLiteral(specifier) ? specifier.text : specifier.getText(sf);
 }
 
 function leadingComment(node: ts.Node, sf: ts.SourceFile): string | undefined {
