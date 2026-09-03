@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Sign
  * Generated module: TSLean/Examples/Roundtrip/Sign.ts
  * Package entry module: TSLean.Examples.Roundtrip.Sign
- * Semantic identity: sha256:84aa4e3f8ca93c11c880b276bf99ebd81cb5beb25691212a5b547abfad3f5c82
- * Input closure: sha256:2bf8a4049ece204d57bf34b5ef26810a13505b6ea4e486b15ee0e7c78e895575
+ * Semantic identity: sha256:4d0f31c2ad9019b306724013573bec4a0f25d30be2b5b42520a17550b7a8de0c
+ * Input closure: sha256:85026782670fd60012a65f4bcd38f318f33c35e4c05662061b87bf7dc7c1c316
  * Semantic IR: sha256:43a391ec3313f5d3cd7e78816c4bcdef5db41b290e45bc665c1b39ccbeab78e9
  * Generated module body: sha256:1aa96220b1a46b2d35fd54a2e12b5db0b2297895fb08b3c719a6bd1623be1728
  * Generated package body: sha256:b13b2ce1b97438fa3fcfb75afb820c5312ff8f920a64eb7b0f2ef2172d9530cf
