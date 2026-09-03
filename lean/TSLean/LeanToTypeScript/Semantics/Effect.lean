@@ -169,6 +169,43 @@ theorem bind_stops (program : Ir.Program) (fuel : Nat) (trace : Source.Trace)
   rw [firstRun]
   rcases halted with ⟨fault, after, rfl⟩ | ⟨after, rfl⟩ <;> rfl
 
+/-! ## Deciding a computation's answer, and what an `Eff`-to-IR compiler still owes
+
+A bind threads the store; deciding what the answer *was* is a `match` on it. For
+`ExceptT ε (StateM σ)` and `EStateM ε σ` the answer half is the `Except` image, so the shape every
+effectful program is written in — `match ← act with | .error e => … | .ok v => …` — is a
+payload-carrying `match` in return position. That shape had no lowering in this model: `Compile.expr`
+refused it by name, so nothing above it could be lowered either.
+
+It has one now. `Compile.returnBody` lowers it to `Target.Body.branch`, `Preservation.branchBody`
+proves the lowering refines the source match, and `Preservation.evalArms_refines` is the scope lemma
+the arms need: the payload the branch names with `const`s, reversed onto the enclosing scope, is
+exactly the scope `Source.evalCases` binds — which is what makes the continuation's view of the store
+binder above the payload the same on both sides. `Option`, `Except`, `JsonValue` and every declared
+`enum` are covered, so deciding an answer, a raised error and a decoded value are all inside the
+theorem.
+
+Three constraints on such a compiler are left, and they are constraints rather than gaps: each is a
+shape refused by name today, so a program that needs one is refused instead of published.
+
+* A recursive traversal that takes a `List` apart in return position — `match xs with | [] => … | x ::
+  rest => …` — is refused with `Fault.listMatch`: a list's alternatives are decided by array length
+  and its payload is read with `subject[0]` and `subject.slice(1)`, which is a third dispatch shape
+  with its own allocation, not a tag comparison and two own-property reads. A traversal written with
+  the six higher-order list opcodes is covered instead, because those enter a real function object
+  once per element.
+* A `match` on the pair a computation answers is refused with `Fault.structureMatch`, because
+  `Source.eval` gives a structure's value the `record` form. Reading `fst` and `snd` with field reads
+  is what is modeled, and it is what `bindBody` above does.
+* A bind chain inside an inline arrow has no emitted form: `emitExpression` refuses a `let` outside
+  return position, so every effectful body has to be a declared function — which is what `bindBody`
+  is. Lifting each chain into a declaration, or growing the emitter a block-bodied arrow, is a
+  decision for that compiler and not something this model can settle.
+
+`Program.HostSubstrate` stays the premise of every real effect, one row per host operation, and
+`Preservation.ListsFit` stays owed by every list-producing row. Neither is changed by any of this.
+-/
+
 end Effect
 
 end TSLean.LeanToTypeScript.Semantics

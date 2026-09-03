@@ -1444,9 +1444,9 @@ describe('Lean to TypeScript checked-fragment compiler', () => {
       '  | .second => .first',
     ];
     // In return position a `const` can name the scrutinee, so it is computed exactly once and the
-    // tag tests read the binding. `Compile` refuses this scrutinee because its target language has
-    // no statement to name it with, so this lowering is outside the model's image; the boundary is
-    // recorded in docs/trust.md rather than closed by refusing a program that evaluates it once.
+    // tag tests read the binding. `Compile.returnBody` lowers that to `Target.Body.branch`, whose
+    // subject is evaluated once before the chain, so this lowering is inside the model's image: the
+    // emitted `const` is one statement carrying no de Bruijn slot, not a shape the theorem misses.
     const returned = admittedSourceCode(
       [
         ...union,
