@@ -317,7 +317,12 @@ private def unadmittedTypeReason? (name : Name) : Option String :=
     some "a Decidable value has no type image: it is erased, and the Bool it decides is read from decide at the use site"
   else none
 
-/-- The `ByteArray` operations the surface excludes, listed by their exact constants. -/
+/-- The `ByteArray` operations this exporter does not yet attach an opcode to, listed by their
+exact constants. The v6 registry carries `bytes.empty`, `bytes.size`, `bytes.isEmpty` and
+`bytes.append`, each with its own preservation theorem over the internal-slot table, but this walk
+has no clause that recognises their constants, so a program reaching one is refused here rather
+than exported with a guessed opcode. The element-touching operations are refused for a semantic
+reason instead, and stay refused however this table changes. -/
 private def byteArrayOperations : List Name :=
   [``ByteArray.size, ``ByteArray.isEmpty, ``ByteArray.push, ``ByteArray.append,
     ``ByteArray.toList, ``ByteArray.mk, ``ByteArray.data, ``ByteArray.empty]
@@ -357,7 +362,7 @@ private def unadmittedOperationReason? (name : Name) : Option String :=
   else if name == ``EmptyCollection.emptyCollection then
     some "an empty-collection literal is outside the surface at the map forms: the v6 registry carries no map.empty row, so an empty Std.HashMap or Std.TreeMap has no emitted form"
   else if byteArrayOperations.contains name then
-    some s!"{name} is outside the surface: the v6 runtime registry carries no bytes opcode, so a computation on a ByteArray has no emitted form to be proved against; a bytes value crosses the boundary unread"
+    some s!"{name} is outside the surface: this exporter attaches no opcode to it. ByteArray.get?, ByteArray.set, ByteArray.push and ByteArray.toList are refused for a semantic reason — each mentions a UInt8, which is not an admitted type form, so a row for one would have to invent a type image for a byte — while ByteArray.size, ByteArray.isEmpty, ByteArray.append and ByteArray.empty are proved rows of the v6 registry that this walk does not yet recognise"
   else if mapOperations.contains name then
     some s!"{name} is outside the surface: the v6 runtime registry carries no map opcode, so an operation on a Std.HashMap or a Std.TreeMap has no emitted form to be proved against; a map value crosses the boundary unread"
   else none
