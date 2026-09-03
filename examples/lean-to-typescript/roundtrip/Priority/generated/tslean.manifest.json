@@ -189,7 +189,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:emitter",
-        "sha256": "sha256:c9ab16648a41b609357fad9b4e21954e3cc9ceacd9a3a0f4682fe28e820f5eec"
+        "sha256": "sha256:6c8776b8a6219abbbc91c5164059c73e79287c3f31b0465e1c53fad0146af243"
       },
       {
         "kind": "compiler-source",
@@ -204,7 +204,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:ir",
-        "sha256": "sha256:c063a0860bd1df84a49628816665b99eca55da235c23c07c8d6ef4c9c0257a2c"
+        "sha256": "sha256:9a2c1d8d05fbb8b281a07b02c7389aeabc164cd2c59e08bf553080fa4931fb3c"
       },
       {
         "kind": "compiler-source",
@@ -239,12 +239,12 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Compile.lean",
-        "sha256": "sha256:fa13b4a6667cbffd405413e51189e9bb7d1275f2ed464fb920419149898cd0c0"
+        "sha256": "sha256:4627b2000fc0b83ec6a7e662de19f47b805212b2b360886cb7dc4d4d6c5d9338"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Effect.lean",
-        "sha256": "sha256:70c9fe41c10d078644e67ef7b89547c5c4b8fb8d296623a26ead568ba9c96614"
+        "sha256": "sha256:f942cb11ee207ba9d32ebc99ecdf6736ea9fc5bfda3f507327569a7c2204c9ee"
       },
       {
         "kind": "compiler-source",
@@ -264,12 +264,12 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Preservation.lean",
-        "sha256": "sha256:9eaf96c62491e0108eeac90a592e7b72c0dc3ee9e3973abd160d862ec71ab625"
+        "sha256": "sha256:eee64da01a7f71015975c3e8990cc79dd93c738d9f7ec49ed87ec16963c0f785"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Program.lean",
-        "sha256": "sha256:d07086d267827373e8310c291a59ca6730b0b8c7288e7a489cb7a01b3b94f25c"
+        "sha256": "sha256:a1098fc1a326336109e0326ecb646fa0e569850bdd7fd50bb59af8da4e1420df"
       },
       {
         "kind": "compiler-source",
@@ -289,12 +289,12 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Target.lean",
-        "sha256": "sha256:f93e09a34cb981a792c2eacc59abf484bff86006cecae01b42fefd00fdca8482"
+        "sha256": "sha256:e1d57d05c5ecdb590608bdab5541ee28ad2c32ad64475e6606c0e57d8555ba81"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Tests/Registry.lean",
-        "sha256": "sha256:7517979c25d3379f88d5c0dc6e8a9a9a5b65d82ce30b9f9dfd776cf06bb6649f"
+        "sha256": "sha256:f0a910deaa2584420faa7972227fcc499c9eb3be1fa63c1fdc634e7a363736e8"
       },
       {
         "kind": "compiler-source",
@@ -382,7 +382,7 @@
         "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       }
     ],
-    "inputClosureSha256": "sha256:9da83152541d10f1582eb4beb8928f1f21bfaccd153aa3619e448b9d5d17e545",
+    "inputClosureSha256": "sha256:15d7a7793a289812c548903e87684c8932efe2faa13d03abfe3a8a4bfd26c2b7",
     "semanticIrSha256": "sha256:8ae81a9d5363ae1295707b25fe32be0bdaa02541d1c3a1fca5b2304e2a0932fe",
     "certificates": [],
     "generatedBodySha256": "sha256:ed1bdbbaec425c346d050af6fafe236d208d289d166e37867c17f67a8a144d36",
