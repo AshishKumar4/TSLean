@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "file": "Suit.ts",
+  "sourceRoot": "",
+  "sources": [
+    "../../../../../../../../lean/TSLean/Examples/Roundtrip/Suit.lean"
+  ],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;AAUA;;;;;AARA;;;;;AAcA;;;;;;;;;;;;;;;;AAQA"
+}

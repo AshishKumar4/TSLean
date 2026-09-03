@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "file": "Traffic.ts",
+  "sourceRoot": "",
+  "sources": [
+    "../../../../../../../../lean/TSLean/Examples/Roundtrip/Traffic.lean"
+  ],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;AAEA;;;;;AAcA;;;;;;;;;;;;;AAPA"
+}

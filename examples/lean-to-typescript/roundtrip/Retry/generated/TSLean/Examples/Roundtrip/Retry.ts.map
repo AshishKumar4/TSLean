@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "file": "Retry.ts",
+  "sourceRoot": "",
+  "sources": [
+    "../../../../../../../../lean/TSLean/Examples/Roundtrip/Retry.lean"
+  ],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;AAEA;;;;;AAOA;;;;;;;;;AAOA"
+}

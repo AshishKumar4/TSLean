@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "file": "Flags.ts",
+  "sourceRoot": "",
+  "sources": [
+    "../../../../../../../../lean/TSLean/Examples/Roundtrip/Flags.lean"
+  ],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;AAEA"
+}

@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "file": "Severity.ts",
+  "sourceRoot": "",
+  "sources": [
+    "../../../../../../../../lean/TSLean/Examples/Roundtrip/Severity.lean"
+  ],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;AAEA;;;;;AAOA;;;;;;;;;;;;;;;;;;;;;;;;;AAeA"
+}

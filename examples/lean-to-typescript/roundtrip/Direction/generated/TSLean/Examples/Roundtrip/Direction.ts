@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Direction
  * Generated module: TSLean/Examples/Roundtrip/Direction.ts
  * Package entry module: TSLean.Examples.Roundtrip.Direction
- * Semantic identity: sha256:3794feb8b2207b366c9557da58f1db9adab337efb8b4a8a9d309cfa8cc495fb9
- * Input closure: sha256:6eeb1ae86291e9de9347621a6ab0e1032f416db4c4c0fc28f14fb3f1fd9df8df
+ * Semantic identity: sha256:39cc75f9e8a1470da92a84d860bb7aeb96b692e06950091efa1a8ada2a4c40fd
+ * Input closure: sha256:fdcfa74a18dc2c9ba80c127ed2a704e55880c70a0369e0d7665c09d60aad536a
  * Semantic IR: sha256:5c3a6468f91d674b444c50f391bb0a8c8765a82b0ccc27298ff031b23f254e4a
  * Generated module body: sha256:0bdcdea9694b0d07472019511b89740c7fc6153327ddcd5212b53b664099e303
  * Generated package body: sha256:fc612d11b27a8258af878d1eef6798b92d63fa0149739dcee6a243ae2dc3f178

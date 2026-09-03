@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "file": "Parity.ts",
+  "sourceRoot": "",
+  "sources": [
+    "../../../../../../../../lean/TSLean/Examples/Roundtrip/Parity.lean"
+  ],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;AAEA;;;;;AAMA"
+}
