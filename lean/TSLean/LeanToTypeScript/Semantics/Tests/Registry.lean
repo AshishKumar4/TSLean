@@ -103,8 +103,8 @@ open Ir Assumption
 
 /-! ## The runtime opcode registry -/
 
--- Fifty-four runtime opcodes, and every one of them enumerated.
-#guard Opcode.all.length = 54
+-- Fifty-eight runtime opcodes, and every one of them enumerated.
+#guard Opcode.all.length = 58
 
 -- The enumeration has no repeats.
 #guard Opcode.all.Nodup
@@ -122,7 +122,8 @@ open Ir Assumption
     "int.less", "int.lessOrEqual", "int.equals", "int.ofNat", "int.toNat", "char.toNat",
     "char.ofNat", "char.equals", "char.less", "string.length", "string.isEmpty", "string.push",
     "string.singleton", "string.toList", "string.ofList", "array.size", "array.isEmpty",
-    "array.push", "array.append", "array.reverse", "array.toList", "array.ofList"]
+    "array.push", "array.append", "array.reverse", "array.toList", "array.ofList",
+    "bytes.empty", "bytes.size", "bytes.isEmpty", "bytes.append"]
 
 -- Every opcode records the TypeScript it lowers to.
 #guard Opcode.all.all fun code => code.emittedForm ≠ ""
@@ -139,17 +140,18 @@ open Ir Assumption
 -- primitive engine field composes nothing, so it records nothing.
 #guard Opcode.all.all fun code => (code.components ≠ []) == code.derived
 
--- Seven opcodes are generated helpers, and they are exactly the rows whose emitted form is a
--- guarded composition rather than one operator or one method.
+-- Eight opcodes are generated helpers, and they are exactly the rows whose emitted form is a
+-- guarded or sequenced composition rather than one operator or one method.
 #guard (Opcode.all.filter fun code => code.runtimeSymbolTag == "helper:").map Opcode.kind =
-  ["nat.subtract", "list.head", "int.tdiv", "int.tmod", "int.toNat", "char.ofNat", "char.less"]
+  ["nat.subtract", "list.head", "int.tdiv", "int.tmod", "int.toNat", "char.ofNat", "char.less",
+    "bytes.append"]
 
--- Every generated helper is derived, and four more rows are derived without needing a helper: their
+-- Every generated helper is derived, and five more rows are derived without needing a helper: their
 -- composition is still one expression at the use site.
 #guard (Opcode.all.filter fun code => code.derived).map Opcode.kind =
   ["nat.subtract", "list.head", "int.tdiv", "int.tmod", "int.ofNat", "int.toNat", "char.ofNat",
     "char.less", "string.length", "string.push", "string.singleton", "array.toList",
-    "array.ofList"]
+    "array.ofList", "bytes.append"]
 
 -- An inline symbol names the opcode it is the emitted form of, which is what makes the join against
 -- `LEAN_RUNTIME_OPCODES` in `src/lean-to-typescript/ir.ts` a bijection rather than a lookup.
@@ -237,8 +239,8 @@ open Ir Assumption
 
 /-! ## The assumption plane -/
 
--- Sixteen assumptions, and every one of them enumerated.
-#guard Id.all.length = 16
+-- Seventeen assumptions, and every one of them enumerated.
+#guard Id.all.length = 17
 
 -- The enumeration has no repeats.
 #guard Id.all.Nodup
@@ -253,7 +255,7 @@ open Ir Assumption
     "array.dense-element-sequence", "bigint.from-length", "bigint.negation",
     "bigint.truncated-division", "string.code-point-at", "string.from-code-point",
     "string.code-point-iteration", "string.empty-code-unit-length", "option.tagged-object",
-    "array.join-empty-separator"]
+    "array.join-empty-separator", "typed-array.byte-sequence"]
 
 -- Every assumption records all four provenance fields.
 #guard Id.all.all fun id =>

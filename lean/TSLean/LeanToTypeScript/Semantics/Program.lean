@@ -126,6 +126,7 @@ theorem sourcePure_of_readable {program : Ir.Program} {fuel : Nat} :
         | string _ => exact Or.inr ⟨_, rfl⟩
         | char _ => exact Or.inr ⟨_, rfl⟩
         | array _ _ => exact Or.inr ⟨_, rfl⟩
+        | bytes _ => exact Or.inr ⟨_, rfl⟩
         | variant _ _ _ => exact Or.inr ⟨_, rfl⟩
         | closure _ _ _ => exact Or.inr ⟨_, rfl⟩
       · rw [run]

@@ -44,6 +44,10 @@ inductive Value where
   constructors so a match can take one apart, but that is how it is *decided*, not how it is
   *held*: the target holds a dense array, and so does this. -/
   | array (element : Ir.Ty) (elements : List Value)
+  /-- A `ByteArray`, holding its bytes directly. Its target image is a `Uint8Array`, whose bytes
+  live in internal slots rather than in an ordinary property store, so this holds the byte sequence
+  that `Target.Slots.bytes` carries. -/
+  | bytes (elements : List UInt8)
   | variant (type : Ir.Ty) (name : String) (arguments : List Value)
   /-- An inline arrow's captured scope, exact parameter list and exact body. The captured scope is
   innermost-first, as every de Bruijn scope is. -/
@@ -140,7 +144,8 @@ theorem charList?_eq_some : ∀ {values : List Value} {characters : List Char},
       rw [← characterEq, List.map_cons, charList?_eq_some tailRead]
   | .boolean _ :: _, _, read | .nat _ :: _, _, read | .int _ :: _, _, read
   | .string _ :: _, _, read | .record _ _ :: _, _, read | .array _ _ :: _, _, read
-  | .variant _ _ _ :: _, _, read | .closure _ _ _ :: _, _, read => by simp [charList?] at read
+  | .variant _ _ _ :: _, _, read | .closure _ _ _ :: _, _, read
+  | .bytes _ :: _, _, read => by simp [charList?] at read
 
 /-- A character list is read back exactly. -/
 theorem charList?_map : ∀ characters : List Char,
@@ -210,6 +215,10 @@ def applyStrict (opcode : Ir.Opcode) (values : List Value) : Except Fault Value 
       .ok (.array element (first ++ second))
   | .arrayToList, [.array element elements] | .arrayOfList, [.array element elements] =>
       .ok (.array element elements)
+  | .bytesEmpty, [] => .ok (.bytes [])
+  | .bytesSize, [.bytes elements] => .ok (.nat elements.length)
+  | .bytesIsEmpty, [.bytes elements] => .ok (.boolean elements.isEmpty)
+  | .bytesAppend, [.bytes left, .bytes right] => .ok (.bytes (left ++ right))
   | .stringOfList, [.array _ elements] =>
       match charList? elements with
       | some characters => .ok (.string (String.ofList characters))

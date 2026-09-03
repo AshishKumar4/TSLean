@@ -285,6 +285,62 @@ theorem allocateArray_shape (state : Target.State) (elements : List Value)
     simp only [Relation.HasDenseElements, Target.readArray, length]
     exact readIndices_dense 0 elements reads
 
+/-! ## The emitted typed array
+
+A `Uint8Array` is an integer-indexed exotic object: its bytes are not own properties, they are the
+contents of a `[[ViewedArrayBuffer]]` read through `[[ArrayLength]]`. So the third construction
+lemma allocates an ordinary object with no own properties and installs the byte sequence in the
+object's internal slots, exactly as `Closure.allocate_shape` installs a callable payload. The bytes
+are not JavaScript values, so no length bound and no element-liveness premise arises: a typed array
+retains nothing the heap has to keep alive.
+-/
+
+/-- The emitted typed array allocates a fresh object whose internal slots carry exactly these
+bytes, and touches nothing that already existed. -/
+theorem allocateBytes_shape (state : Target.State) (elements : List UInt8)
+    (valid : state.heap.WellFormed) (payloadsValid : state.PayloadsWellFormed) :
+    ∃ ref final, Target.allocateBytes state elements = .ok (.object ref) final ∧
+      final.trace = state.trace ∧
+        Target.State.Extension state final ∧ final.PayloadsWellFormed ∧
+          Relation.HasByteElements final ref elements := by
+  obtain ⟨ref, allocated, allocatedRun, traceEq, closuresEq, slotsEq, allocationExtension,
+    allocatedValid, fresh, shape⟩ :=
+    allocateLiteral_shape state [] valid payloadsValid (by simp) (by simp) (by simp)
+  have missingStart : state.lookupSlots ref = none :=
+    Target.State.lookupSlots_none_of_fresh state payloadsValid.2 ref fresh
+  have missingAllocated : allocated.lookupSlots ref = none := by
+    simpa [Target.State.lookupSlots, slotsEq] using missingStart
+  have self : (allocated.registerSlots ref (.bytes elements)).lookupSlots ref
+      = some (.bytes elements) :=
+    Target.State.lookupSlots_register_self allocated ref (.bytes elements) missingAllocated
+  have refValid : allocated.heap.valueValid (.object ref) = true :=
+    Relation.valueValid_of_hasOwnFields shape
+  have registeredExtension :
+      Target.State.Extension allocated (allocated.registerSlots ref (.bytes elements)) :=
+    Target.State.registerSlots_extension allocated ref (.bytes elements)
+      allocationExtension.nextWellFormed
+  refine ⟨ref, allocated.registerSlots ref (.bytes elements), ?_, ?_,
+    allocationExtension.trans registeredExtension, ?_, ?_⟩
+  · unfold Target.allocateBytes
+    rw [allocatedRun]
+  · simpa [Target.State.registerSlots] using traceEq
+  · refine ⟨?_, ?_⟩
+    · intro observedRef closure found
+      exact allocatedValid.1 observedRef closure found
+    · intro observedRef slots found
+      by_cases same : observedRef = ref
+      · subst same
+        rw [self] at found
+        injection found with slotsEq'
+        subst slotsEq'
+        exact ⟨refValid, by intro value member; simp [Target.Slots.storedValues] at member⟩
+      · rw [Target.State.lookupSlots_register_ne allocated ref (.bytes elements) same] at found
+        exact allocatedValid.2 observedRef slots found
+  · obtain ⟨object, found⟩ := Relation.exists_object_of_keys shape.keys
+    have carried : (allocated.registerSlots ref (.bytes elements)).heap.get? ref = .ok object := by
+      simpa [Target.State.registerSlots] using found
+    simp only [Relation.HasByteElements, Target.readBytes, carried, self]
+
 end Allocation
 
 end TSLean.LeanToTypeScript.Semantics

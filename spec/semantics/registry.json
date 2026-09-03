@@ -300,6 +300,32 @@
       "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
       "sourceUrl": "https://tc39.es/ecma262/2025/",
       "statement": "The join method with the empty separator concatenates the elements of an array of strings in index order and inserts nothing between them."
+    },
+    {
+      "canonicalWording": "22:sec-typedarray-objects:14:sec-typedarray:37:sec-get-%typedarray%.prototype.length:30:sec-%typedarray%.prototype.set:18:sec-comma-operator:35:sec-bigint-constructor-number-value:616:A Uint8Array constructed with no argument has array length zero. The length property of a typed array is its array length, and the BigInt constructor applied to it is that count as an exact integer, so length === 0 holds exactly for the empty typed array. Constructing a Uint8Array from a length produces that many zero bytes, and the set method copies a source typed array's bytes into the target at a byte offset; the comma operator evaluates its operands left to right and yields the right one, so the concatenation helper returns the target after both copies and presents exactly the two byte sequences in order.:42:semantics-probes/typed-array.byte-sequence:24:typed-array-empty-length:18:typed-array-length:23:typed-array-length-zero:23:typed-array-from-length:22:typed-array-set-offset:25:typed-array-concatenation:20:comma-operator-order",
+      "clauses": [
+        "sec-typedarray-objects",
+        "sec-typedarray",
+        "sec-get-%typedarray%.prototype.length",
+        "sec-%typedarray%.prototype.set",
+        "sec-comma-operator",
+        "sec-bigint-constructor-number-value"
+      ],
+      "coverage": [
+        "typed-array-empty-length",
+        "typed-array-length",
+        "typed-array-length-zero",
+        "typed-array-from-length",
+        "typed-array-set-offset",
+        "typed-array-concatenation",
+        "comma-operator-order"
+      ],
+      "id": "typed-array.byte-sequence",
+      "oracle": "semantics-probes/typed-array.byte-sequence",
+      "sourceArtifact": "spec/semantics/ecma262-2025.html",
+      "sourceDigest": "sha256:c1f9a15946c7dd94b13f56564fa6549cc6f212fd35101f8f5e38a32a0efbefe1",
+      "sourceUrl": "https://tc39.es/ecma262/2025/",
+      "statement": "A Uint8Array constructed with no argument has array length zero. The length property of a typed array is its array length, and the BigInt constructor applied to it is that count as an exact integer, so length === 0 holds exactly for the empty typed array. Constructing a Uint8Array from a length produces that many zero bytes, and the set method copies a source typed array's bytes into the target at a byte offset; the comma operator evaluates its operands left to right and yields the right one, so the concatenation helper returns the target after both copies and presents exactly the two byte sequences in order."
     }
   ],
   "declarationFamilies": [
@@ -1154,6 +1180,59 @@
       "requires": [],
       "runtimeSymbol": "inline:array.ofList",
       "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.arrayOfListModelsOfList"
+    },
+    {
+      "components": [],
+      "emittedForm": "new Uint8Array()",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.bytesEmpty",
+      "opcode": "bytes.empty",
+      "relation": "source = model",
+      "requires": [
+        "typed-array.byte-sequence"
+      ],
+      "runtimeSymbol": "inline:bytes.empty",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.bytesEmptyModelsEmpty"
+    },
+    {
+      "components": [],
+      "emittedForm": "BigInt(value.length)",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.bytesSize",
+      "opcode": "bytes.size",
+      "relation": "source = model",
+      "requires": [
+        "typed-array.byte-sequence"
+      ],
+      "runtimeSymbol": "inline:bytes.size",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.bytesSizeModelsSize"
+    },
+    {
+      "components": [],
+      "emittedForm": "value.length === 0",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.bytesIsEmpty",
+      "opcode": "bytes.isEmpty",
+      "relation": "source = model",
+      "requires": [
+        "typed-array.byte-sequence"
+      ],
+      "runtimeSymbol": "inline:bytes.isEmpty",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.bytesIsEmptyModelsIsEmpty"
+    },
+    {
+      "components": [
+        "primitive:typed-array.from-length",
+        "primitive:typed-array.set",
+        "inline:bytes.size",
+        "sequence:comma-operator"
+      ],
+      "emittedForm": "(target => (target.set(left, 0), target.set(right, left.length), target))(new Uint8Array(left.length + right.length))",
+      "model": "TSLean.LeanToTypeScript.Semantics.Runtime.bytesAppend",
+      "opcode": "bytes.append",
+      "relation": "source = model",
+      "requires": [
+        "typed-array.byte-sequence"
+      ],
+      "runtimeSymbol": "helper:bytes-concatenation",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.Opcode.bytesAppendModelsAppend"
     }
   ],
   "schemaVersion": 1,

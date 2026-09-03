@@ -452,22 +452,30 @@ def allocateClosure (state : State) (code : Ir.LambdaCode) (body : Body)
   | .fault fault next => .fault fault next
   | .exhausted next => .exhausted next
 
-/-- Reads the byte sequence out of a typed array's internal slots. A value that carries no byte
-slots is refused rather than read through its ordinary property store: an integer-indexed exotic
-object answers a canonical numeric index from its buffer, not from that store. -/
+/-- Reads the byte sequence out of a typed array's internal slots. The heap read comes first
+because a typed array is a live object with slots and not a slot record on its own; a value that
+carries no byte slots is then refused rather than read through its ordinary property store, since an
+integer-indexed exotic object answers a canonical numeric index from its buffer and not from that
+store. -/
 def readBytes (state : State) : Value → Except Fault (List UInt8)
   | .object ref =>
-      match state.lookupSlots ref with
-      | some (.bytes elements) => .ok elements
-      | some (.map _) | none => .error .notBytes
+      match state.heap.get? ref with
+      | .error fault => .error (.heap fault)
+      | .ok _ =>
+          match state.lookupSlots ref with
+          | some (.bytes elements) => .ok elements
+          | some (.map _) | none => .error .notBytes
   | .primitive _ => .error .notBytes
 
-/-- Reads `[[MapData]]` out of a `Map`'s internal slots. -/
+/-- Reads `[[MapData]]` out of a live `Map`'s internal slots. -/
 def readMap (state : State) : Value → Except Fault (List (Value × Value))
   | .object ref =>
-      match state.lookupSlots ref with
-      | some (.map entries) => .ok entries
-      | some (.bytes _) | none => .error .notAMap
+      match state.heap.get? ref with
+      | .error fault => .error (.heap fault)
+      | .ok _ =>
+          match state.lookupSlots ref with
+          | some (.map entries) => .ok entries
+          | some (.bytes _) | none => .error .notAMap
   | .primitive _ => .error .notAMap
 
 /-- Allocates a real typed array: a fresh object with no own properties, whose internal slots carry
@@ -858,6 +866,20 @@ def runOperation (program : Program) (runtime : Runtime) (fuel : Nat) (state : S
       | _, .error fault => .fault fault state
   | .arrayToList, [subject] => .ok (runtime.arrayToList subject) state
   | .arrayOfList, [subject] => .ok (runtime.arrayOfList subject) state
+  | .bytesEmpty, [] => allocateBytes state runtime.bytesEmpty
+  | .bytesSize, [subject] =>
+      match readBytes state subject with
+      | .error fault => .fault fault state
+      | .ok elements => .ok (runtime.bytesSize elements) state
+  | .bytesIsEmpty, [subject] =>
+      match readBytes state subject with
+      | .error fault => .fault fault state
+      | .ok elements => .ok (runtime.bytesIsEmpty elements) state
+  | .bytesAppend, [left, right] =>
+      match readBytes state left, readBytes state right with
+      | .ok first, .ok second => allocateBytes state (runtime.bytesAppend first second)
+      | .error fault, _ => .fault fault state
+      | _, .error fault => .fault fault state
   | .boolAnd, _ | .boolOr, _ | .boolNot, _ | .boolEquals, _ =>
       .fault (.structuralOpcode opcode) state
   | opcode, operands => .fault (.operandCount opcode operands.length) state

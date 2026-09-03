@@ -2617,6 +2617,7 @@ const HELPER_DECLARATION_HINTS: Readonly<Record<LeanRuntimeHelperRole, string>> 
   'int-to-nat-clamp': 'intToNat',
   'char-of-nat': 'charOfNat',
   'char-less-code-point': 'charLess',
+  'bytes-concatenation': 'bytesAppend',
 };
 
 /**
@@ -2718,6 +2719,50 @@ function helperBodyForm(role: LeanRuntimeHelperRole, operands: readonly ts.Expre
     // two disagree above the BMP, so the comparison reads the code points.
     case 'char-less-code-point':
       return compare(firstCodePoint(operand(0)), ts.SyntaxKind.LessThanToken, firstCodePoint(operand(1)));
+    // A typed array has no concatenating method: the helper sizes one target from both operands and
+    // copies each in at its offset. The comma operator sequences the two copies and yields the
+    // target, so the whole body stays one expression.
+    case 'bytes-concatenation': {
+      const target = ts.factory.createIdentifier('target');
+      const leftLength = ts.factory.createPropertyAccessExpression(operand(0), 'length');
+      const copy = (source: ts.Expression, offset: ts.Expression): ts.Expression =>
+        ts.factory.createCallExpression(ts.factory.createPropertyAccessExpression(target, 'set'), undefined, [
+          source,
+          offset,
+        ]);
+      return ts.factory.createCallExpression(
+        ts.factory.createParenthesizedExpression(
+          ts.factory.createArrowFunction(
+            undefined,
+            undefined,
+            [ts.factory.createParameterDeclaration(undefined, undefined, 'target')],
+            undefined,
+            undefined,
+            ts.factory.createParenthesizedExpression(
+              ts.factory.createBinaryExpression(
+                ts.factory.createBinaryExpression(
+                  copy(operand(0), ts.factory.createNumericLiteral(0)),
+                  ts.SyntaxKind.CommaToken,
+                  copy(operand(1), leftLength),
+                ),
+                ts.SyntaxKind.CommaToken,
+                target,
+              ),
+            ),
+          ),
+        ),
+        undefined,
+        [
+          ts.factory.createNewExpression(ts.factory.createIdentifier('Uint8Array'), undefined, [
+            ts.factory.createBinaryExpression(
+              leftLength,
+              ts.SyntaxKind.PlusToken,
+              ts.factory.createPropertyAccessExpression(operand(1), 'length'),
+            ),
+          ]),
+        ],
+      );
+    }
   }
 }
 
@@ -2765,6 +2810,12 @@ function helperSignature(role: LeanRuntimeHelperRole, context: EmitContext): Hel
         typeParameters: undefined,
         parameters: pair(stringType),
         result: ts.factory.createKeywordTypeNode(ts.SyntaxKind.BooleanKeyword),
+      };
+    case 'bytes-concatenation':
+      return {
+        typeParameters: undefined,
+        parameters: pair(ts.factory.createTypeReferenceNode('Uint8Array')),
+        result: ts.factory.createTypeReferenceNode('Uint8Array'),
       };
   }
 }
@@ -4238,6 +4289,19 @@ function operationForm(
       return ts.factory.createElementAccessExpression(unary(), ts.factory.createNumericLiteral(0));
     case 'list.rest':
       return method(0, 'slice', [ts.factory.createNumericLiteral(1)]);
+    // A ByteArray is a Uint8Array: its bytes are the contents of a [[ViewedArrayBuffer]] read
+    // through [[ArrayLength]], so the length read and the emptiness test are the typed array's own
+    // and never a dense-array observation.
+    case 'bytes.empty':
+      return ts.factory.createNewExpression(ts.factory.createIdentifier('Uint8Array'), undefined, []);
+    case 'bytes.size':
+      return ts.factory.createCallExpression(ts.factory.createIdentifier('BigInt'), undefined, [
+        ts.factory.createPropertyAccessExpression(unary(), 'length'),
+      ]);
+    case 'bytes.isEmpty':
+      return isEmptyList(unary());
+    case 'bytes.append':
+      return environment.helper(opcode, binary(1));
   }
 }
 

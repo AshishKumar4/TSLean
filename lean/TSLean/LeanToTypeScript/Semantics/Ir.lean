@@ -365,6 +365,14 @@ inductive Opcode where
   | arrayReverse
   | arrayToList
   | arrayOfList
+  /-- `ByteArray.empty`, the zero-length typed array. -/
+  | bytesEmpty
+  /-- `ByteArray.size`, the typed array's `[[ArrayLength]]`. -/
+  | bytesSize
+  /-- `ByteArray.isEmpty`. -/
+  | bytesIsEmpty
+  /-- `ByteArray.append`, which copies both byte sequences into one fresh typed array. -/
+  | bytesAppend
   deriving DecidableEq, Repr
 
 /-- The wire spelling the IR carries. -/
@@ -423,6 +431,10 @@ def Opcode.kind : Opcode → String
   | .arrayReverse => "array.reverse"
   | .arrayToList => "array.toList"
   | .arrayOfList => "array.ofList"
+  | .bytesEmpty => "bytes.empty"
+  | .bytesSize => "bytes.size"
+  | .bytesIsEmpty => "bytes.isEmpty"
+  | .bytesAppend => "bytes.append"
 
 
 /-- Every admitted opcode. -/
@@ -434,7 +446,8 @@ def Opcode.all : List Opcode :=
     .intNegate, .intTruncatedDivide, .intTruncatedModulo, .intLess, .intLessOrEqual, .intEquals,
     .intOfNat, .intToNat, .charToNat, .charOfNat, .charEquals, .charLess, .stringLength,
     .stringIsEmpty, .stringPush, .stringSingleton, .stringToList, .stringOfList, .arraySize,
-    .arrayIsEmpty, .arrayPush, .arrayAppend, .arrayReverse, .arrayToList, .arrayOfList]
+    .arrayIsEmpty, .arrayPush, .arrayAppend, .arrayReverse, .arrayToList, .arrayOfList,
+    .bytesEmpty, .bytesSize, .bytesIsEmpty, .bytesAppend]
 
 theorem Opcode.mem_all (code : Opcode) : code ∈ Opcode.all := by
   cases code <;> simp [Opcode.all]
@@ -488,7 +501,8 @@ def Opcode.operator? : Opcode → Option OperatorForm
   | .intOfNat | .intToNat | .charToNat | .charOfNat | .charEquals | .charLess | .stringLength
   | .stringIsEmpty | .stringPush | .stringSingleton | .stringToList | .stringOfList
   | .arraySize | .arrayIsEmpty | .arrayPush | .arrayAppend | .arrayReverse
-  | .arrayToList | .arrayOfList => none
+  | .arrayToList | .arrayOfList
+  | .bytesEmpty | .bytesSize | .bytesIsEmpty | .bytesAppend => none
 
 /-- Exactly `bool.and` is spelled `&&`. -/
 theorem Opcode.eq_boolAnd_of_operator? {code : Opcode}
@@ -527,7 +541,8 @@ def Opcode.callback : Opcode → Bool
   | .intLess | .intLessOrEqual | .intEquals | .intOfNat | .intToNat | .charToNat | .charOfNat
   | .charEquals | .charLess | .stringLength | .stringIsEmpty | .stringPush | .stringSingleton
   | .stringToList | .stringOfList | .arraySize | .arrayIsEmpty | .arrayPush
-  | .arrayAppend | .arrayReverse | .arrayToList | .arrayOfList => false
+  | .arrayAppend | .arrayReverse | .arrayToList | .arrayOfList
+  | .bytesEmpty | .bytesSize | .bytesIsEmpty | .bytesAppend => false
 
 
 /-! ## The host-effect registry

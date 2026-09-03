@@ -64,6 +64,11 @@ def option : Option Value → OptionImage
   | none => .absent
   | some value => .present value
 
+/-- A Lean `ByteArray` reaches the target as a `Uint8Array`, whose bytes are the internal-slot
+sequence `Target.Slots.bytes` carries rather than a JavaScript value. The image is therefore the
+byte sequence itself, exactly as an array form's image is the dense element sequence. -/
+def bytes (value : ByteArray) : List UInt8 := value.data.toList
+
 end Encode
 
 namespace Model
@@ -169,6 +174,15 @@ structure Runtime where
   stringToList : Value → List Value
   /-- `value.join("")` over an array of strings -/
   stringOfList : List Value → Value
+  /-- `new Uint8Array()`: a typed array whose `[[ArrayLength]]` is zero. -/
+  bytesEmpty : List UInt8
+  /-- `BigInt(value.length)` on a typed array, whose `length` is its `[[ArrayLength]]` -/
+  bytesSize : List UInt8 → Value
+  /-- `value.length === 0` on a typed array -/
+  bytesIsEmpty : List UInt8 → Value
+  /-- The generated concatenation helper: a fresh typed array of the summed length, into which both
+  operands are copied by `%TypedArray%.prototype.set`. -/
+  bytesAppend : List UInt8 → List UInt8 → List UInt8
 
 namespace Runtime
 
@@ -332,6 +346,9 @@ inductive Id where
   | stringEmptyCodeUnitLength
   /-- `value.join(\"\")` concatenates an array of strings in order. -/
   | arrayJoinEmptySeparator
+  /-- A `Uint8Array` presents, and its generated concatenation helper produces, exactly the byte
+  sequence its internal slots carry. -/
+  | typedArrayByteSequence
   deriving DecidableEq, Repr
 
 /-- The stable string identity, which catalog rows key on. -/
@@ -352,6 +369,7 @@ def Id.name : Id → String
   | .stringCodePointIteration => "string.code-point-iteration"
   | .stringEmptyCodeUnitLength => "string.empty-code-unit-length"
   | .arrayJoinEmptySeparator => "array.join-empty-separator"
+  | .typedArrayByteSequence => "typed-array.byte-sequence"
 
 /-- Every assumption this compiler makes. -/
 def Id.all : List Id :=
@@ -359,7 +377,7 @@ def Id.all : List Id :=
     .conditionalTruthySelection, .stringUtf16Concatenation, .arrayDenseElementSequence,
     .bigintFromLength, .bigintNegation, .bigintTruncatedDivision, .stringCodePointAt,
     .stringFromCodePoint, .stringCodePointIteration, .stringEmptyCodeUnitLength,
-    .optionTaggedObject, .arrayJoinEmptySeparator]
+    .optionTaggedObject, .arrayJoinEmptySeparator, .typedArrayByteSequence]
 
 theorem Id.mem_all (id : Id) : id ∈ Id.all := by
   cases id <;> simp [Id.all]
@@ -462,6 +480,15 @@ def Id.provenance : Id → Provenance
         statement := "The join method with the empty separator concatenates the elements of an array of strings in index order and inserts nothing between them."
         oracle := "semantics-probes/array.join-empty-separator"
         coverage := ["array-join-empty-separator", "array-join-single", "array-join-empty-array"] }
+  | .typedArrayByteSequence =>
+      { clauses := ["sec-typedarray-objects", "sec-typedarray",
+          "sec-get-%typedarray%.prototype.length", "sec-%typedarray%.prototype.set",
+          "sec-comma-operator", "sec-bigint-constructor-number-value"]
+        statement := "A Uint8Array constructed with no argument has array length zero. The length property of a typed array is its array length, and the BigInt constructor applied to it is that count as an exact integer, so length === 0 holds exactly for the empty typed array. Constructing a Uint8Array from a length produces that many zero bytes, and the set method copies a source typed array's bytes into the target at a byte offset; the comma operator evaluates its operands left to right and yields the right one, so the concatenation helper returns the target after both copies and presents exactly the two byte sequences in order."
+        oracle := "semantics-probes/typed-array.byte-sequence"
+        coverage := ["typed-array-empty-length", "typed-array-length", "typed-array-length-zero",
+            "typed-array-from-length", "typed-array-set-offset", "typed-array-concatenation",
+            "comma-operator-order"] }
 
 /-- The recorded digest for one assumption. -/
 def Id.canonicalWording (id : Id) : String := id.provenance.canonicalWording
@@ -551,6 +578,11 @@ def Id.statement (runtime : Runtime) : Id → Prop
   | .arrayJoinEmptySeparator => ∀ characters : List Char,
       runtime.stringOfList (characters.map Encode.char)
         = Encode.string (String.ofList characters)
+  | .typedArrayByteSequence =>
+      runtime.bytesEmpty = [] ∧
+      (∀ elements : List UInt8, runtime.bytesSize elements = Encode.nat elements.length) ∧
+      (∀ elements : List UInt8, runtime.bytesIsEmpty elements = Encode.bool elements.isEmpty) ∧
+      (∀ left right : List UInt8, runtime.bytesAppend left right = left ++ right)
 
 /-- An ordered assumption closure. The order is the order the emitted form depends on them. -/
 def Holds (runtime : Runtime) : List Id → Prop

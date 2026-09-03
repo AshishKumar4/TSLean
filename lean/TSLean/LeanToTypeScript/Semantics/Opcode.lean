@@ -86,6 +86,11 @@ def emittedForm : Opcode → String
   | .arrayReverse => "[...value].reverse()"
   | .arrayToList => "value"
   | .arrayOfList => "value"
+  | .bytesEmpty => "new Uint8Array()"
+  | .bytesSize => "BigInt(value.length)"
+  | .bytesIsEmpty => "value.length === 0"
+  | .bytesAppend =>
+      "(target => (target.set(left, 0), target.set(right, left.length), target))(new Uint8Array(left.length + right.length))"
 
 /-- The theorem that discharges the opcode, by name inside this namespace. `registry` pairs each
 opcode with that theorem, so a name recorded here and a clause naming a different theorem is a
@@ -145,6 +150,10 @@ def theoremName : Opcode → String
   | .arrayReverse => "arrayReverseModelsReverse"
   | .arrayToList => "arrayToListModelsToList"
   | .arrayOfList => "arrayOfListModelsOfList"
+  | .bytesEmpty => "bytesEmptyModelsEmpty"
+  | .bytesSize => "bytesSizeModelsSize"
+  | .bytesIsEmpty => "bytesIsEmptyModelsIsEmpty"
+  | .bytesAppend => "bytesAppendModelsAppend"
 
 /-- The fully named model constant the opcode's theorem constrains. Most are primitive Runtime
 fields; generated helpers such as natSubtract and listHead are derived Runtime definitions. -/
@@ -203,6 +212,10 @@ def modelField : Opcode → String
   | .arrayReverse => "listReverse"
   | .arrayToList => "arrayToList"
   | .arrayOfList => "arrayOfList"
+  | .bytesEmpty => "bytesEmpty"
+  | .bytesSize => "bytesSize"
+  | .bytesIsEmpty => "bytesIsEmpty"
+  | .bytesAppend => "bytesAppend"
 
 /--
 The emitted role the opcode's form is built from, tagged by how it reaches the target.
@@ -225,6 +238,7 @@ def runtimeSymbol : Opcode → String
   | .intToNat => "helper:int-to-nat-clamp"
   | .charOfNat => "helper:char-of-nat"
   | .charLess => "helper:char-less-code-point"
+  | .bytesAppend => "helper:bytes-concatenation"
   | code => "inline:" ++ code.kind
 
 /-- The tag every runtime symbol carries: `inline:` for a form written at the use site, `helper:`
@@ -252,6 +266,8 @@ def components : Opcode → List String
   | .stringPush => ["inline:string.append", "representation:char.one-code-point-string"]
   | .stringSingleton => ["representation:char.one-code-point-string"]
   | .arrayToList | .arrayOfList => ["representation:array.shared-dense-image"]
+  | .bytesAppend => ["primitive:typed-array.from-length", "primitive:typed-array.set",
+      "inline:bytes.size", "sequence:comma-operator"]
   | _ => []
 
 /--
@@ -266,14 +282,15 @@ reaches it as a declared helper.
 def derived : Opcode → Bool
   | .natSubtract | .listHead | .intTruncatedDivide | .intTruncatedModulo | .intToNat | .intOfNat
   | .charOfNat | .charLess | .stringLength | .stringPush | .stringSingleton
-  | .arrayToList | .arrayOfList => true
+  | .arrayToList | .arrayOfList | .bytesAppend => true
   | .boolAnd | .boolOr | .boolNot | .boolEquals | .natAdd | .natMultiply | .natLess
   | .natLessOrEqual | .natEquals | .natSuccessor | .stringAppend | .stringEquals | .listLength
   | .listIsEmpty | .listAppend | .listReverse | .listMap | .listFilter | .listFoldLeft
   | .listFoldRight | .listAny | .listAll | .listFirst | .listRest | .intAdd | .intSubtract
   | .intMultiply | .intNegate | .intLess | .intLessOrEqual | .intEquals | .charToNat | .charEquals
   | .stringIsEmpty | .stringToList | .stringOfList | .arraySize | .arrayIsEmpty
-  | .arrayPush | .arrayAppend | .arrayReverse => false
+  | .arrayPush | .arrayAppend | .arrayReverse
+  | .bytesEmpty | .bytesSize | .bytesIsEmpty => false
 
 /-- Exactly the opcodes whose model constant is derived record the semantic components it composes;
 a primitive field has none, because there is nothing to certify. -/
@@ -334,6 +351,7 @@ def requires : Opcode → List Assumption.Id
   | .arraySize => [.bigintFromLength]
   | .arrayIsEmpty | .arrayPush | .arrayAppend | .arrayReverse => [.arrayDenseElementSequence]
   | .arrayToList | .arrayOfList => []
+  | .bytesEmpty | .bytesSize | .bytesIsEmpty | .bytesAppend => [.typedArrayByteSequence]
 
 /--
 What the opcode's theorem states. The left side is the source operation, encoded; the right side is
@@ -480,6 +498,14 @@ def Preserves (runtime : Runtime) : Opcode → Prop
       values.reverse.map encode = runtime.listReverse (values.map encode)
   | .arrayToList => ∀ image : Value, image = runtime.arrayToList image
   | .arrayOfList => ∀ image : Value, image = runtime.arrayOfList image
+  | .bytesEmpty => Encode.bytes ByteArray.empty = runtime.bytesEmpty
+  | .bytesSize => ∀ value : ByteArray,
+      Encode.nat value.size = runtime.bytesSize (Encode.bytes value)
+  | .bytesIsEmpty => ∀ value : ByteArray,
+      Encode.bool value.isEmpty = runtime.bytesIsEmpty (Encode.bytes value)
+  | .bytesAppend => ∀ left right : ByteArray,
+      Encode.bytes (left ++ right)
+        = runtime.bytesAppend (Encode.bytes left) (Encode.bytes right)
 
 /-- The obligation one opcode carries: its ordered assumption closure entails its statement. -/
 def Obligation (runtime : Runtime) (code : Opcode) : Prop :=
@@ -1179,6 +1205,69 @@ theorem arrayOfListModelsOfList (runtime : Runtime)
   intro image
   rfl
 
+/-! ### `ByteArray`
+
+A `ByteArray` is a `Uint8Array`, which is not an ordinary object: ECMA-262 gives it a
+`[[ViewedArrayBuffer]]` and an `[[ArrayLength]]`, so its bytes are the internal-slot sequence
+`Target.Slots.bytes` carries. These four rows are exactly the `ByteArray` operations whose Lean
+result type the surface already admits.
+
+`ByteArray.get?`, `ByteArray.set`, `ByteArray.push`, `ByteArray.toList` and
+`List.toByteArray` are refused rather than registered: each of them mentions a `UInt8`, and `UInt8`
+is not an admitted type form, because its arithmetic wraps at its width and a modular opcode family
+does not exist. A row for one of them would have to invent a type image for a byte, so there is
+nothing here to prove.
+-/
+
+/-- The image of a `ByteArray` is its byte sequence, so its length is the array's size. -/
+private theorem bytes_length (value : ByteArray) : (Encode.bytes value).length = value.size := by
+  simp [Encode.bytes]
+
+/-- `new Uint8Array()` denotes `ByteArray.empty`: both are the empty byte sequence. -/
+theorem bytesEmptyModelsEmpty (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.bytesEmpty.requires) :
+    Opcode.bytesEmpty.Preserves runtime := by
+  simp only [Ir.Opcode.Preserves]
+  rw [holds.1.1]
+  simp [Encode.bytes, ByteArray.data_empty]
+
+/-- `BigInt(value.length)` denotes `ByteArray.size`, because a typed array's `length` is its
+`[[ArrayLength]]` and the image carries exactly that many bytes. -/
+theorem bytesSizeModelsSize (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.bytesSize.requires) :
+    Opcode.bytesSize.Preserves runtime := by
+  intro value
+  rw [holds.1.2.1 (Encode.bytes value), bytes_length value]
+
+/-- `value.length === 0` denotes `ByteArray.isEmpty`. -/
+theorem bytesIsEmptyModelsIsEmpty (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.bytesIsEmpty.requires) :
+    Opcode.bytesIsEmpty.Preserves runtime := by
+  intro value
+  rw [holds.1.2.2.1 (Encode.bytes value)]
+  have lengths : (Encode.bytes value).length = value.size := bytes_length value
+  have images : (Encode.bytes value).isEmpty = value.isEmpty := by
+    cases image : Encode.bytes value with
+    | nil =>
+        rw [image] at lengths
+        simp only [List.length_nil] at lengths
+        simp [ByteArray.isEmpty, ← lengths]
+    | cons head tail =>
+        rw [image] at lengths
+        simp only [List.length_cons] at lengths
+        simp [ByteArray.isEmpty, ← lengths]
+  rw [images]
+
+/-- The generated concatenation helper denotes `ByteArray.append`: it copies the two byte sequences
+into one fresh typed array, in order. -/
+theorem bytesAppendModelsAppend (runtime : Runtime)
+    (holds : Assumption.Holds runtime Opcode.bytesAppend.requires) :
+    Opcode.bytesAppend.Preserves runtime := by
+  intro left right
+  rw [holds.1.2.2.2 (Encode.bytes left) (Encode.bytes right)]
+  simp only [Encode.bytes]
+  exact ByteArray.toList_data_append
+
 /--
 The closure over the opcode registry. It is a total function on `Opcode`, so an opcode with no theorem
 is a build failure rather than an unproved row, and a theorem whose assumption closure differs from
@@ -1239,6 +1328,10 @@ theorem registry (runtime : Runtime) : (code : Opcode) → code.Obligation runti
   | .arrayReverse => arrayReverseModelsReverse runtime
   | .arrayToList => arrayToListModelsToList runtime
   | .arrayOfList => arrayOfListModelsOfList runtime
+  | .bytesEmpty => bytesEmptyModelsEmpty runtime
+  | .bytesSize => bytesSizeModelsSize runtime
+  | .bytesIsEmpty => bytesIsEmptyModelsIsEmpty runtime
+  | .bytesAppend => bytesAppendModelsAppend runtime
 
 /-- Every admitted opcode is discharged from its own recorded assumption closure. -/
 theorem registry_total (runtime : Runtime) (code : Opcode)

@@ -129,7 +129,11 @@ export type LeanOpcode =
   | 'array.append'
   | 'array.reverse'
   | 'array.toList'
-  | 'array.ofList';
+  | 'array.ofList'
+  | 'bytes.empty'
+  | 'bytes.size'
+  | 'bytes.isEmpty'
+  | 'bytes.append';
 
 /**
  * The host operations a `foreign` declaration may be the boundary for, as the closed registry the
@@ -204,7 +208,8 @@ export type LeanRuntimeAssumption =
   | 'string.from-code-point'
   | 'array.dense-element-sequence'
   | 'array.join-empty-separator'
-  | 'option.tagged-object';
+  | 'option.tagged-object'
+  | 'typed-array.byte-sequence';
 
 export const LEAN_RUNTIME_ASSUMPTIONS: Readonly<Record<LeanRuntimeAssumption, string>> = {
   'boolean.logical-operators': '&&, || and ! on JavaScript booleans are the Lean Bool operations',
@@ -228,6 +233,8 @@ export const LEAN_RUNTIME_ASSUMPTIONS: Readonly<Record<LeanRuntimeAssumption, st
   'string.from-code-point': 'String.fromCodePoint(n) is the one-code-point string at a valid scalar n',
   'array.join-empty-separator': 'value.join("") concatenates the elements of an array of strings in order',
   'option.tagged-object': '{ kind: "none" } and { kind: "some", value } denote Option.none and Option.some',
+  'typed-array.byte-sequence':
+    'a Uint8Array presents its internal byte slots: new Uint8Array() is empty, length is its array length, new Uint8Array(n) is n zero bytes, and set copies a source typed array in at an offset',
 };
 
 /** Where the Lean semantics library declares the model theorem of every runtime opcode. */
@@ -246,7 +253,8 @@ export type LeanRuntimeHelperRole =
   | 'int-truncated-modulo'
   | 'int-to-nat-clamp'
   | 'char-of-nat'
-  | 'char-less-code-point';
+  | 'char-less-code-point'
+  | 'bytes-concatenation';
 
 /**
  * Every helper role, in one fixed order. The emitter allocates a declaration name per role and
@@ -261,6 +269,7 @@ export const LEAN_RUNTIME_HELPER_ROLES: readonly LeanRuntimeHelperRole[] = [
   'int-to-nat-clamp',
   'char-of-nat',
   'char-less-code-point',
+  'bytes-concatenation',
 ];
 
 /**
@@ -287,6 +296,8 @@ export function runtimeHelperRole(symbol: LeanRuntimeSymbol): LeanRuntimeHelperR
       return 'char-of-nat';
     case 'helper:char-less-code-point':
       return 'char-less-code-point';
+    case 'helper:bytes-concatenation':
+      return 'bytes-concatenation';
     default:
       return undefined;
   }
@@ -322,7 +333,11 @@ export type LeanRuntimeComponent =
   | 'representation:nat.nonnegative-bigint'
   | 'representation:char.scalar-value'
   | 'representation:char.one-code-point-string'
-  | 'representation:array.shared-dense-image';
+  | 'representation:array.shared-dense-image'
+  | 'inline:bytes.size'
+  | 'primitive:typed-array.from-length'
+  | 'primitive:typed-array.set'
+  | 'sequence:comma-operator';
 
 interface LeanRuntimeOpcodeBase {
   readonly opcode: LeanOpcode;
@@ -377,6 +392,7 @@ const STRING: LeanType = { kind: 'string' };
 const INT: LeanType = { kind: 'int' };
 const CHAR: LeanType = { kind: 'char' };
 const CHARACTERS: LeanType = { kind: 'list', element: CHAR };
+const BYTES: LeanType = { kind: 'bytes' };
 
 function typeArgument(typeArguments: readonly LeanType[], index: number): LeanType {
   const type = typeArguments[index];
@@ -995,6 +1011,51 @@ export const LEAN_RUNTIME_OPCODES: Readonly<Record<LeanOpcode, LeanRuntimeOpcode
     typeParameters: 1,
     parameters: (args) => [{ kind: 'list', element: typeArgument(args, 0) }],
     result: (args) => ({ kind: 'array', element: typeArgument(args, 0) }),
+  },
+  'bytes.empty': {
+    opcode: 'bytes.empty',
+    runtimeSymbol: 'inline:bytes.empty',
+    leanSymbol: 'ByteArray.empty',
+    operands: [],
+    modelTheorem: `${MODEL_NAMESPACE}.bytesEmptyModelsEmpty`,
+    assumptions: ['typed-array.byte-sequence'],
+    ...monomorphic([], BYTES),
+  },
+  'bytes.size': {
+    opcode: 'bytes.size',
+    runtimeSymbol: 'inline:bytes.size',
+    leanSymbol: 'ByteArray.size',
+    operands: ['value'],
+    modelTheorem: `${MODEL_NAMESPACE}.bytesSizeModelsSize`,
+    assumptions: ['typed-array.byte-sequence'],
+    ...monomorphic([BYTES], NAT),
+  },
+  'bytes.isEmpty': {
+    opcode: 'bytes.isEmpty',
+    runtimeSymbol: 'inline:bytes.isEmpty',
+    leanSymbol: 'ByteArray.isEmpty',
+    operands: ['value'],
+    modelTheorem: `${MODEL_NAMESPACE}.bytesIsEmptyModelsIsEmpty`,
+    assumptions: ['typed-array.byte-sequence'],
+    ...monomorphic([BYTES], BOOLEAN),
+  },
+  'bytes.append': {
+    opcode: 'bytes.append',
+    runtimeSymbol: 'helper:bytes-concatenation',
+    // A typed array has no concatenating method, so the helper sizes one target from both operands
+    // and copies each in at its offset; the comma operator sequences the two copies and yields the
+    // target.
+    components: [
+      'primitive:typed-array.from-length',
+      'primitive:typed-array.set',
+      'inline:bytes.size',
+      'sequence:comma-operator',
+    ],
+    leanSymbol: 'ByteArray.append',
+    operands: ['left', 'right'],
+    modelTheorem: `${MODEL_NAMESPACE}.bytesAppendModelsAppend`,
+    assumptions: ['typed-array.byte-sequence'],
+    ...monomorphic([BYTES, BYTES], BYTES),
   },
 };
 

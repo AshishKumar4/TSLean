@@ -98,6 +98,43 @@ theorem valueValid_of_denseElements {state : Target.State} {ref : RefId} {images
       unfold Heap.valueValid
       exact decide_eq_true valid
 
+/-- The heap object at `ref` is a typed array whose internal slots carry exactly these bytes. It is
+stated through `Target.readBytes`, the one function the target semantics reads a typed array with,
+so the relation and the semantics cannot drift apart. -/
+def HasByteElements (state : Target.State) (ref : RefId) (elements : List UInt8) : Prop :=
+  Target.readBytes state (.object ref) = .ok elements
+
+/-- A typed array's reference denotes a live object, so it may be stored in a fresh one. -/
+theorem valueValid_of_byteElements {state : Target.State} {ref : RefId} {elements : List UInt8}
+    (carried : HasByteElements state ref elements) :
+    state.heap.valueValid (.object ref) = true := by
+  simp only [HasByteElements, Target.readBytes] at carried
+  cases found : state.heap.get? ref with
+  | error fault => rw [found] at carried; simp at carried
+  | ok object =>
+      have valid := Heap.get?_ok_valid state.heap ref object found
+      unfold Heap.valueValid
+      exact decide_eq_true valid
+
+/-- Byte-slot representation survives an exact state extension: the extension keeps the object and
+carries every internal-slot payload forward unchanged, which is the whole of what a typed-array read
+consults. -/
+theorem HasByteElements.stable {old next : Target.State}
+    (extension : Target.State.Extension old next) {ref : RefId} {elements : List UInt8}
+    (carried : HasByteElements old ref elements) : HasByteElements next ref elements := by
+  simp only [HasByteElements, Target.readBytes] at carried ⊢
+  cases found : old.heap.get? ref with
+  | error fault => rw [found] at carried; simp at carried
+  | ok object =>
+      rw [found] at carried
+      rw [extension.heap.get_eq ref object found]
+      cases slotsFound : old.lookupSlots ref with
+      | none => rw [slotsFound] at carried; simp at carried
+      | some slots =>
+          rw [extension.slots ref slots slotsFound]
+          rw [slotsFound] at carried
+          exact carried
+
 mutual
 
 /-- How one source value is represented in the target state. -/
@@ -116,6 +153,8 @@ def Represents (program : Ir.Program) (state : Target.State) : Source.Value → 
       ∃ (ref : RefId) (images : List Value),
         target = .object ref ∧ RepresentsList program state elements images ∧
           HasDenseElements state ref images
+  | .bytes elements, target =>
+      ∃ ref : RefId, target = .object ref ∧ HasByteElements state ref elements
   | .variant type name arguments, target =>
       ∃ constructors, program.constructorsOf type = some constructors ∧
         ∃ constructor, Ir.constructor? constructors name = some constructor ∧
@@ -260,6 +299,10 @@ theorem Represents.stable {program : Ir.Program} {old next : Target.State}
       obtain ⟨ref, images, targetEq, elementsRelated, dense⟩ := related
       exact ⟨ref, images, targetEq,
         RepresentsList.stable extension elements images elementsRelated, dense.stable extension⟩
+  | .bytes elements =>
+      unfold Represents at related ⊢
+      obtain ⟨ref, targetEq, carried⟩ := related
+      exact ⟨ref, targetEq, carried.stable extension⟩
   | .variant type name arguments =>
       unfold Represents at related ⊢
       obtain ⟨constructors, declared, constructor, selected, body⟩ := related

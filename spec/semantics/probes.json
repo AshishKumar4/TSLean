@@ -1037,6 +1037,136 @@
           "family": "array-join-empty-array"
         }
       ]
+    },
+    {
+      "id": "typed-array.byte-sequence",
+      "probes": [
+        {
+          "id": "empty-constructor-has-no-bytes",
+          "source": "new Uint8Array().length",
+          "expect": {
+            "number": 0
+          },
+          "family": "typed-array-empty-length"
+        },
+        {
+          "id": "length-is-array-length",
+          "source": "new Uint8Array([1, 2, 3]).length",
+          "expect": {
+            "number": 3
+          },
+          "family": "typed-array-length"
+        },
+        {
+          "id": "length-zero-holds-for-empty",
+          "source": "new Uint8Array().length === 0",
+          "expect": {
+            "boolean": true
+          },
+          "family": "typed-array-length-zero"
+        },
+        {
+          "id": "length-zero-fails-for-nonempty",
+          "source": "new Uint8Array([7]).length === 0",
+          "expect": {
+            "boolean": false
+          },
+          "family": "typed-array-length-zero"
+        },
+        {
+          "id": "bigint-of-length-is-exact",
+          "source": "BigInt(new Uint8Array([1, 2, 3]).length)",
+          "expect": {
+            "bigint": "3"
+          },
+          "family": "typed-array-from-length"
+        },
+        {
+          "id": "constructor-from-length-is-zero-filled",
+          "source": "[...new Uint8Array(3)]",
+          "expect": {
+            "array": [
+              {
+                "number": 0
+              },
+              {
+                "number": 0
+              },
+              {
+                "number": 0
+              }
+            ]
+          },
+          "family": "typed-array-from-length"
+        },
+        {
+          "id": "set-copies-at-offset",
+          "source": "((target) => (target.set(new Uint8Array([9, 8]), 1), [...target]))(new Uint8Array(3))",
+          "expect": {
+            "array": [
+              {
+                "number": 0
+              },
+              {
+                "number": 9
+              },
+              {
+                "number": 8
+              }
+            ]
+          },
+          "family": "typed-array-set-offset"
+        },
+        {
+          "id": "concatenation-helper-body",
+          "source": "((left, right) => [...((target) => (target.set(left, 0), target.set(right, left.length), target))(new Uint8Array(left.length + right.length))])(new Uint8Array([1, 2]), new Uint8Array([3]))",
+          "expect": {
+            "array": [
+              {
+                "number": 1
+              },
+              {
+                "number": 2
+              },
+              {
+                "number": 3
+              }
+            ]
+          },
+          "family": "typed-array-concatenation"
+        },
+        {
+          "id": "concatenation-of-empty-operands",
+          "source": "((left, right) => ((target) => (target.set(left, 0), target.set(right, left.length), target))(new Uint8Array(left.length + right.length)).length)(new Uint8Array(), new Uint8Array())",
+          "expect": {
+            "number": 0
+          },
+          "family": "typed-array-concatenation"
+        },
+        {
+          "id": "comma-yields-its-right-operand",
+          "source": "(1, 2)",
+          "expect": {
+            "number": 2
+          },
+          "family": "comma-operator-order"
+        },
+        {
+          "id": "comma-evaluates-left-to-right",
+          "source": "((log) => (log.push(1), log.push(2), log))([])",
+          "expect": {
+            "array": [
+              {
+                "number": 1
+              },
+              {
+                "number": 2
+              }
+            ]
+          },
+          "family": "comma-operator-order"
+        }
+      ]
     }
   ]
 }

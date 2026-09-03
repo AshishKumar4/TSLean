@@ -375,6 +375,11 @@ theorem valueValid_of_represents {program : Ir.Program} {state : Target.State} :
       obtain ⟨ref, images, targetEq, _, dense⟩ := related
       subst targetEq
       exact Relation.valueValid_of_denseElements dense
+  | .bytes _, target, related => by
+      unfold Relation.Represents at related
+      obtain ⟨ref, targetEq, carried⟩ := related
+      subst targetEq
+      exact Relation.valueValid_of_byteElements carried
   | .variant _ _ _, target, related => by
       unfold Relation.Represents at related
       obtain ⟨constructors, _, constructor, _, body⟩ := related
@@ -800,6 +805,7 @@ theorem ifThenElse {runtime : Runtime} : Op.Preserves runtime .ifThenElse := by
       | record _ _ => exact refines_fault
       | array _ _ => exact refines_fault
       | variant _ _ _ => exact refines_fault
+      | bytes _ => exact refines_fault
       | closure _ _ _ => exact refines_fault
 
 /-- A declared field read is an own-property read of the object the record is represented by. -/
@@ -838,6 +844,7 @@ theorem fieldGet {runtime : Runtime} : Op.Preserves runtime .fieldGet := by
       | char _ => exact refines_fault
       | array _ _ => exact refines_fault
       | variant _ _ _ => exact refines_fault
+      | bytes _ => exact refines_fault
       | closure _ _ _ => exact refines_fault
 
 /-- A leading `let` becomes a `const` binding, and the body sees it at the same position. -/
@@ -1287,7 +1294,8 @@ theorem applyField {runtime : Runtime} : ∀ (program : Ir.Program) (target : Ta
       rw [targetRun]
       dsimp only
       cases callee with
-      | boolean _ | nat _ | int _ | string _ | char _ | record _ _ | array _ _ | variant _ _ _ =>
+      | boolean _ | nat _ | int _ | string _ | char _ | record _ _ | array _ _ | bytes _
+      | variant _ _ _ =>
           exact refines_fault
       | closure captured parameters body =>
           have nextAligned := aligned.step extension payloadsValid traceRefines
@@ -1345,6 +1353,7 @@ theorem apply {runtime : Runtime} : Op.Preserves runtime .apply := by
       | record _ _ => exact refines_fault
       | array _ _ => exact refines_fault
       | variant _ _ _ => exact refines_fault
+      | bytes _ => exact refines_fault
       | closure captured parameters body =>
           dsimp only
           cases argumentsRun : Source.evalList program fuel sourceScope trace arguments with
@@ -1520,6 +1529,7 @@ theorem filterElements_refines {program : Ir.Program} {target : Target.Program} 
           | record _ _ => exact refinesList_fault
           | array _ _ => exact refinesList_fault
           | variant _ _ _ => exact refinesList_fault
+          | bytes _ => exact refinesList_fault
           | closure _ _ _ => exact refinesList_fault
 
 /-- `value.some(callback)` enters the callback once per element, in order, until one accepts. -/
@@ -1590,6 +1600,7 @@ theorem anyElements_refines {program : Ir.Program} {target : Target.Program} {ru
           | record _ _ => exact refines_fault
           | array _ _ => exact refines_fault
           | variant _ _ _ => exact refines_fault
+          | bytes _ => exact refines_fault
           | closure _ _ _ => exact refines_fault
 
 /-- `value.every(callback)` enters the callback once per element, in order, until one refuses. -/
@@ -1660,6 +1671,7 @@ theorem allElements_refines {program : Ir.Program} {target : Target.Program} {ru
           | record _ _ => exact refines_fault
           | array _ _ => exact refines_fault
           | variant _ _ _ => exact refines_fault
+          | bytes _ => exact refines_fault
           | closure _ _ _ => exact refines_fault
 
 /-- `value.reduce(callback, initial)` folds from the left, accumulator first. -/
@@ -1813,6 +1825,69 @@ theorem refines_allocateArray {program : Ir.Program} {state : Target.State} {tra
   · rw [traceEq]
     exact Relation.RefinesTrace.stable extension trace state.trace traceRefines
 
+/-- A represented `ByteArray` is a typed array the target reads back exactly. -/
+theorem readBytes_of_represents {program : Ir.Program} {state : Target.State}
+    {elements : List UInt8} {subject : Value}
+    (related : Relation.Represents program state (.bytes elements) subject) :
+    Target.readBytes state subject = .ok elements := by
+  unfold Relation.Represents at related
+  obtain ⟨ref, subjectEq, carried⟩ := related
+  subst subjectEq
+  exact carried
+
+/--
+Allocating the emitted typed array refines producing the source `ByteArray` it represents.
+
+No array-length premise arises here, unlike `refines_allocateArray`: a `Uint8Array` is not an array
+exotic object, its bytes are the contents of a `[[ViewedArrayBuffer]]`, and the emitted forms build
+it with `new Uint8Array()` or with `new Uint8Array(length)` and `set` rather than with a literal or
+a spread. No element-liveness premise arises either, because a byte is not a JavaScript value.
+-/
+theorem refines_allocateBytes {program : Ir.Program} {state : Target.State} {trace : Source.Trace}
+    {elements : List UInt8}
+    (heapValid : state.heap.WellFormed) (payloadsValid : state.PayloadsWellFormed)
+    (traceRefines : Relation.RefinesTrace program state trace state.trace) :
+    Relation.Refines program state (.value (.bytes elements) trace)
+      (Target.allocateBytes state elements) := by
+  obtain ⟨ref, final, allocated, traceEq, extension, finalValid, carried⟩ :=
+    Allocation.allocateBytes_shape state elements heapValid payloadsValid
+  rw [allocated]
+  refine refines_value extension finalValid ?_ ?_
+  · unfold Relation.Represents
+    exact ⟨ref, rfl, carried⟩
+  · rw [traceEq]
+    exact Relation.RefinesTrace.stable extension trace state.trace traceRefines
+
+/-- `bytes.empty` accepts no operand. -/
+theorem strict_bytesEmpty {values : List Source.Value} {value : Source.Value}
+    (produced : Source.applyStrict .bytesEmpty values = .ok value) : values = [] := by
+  unfold Source.applyStrict at produced
+  split at produced <;> simp_all
+
+/-- `bytes.size` and `bytes.isEmpty` each accept one `ByteArray` operand. -/
+theorem strict_unaryBytes {opcode : Ir.Opcode} {values : List Source.Value} {value : Source.Value}
+    (unary : opcode = .bytesSize ∨ opcode = .bytesIsEmpty)
+    (produced : Source.applyStrict opcode values = .ok value) :
+    ∃ elements, values = [.bytes elements] := by
+  match values with
+  | [] => rcases unary with rfl | rfl <;> simp [Source.applyStrict] at produced
+  | head :: rest =>
+      cases rest with
+      | cons _ _ => rcases unary with rfl | rfl <;> simp [Source.applyStrict] at produced
+      | nil =>
+          cases head with
+          | bytes elements => exact ⟨elements, rfl⟩
+          | boolean _ | nat _ | int _ | string _ | char _ | record _ _ | array _ _
+          | variant _ _ _ | closure _ _ _ =>
+              rcases unary with rfl | rfl <;> simp [Source.applyStrict] at produced
+
+/-- `bytes.append` accepts two `ByteArray` operands. -/
+theorem strict_bytesAppend {values : List Source.Value} {value : Source.Value}
+    (produced : Source.applyStrict .bytesAppend values = .ok value) :
+    ∃ left right, values = [.bytes left, .bytes right] := by
+  unfold Source.applyStrict at produced
+  split at produced <;> simp_all
+
 /-- A first-order opcode that answers a value denotes that value, at no fuel and no trace cost. -/
 theorem applyOperation_of_strict_ok {program : Ir.Program} {fuel : Nat} {trace : Source.Trace}
     {typeArguments : List Ir.Ty} {opcode : Ir.Opcode} {values : List Source.Value}
@@ -1960,7 +2035,7 @@ theorem strict_unaryArrayOf {opcode : Ir.Opcode} {values : List Source.Value}
           cases head with
           | array element elements => exact ⟨element, elements, rfl⟩
           | boolean _ | nat _ | int _ | string _ | char _ | record _ _ | variant _ _ _
-          | closure _ _ _ =>
+          | bytes _ | closure _ _ _ =>
               rcases unary with rfl | rfl | rfl | rfl | rfl <;>
                 simp [Source.applyStrict] at produced
 
@@ -2002,7 +2077,7 @@ theorem strict_stringOfList {values : List Source.Value} {value : Source.Value}
                   · simp only [Source.applyStrict, read, Except.ok.injEq] at produced
                     exact produced.symm
           | boolean _ | nat _ | int _ | string _ | char _ | record _ _ | variant _ _ _
-          | closure _ _ _ => simp [Source.applyStrict] at produced
+          | bytes _ | closure _ _ _ => simp [Source.applyStrict] at produced
 
 /-- A character list and its images are related pointwise, which is what makes `string.toList`
 produce a represented array and `string.ofList` read one back. -/
@@ -3086,6 +3161,94 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         simp only [Target.runOperation]
         rw [← law subject]
         exact refines_inPlace heapValid payloadsValid subjectRelated traceRefines
+  case bytesEmpty =>
+    cases strict : Source.applyStrict Ir.Opcode.bytesEmpty values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        have valuesEq := strict_bytesEmpty strict
+        subst valuesEq
+        have producedEq : produced = .bytes [] := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        unfold Relation.RepresentsList at related
+        subst related
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation]
+        rw [← law]
+        exact refines_allocateBytes heapValid payloadsValid traceRefines
+  case bytesSize =>
+    cases strict : Source.applyStrict Ir.Opcode.bytesSize values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨elements, valuesEq⟩ := strict_unaryBytes (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .nat elements.length := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨subject, operandsEq, subjectRelated⟩ := representsList_one related
+        subst operandsEq
+        have read := readBytes_of_represents subjectRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation, read]
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
+        unfold Relation.Represents
+        have denoted := law ⟨elements.toArray⟩
+        simp only [Encode.bytes, ByteArray.size] at denoted
+        exact denoted.symm
+  case bytesIsEmpty =>
+    cases strict : Source.applyStrict Ir.Opcode.bytesIsEmpty values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨elements, valuesEq⟩ := strict_unaryBytes (by simp) strict
+        subst valuesEq
+        have producedEq : produced = .boolean elements.isEmpty := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨subject, operandsEq, subjectRelated⟩ := representsList_one related
+        subst operandsEq
+        have read := readBytes_of_represents subjectRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation, read]
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
+        unfold Relation.Represents
+        have denoted := law ⟨elements.toArray⟩
+        simp only [Encode.bytes, ByteArray.isEmpty, ByteArray.size] at denoted
+        have counted : (elements.toArray.size == 0) = elements.isEmpty := by
+          cases elements <;> simp
+        rw [counted] at denoted
+        exact denoted.symm
+  case bytesAppend =>
+    cases strict : Source.applyStrict Ir.Opcode.bytesAppend values with
+    | error fault =>
+        rw [applyOperation_of_strict_error firstOrder strict]
+        exact refines_fault
+    | ok produced =>
+        obtain ⟨first, second, valuesEq⟩ := strict_bytesAppend strict
+        subst valuesEq
+        have producedEq : produced = .bytes (first ++ second) := by
+          simpa only [Source.applyStrict, Except.ok.injEq] using strict.symm
+        subst producedEq
+        obtain ⟨firstSubject, secondSubject, operandsEq, firstRelated, secondRelated⟩ :=
+          representsList_two related
+        subst operandsEq
+        have firstRead := readBytes_of_represents firstRelated
+        have secondRead := readBytes_of_represents secondRelated
+        rw [applyOperation_of_strict_ok firstOrder strict]
+        simp only [Ir.Opcode.Preserves] at law
+        simp only [Target.runOperation, firstRead, secondRead]
+        have denoted := law ⟨first.toArray⟩ ⟨second.toArray⟩
+        simp only [Encode.bytes, ByteArray.toList_data_append] at denoted
+        rw [← denoted]
+        exact refines_allocateBytes heapValid payloadsValid traceRefines
   case listHead =>
     cases strict : Source.applyStrict Ir.Opcode.listHead values with
     | error fault =>
@@ -3214,8 +3377,9 @@ theorem listMap_operands {program : Ir.Program} {target : Target.Program} {runti
   | [.closure _ _ _, .boolean _] | [.closure _ _ _, .nat _] | [.closure _ _ _, .int _]
   | [.closure _ _ _, .string _] | [.closure _ _ _, .char _] | [.closure _ _ _, .record _ _]
   | [.closure _ _ _, .variant _ _ _] | [.closure _ _ _, .closure _ _ _]
+  | [.closure _ _ _, .bytes _]
   | [.boolean _, _] | [.nat _, _] | [.int _, _] | [.string _, _] | [.char _, _]
-  | [.record _ _, _] | [.array _ _, _] | [.variant _ _ _, _] =>
+  | [.record _ _, _] | [.array _ _, _] | [.variant _ _ _, _] | [.bytes _, _] =>
       exact Or.inl (by simp only [Source.applyOperation]; exact refines_fault)
 
 /-- `list.filter` takes the callback first and the subject second. -/
@@ -3237,8 +3401,9 @@ theorem listFilter_operands {program : Ir.Program} {target : Target.Program} {ru
   | [.closure _ _ _, .boolean _] | [.closure _ _ _, .nat _] | [.closure _ _ _, .int _]
   | [.closure _ _ _, .string _] | [.closure _ _ _, .char _] | [.closure _ _ _, .record _ _]
   | [.closure _ _ _, .variant _ _ _] | [.closure _ _ _, .closure _ _ _]
+  | [.closure _ _ _, .bytes _]
   | [.boolean _, _] | [.nat _, _] | [.int _, _] | [.string _, _] | [.char _, _]
-  | [.record _ _, _] | [.array _ _, _] | [.variant _ _ _, _] =>
+  | [.record _ _, _] | [.array _ _, _] | [.variant _ _ _, _] | [.bytes _, _] =>
       exact Or.inl (by simp only [Source.applyOperation]; exact refines_fault)
 
 /-- `list.any` takes the subject first and the callback second. -/
@@ -3259,9 +3424,9 @@ theorem listAny_operands {program : Ir.Program} {target : Target.Program} {runti
       exact Or.inr ⟨element, elements, captured, parameters, body, rfl⟩
   | [.array _ _, .boolean _] | [.array _ _, .nat _] | [.array _ _, .int _]
   | [.array _ _, .string _] | [.array _ _, .char _] | [.array _ _, .record _ _]
-  | [.array _ _, .variant _ _ _] | [.array _ _, .array _ _]
+  | [.array _ _, .variant _ _ _] | [.array _ _, .array _ _] | [.array _ _, .bytes _]
   | [.boolean _, _] | [.nat _, _] | [.int _, _] | [.string _, _] | [.char _, _]
-  | [.record _ _, _] | [.closure _ _ _, _]
+  | [.record _ _, _] | [.closure _ _ _, _] | [.bytes _, _]
   | [.variant _ _ _, _] =>
       exact Or.inl (by simp only [Source.applyOperation]; exact refines_fault)
 
@@ -3283,9 +3448,9 @@ theorem listAll_operands {program : Ir.Program} {target : Target.Program} {runti
       exact Or.inr ⟨element, elements, captured, parameters, body, rfl⟩
   | [.array _ _, .boolean _] | [.array _ _, .nat _] | [.array _ _, .int _]
   | [.array _ _, .string _] | [.array _ _, .char _] | [.array _ _, .record _ _]
-  | [.array _ _, .variant _ _ _] | [.array _ _, .array _ _]
+  | [.array _ _, .variant _ _ _] | [.array _ _, .array _ _] | [.array _ _, .bytes _]
   | [.boolean _, _] | [.nat _, _] | [.int _, _] | [.string _, _] | [.char _, _]
-  | [.record _ _, _] | [.closure _ _ _, _]
+  | [.record _ _, _] | [.closure _ _ _, _] | [.bytes _, _]
   | [.variant _ _ _, _] =>
       exact Or.inl (by simp only [Source.applyOperation]; exact refines_fault)
 
@@ -3309,9 +3474,10 @@ theorem listFoldLeft_operands {program : Ir.Program} {target : Target.Program} {
   | [.closure _ _ _, _, .boolean _] | [.closure _ _ _, _, .nat _] | [.closure _ _ _, _, .int _]
   | [.closure _ _ _, _, .string _] | [.closure _ _ _, _, .char _]
   | [.closure _ _ _, _, .record _ _] | [.closure _ _ _, _, .variant _ _ _]
+  | [.closure _ _ _, _, .bytes _]
   | [.closure _ _ _, _, .closure _ _ _]
   | [.boolean _, _, _] | [.nat _, _, _] | [.int _, _, _] | [.string _, _, _] | [.char _, _, _]
-  | [.record _ _, _, _] | [.array _ _, _, _] | [.variant _ _ _, _, _] =>
+  | [.record _ _, _, _] | [.array _ _, _, _] | [.variant _ _ _, _, _] | [.bytes _, _, _] =>
       exact Or.inl (by simp only [Source.applyOperation]; exact refines_fault)
 
 /-- `list.foldRight` takes the step, the initial accumulator, then the subject. -/
@@ -3334,9 +3500,10 @@ theorem listFoldRight_operands {program : Ir.Program} {target : Target.Program} 
   | [.closure _ _ _, _, .boolean _] | [.closure _ _ _, _, .nat _] | [.closure _ _ _, _, .int _]
   | [.closure _ _ _, _, .string _] | [.closure _ _ _, _, .char _]
   | [.closure _ _ _, _, .record _ _] | [.closure _ _ _, _, .variant _ _ _]
+  | [.closure _ _ _, _, .bytes _]
   | [.closure _ _ _, _, .closure _ _ _]
   | [.boolean _, _, _] | [.nat _, _, _] | [.int _, _, _] | [.string _, _, _] | [.char _, _, _]
-  | [.record _ _, _, _] | [.array _ _, _, _] | [.variant _ _ _, _, _] =>
+  | [.record _ _, _, _] | [.array _ _, _, _] | [.variant _ _ _, _, _] | [.bytes _, _, _] =>
       exact Or.inl (by simp only [Source.applyOperation]; exact refines_fault)
 
 /--
@@ -3636,7 +3803,7 @@ theorem applyOperation_boolNot {program : Ir.Program} {fuel : Nat} {trace : Sour
       exact Or.inl ⟨flag, rfl,
         applyOperation_of_strict_ok (by decide) (by simp only [Source.applyStrict])⟩
   | nat _ | int _ | string _ | char _ | record _ _ | array _ _ | variant _ _ _
-      | closure _ _ _ =>
+      | bytes _ | closure _ _ _ =>
       all_goals exact Or.inr ⟨_, applyOperation_of_strict_error (by decide)
         (by simp only [Source.applyStrict]; rfl)⟩
 
@@ -3655,11 +3822,11 @@ theorem applyOperation_boolEquals {program : Ir.Program} {fuel : Nat} {trace : S
           exact Or.inl ⟨leftFlag, rightFlag, rfl, rfl,
             applyOperation_of_strict_ok (by decide) (by simp only [Source.applyStrict])⟩
       | nat _ | int _ | string _ | char _ | record _ _ | array _ _ | variant _ _ _
-      | closure _ _ _ =>
+      | bytes _ | closure _ _ _ =>
           all_goals exact Or.inr ⟨_, applyOperation_of_strict_error (by decide)
             (by simp only [Source.applyStrict]; rfl)⟩
   | nat _ | int _ | string _ | char _ | record _ _ | array _ _ | variant _ _ _
-      | closure _ _ _ =>
+      | bytes _ | closure _ _ _ =>
       all_goals exact Or.inr ⟨_, applyOperation_of_strict_error (by decide)
         (by simp only [Source.applyStrict]; rfl)⟩
 
@@ -3721,9 +3888,9 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
                         exact refines_value (extension.trans lastExtension) lastValid secondRelated
                           lastTrace
                     | nat _ | int _ | string _ | char _ | record _ _ | array _ _
-                    | variant _ _ _ | closure _ _ _ => all_goals exact refines_fault
+                    | bytes _ | variant _ _ _ | closure _ _ _ => all_goals exact refines_fault
         | nat _ | int _ | string _ | char _ | record _ _ | array _ _ | variant _ _ _
-      | closure _ _ _ =>
+      | bytes _ | closure _ _ _ =>
             all_goals exact refines_fault
   · intro typeArguments left right emittedLeft emittedRight leftStep rightStep
       sourceScope targetScope trace state aligned
@@ -3772,9 +3939,9 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
                         exact refines_value (extension.trans lastExtension) lastValid secondRelated
                           lastTrace
                     | nat _ | int _ | string _ | char _ | record _ _ | array _ _
-                    | variant _ _ _ | closure _ _ _ => all_goals exact refines_fault
+                    | bytes _ | variant _ _ _ | closure _ _ _ => all_goals exact refines_fault
         | nat _ | int _ | string _ | char _ | record _ _ | array _ _ | variant _ _ _
-      | closure _ _ _ =>
+      | bytes _ | closure _ _ _ =>
             all_goals exact refines_fault
   · intro typeArguments operand emittedOperand operandStep
       sourceScope targetScope trace state aligned
@@ -4278,7 +4445,7 @@ theorem variant {runtime : Runtime} : Op.Preserves runtime .variant := by
                       listRelated⟩)
                   lastTrace bound
             | boolean _ | nat _ | int _ | string _ | char _ | record _ _ | variant _ _ _
-            | closure _ _ _ =>
+            | bytes _ | closure _ _ _ =>
                 all_goals exact refines_fault
 
 /-! ## The tag chain -/
@@ -4738,6 +4905,7 @@ theorem matchOn {runtime : Runtime} : Op.Preserves runtime .matchOn := by
     | char _ => exact refines_fault
     | string _ => exact refines_fault
     | record _ _ => exact refines_fault
+    | bytes _ => exact refines_fault
     | closure _ _ _ => exact refines_fault
   · rw [pure]
     exact refines_fault
@@ -4785,6 +4953,7 @@ theorem member_reads_own_data_property {program : Ir.Program} {target : Target.P
       | string _ => simp at sourceRun
       | array _ _ => simp at sourceRun
       | variant _ _ _ => simp at sourceRun
+      | bytes _ => simp at sourceRun
       | closure _ _ _ => simp at sourceRun
       | record type fields =>
           dsimp only at sourceRun
