@@ -761,6 +761,7 @@ theorem ifThenBody {runtime : Runtime} : ∀ (program : Ir.Program) (target : Ta
       | string _ => exact refines_fault
       | record _ _ => exact refines_fault
       | array _ _ => exact refines_fault
+      | bytes _ => exact refines_fault
       | variant _ _ _ => exact refines_fault
       | closure _ _ _ => exact refines_fault
 
@@ -4725,7 +4726,7 @@ theorem evalArms_refines {program : Ir.Program} {target : Target.Program} {runti
         rw [decided]
         simp only [Value.toBoolean, Primitive.toBoolean, if_true, read]
         refine armStep (arguments.reverse ++ sourceScope) (images.reverse ++ targetScope) trace
-          state ⟨aligned.heapValid, aligned.closuresValid, ?_, aligned.trace⟩
+          state ⟨aligned.heapValid, aligned.payloadsValid, ?_, aligned.trace⟩
         exact represents_append arguments.reverse images.reverse sourceScope targetScope
           (represents_reverse arguments images related) aligned.scope
       · rw [if_neg matched]
@@ -4853,6 +4854,7 @@ theorem branchBody {runtime : Runtime} : ∀ (program : Ir.Program) (target : Ta
       | char _ => exact refines_fault
       | string _ => exact refines_fault
       | record _ _ => exact refines_fault
+      | bytes _ => exact refines_fault
       | closure _ _ _ => exact refines_fault
 
 /--
