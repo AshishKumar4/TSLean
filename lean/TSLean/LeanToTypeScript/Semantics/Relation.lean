@@ -357,10 +357,10 @@ theorem RefinesTrace.stable {program : Ir.Program} {old next : Target.State}
 def RefinesList (program : Ir.Program) (start : Target.State) :
     Source.ListOutcome → Target.ListResult → Prop
   | .values values trace, .ok targets state =>
-      Target.State.Extension start state ∧ state.ClosuresWellFormed ∧
+      Target.State.Extension start state ∧ state.PayloadsWellFormed ∧
         RepresentsList program state values targets ∧ RefinesTrace program state trace state.trace
   | .exhausted trace, .exhausted state =>
-      Target.State.Extension start state ∧ state.ClosuresWellFormed ∧
+      Target.State.Extension start state ∧ state.PayloadsWellFormed ∧
         RefinesTrace program state trace state.trace
   | .fault _ _, _ => True
   | _, _ => False
@@ -369,10 +369,10 @@ def RefinesList (program : Ir.Program) (start : Target.State) :
 def RefinesFields (program : Ir.Program) (start : Target.State) :
     Source.FieldsOutcome → Target.NamedListResult → Prop
   | .fields fields trace, .ok entries state =>
-      Target.State.Extension start state ∧ state.ClosuresWellFormed ∧
+      Target.State.Extension start state ∧ state.PayloadsWellFormed ∧
         RepresentsFields program state fields entries ∧ RefinesTrace program state trace state.trace
   | .exhausted trace, .exhausted state =>
-      Target.State.Extension start state ∧ state.ClosuresWellFormed ∧
+      Target.State.Extension start state ∧ state.PayloadsWellFormed ∧
         RefinesTrace program state trace state.trace
   | .fault _ _, _ => True
   | _, _ => False
@@ -382,10 +382,10 @@ and state extension. -/
 def Refines (program : Ir.Program) (start : Target.State) :
     Source.Outcome → Target.Result → Prop
   | .value value trace, .ok target state =>
-      Target.State.Extension start state ∧ state.ClosuresWellFormed ∧
+      Target.State.Extension start state ∧ state.PayloadsWellFormed ∧
         Represents program state value target ∧ RefinesTrace program state trace state.trace
   | .exhausted trace, .exhausted state =>
-      Target.State.Extension start state ∧ state.ClosuresWellFormed ∧
+      Target.State.Extension start state ∧ state.PayloadsWellFormed ∧
         RefinesTrace program state trace state.trace
   | .fault _ _, _ => True
   | _, _ => False

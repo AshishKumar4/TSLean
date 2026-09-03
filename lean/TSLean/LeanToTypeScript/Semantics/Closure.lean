@@ -21,22 +21,26 @@ open TSLean.JS
 
 namespace Closure
 
-/-- Appending a fresh callable payload preserves closure-state validity and makes the new payload
-live at its reference. -/
+/-- Appending a fresh callable payload preserves both payload tables' validity and makes the new
+payload live at its reference. The internal-slot table is untouched by a closure registration, so
+its half of the invariant transfers unchanged. -/
 private theorem register_wellFormed (state : Target.State) (ref : RefId) (closure : Target.Closure)
-    (stateValid : state.ClosuresWellFormed) (missing : state.lookupClosure ref = none)
+    (stateValid : state.PayloadsWellFormed) (missing : state.lookupClosure ref = none)
     (refValid : state.heap.valueValid (.object ref) = true)
     (capturesValid : ∀ value ∈ closure.captured, state.heap.valueValid value = true) :
-    (state.registerClosure ref closure).ClosuresWellFormed := by
-  intro observedRef observedClosure found
-  by_cases same : observedRef = ref
-  · rw [same] at found ⊢
-    rw [Target.State.lookupClosure_register_self state ref closure missing] at found
-    injection found with closureEq
-    subst closureEq
-    exact ⟨refValid, capturesValid⟩
-  · rw [Target.State.lookupClosure_register_ne state ref closure same] at found
-    exact stateValid observedRef observedClosure found
+    (state.registerClosure ref closure).PayloadsWellFormed := by
+  refine ⟨?_, ?_⟩
+  · intro observedRef observedClosure found
+    by_cases same : observedRef = ref
+    · rw [same] at found ⊢
+      rw [Target.State.lookupClosure_register_self state ref closure missing] at found
+      injection found with closureEq
+      subst closureEq
+      exact ⟨refValid, capturesValid⟩
+    · rw [Target.State.lookupClosure_register_ne state ref closure same] at found
+      exact stateValid.1 observedRef observedClosure found
+  · intro observedRef observedSlots found
+    exact stateValid.2 observedRef observedSlots found
 
 /--
 An inline arrow allocates one fresh heap object carrying exactly its captured binders as own data
@@ -46,21 +50,21 @@ and fuel do not change.
 -/
 theorem allocate_shape (state : Target.State) (code : Ir.LambdaCode) (body : Target.Body)
     (captured : List Value) (heapValid : state.heap.WellFormed)
-    (closuresValid : state.ClosuresWellFormed)
+    (payloadsValid : state.PayloadsWellFormed)
     (valuesValid : ∀ value ∈ captured, state.heap.valueValid value = true) :
     ∃ ref final,
       Target.allocateClosure state code body captured = .ok (.object ref) final ∧
         final.trace = state.trace ∧ Target.State.Extension state final ∧
-          final.ClosuresWellFormed ∧
+          final.PayloadsWellFormed ∧
             final.lookupClosure ref = some ⟨code, body, captured⟩ ∧
               Relation.HasOwnFields final.heap ref (Ir.closureEntries captured) := by
-  obtain ⟨ref, allocated, allocatedRun, traceEq, closuresEq, allocationExtension,
+  obtain ⟨ref, allocated, allocatedRun, traceEq, closuresEq, _, allocationExtension,
     allocatedValid, fresh, shape⟩ :=
-    Allocation.allocateLiteral_shape state (Ir.closureEntries captured) heapValid closuresValid
+    Allocation.allocateLiteral_shape state (Ir.closureEntries captured) heapValid payloadsValid
       (Ir.closureEntries_valid captured) (Ir.closureEntries_nodup captured)
       (fun entry member => valuesValid entry.2 (Ir.capturedEntries_mem 0 captured entry member))
   have missingStart : state.lookupClosure ref = none :=
-    Target.State.lookupClosure_none_of_fresh state closuresValid ref fresh
+    Target.State.lookupClosure_none_of_fresh state payloadsValid.1 ref fresh
   have missingAllocated : allocated.lookupClosure ref = none := by
     simpa [Target.State.lookupClosure, closuresEq] using missingStart
   let closure : Target.Closure := ⟨code, body, captured⟩
@@ -71,7 +75,7 @@ theorem allocate_shape (state : Target.State) (code : Ir.LambdaCode) (body : Tar
   have capturesValid : ∀ value ∈ closure.captured, allocated.heap.valueValid value = true := by
     intro value member
     exact allocationExtension.heap.preserves_valueValid value (valuesValid value member)
-  have finalValid : (allocated.registerClosure ref closure).ClosuresWellFormed :=
+  have finalValid : (allocated.registerClosure ref closure).PayloadsWellFormed :=
     register_wellFormed allocated ref closure allocatedValid missingAllocated refValid
       capturesValid
   have registeredExtension : Target.State.Extension allocated (allocated.registerClosure ref closure) :=

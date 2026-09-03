@@ -132,6 +132,39 @@ structure Closure where
   body : Body
   captured : List Value
 
+/--
+The internal slots of one exotic object the emitted fragment allocates.
+
+A `Uint8Array` and a `Map` are not ordinary objects. ECMA-262 gives each of them internal slots no
+property store can hold: a typed array views a `[[ViewedArrayBuffer]]` through `[[ByteOffset]]` and
+`[[ArrayLength]]`, and a `Map` owns `[[MapData]]`. `TSLean/JS/Heap.lean` models ordinary objects,
+array exotic objects, function objects, array iterators and primitive wrappers, and none of those
+carries either slot. So the heap keeps owning the object identity and its ordinary own-property
+store while this table owns the slots — exactly the split `State.closures` already draws for a
+function object's `[[Call]]`-like payload.
+
+`bytes` is the byte sequence a typed array presents at `[[ByteOffset]] = 0` with
+`[[ArrayLength]] = elements.length`. The emitted fragment allocates no other view onto a buffer, so
+here a view *is* its bytes.
+
+`map` is `[[MapData]]` carrying no empty records. ECMA-262 empties a record on `delete` so a later
+re-insertion appends rather than reusing the emptied position, which is observable only by iterating
+the map; no admitted opcode iterates a `Map`, because `map.toList` is refused, so removing the
+record rather than emptying it is exact for every observation this model admits.
+-/
+inductive Slots where
+  /-- A typed array's byte sequence, in index order. -/
+  | bytes (elements : List UInt8)
+  /-- A `Map`'s `[[MapData]]`, key then value, in insertion order. -/
+  | map (entries : List (Value × Value))
+
+/-- The values an internal-slot payload retains, so well-formedness can require each of them to be
+live. A typed array retains bytes rather than JavaScript values and so retains none. -/
+def Slots.storedValues : Slots → List Value
+  | .bytes _ => []
+  | .map entries => entries.flatMap fun entry => [entry.1, entry.2]
+
+
 /-- One emitted function declaration. -/
 structure Function where
   name : String
@@ -165,6 +198,7 @@ structure State where
   heap : Heap
   trace : Trace
   closures : List (RefId × Closure)
+  slots : List (RefId × Slots)
 
 /-- A JavaScript exception the emitted fragment can raise. -/
 inductive Thrown where
@@ -204,6 +238,15 @@ inductive Fault where
   `||`, `!` and `===` are emitted as operators, so they have exactly one target meaning and it is
   not this one. -/
   | structuralOpcode (opcode : Ir.Opcode)
+  /-- An operand an opcode requires to be a typed array carrying the byte slots, and which is
+  not. -/
+  | notBytes
+  /-- An operand an opcode requires to be a `Map` carrying `[[MapData]]`, and which is not. -/
+  | notAMap
+  /-- A map key whose image is not a JavaScript primitive. A `Map` matches keys by SameValueZero,
+  which is reference identity on objects, while Lean matches them by `BEq`, which is structural, so
+  an object-imaged key has no faithful `Map` representation. -/
+  | notAPrimitiveKey
   deriving DecidableEq
 
 /-- The result of running one emitted expression. -/
@@ -239,6 +282,16 @@ previously resolved live reference keeps resolving to the exact payload it alrea
 def State.registerClosure (state : State) (ref : RefId) (closure : Closure) : State :=
   { state with closures := state.closures ++ [(ref, closure)] }
 
+/-- The internal-slot payload a live exotic object owns. -/
+def State.lookupSlots (state : State) (ref : RefId) : Option Slots :=
+  (state.slots.find? fun entry => entry.1 == ref).map Prod.snd
+
+/-- Registers the internal slots of a newly allocated exotic object. New payloads append, exactly
+as callable payloads do, so a previously resolved live reference keeps resolving to the slots it
+already carried. -/
+def State.registerSlots (state : State) (ref : RefId) (slots : Slots) : State :=
+  { state with slots := state.slots ++ [(ref, slots)] }
+
 /-- Records one function entry. -/
 def State.record (state : State) (event : Event) : State :=
   { state with trace := state.trace ++ [event] }
@@ -252,22 +305,47 @@ def State.ClosuresWellFormed (state : State) : Prop :=
     state.heap.valueValid (.object ref) = true ∧
       ∀ value ∈ closure.captured, state.heap.valueValid value = true
 
-/-- A state transition extends the heap exactly and preserves every pre-existing callable payload. -/
+/--
+A state carries internal slots only for live objects, and every value a slot retains is live in its
+heap. This is the byte and map counterpart of `ClosuresWellFormed`, stated over
+`Slots.storedValues` so a typed array — which retains bytes rather than JavaScript values — owes
+nothing beyond its own liveness.
+
+It is what makes an allocation mean what it says: a freshly allocated reference is beyond the heap's
+size, so this invariant is exactly the evidence that no stale slots are already keyed on it.
+-/
+def State.SlotsWellFormed (state : State) : Prop :=
+  ∀ ref slots, state.lookupSlots ref = some slots →
+    state.heap.valueValid (.object ref) = true ∧
+      ∀ value ∈ slots.storedValues, state.heap.valueValid value = true
+
+/-- Both payload tables of a state are well formed. `State.closures` owns a function object's
+`[[Call]]`-like payload and `State.slots` owns an exotic object's internal slots; a state is sound
+when neither keeps a payload for a dead object nor retains a dead value. -/
+def State.PayloadsWellFormed (state : State) : Prop :=
+  state.ClosuresWellFormed ∧ state.SlotsWellFormed
+
+/-- A state transition extends the heap exactly and preserves every pre-existing callable payload
+and every pre-existing internal-slot payload. -/
 structure State.Extension (old next : State) : Prop where
   heap : TSLean.Refinement.Heap.ExactExtension old.heap next.heap
   closures : ∀ ref closure, old.lookupClosure ref = some closure →
     next.lookupClosure ref = some closure
+  slots : ∀ ref slots, old.lookupSlots ref = some slots → next.lookupSlots ref = some slots
 
 /-- The empty state transition. -/
 theorem State.Extension.refl (state : State) (heapValid : state.heap.WellFormed) :
     State.Extension state state :=
-  ⟨TSLean.Refinement.Heap.ExactExtension.refl state.heap heapValid, fun _ _ found => found⟩
+  ⟨TSLean.Refinement.Heap.ExactExtension.refl state.heap heapValid, fun _ _ found => found,
+    fun _ _ found => found⟩
 
 /-- Exact state extensions compose. -/
 theorem State.Extension.trans {first second third : State}
     (left : State.Extension first second) (right : State.Extension second third) :
     State.Extension first third :=
-  ⟨left.heap.trans right.heap, fun ref closure found => right.closures ref closure (left.closures ref closure found)⟩
+  ⟨left.heap.trans right.heap,
+    fun ref closure found => right.closures ref closure (left.closures ref closure found),
+    fun ref slots found => right.slots ref slots (left.slots ref slots found)⟩
 
 /-- A later state in an exact extension has a well-formed heap. -/
 theorem State.Extension.nextWellFormed {old next : State}
@@ -374,6 +452,44 @@ def allocateClosure (state : State) (code : Ir.LambdaCode) (body : Body)
   | .fault fault next => .fault fault next
   | .exhausted next => .exhausted next
 
+/-- Reads the byte sequence out of a typed array's internal slots. A value that carries no byte
+slots is refused rather than read through its ordinary property store: an integer-indexed exotic
+object answers a canonical numeric index from its buffer, not from that store. -/
+def readBytes (state : State) : Value → Except Fault (List UInt8)
+  | .object ref =>
+      match state.lookupSlots ref with
+      | some (.bytes elements) => .ok elements
+      | some (.map _) | none => .error .notBytes
+  | .primitive _ => .error .notBytes
+
+/-- Reads `[[MapData]]` out of a `Map`'s internal slots. -/
+def readMap (state : State) : Value → Except Fault (List (Value × Value))
+  | .object ref =>
+      match state.lookupSlots ref with
+      | some (.map entries) => .ok entries
+      | some (.bytes _) | none => .error .notAMap
+  | .primitive _ => .error .notAMap
+
+/-- Allocates a real typed array: a fresh object with no own properties, whose internal slots carry
+exactly these bytes. -/
+def allocateBytes (state : State) (elements : List UInt8) : Result :=
+  match allocateLiteral state [] with
+  | .ok (.object ref) next => .ok (.object ref) (next.registerSlots ref (.bytes elements))
+  | .ok _value next => .fault .notBytes next
+  | .thrown error next => .thrown error next
+  | .fault fault next => .fault fault next
+  | .exhausted next => .exhausted next
+
+/-- Allocates a real `Map`: a fresh object with no own properties, whose internal slots carry
+exactly this `[[MapData]]`. -/
+def allocateMap (state : State) (entries : List (Value × Value)) : Result :=
+  match allocateLiteral state [] with
+  | .ok (.object ref) next => .ok (.object ref) (next.registerSlots ref (.map entries))
+  | .ok _value next => .fault .notAMap next
+  | .thrown error next => .thrown error next
+  | .fault fault next => .fault fault next
+  | .exhausted next => .exhausted next
+
 /-- Appending a closure payload preserves every payload already resolved in the state. -/
 theorem State.lookupClosure_register_old (state : State) (newRef : RefId) (newClosure : Closure)
     {ref : RefId} {closure : Closure}
@@ -425,13 +541,64 @@ theorem State.registerClosure_extension (state : State) (newRef : RefId) (newClo
     (heapValid : state.heap.WellFormed) :
     State.Extension state (state.registerClosure newRef newClosure) :=
   ⟨(State.Extension.refl state heapValid).heap,
-    fun _ _ found => State.lookupClosure_register_old state newRef newClosure found⟩
+    fun _ _ found => State.lookupClosure_register_old state newRef newClosure found,
+    fun _ _ found => found⟩
 
 /-- Recording an entry is an exact state extension: it appends to the trace and touches neither the
-heap nor any live function object's callable payload. -/
+heap, nor any live function object's callable payload, nor any object's internal slots. -/
 theorem State.record_extension (state : State) (event : Event)
     (heapValid : state.heap.WellFormed) : State.Extension state (state.record event) :=
-  ⟨(State.Extension.refl state heapValid).heap, fun _ _ found => found⟩
+  ⟨(State.Extension.refl state heapValid).heap, fun _ _ found => found, fun _ _ found => found⟩
+
+/-- Appending an internal-slot payload preserves every payload already resolved in the state. -/
+theorem State.lookupSlots_register_old (state : State) (newRef : RefId) (newSlots : Slots)
+    {ref : RefId} {slots : Slots} (found : state.lookupSlots ref = some slots) :
+    (state.registerSlots newRef newSlots).lookupSlots ref = some slots := by
+  simp only [State.lookupSlots, State.registerSlots, List.find?_append] at found ⊢
+  cases existing : state.slots.find? (fun entry => entry.1 == ref) with
+  | none => simp [existing] at found
+  | some entry =>
+      have entryValue : entry.2 = slots := by simpa [existing] using found
+      simp [entryValue]
+
+/-- A fresh heap reference cannot already carry internal slots. -/
+theorem State.lookupSlots_none_of_fresh (state : State) (valid : state.SlotsWellFormed)
+    (ref : RefId) (fresh : state.heap.size ≤ ref.value) : state.lookupSlots ref = none := by
+  match found : state.lookupSlots ref with
+  | none => rfl
+  | some slots =>
+      obtain ⟨live, _⟩ := valid ref slots found
+      simp only [Heap.valueValid, decide_eq_true_eq] at live
+      exact absurd live (by omega)
+
+/-- Newly appended slots cannot change lookup at a different object reference. -/
+theorem State.lookupSlots_register_ne (state : State) (newRef : RefId) (newSlots : Slots)
+    {ref : RefId} (different : ref ≠ newRef) :
+    (state.registerSlots newRef newSlots).lookupSlots ref = state.lookupSlots ref := by
+  simp only [State.lookupSlots, State.registerSlots, List.find?_append]
+  cases existing : state.slots.find? (fun entry => entry.1 == ref) with
+  | none =>
+      have missing : (newRef : RefId) ≠ ref := fun same => different same.symm
+      simp [missing]
+  | some entry =>
+      have head : ¬(newRef == ref) := fun equal => different (beq_iff_eq.mp equal).symm
+      simp [head]
+
+/-- Appending the unique slots for a fresh reference makes that reference resolve to them. -/
+theorem State.lookupSlots_register_self (state : State) (newRef : RefId) (newSlots : Slots)
+    (missing : state.lookupSlots newRef = none) :
+    (state.registerSlots newRef newSlots).lookupSlots newRef = some newSlots := by
+  simp only [State.lookupSlots, State.registerSlots, List.find?_append] at missing ⊢
+  cases existing : state.slots.find? (fun entry => entry.1 == newRef) with
+  | none => simp
+  | some entry => simp [existing] at missing
+
+/-- Registering fresh internal slots is an exact state extension. -/
+theorem State.registerSlots_extension (state : State) (newRef : RefId) (newSlots : Slots)
+    (heapValid : state.heap.WellFormed) :
+    State.Extension state (state.registerSlots newRef newSlots) :=
+  ⟨(State.Extension.refl state heapValid).heap, fun _ _ found => found,
+    fun _ _ found => State.lookupSlots_register_old state newRef newSlots found⟩
 
 /-- Binds a call's arguments to a declared parameter count the way a JavaScript call does: a missing
 argument becomes `undefined`, an extra argument is dropped. -/

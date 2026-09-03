@@ -103,9 +103,9 @@ private theorem defineAll {start : Heap} {ref : RefId} :
       (∀ entry ∈ remaining, state.heap.valueValid entry.2 = true) →
       ∃ final, Target.defineProperties ref state remaining = .ok (.object ref) final ∧
         final.trace = state.trace ∧ final.closures = state.closures ∧
-          Building start ref (done ++ remaining) final.heap
+          final.slots = state.slots ∧ Building start ref (done ++ remaining) final.heap
   | [], done, state, building, _, _, _ => by
-      refine ⟨state, rfl, rfl, rfl, ?_⟩
+      refine ⟨state, rfl, rfl, rfl, rfl, ?_⟩
       simpa using building
   | (name, value) :: rest, done, state, building, validKeys, distinct, valuesValid => by
       have absent : name ∉ done.map Prod.fst := by
@@ -119,15 +119,16 @@ private theorem defineAll {start : Heap} {ref : RefId} :
       have carried : ∀ entry ∈ rest, next.valueValid entry.2 = true := by
         intro entry member
         exact (validEq entry.2).trans (valuesValid entry (by simp [member]))
-      obtain ⟨final, ran, traceEq, closuresEq, finalBuilding⟩ :=
+      obtain ⟨final, ran, traceEq, closuresEq, slotsEq, finalBuilding⟩ :=
         defineAll rest (done ++ [(name, value)]) (state.withHeap next) nextBuilding
           (fun entry member => validKeys entry (by simp [member]))
           (by simpa using distinct) carried
-      refine ⟨final, ?_, traceEq, ?_, by simpa using finalBuilding⟩
+      refine ⟨final, ?_, traceEq, ?_, ?_, by simpa using finalBuilding⟩
       · unfold Target.defineProperties
         rw [defined]
         exact ran
       · simpa [Target.State.withHeap] using closuresEq
+      · simpa [Target.State.withHeap] using slotsEq
 
 /--
 The emitted object literal allocates a fresh object whose own properties are exactly the listed
@@ -135,13 +136,14 @@ fields, in the listed order, and touches nothing that already existed. It preser
 callable payload because object-literal allocation only updates the heap.
 -/
 theorem allocateLiteral_shape (state : Target.State) (entries : List (String × Value))
-    (valid : state.heap.WellFormed) (closuresValid : state.ClosuresWellFormed)
+    (valid : state.heap.WellFormed) (payloadsValid : state.PayloadsWellFormed)
     (validKeys : ∀ entry ∈ entries, Ir.ValidKey entry.1)
     (distinct : (entries.map Prod.fst).Nodup)
     (valuesValid : ∀ entry ∈ entries, state.heap.valueValid entry.2 = true) :
     ∃ ref final, Target.allocateLiteral state entries = .ok (.object ref) final ∧
       final.trace = state.trace ∧ final.closures = state.closures ∧
-        Target.State.Extension state final ∧ final.ClosuresWellFormed ∧
+        final.slots = state.slots ∧
+        Target.State.Extension state final ∧ final.PayloadsWellFormed ∧
           state.heap.size ≤ ref.value ∧ Relation.HasOwnFields final.heap ref entries := by
   obtain ⟨ref, heap, allocated⟩ := Heap.allocate_null_prototype_ok state.heap true
   obtain ⟨⟨object, found, ordinary, _, extensible⟩, emptyKeys, emptyReads⟩ :=
@@ -155,26 +157,39 @@ theorem allocateLiteral_shape (state : Target.State) (entries : List (String × 
     · simpa using emptyKeys
     · intro name
       simpa using emptyReads (Ir.propertyKey name)
-  obtain ⟨final, ran, traceEq, closuresEq, finalBuilding⟩ :=
+  obtain ⟨final, ran, traceEq, closuresEq, slotsEq, finalBuilding⟩ :=
     defineAll entries [] (state.withHeap heap) building validKeys (by simpa using distinct)
       (fun entry member => extension.preserves_valueValid entry.2 (valuesValid entry member))
   have lookupEq : ∀ lookupRef, final.lookupClosure lookupRef = state.lookupClosure lookupRef := by
     intro lookupRef
     simp [Target.State.lookupClosure, closuresEq, Target.State.withHeap]
+  have slotLookupEq : ∀ lookupRef, final.lookupSlots lookupRef = state.lookupSlots lookupRef := by
+    intro lookupRef
+    simp [Target.State.lookupSlots, slotsEq, Target.State.withHeap]
   have stateExtension : Target.State.Extension state final := by
-    refine ⟨finalBuilding.extension, ?_⟩
-    intro oldRef closure oldFound
-    rw [lookupEq oldRef]
-    exact oldFound
-  have finalClosuresValid : final.ClosuresWellFormed := by
-    intro oldRef closure finalFound
-    rw [lookupEq oldRef] at finalFound
-    obtain ⟨oldRefValid, capturedValid⟩ := closuresValid oldRef closure finalFound
-    refine ⟨finalBuilding.extension.preserves_valueValid (.object oldRef) oldRefValid, ?_⟩
-    intro value member
-    exact finalBuilding.extension.preserves_valueValid value (capturedValid value member)
-  refine ⟨ref, final, ?_, traceEq, closuresEq, stateExtension, finalClosuresValid,
-    finalBuilding.fresh, ?_⟩
+    refine ⟨finalBuilding.extension, ?_, ?_⟩
+    · intro oldRef closure oldFound
+      rw [lookupEq oldRef]
+      exact oldFound
+    · intro oldRef slots oldFound
+      rw [slotLookupEq oldRef]
+      exact oldFound
+  have finalPayloadsValid : final.PayloadsWellFormed := by
+    refine ⟨?_, ?_⟩
+    · intro oldRef closure finalFound
+      rw [lookupEq oldRef] at finalFound
+      obtain ⟨oldRefValid, capturedValid⟩ := payloadsValid.1 oldRef closure finalFound
+      refine ⟨finalBuilding.extension.preserves_valueValid (.object oldRef) oldRefValid, ?_⟩
+      intro value member
+      exact finalBuilding.extension.preserves_valueValid value (capturedValid value member)
+    · intro oldRef slots finalFound
+      rw [slotLookupEq oldRef] at finalFound
+      obtain ⟨oldRefValid, storedValid⟩ := payloadsValid.2 oldRef slots finalFound
+      refine ⟨finalBuilding.extension.preserves_valueValid (.object oldRef) oldRefValid, ?_⟩
+      intro value member
+      exact finalBuilding.extension.preserves_valueValid value (storedValid value member)
+  refine ⟨ref, final, ?_, traceEq, closuresEq, by simpa [Target.State.withHeap] using slotsEq,
+    stateExtension, finalPayloadsValid, finalBuilding.fresh, ?_⟩
   · unfold Target.allocateLiteral
     rw [allocated]
     exact ran
@@ -216,12 +231,13 @@ array literal or spread beyond `maxArrayLength` raises a `RangeError` rather tha
 array, so a caller owes the bound rather than receiving it.
 -/
 theorem allocateArray_shape (state : Target.State) (elements : List Value)
-    (valid : state.heap.WellFormed) (closuresValid : state.ClosuresWellFormed)
+    (valid : state.heap.WellFormed) (payloadsValid : state.PayloadsWellFormed)
     (valuesValid : ∀ value ∈ elements, state.heap.valueValid value = true)
     (bound : elements.length ≤ Heap.maxArrayLength) :
     ∃ ref final, Target.allocateArray state elements = .ok (.object ref) final ∧
       final.trace = state.trace ∧ final.closures = state.closures ∧
-        Target.State.Extension state final ∧ final.ClosuresWellFormed ∧
+        final.slots = state.slots ∧
+        Target.State.Extension state final ∧ final.PayloadsWellFormed ∧
           Relation.HasDenseElements final ref elements := by
   have slots : (elements.map some).toArray = elements.toArray.map some := by simp
   obtain ⟨ref, heap, allocated⟩ :=
@@ -241,14 +257,21 @@ theorem allocateArray_shape (state : Target.State) (elements : List Value)
       rw [← slots]; exact allocated)
   have extension := TSLean.Refinement.Heap.allocateArray_exactExtension state.heap heap
     (elements.map some) none ref valid listAllocated
-  refine ⟨ref, state.withHeap heap, ?_, rfl, rfl, ⟨extension, fun _ _ found => found⟩, ?_, ?_⟩
+  refine ⟨ref, state.withHeap heap, ?_, rfl, rfl, rfl,
+    ⟨extension, fun _ _ found => found, fun _ _ found => found⟩, ?_, ?_⟩
   · unfold Target.allocateArray
     rw [listAllocated]
-  · intro oldRef closure oldFound
-    obtain ⟨refValid, capturedValid⟩ := closuresValid oldRef closure oldFound
-    refine ⟨extension.preserves_valueValid (.object oldRef) refValid, ?_⟩
-    intro value member
-    exact extension.preserves_valueValid value (capturedValid value member)
+  · refine ⟨?_, ?_⟩
+    · intro oldRef closure oldFound
+      obtain ⟨refValid, capturedValid⟩ := payloadsValid.1 oldRef closure oldFound
+      refine ⟨extension.preserves_valueValid (.object oldRef) refValid, ?_⟩
+      intro value member
+      exact extension.preserves_valueValid value (capturedValid value member)
+    · intro oldRef payload oldFound
+      obtain ⟨refValid, storedValid⟩ := payloadsValid.2 oldRef payload oldFound
+      refine ⟨extension.preserves_valueValid (.object oldRef) refValid, ?_⟩
+      intro value member
+      exact extension.preserves_valueValid value (storedValid value member)
   · have length : (state.withHeap heap).heap.arrayLength ref = .ok elements.length := by
       simp [Target.State.withHeap, Heap.arrayLength, found, Bind.bind, Except.bind, kind,
         Pure.pure, Except.pure]

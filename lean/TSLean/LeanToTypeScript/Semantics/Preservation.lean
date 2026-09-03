@@ -39,7 +39,7 @@ payloads, representing scopes, and a refining ordered trace. -/
 structure Aligned (program : Ir.Program) (sourceScope : List Source.Value)
     (targetScope : List Value) (trace : Source.Trace) (state : Target.State) : Prop where
   heapValid : state.heap.WellFormed
-  closuresValid : state.ClosuresWellFormed
+  payloadsValid : state.PayloadsWellFormed
   scope : Relation.RepresentsList program state sourceScope targetScope
   trace : Relation.RefinesTrace program state trace state.trace
 
@@ -293,7 +293,7 @@ theorem refines_value_inv {program : Ir.Program} {start : Target.State} {value :
     {trace : Source.Trace} {result : Target.Result}
     (refines : Relation.Refines program start (.value value trace) result) :
     ∃ target state, result = .ok target state ∧ Target.State.Extension start state ∧
-      state.ClosuresWellFormed ∧ Relation.Represents program state value target ∧
+      state.PayloadsWellFormed ∧ Relation.Represents program state value target ∧
         Relation.RefinesTrace program state trace state.trace := by
   cases result with
   | ok target state =>
@@ -308,7 +308,7 @@ theorem refines_exhausted_inv {program : Ir.Program} {start : Target.State} {tra
     {result : Target.Result}
     (refines : Relation.Refines program start (.exhausted trace) result) :
     ∃ state, result = .exhausted state ∧ Target.State.Extension start state ∧
-      state.ClosuresWellFormed ∧ Relation.RefinesTrace program state trace state.trace := by
+      state.PayloadsWellFormed ∧ Relation.RefinesTrace program state trace state.trace := by
   cases result with
   | ok target state => simp only [Relation.Refines] at refines
   | thrown error state => simp only [Relation.Refines] at refines
@@ -318,21 +318,21 @@ theorem refines_exhausted_inv {program : Ir.Program} {start : Target.State} {tra
 /-- Builds the refinement of a successful run. -/
 theorem refines_value {program : Ir.Program} {start : Target.State} {value : Source.Value}
     {trace : Source.Trace} {target : Value} {state : Target.State}
-    (extension : Target.State.Extension start state) (closuresValid : state.ClosuresWellFormed)
+    (extension : Target.State.Extension start state) (payloadsValid : state.PayloadsWellFormed)
     (represents : Relation.Represents program state value target)
     (traceRefines : Relation.RefinesTrace program state trace state.trace) :
     Relation.Refines program start (.value value trace) (.ok target state) := by
   simp only [Relation.Refines]
-  exact ⟨extension, closuresValid, represents, traceRefines⟩
+  exact ⟨extension, payloadsValid, represents, traceRefines⟩
 
 /-- Builds the refinement of an exhausted run. -/
 theorem refines_exhausted {program : Ir.Program} {start : Target.State} {trace : Source.Trace}
     {state : Target.State}
-    (extension : Target.State.Extension start state) (closuresValid : state.ClosuresWellFormed)
+    (extension : Target.State.Extension start state) (payloadsValid : state.PayloadsWellFormed)
     (traceRefines : Relation.RefinesTrace program state trace state.trace) :
     Relation.Refines program start (.exhausted trace) (.exhausted state) := by
   simp only [Relation.Refines]
-  exact ⟨extension, closuresValid, traceRefines⟩
+  exact ⟨extension, payloadsValid, traceRefines⟩
 
 /-- A source run that faults claims nothing of the target. -/
 theorem refines_fault {program : Ir.Program} {start : Target.State} {fault : Source.Fault}
@@ -345,10 +345,10 @@ theorem Aligned.step {program : Ir.Program} {sourceScope : List Source.Value}
     {targetScope : List Value} {trace nextTrace : Source.Trace} {state nextState : Target.State}
     (aligned : Aligned program sourceScope targetScope trace state)
     (extension : Target.State.Extension state nextState)
-    (closuresValid : nextState.ClosuresWellFormed)
+    (payloadsValid : nextState.PayloadsWellFormed)
     (traceRefines : Relation.RefinesTrace program nextState nextTrace nextState.trace) :
     Aligned program sourceScope targetScope nextTrace nextState :=
-  ⟨extension.nextWellFormed, closuresValid,
+  ⟨extension.nextWellFormed, payloadsValid,
     Relation.RepresentsList.stable extension sourceScope targetScope aligned.scope, traceRefines⟩
 
 /-- Every represented value is a valid heap value, so it may be stored in a fresh object. -/
@@ -660,13 +660,13 @@ theorem varRef {runtime : Runtime} : Op.Preserves runtime .varRef := by
         lookup_represents sourceScope targetScope index aligned.scope value sourceLookup
       rw [targetLookup]
       exact refines_value (Target.State.Extension.refl state aligned.heapValid)
-        aligned.closuresValid related aligned.trace
+        aligned.payloadsValid related aligned.trace
 
 /-- A `Bool` literal is a JavaScript boolean literal. -/
 theorem boolLit {runtime : Runtime} : Op.Preserves runtime .boolLit := by
   intro program target fuel value sourceScope targetScope trace state aligned
   simp only [Source.eval, Target.eval]
-  refine refines_value (Target.State.Extension.refl state aligned.heapValid) aligned.closuresValid
+  refine refines_value (Target.State.Extension.refl state aligned.heapValid) aligned.payloadsValid
     ?_ aligned.trace
   unfold Relation.Represents
   rfl
@@ -675,7 +675,7 @@ theorem boolLit {runtime : Runtime} : Op.Preserves runtime .boolLit := by
 theorem natLit {runtime : Runtime} : Op.Preserves runtime .natLit := by
   intro program target fuel value sourceScope targetScope trace state aligned
   simp only [Source.eval, Target.eval]
-  refine refines_value (Target.State.Extension.refl state aligned.heapValid) aligned.closuresValid
+  refine refines_value (Target.State.Extension.refl state aligned.heapValid) aligned.payloadsValid
     ?_ aligned.trace
   unfold Relation.Represents
   rfl
@@ -684,7 +684,7 @@ theorem natLit {runtime : Runtime} : Op.Preserves runtime .natLit := by
 theorem stringLit {runtime : Runtime} : Op.Preserves runtime .stringLit := by
   intro program target fuel value sourceScope targetScope trace state aligned
   simp only [Source.eval, Target.eval]
-  refine refines_value (Target.State.Extension.refl state aligned.heapValid) aligned.closuresValid
+  refine refines_value (Target.State.Extension.refl state aligned.heapValid) aligned.payloadsValid
     ?_ aligned.trace
   unfold Relation.Represents
   rfl
@@ -697,14 +697,14 @@ theorem refines_widen {program : Ir.Program} {start middle : Target.State} {sour
   cases source with
   | fault fault trace => exact refines_fault
   | value value trace =>
-      obtain ⟨image, state, resultEq, inner, closuresValid, related, traceRefines⟩ :=
+      obtain ⟨image, state, resultEq, inner, payloadsValid, related, traceRefines⟩ :=
         refines_value_inv refines
       subst resultEq
-      exact refines_value (extension.trans inner) closuresValid related traceRefines
+      exact refines_value (extension.trans inner) payloadsValid related traceRefines
   | exhausted trace =>
-      obtain ⟨state, resultEq, inner, closuresValid, traceRefines⟩ := refines_exhausted_inv refines
+      obtain ⟨state, resultEq, inner, payloadsValid, traceRefines⟩ := refines_exhausted_inv refines
       subst resultEq
-      exact refines_exhausted (extension.trans inner) closuresValid traceRefines
+      exact refines_exhausted (extension.trans inner) payloadsValid traceRefines
 
 /--
 A statement-form `if` selects by truthiness, exactly as the conditional expression does, and the
@@ -769,13 +769,13 @@ theorem ifThenElse {runtime : Runtime} : Op.Preserves runtime .ifThenElse := by
   cases conditionRun : Source.eval program fuel sourceScope trace condition with
   | fault fault next => exact refines_fault
   | exhausted next =>
-      obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+      obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
         refines_exhausted_inv
           (conditionRun ▸ conditionStep sourceScope targetScope trace state aligned)
       rw [targetRun]
-      exact refines_exhausted extension closuresValid traceRefines
+      exact refines_exhausted extension payloadsValid traceRefines
   | value produced next =>
-      obtain ⟨image, targetState, targetRun, extension, closuresValid, related, traceRefines⟩ :=
+      obtain ⟨image, targetState, targetRun, extension, payloadsValid, related, traceRefines⟩ :=
         refines_value_inv
           (conditionRun ▸ conditionStep sourceScope targetScope trace state aligned)
       rw [targetRun]
@@ -783,7 +783,7 @@ theorem ifThenElse {runtime : Runtime} : Op.Preserves runtime .ifThenElse := by
       | boolean flag =>
           unfold Relation.Represents at related
           subst related
-          have nextAligned := aligned.step extension closuresValid traceRefines
+          have nextAligned := aligned.step extension payloadsValid traceRefines
           cases flag with
           | true =>
               simp only [Value.toBoolean, Primitive.toBoolean, if_true]
@@ -810,12 +810,12 @@ theorem fieldGet {runtime : Runtime} : Op.Preserves runtime .fieldGet := by
   cases sourceRun : Source.eval program fuel sourceScope trace subject with
   | fault fault next => exact refines_fault
   | exhausted next =>
-      obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+      obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
         refines_exhausted_inv (sourceRun ▸ inner sourceScope targetScope trace state aligned)
       rw [targetRun]
-      exact refines_exhausted extension closuresValid traceRefines
+      exact refines_exhausted extension payloadsValid traceRefines
   | value produced next =>
-      obtain ⟨image, targetState, targetRun, extension, closuresValid, related, traceRefines⟩ :=
+      obtain ⟨image, targetState, targetRun, extension, payloadsValid, related, traceRefines⟩ :=
         refines_value_inv (sourceRun ▸ inner sourceScope targetScope trace state aligned)
       rw [targetRun]
       cases produced with
@@ -830,7 +830,7 @@ theorem fieldGet {runtime : Runtime} : Op.Preserves runtime .fieldGet := by
               obtain ⟨fieldImage, entryFound, fieldRelated⟩ :=
                 fields_lookup fields entries fieldsRelated field value lookup
               rw [readMember_of_shape targetState shape field fieldImage entryFound]
-              exact refines_value extension closuresValid fieldRelated traceRefines
+              exact refines_value extension payloadsValid fieldRelated traceRefines
       | boolean _ => exact refines_fault
       | nat _ => exact refines_fault
       | int _ => exact refines_fault
@@ -848,17 +848,17 @@ theorem letBind {runtime : Runtime} : Op.Preserves runtime .letBind := by
   cases sourceRun : Source.eval program fuel sourceScope trace value with
   | fault fault next => exact refines_fault
   | exhausted next =>
-      obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+      obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
         refines_exhausted_inv (sourceRun ▸ valueStep sourceScope targetScope trace state aligned)
       rw [targetRun]
-      exact refines_exhausted extension closuresValid traceRefines
+      exact refines_exhausted extension payloadsValid traceRefines
   | value produced next =>
-      obtain ⟨image, targetState, targetRun, extension, closuresValid, related, traceRefines⟩ :=
+      obtain ⟨image, targetState, targetRun, extension, payloadsValid, related, traceRefines⟩ :=
         refines_value_inv (sourceRun ▸ valueStep sourceScope targetScope trace state aligned)
       rw [targetRun]
       have extended :
           Aligned program (produced :: sourceScope) (image :: targetScope) next targetState := by
-        refine ⟨extension.nextWellFormed, closuresValid, ?_, traceRefines⟩
+        refine ⟨extension.nextWellFormed, payloadsValid, ?_, traceRefines⟩
         unfold Relation.RepresentsList
         exact ⟨image, targetScope, rfl, related,
           Relation.RepresentsList.stable extension sourceScope targetScope aligned.scope⟩
@@ -873,7 +873,7 @@ theorem refinesFields_inv {program : Ir.Program} {start : Target.State}
     {result : Target.NamedListResult}
     (refines : Relation.RefinesFields program start (.fields produced trace) result) :
     ∃ entries state, result = .ok entries state ∧ Target.State.Extension start state ∧
-      state.ClosuresWellFormed ∧ Relation.RepresentsFields program state produced entries ∧
+      state.PayloadsWellFormed ∧ Relation.RepresentsFields program state produced entries ∧
         Relation.RefinesTrace program state trace state.trace := by
   cases result with
   | ok entries state =>
@@ -888,7 +888,7 @@ theorem refinesFields_exhausted_inv {program : Ir.Program} {start : Target.State
     {trace : Source.Trace} {result : Target.NamedListResult}
     (refines : Relation.RefinesFields program start (.exhausted trace) result) :
     ∃ state, result = .exhausted state ∧ Target.State.Extension start state ∧
-      state.ClosuresWellFormed ∧ Relation.RefinesTrace program state trace state.trace := by
+      state.PayloadsWellFormed ∧ Relation.RefinesTrace program state trace state.trace := by
   cases result with
   | ok entries state => simp only [Relation.RefinesFields] at refines
   | thrown error state => simp only [Relation.RefinesFields] at refines
@@ -900,7 +900,7 @@ theorem refinesList_inv {program : Ir.Program} {start : Target.State} {produced 
     {trace : Source.Trace} {result : Target.ListResult}
     (refines : Relation.RefinesList program start (.values produced trace) result) :
     ∃ targets state, result = .ok targets state ∧ Target.State.Extension start state ∧
-      state.ClosuresWellFormed ∧ Relation.RepresentsList program state produced targets ∧
+      state.PayloadsWellFormed ∧ Relation.RepresentsList program state produced targets ∧
         Relation.RefinesTrace program state trace state.trace := by
   cases result with
   | ok targets state =>
@@ -915,7 +915,7 @@ theorem refinesList_exhausted_inv {program : Ir.Program} {start : Target.State}
     {trace : Source.Trace} {result : Target.ListResult}
     (refines : Relation.RefinesList program start (.exhausted trace) result) :
     ∃ state, result = .exhausted state ∧ Target.State.Extension start state ∧
-      state.ClosuresWellFormed ∧ Relation.RefinesTrace program state trace state.trace := by
+      state.PayloadsWellFormed ∧ Relation.RefinesTrace program state trace state.trace := by
   cases result with
   | ok targets state => simp only [Relation.RefinesList] at refines
   | thrown error state => simp only [Relation.RefinesList] at refines
@@ -926,21 +926,21 @@ theorem refinesList_exhausted_inv {program : Ir.Program} {start : Target.State}
 theorem refinesList_values {program : Ir.Program} {start : Target.State}
     {produced : List Source.Value} {trace : Source.Trace} {targets : List Value}
     {state : Target.State} (extension : Target.State.Extension start state)
-    (closuresValid : state.ClosuresWellFormed)
+    (payloadsValid : state.PayloadsWellFormed)
     (related : Relation.RepresentsList program state produced targets)
     (traceRefines : Relation.RefinesTrace program state trace state.trace) :
     Relation.RefinesList program start (.values produced trace) (.ok targets state) := by
   simp only [Relation.RefinesList]
-  exact ⟨extension, closuresValid, related, traceRefines⟩
+  exact ⟨extension, payloadsValid, related, traceRefines⟩
 
 /-- Builds an exhausted list refinement. -/
 theorem refinesList_exhausted {program : Ir.Program} {start : Target.State} {trace : Source.Trace}
     {state : Target.State} (extension : Target.State.Extension start state)
-    (closuresValid : state.ClosuresWellFormed)
+    (payloadsValid : state.PayloadsWellFormed)
     (traceRefines : Relation.RefinesTrace program state trace state.trace) :
     Relation.RefinesList program start (.exhausted trace) (.exhausted state) := by
   simp only [Relation.RefinesList]
-  exact ⟨extension, closuresValid, traceRefines⟩
+  exact ⟨extension, payloadsValid, traceRefines⟩
 
 /-- A source list run that faults claims nothing of the target. -/
 theorem refinesList_fault {program : Ir.Program} {start : Target.State} {fault : Source.Fault}
@@ -1019,13 +1019,13 @@ theorem record {runtime : Runtime} : Op.Preserves runtime .record := by
   cases sourceRun : Source.evalFields program fuel sourceScope trace fields with
   | fault fault next => exact refines_fault
   | exhausted next =>
-      obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+      obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
         refinesFields_exhausted_inv
           (sourceRun ▸ fieldsStep sourceScope targetScope trace state aligned)
       rw [targetRun]
-      exact refines_exhausted extension closuresValid traceRefines
+      exact refines_exhausted extension payloadsValid traceRefines
   | fields produced next =>
-      obtain ⟨entries, targetState, targetRun, extension, closuresValid, fieldsRelated,
+      obtain ⟨entries, targetState, targetRun, extension, payloadsValid, fieldsRelated,
         traceRefines⟩ :=
         refinesFields_inv (sourceRun ▸ fieldsStep sourceScope targetScope trace state aligned)
       rw [targetRun]
@@ -1033,8 +1033,9 @@ theorem record {runtime : Runtime} : Op.Preserves runtime .record := by
       have names : entries.map Prod.fst = fields.map Prod.fst := by
         rw [representsFields_names produced entries fieldsRelated,
           evalFields_names fields trace produced next sourceRun]
-      obtain ⟨ref, final, allocated, traceEq, _, finalExtension, finalClosuresValid, _, shape⟩ :=
-        Allocation.allocateLiteral_shape targetState entries extension.nextWellFormed closuresValid
+      obtain ⟨ref, final, allocated, traceEq, _, _, finalExtension, finalPayloadsValid, _,
+        shape⟩ :=
+        Allocation.allocateLiteral_shape targetState entries extension.nextWellFormed payloadsValid
           (by
             intro entry member
             have nameMember : entry.1 ∈ fields.map Prod.fst := by
@@ -1045,7 +1046,7 @@ theorem record {runtime : Runtime} : Op.Preserves runtime .record := by
           (by rw [names]; exact distinct)
           (representsFields_valuesValid produced entries fieldsRelated)
       rw [allocated]
-      refine refines_value (extension.trans finalExtension) finalClosuresValid ?_ ?_
+      refine refines_value (extension.trans finalExtension) finalPayloadsValid ?_ ?_
       · unfold Relation.Represents
         exact ⟨ref, entries, rfl,
           Relation.RepresentsFields.stable finalExtension produced entries fieldsRelated, shape⟩
@@ -1110,13 +1111,13 @@ theorem call {runtime : Runtime} : Op.Preserves runtime .call := by
   cases sourceRun : Source.evalList program fuel sourceScope trace arguments with
   | fault fault next => exact refines_fault
   | exhausted next =>
-      obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+      obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
         refinesList_exhausted_inv
           (sourceRun ▸ argumentsStep sourceScope targetScope trace state aligned)
       rw [targetRun]
-      exact refines_exhausted extension closuresValid traceRefines
+      exact refines_exhausted extension payloadsValid traceRefines
   | values produced next =>
-      obtain ⟨targets, targetState, targetRun, extension, closuresValid, listRelated,
+      obtain ⟨targets, targetState, targetRun, extension, payloadsValid, listRelated,
         traceRefines⟩ :=
         refinesList_inv (sourceRun ▸ argumentsStep sourceScope targetScope trace state aligned)
       rw [targetRun]
@@ -1136,7 +1137,7 @@ theorem call {runtime : Runtime} : Op.Preserves runtime .call := by
               rw [arity, matched, representsList_length produced targets listRelated]
             rw [bindArguments_exact targets emitted.parameters lengths]
             cases fuel with
-            | zero => exact refines_exhausted extension closuresValid traceRefines
+            | zero => exact refines_exhausted extension payloadsValid traceRefines
             | succ remaining =>
                 dsimp only
                 have recorded := Target.State.record_extension targetState
@@ -1147,7 +1148,7 @@ theorem call {runtime : Runtime} : Op.Preserves runtime .call := by
                   declared emittedFound produced.reverse targets.reverse
                   (next ++ [.function function produced])
                   (targetState.record (.function function targets)) ?_
-                refine ⟨extension.nextWellFormed, closuresValid, ?_, ?_⟩
+                refine ⟨extension.nextWellFormed, payloadsValid, ?_, ?_⟩
                 · exact Relation.RepresentsList.stable recorded produced.reverse targets.reverse
                     (represents_reverse produced targets listRelated)
                 · exact refinesTrace_append next targetState.trace
@@ -1166,11 +1167,11 @@ theorem lambda {runtime : Runtime} : Op.Preserves runtime .lambda := by
   intro program target fuel parameters body emittedBody compiled _
     sourceScope targetScope trace state aligned
   simp only [Source.eval, Target.eval]
-  obtain ⟨ref, final, allocated, traceEq, extension, finalClosuresValid, closureFound, shape⟩ :=
+  obtain ⟨ref, final, allocated, traceEq, extension, finalPayloadsValid, closureFound, shape⟩ :=
     Closure.allocate_shape state ⟨parameters, body⟩ emittedBody targetScope aligned.heapValid
-      aligned.closuresValid (representsList_valuesValid sourceScope targetScope aligned.scope)
+      aligned.payloadsValid (representsList_valuesValid sourceScope targetScope aligned.scope)
   rw [allocated]
-  refine refines_value extension finalClosuresValid ?_ ?_
+  refine refines_value extension finalPayloadsValid ?_ ?_
   · unfold Relation.Represents
     exact ⟨ref, ⟨⟨parameters, body⟩, emittedBody, targetScope⟩, rfl, closureFound, rfl, compiled,
       Relation.RepresentsList.stable extension sourceScope targetScope aligned.scope, shape⟩
@@ -1196,7 +1197,7 @@ theorem invoke_refines {program : Ir.Program} {target : Target.Program} {runtime
     {captured : List Source.Value} {parameters : List Ir.Field} {body : Ir.Expr} {callee : Value}
     {arguments : List Source.Value} {targets : List Value} {trace : Source.Trace}
     {state : Target.State}
-    (heapValid : state.heap.WellFormed) (closuresValid : state.ClosuresWellFormed)
+    (heapValid : state.heap.WellFormed) (payloadsValid : state.PayloadsWellFormed)
     (calleeRelated : Relation.Represents program state (.closure captured parameters body) callee)
     (related : Relation.RepresentsList program state arguments targets)
     (traceRefines : Relation.RefinesTrace program state trace state.trace) :
@@ -1222,7 +1223,7 @@ theorem invoke_refines {program : Ir.Program} {target : Target.Program} {runtime
     rw [bindArguments_exact targets closure.code.parameters.length targetArity]
     cases fuel with
     | zero =>
-        exact refines_exhausted (Target.State.Extension.refl state heapValid) closuresValid
+        exact refines_exhausted (Target.State.Extension.refl state heapValid) payloadsValid
           traceRefines
     | succ remaining =>
         dsimp only
@@ -1233,7 +1234,7 @@ theorem invoke_refines {program : Ir.Program} {target : Target.Program} {runtime
           (arguments.reverse ++ captured) (targets.reverse ++ closure.captured)
           (trace ++ [.application ⟨parameters, body⟩ arguments])
           (state.record (.application closure.code targets)) ?_
-        refine ⟨heapValid, closuresValid, ?_, ?_⟩
+        refine ⟨heapValid, payloadsValid, ?_, ?_⟩
         · exact represents_append arguments.reverse targets.reverse captured closure.captured
             (Relation.RepresentsList.stable recorded arguments.reverse targets.reverse
               (represents_reverse arguments targets related))
@@ -1274,13 +1275,13 @@ theorem applyField {runtime : Runtime} : ∀ (program : Ir.Program) (target : Ta
   cases calleeRun : Source.eval program fuel sourceScope trace (.fieldGet subject field) with
   | fault fault next => exact refines_fault
   | exhausted next =>
-      obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+      obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
         refines_exhausted_inv
           (calleeRun ▸ calleeStep sourceScope targetScope trace state aligned)
       rw [targetRun]
-      exact refines_exhausted extension closuresValid traceRefines
+      exact refines_exhausted extension payloadsValid traceRefines
   | value callee next =>
-      obtain ⟨calleeImage, targetState, targetRun, extension, closuresValid, calleeRelated,
+      obtain ⟨calleeImage, targetState, targetRun, extension, payloadsValid, calleeRelated,
         traceRefines⟩ :=
         refines_value_inv (calleeRun ▸ calleeStep sourceScope targetScope trace state aligned)
       rw [targetRun]
@@ -1289,7 +1290,7 @@ theorem applyField {runtime : Runtime} : ∀ (program : Ir.Program) (target : Ta
       | boolean _ | nat _ | int _ | string _ | char _ | record _ _ | array _ _ | variant _ _ _ =>
           exact refines_fault
       | closure captured parameters body =>
-          have nextAligned := aligned.step extension closuresValid traceRefines
+          have nextAligned := aligned.step extension payloadsValid traceRefines
           change Relation.Refines program state
             (match Source.evalList program fuel sourceScope next arguments with
             | .values values last => Source.applyClosure program fuel last captured parameters body values
@@ -1349,20 +1350,20 @@ theorem apply {runtime : Runtime} : Op.Preserves runtime .apply := by
           cases argumentsRun : Source.evalList program fuel sourceScope trace arguments with
           | fault fault next => exact refines_fault
           | exhausted next =>
-              obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+              obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
                 refinesList_exhausted_inv
                   (argumentsRun ▸ argumentsStep sourceScope targetScope trace state aligned)
               rw [targetRun]
-              exact refines_exhausted extension closuresValid traceRefines
+              exact refines_exhausted extension payloadsValid traceRefines
           | values produced next =>
-              obtain ⟨targets, targetState, targetRun, extension, closuresValid, listRelated,
+              obtain ⟨targets, targetState, targetRun, extension, payloadsValid, listRelated,
                 traceRefines⟩ :=
                 refinesList_inv
                   (argumentsRun ▸ argumentsStep sourceScope targetScope trace state aligned)
               rw [targetRun]
               dsimp only
               refine refines_widen extension ?_
-              exact invoke_refines bodyAtLower extension.nextWellFormed closuresValid
+              exact invoke_refines bodyAtLower extension.nextWellFormed payloadsValid
                 (Relation.Represents.stable extension (.closure captured parameters body)
                   calleeImage calleeRelated)
                 listRelated traceRefines
@@ -1383,20 +1384,20 @@ theorem mapElements_refines {program : Ir.Program} {target : Target.Program} {ru
     {captured : List Source.Value} {parameters : List Ir.Field} {body : Ir.Expr} {callee : Value} :
     ∀ (elements : List Source.Value) (images : List Value) (trace : Source.Trace)
       (state : Target.State),
-      state.heap.WellFormed → state.ClosuresWellFormed →
+      state.heap.WellFormed → state.PayloadsWellFormed →
       Relation.Represents program state (.closure captured parameters body) callee →
       Relation.RepresentsList program state elements images →
       Relation.RefinesTrace program state trace state.trace →
       Relation.RefinesList program state
         (Source.mapElements program fuel trace captured parameters body elements)
         (Target.mapCalls target runtime fuel state callee images)
-  | [], images, trace, state, heapValid, closuresValid, _, related, traceRefines => by
+  | [], images, trace, state, heapValid, payloadsValid, _, related, traceRefines => by
       unfold Relation.RepresentsList at related
       subst related
       simp only [Source.mapElements, Target.mapCalls]
-      exact refinesList_values (Target.State.Extension.refl state heapValid) closuresValid
+      exact refinesList_values (Target.State.Extension.refl state heapValid) payloadsValid
         represents_nil traceRefines
-  | head :: rest, images, trace, state, heapValid, closuresValid, calleeRelated, related,
+  | head :: rest, images, trace, state, heapValid, payloadsValid, calleeRelated, related,
       traceRefines => by
       unfold Relation.RepresentsList at related
       obtain ⟨headImage, restImages, imagesEq, headRelated, tailRelated⟩ := related
@@ -1406,14 +1407,14 @@ theorem mapElements_refines {program : Ir.Program} {target : Target.Program} {ru
       | fault fault next => exact refinesList_fault
       | exhausted next =>
           obtain ⟨targetState, targetRun, extension, nextValid, nextTrace⟩ :=
-            refines_exhausted_inv (headRun ▸ invoke_refines bodyAtLower heapValid closuresValid
+            refines_exhausted_inv (headRun ▸ invoke_refines bodyAtLower heapValid payloadsValid
               calleeRelated (represents_singleton headRelated) traceRefines)
           rw [targetRun]
           exact refinesList_exhausted extension nextValid nextTrace
       | value produced next =>
           obtain ⟨image, targetState, targetRun, extension, nextValid, producedRelated,
             nextTrace⟩ :=
-            refines_value_inv (headRun ▸ invoke_refines bodyAtLower heapValid closuresValid
+            refines_value_inv (headRun ▸ invoke_refines bodyAtLower heapValid payloadsValid
               calleeRelated (represents_singleton headRelated) traceRefines)
           rw [targetRun]
           dsimp only
@@ -1447,20 +1448,20 @@ theorem filterElements_refines {program : Ir.Program} {target : Target.Program} 
     {captured : List Source.Value} {parameters : List Ir.Field} {body : Ir.Expr} {callee : Value} :
     ∀ (elements : List Source.Value) (images : List Value) (trace : Source.Trace)
       (state : Target.State),
-      state.heap.WellFormed → state.ClosuresWellFormed →
+      state.heap.WellFormed → state.PayloadsWellFormed →
       Relation.Represents program state (.closure captured parameters body) callee →
       Relation.RepresentsList program state elements images →
       Relation.RefinesTrace program state trace state.trace →
       Relation.RefinesList program state
         (Source.filterElements program fuel trace captured parameters body elements)
         (Target.filterCalls target runtime fuel state callee images)
-  | [], images, trace, state, heapValid, closuresValid, _, related, traceRefines => by
+  | [], images, trace, state, heapValid, payloadsValid, _, related, traceRefines => by
       unfold Relation.RepresentsList at related
       subst related
       simp only [Source.filterElements, Target.filterCalls]
-      exact refinesList_values (Target.State.Extension.refl state heapValid) closuresValid
+      exact refinesList_values (Target.State.Extension.refl state heapValid) payloadsValid
         represents_nil traceRefines
-  | head :: rest, images, trace, state, heapValid, closuresValid, calleeRelated, related,
+  | head :: rest, images, trace, state, heapValid, payloadsValid, calleeRelated, related,
       traceRefines => by
       unfold Relation.RepresentsList at related
       obtain ⟨headImage, restImages, imagesEq, headRelated, tailRelated⟩ := related
@@ -1470,14 +1471,14 @@ theorem filterElements_refines {program : Ir.Program} {target : Target.Program} 
       | fault fault next => exact refinesList_fault
       | exhausted next =>
           obtain ⟨targetState, targetRun, extension, nextValid, nextTrace⟩ :=
-            refines_exhausted_inv (headRun ▸ invoke_refines bodyAtLower heapValid closuresValid
+            refines_exhausted_inv (headRun ▸ invoke_refines bodyAtLower heapValid payloadsValid
               calleeRelated (represents_singleton headRelated) traceRefines)
           rw [targetRun]
           exact refinesList_exhausted extension nextValid nextTrace
       | value produced next =>
           obtain ⟨image, targetState, targetRun, extension, nextValid, producedRelated,
             nextTrace⟩ :=
-            refines_value_inv (headRun ▸ invoke_refines bodyAtLower heapValid closuresValid
+            refines_value_inv (headRun ▸ invoke_refines bodyAtLower heapValid payloadsValid
               calleeRelated (represents_singleton headRelated) traceRefines)
           rw [targetRun]
           cases produced with
@@ -1530,22 +1531,22 @@ theorem anyElements_refines {program : Ir.Program} {target : Target.Program} {ru
     {captured : List Source.Value} {parameters : List Ir.Field} {body : Ir.Expr} {callee : Value} :
     ∀ (elements : List Source.Value) (images : List Value) (trace : Source.Trace)
       (state : Target.State),
-      state.heap.WellFormed → state.ClosuresWellFormed →
+      state.heap.WellFormed → state.PayloadsWellFormed →
       Relation.Represents program state (.closure captured parameters body) callee →
       Relation.RepresentsList program state elements images →
       Relation.RefinesTrace program state trace state.trace →
       Relation.Refines program state
         (Source.anyElements program fuel trace captured parameters body elements)
         (Target.anyCalls target runtime fuel state callee images)
-  | [], images, trace, state, heapValid, closuresValid, _, related, traceRefines => by
+  | [], images, trace, state, heapValid, payloadsValid, _, related, traceRefines => by
       unfold Relation.RepresentsList at related
       subst related
       simp only [Source.anyElements, Target.anyCalls]
-      refine refines_value (Target.State.Extension.refl state heapValid) closuresValid ?_
+      refine refines_value (Target.State.Extension.refl state heapValid) payloadsValid ?_
         traceRefines
       unfold Relation.Represents
       rfl
-  | head :: rest, images, trace, state, heapValid, closuresValid, calleeRelated, related,
+  | head :: rest, images, trace, state, heapValid, payloadsValid, calleeRelated, related,
       traceRefines => by
       unfold Relation.RepresentsList at related
       obtain ⟨headImage, restImages, imagesEq, headRelated, tailRelated⟩ := related
@@ -1555,14 +1556,14 @@ theorem anyElements_refines {program : Ir.Program} {target : Target.Program} {ru
       | fault fault next => exact refines_fault
       | exhausted next =>
           obtain ⟨targetState, targetRun, extension, nextValid, nextTrace⟩ :=
-            refines_exhausted_inv (headRun ▸ invoke_refines bodyAtLower heapValid closuresValid
+            refines_exhausted_inv (headRun ▸ invoke_refines bodyAtLower heapValid payloadsValid
               calleeRelated (represents_singleton headRelated) traceRefines)
           rw [targetRun]
           exact refines_exhausted extension nextValid nextTrace
       | value produced next =>
           obtain ⟨image, targetState, targetRun, extension, nextValid, producedRelated,
             nextTrace⟩ :=
-            refines_value_inv (headRun ▸ invoke_refines bodyAtLower heapValid closuresValid
+            refines_value_inv (headRun ▸ invoke_refines bodyAtLower heapValid payloadsValid
               calleeRelated (represents_singleton headRelated) traceRefines)
           rw [targetRun]
           cases produced with
@@ -1600,22 +1601,22 @@ theorem allElements_refines {program : Ir.Program} {target : Target.Program} {ru
     {captured : List Source.Value} {parameters : List Ir.Field} {body : Ir.Expr} {callee : Value} :
     ∀ (elements : List Source.Value) (images : List Value) (trace : Source.Trace)
       (state : Target.State),
-      state.heap.WellFormed → state.ClosuresWellFormed →
+      state.heap.WellFormed → state.PayloadsWellFormed →
       Relation.Represents program state (.closure captured parameters body) callee →
       Relation.RepresentsList program state elements images →
       Relation.RefinesTrace program state trace state.trace →
       Relation.Refines program state
         (Source.allElements program fuel trace captured parameters body elements)
         (Target.allCalls target runtime fuel state callee images)
-  | [], images, trace, state, heapValid, closuresValid, _, related, traceRefines => by
+  | [], images, trace, state, heapValid, payloadsValid, _, related, traceRefines => by
       unfold Relation.RepresentsList at related
       subst related
       simp only [Source.allElements, Target.allCalls]
-      refine refines_value (Target.State.Extension.refl state heapValid) closuresValid ?_
+      refine refines_value (Target.State.Extension.refl state heapValid) payloadsValid ?_
         traceRefines
       unfold Relation.Represents
       rfl
-  | head :: rest, images, trace, state, heapValid, closuresValid, calleeRelated, related,
+  | head :: rest, images, trace, state, heapValid, payloadsValid, calleeRelated, related,
       traceRefines => by
       unfold Relation.RepresentsList at related
       obtain ⟨headImage, restImages, imagesEq, headRelated, tailRelated⟩ := related
@@ -1625,14 +1626,14 @@ theorem allElements_refines {program : Ir.Program} {target : Target.Program} {ru
       | fault fault next => exact refines_fault
       | exhausted next =>
           obtain ⟨targetState, targetRun, extension, nextValid, nextTrace⟩ :=
-            refines_exhausted_inv (headRun ▸ invoke_refines bodyAtLower heapValid closuresValid
+            refines_exhausted_inv (headRun ▸ invoke_refines bodyAtLower heapValid payloadsValid
               calleeRelated (represents_singleton headRelated) traceRefines)
           rw [targetRun]
           exact refines_exhausted extension nextValid nextTrace
       | value produced next =>
           obtain ⟨image, targetState, targetRun, extension, nextValid, producedRelated,
             nextTrace⟩ :=
-            refines_value_inv (headRun ▸ invoke_refines bodyAtLower heapValid closuresValid
+            refines_value_inv (headRun ▸ invoke_refines bodyAtLower heapValid payloadsValid
               calleeRelated (represents_singleton headRelated) traceRefines)
           rw [targetRun]
           cases produced with
@@ -1670,7 +1671,7 @@ theorem foldLeftElements_refines {program : Ir.Program} {target : Target.Program
     {captured : List Source.Value} {parameters : List Ir.Field} {body : Ir.Expr} {callee : Value} :
     ∀ (elements : List Source.Value) (images : List Value) (accumulator : Source.Value)
       (accumulatorImage : Value) (trace : Source.Trace) (state : Target.State),
-      state.heap.WellFormed → state.ClosuresWellFormed →
+      state.heap.WellFormed → state.PayloadsWellFormed →
       Relation.Represents program state (.closure captured parameters body) callee →
       Relation.Represents program state accumulator accumulatorImage →
       Relation.RepresentsList program state elements images →
@@ -1678,14 +1679,14 @@ theorem foldLeftElements_refines {program : Ir.Program} {target : Target.Program
       Relation.Refines program state
         (Source.foldLeftElements program fuel trace captured parameters body accumulator elements)
         (Target.foldLeftCalls target runtime fuel state callee accumulatorImage images)
-  | [], images, accumulator, accumulatorImage, trace, state, heapValid, closuresValid, _,
+  | [], images, accumulator, accumulatorImage, trace, state, heapValid, payloadsValid, _,
       accumulatorRelated, related, traceRefines => by
       unfold Relation.RepresentsList at related
       subst related
       simp only [Source.foldLeftElements, Target.foldLeftCalls]
-      exact refines_value (Target.State.Extension.refl state heapValid) closuresValid
+      exact refines_value (Target.State.Extension.refl state heapValid) payloadsValid
         accumulatorRelated traceRefines
-  | head :: rest, images, accumulator, accumulatorImage, trace, state, heapValid, closuresValid,
+  | head :: rest, images, accumulator, accumulatorImage, trace, state, heapValid, payloadsValid,
       calleeRelated, accumulatorRelated, related, traceRefines => by
       unfold Relation.RepresentsList at related
       obtain ⟨headImage, restImages, imagesEq, headRelated, tailRelated⟩ := related
@@ -1696,14 +1697,14 @@ theorem foldLeftElements_refines {program : Ir.Program} {target : Target.Program
       | fault fault next => exact refines_fault
       | exhausted next =>
           obtain ⟨targetState, targetRun, extension, nextValid, nextTrace⟩ :=
-            refines_exhausted_inv (headRun ▸ invoke_refines bodyAtLower heapValid closuresValid
+            refines_exhausted_inv (headRun ▸ invoke_refines bodyAtLower heapValid payloadsValid
               calleeRelated (represents_pair accumulatorRelated headRelated) traceRefines)
           rw [targetRun]
           exact refines_exhausted extension nextValid nextTrace
       | value produced next =>
           obtain ⟨image, targetState, targetRun, extension, nextValid, producedRelated,
             nextTrace⟩ :=
-            refines_value_inv (headRun ▸ invoke_refines bodyAtLower heapValid closuresValid
+            refines_value_inv (headRun ▸ invoke_refines bodyAtLower heapValid payloadsValid
               calleeRelated (represents_pair accumulatorRelated headRelated) traceRefines)
           rw [targetRun]
           refine refines_widen extension ?_
@@ -1721,7 +1722,7 @@ theorem foldRightElements_refines {program : Ir.Program} {target : Target.Progra
     {captured : List Source.Value} {parameters : List Ir.Field} {body : Ir.Expr} {callee : Value} :
     ∀ (elements : List Source.Value) (images : List Value) (accumulator : Source.Value)
       (accumulatorImage : Value) (trace : Source.Trace) (state : Target.State),
-      state.heap.WellFormed → state.ClosuresWellFormed →
+      state.heap.WellFormed → state.PayloadsWellFormed →
       Relation.Represents program state (.closure captured parameters body) callee →
       Relation.Represents program state accumulator accumulatorImage →
       Relation.RepresentsList program state elements images →
@@ -1729,21 +1730,21 @@ theorem foldRightElements_refines {program : Ir.Program} {target : Target.Progra
       Relation.Refines program state
         (Source.foldRightElements program fuel trace captured parameters body accumulator elements)
         (Target.foldRightCalls target runtime fuel state callee accumulatorImage images)
-  | [], images, accumulator, accumulatorImage, trace, state, heapValid, closuresValid, _,
+  | [], images, accumulator, accumulatorImage, trace, state, heapValid, payloadsValid, _,
       accumulatorRelated, related, traceRefines => by
       unfold Relation.RepresentsList at related
       subst related
       simp only [Source.foldRightElements, Target.foldRightCalls]
-      exact refines_value (Target.State.Extension.refl state heapValid) closuresValid
+      exact refines_value (Target.State.Extension.refl state heapValid) payloadsValid
         accumulatorRelated traceRefines
-  | head :: rest, images, accumulator, accumulatorImage, trace, state, heapValid, closuresValid,
+  | head :: rest, images, accumulator, accumulatorImage, trace, state, heapValid, payloadsValid,
       calleeRelated, accumulatorRelated, related, traceRefines => by
       unfold Relation.RepresentsList at related
       obtain ⟨headImage, restImages, imagesEq, headRelated, tailRelated⟩ := related
       subst imagesEq
       simp only [Source.foldRightElements, Target.foldRightCalls]
       have step := foldRightElements_refines bodyAtLower rest restImages accumulator
-        accumulatorImage trace state heapValid closuresValid calleeRelated accumulatorRelated
+        accumulatorImage trace state heapValid payloadsValid calleeRelated accumulatorRelated
         tailRelated traceRefines
       cases restRun : Source.foldRightElements program fuel trace captured parameters body
           accumulator rest with
@@ -1774,11 +1775,11 @@ trace cost, and the engine law is consumed from `Ir.Opcode.Preserves` rather tha
 /-- A first-order opcode answers in place: no fuel, no event, no heap change. -/
 private theorem refines_inPlace {program : Ir.Program} {state : Target.State}
     {trace : Source.Trace} {value : Source.Value} {image : Value}
-    (heapValid : state.heap.WellFormed) (closuresValid : state.ClosuresWellFormed)
+    (heapValid : state.heap.WellFormed) (payloadsValid : state.PayloadsWellFormed)
     (related : Relation.Represents program state value image)
     (traceRefines : Relation.RefinesTrace program state trace state.trace) :
     Relation.Refines program state (.value value trace) (.ok image state) :=
-  refines_value (Target.State.Extension.refl state heapValid) closuresValid related traceRefines
+  refines_value (Target.State.Extension.refl state heapValid) payloadsValid related traceRefines
 
 /-- A represented list is a dense array the target reads back exactly. -/
 theorem readArray_of_represents {program : Ir.Program} {state : Target.State} {element : Ir.Ty}
@@ -1794,14 +1795,14 @@ theorem readArray_of_represents {program : Ir.Program} {state : Target.State} {e
 /-- Allocating the emitted array refines producing the source list it represents. -/
 theorem refines_allocateArray {program : Ir.Program} {state : Target.State} {trace : Source.Trace}
     {element : Ir.Ty} {elements : List Source.Value} {images : List Value}
-    (heapValid : state.heap.WellFormed) (closuresValid : state.ClosuresWellFormed)
+    (heapValid : state.heap.WellFormed) (payloadsValid : state.PayloadsWellFormed)
     (related : Relation.RepresentsList program state elements images)
     (traceRefines : Relation.RefinesTrace program state trace state.trace)
     (bound : elements.length ≤ Heap.maxArrayLength) :
     Relation.Refines program state (.value (.array element elements) trace)
       (Target.allocateArray state images) := by
-  obtain ⟨ref, final, allocated, traceEq, _, extension, finalValid, dense⟩ :=
-    Allocation.allocateArray_shape state images heapValid closuresValid
+  obtain ⟨ref, final, allocated, traceEq, _, _, extension, finalValid, dense⟩ :=
+    Allocation.allocateArray_shape state images heapValid payloadsValid
       (representsList_valuesValid elements images related)
       (by rw [← representsList_length elements images related]; exact bound)
   rw [allocated]
@@ -2053,7 +2054,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
     (firstOrder : opcode.callback = false)
     (law : opcode.Preserves runtime)
     (notOperator : ∀ form, opcode.operator? = some form → values.length ≠ form.operands)
-    (heapValid : state.heap.WellFormed) (closuresValid : state.ClosuresWellFormed)
+    (heapValid : state.heap.WellFormed) (payloadsValid : state.PayloadsWellFormed)
     (related : Relation.RepresentsList program state values operands)
     (traceRefines : Relation.RefinesTrace program state trace state.trace)
     (fits : ∀ (element : Ir.Ty) (elements : List Source.Value) (next : Source.Trace),
@@ -2115,7 +2116,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law operand).symm
   case natAdd =>
@@ -2138,7 +2139,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case natSubtract =>
@@ -2161,7 +2162,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case natMultiply =>
@@ -2184,7 +2185,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case natLess =>
@@ -2207,7 +2208,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case natLessOrEqual =>
@@ -2230,7 +2231,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case natEquals =>
@@ -2253,7 +2254,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case stringAppend =>
@@ -2276,7 +2277,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case stringEquals =>
@@ -2299,7 +2300,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case listLength =>
@@ -2319,7 +2320,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation, read]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         have denoted := law (α := Value) id images
         simp only [List.map_id] at denoted
@@ -2342,7 +2343,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation, read]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         have denoted := law (α := Value) id images
         simp only [List.map_id] at denoted
@@ -2371,7 +2372,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
             rw [applyOperation_of_strict_ok firstOrder strict]
             simp only [Ir.Opcode.Preserves] at law
             simp only [Target.runOperation, read]
-            refine refines_inPlace heapValid closuresValid ?_ traceRefines
+            refine refines_inPlace heapValid payloadsValid ?_ traceRefines
             have denoted := law (α := Value) id headImage restImages
             simp only [List.map_cons, List.map_id, id_eq] at denoted
             rw [← denoted]
@@ -2404,7 +2405,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
             have denoted := law (α := Value) id headImage restImages
             simp only [List.map_cons, List.map_id, id_eq] at denoted
             rw [← denoted]
-            exact refines_allocateArray heapValid closuresValid tailRelated traceRefines
+            exact refines_allocateArray heapValid payloadsValid tailRelated traceRefines
               (fits element rest trace sourceRun)
   case listReverse =>
     cases strict : Source.applyStrict Ir.Opcode.listReverse values with
@@ -2428,7 +2429,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         have denoted := law (α := Value) id images
         simp only [List.map_id] at denoted
         rw [← denoted]
-        exact refines_allocateArray heapValid closuresValid
+        exact refines_allocateArray heapValid payloadsValid
           (represents_reverse elements images listRelated) traceRefines
           (fits element elements.reverse trace sourceRun)
   case listAppend =>
@@ -2455,7 +2456,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         have denoted := law (α := Value) id firstImages secondImages
         simp only [List.map_id] at denoted
         rw [← denoted]
-        exact refines_allocateArray heapValid closuresValid
+        exact refines_allocateArray heapValid payloadsValid
           (represents_append first firstImages second secondImages firstList secondList)
           traceRefines (fits firstElement (first ++ second) trace sourceRun)
   case intAdd =>
@@ -2478,7 +2479,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case intSubtract =>
@@ -2501,7 +2502,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case intMultiply =>
@@ -2524,7 +2525,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case intTruncatedDivide =>
@@ -2547,7 +2548,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case intTruncatedModulo =>
@@ -2570,7 +2571,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case intLess =>
@@ -2593,7 +2594,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case intLessOrEqual =>
@@ -2616,7 +2617,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case intEquals =>
@@ -2639,7 +2640,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case intNegate =>
@@ -2660,7 +2661,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law operand).symm
   case intToNat =>
@@ -2681,7 +2682,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law operand).symm
   case intOfNat =>
@@ -2702,7 +2703,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law operand).symm
   case charOfNat =>
@@ -2723,7 +2724,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law operand).symm
   case charToNat =>
@@ -2744,7 +2745,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law character).symm
   case stringSingleton =>
@@ -2765,7 +2766,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law character).symm
   case charEquals =>
@@ -2788,7 +2789,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case charLess =>
@@ -2811,7 +2812,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law left right).symm
   case stringLength =>
@@ -2832,7 +2833,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law operand).symm
   case stringIsEmpty =>
@@ -2853,7 +2854,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law operand).symm
   case stringPush =>
@@ -2876,7 +2877,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law operand character).symm
   case stringToList =>
@@ -2902,7 +2903,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         have denoted := law operand
         simp only [Encode.string, Encode.jsString] at denoted
         rw [← denoted]
-        exact refines_allocateArray heapValid closuresValid (represents_charList operand.toList)
+        exact refines_allocateArray heapValid payloadsValid (represents_charList operand.toList)
           traceRefines (fits .char (operand.toList.map Source.Value.char) trace sourceRun)
   case stringOfList =>
     cases strict : Source.applyStrict Ir.Opcode.stringOfList values with
@@ -2921,7 +2922,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation, read]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         exact (law characters).symm
   case arraySize =>
@@ -2941,7 +2942,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation, read]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         have denoted := law (α := Value) id images
         simp only [List.map_id] at denoted
@@ -2964,7 +2965,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         rw [applyOperation_of_strict_ok firstOrder strict]
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation, read]
-        refine refines_inPlace heapValid closuresValid ?_ traceRefines
+        refine refines_inPlace heapValid payloadsValid ?_ traceRefines
         unfold Relation.Represents
         have denoted := law (α := Value) id images
         simp only [List.map_id] at denoted
@@ -2992,7 +2993,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         have denoted := law (α := Value) id images
         simp only [List.map_id] at denoted
         rw [← denoted]
-        exact refines_allocateArray heapValid closuresValid
+        exact refines_allocateArray heapValid payloadsValid
           (represents_reverse elements images listRelated) traceRefines
           (fits element elements.reverse trace sourceRun)
   case arrayPush =>
@@ -3018,7 +3019,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         have denoted := law (α := Value) id images pushedImage
         simp only [List.map_id, List.map_append, List.map_cons, List.map_nil, id_eq] at denoted
         rw [← denoted]
-        exact refines_allocateArray heapValid closuresValid
+        exact refines_allocateArray heapValid payloadsValid
           (represents_append elements images [pushed] [pushedImage] listRelated
             (represents_singleton pushedRelated))
           traceRefines (fits element (elements ++ [pushed]) trace sourceRun)
@@ -3046,7 +3047,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         have denoted := law (α := Value) id firstImages secondImages
         simp only [List.map_id] at denoted
         rw [← denoted]
-        exact refines_allocateArray heapValid closuresValid
+        exact refines_allocateArray heapValid payloadsValid
           (represents_append first firstImages second secondImages firstList secondList)
           traceRefines (fits firstElement (first ++ second) trace sourceRun)
   case arrayToList =>
@@ -3066,7 +3067,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
         rw [← law subject]
-        exact refines_inPlace heapValid closuresValid subjectRelated traceRefines
+        exact refines_inPlace heapValid payloadsValid subjectRelated traceRefines
   case arrayOfList =>
     cases strict : Source.applyStrict Ir.Opcode.arrayOfList values with
     | error fault =>
@@ -3084,7 +3085,7 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
         simp only [Ir.Opcode.Preserves] at law
         simp only [Target.runOperation]
         rw [← law subject]
-        exact refines_inPlace heapValid closuresValid subjectRelated traceRefines
+        exact refines_inPlace heapValid payloadsValid subjectRelated traceRefines
   case listHead =>
     cases strict : Source.applyStrict Ir.Opcode.listHead values with
     | error fault =>
@@ -3112,10 +3113,10 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
               simpa [Encode.option] using (law (α := Value) id ([] : List Value)).symm
             rw [applyOperation_of_strict_ok firstOrder strict]
             simp only [Target.runOperation, read, denoted, Target.optionValue]
-            obtain ⟨ref, final, allocated, traceEq, _, extension, finalValid, _, shape⟩ :=
+            obtain ⟨ref, final, allocated, traceEq, _, _, extension, finalValid, _, shape⟩ :=
               Allocation.allocateLiteral_shape state
                 [("kind", Value.primitive (.string (JSString.ofLeanString "none")))]
-                heapValid closuresValid
+                heapValid payloadsValid
                 (by
                   intro entry member
                   simp only [List.mem_singleton] at member
@@ -3150,11 +3151,11 @@ theorem runOperation_firstOrder_refines {program : Ir.Program} {target : Target.
               simpa [Encode.option] using (law (α := Value) id (headImage :: restImages)).symm
             rw [applyOperation_of_strict_ok firstOrder strict]
             simp only [Target.runOperation, read, denoted, Target.optionValue]
-            obtain ⟨ref, final, allocated, traceEq, _, extension, finalValid, _, shape⟩ :=
+            obtain ⟨ref, final, allocated, traceEq, _, _, extension, finalValid, _, shape⟩ :=
               Allocation.allocateLiteral_shape state
                 [("kind", Value.primitive (.string (JSString.ofLeanString "some"))),
                   ("value", headImage)]
-                heapValid closuresValid
+                heapValid payloadsValid
                 (by
                   intro entry member
                   rcases List.mem_cons.mp member with rfl | tail
@@ -3352,7 +3353,7 @@ theorem runOperation_callback_refines {program : Ir.Program} {target : Target.Pr
     (bodyAtLower : ∀ smaller, smaller + 1 = fuel → ∀ (inner : Ir.Expr) (emitted : Target.Body),
       Compile.body program inner = .ok emitted →
       EverywhereBody program target runtime smaller inner emitted)
-    (heapValid : state.heap.WellFormed) (closuresValid : state.ClosuresWellFormed)
+    (heapValid : state.heap.WellFormed) (payloadsValid : state.PayloadsWellFormed)
     (related : Relation.RepresentsList program state values operands)
     (traceRefines : Relation.RefinesTrace program state trace state.trace)
     (fits : ∀ (element : Ir.Ty) (elements : List Source.Value) (next : Source.Trace),
@@ -3374,7 +3375,7 @@ theorem runOperation_callback_refines {program : Ir.Program} {target : Target.Pr
     subst operandsEq
     obtain ⟨images, read, listRelated⟩ := readArray_of_represents subjectRelated
     have loop := mapElements_refines bodyAtLower elements images trace state heapValid
-      closuresValid callbackRelated listRelated traceRefines
+      payloadsValid callbackRelated listRelated traceRefines
     cases sourceRun : Source.mapElements program fuel trace captured parameters body elements with
     | fault fault last =>
         rw [show Source.applyOperation program fuel trace Ir.Opcode.listMap typeArguments
@@ -3413,7 +3414,7 @@ theorem runOperation_callback_refines {program : Ir.Program} {target : Target.Pr
     subst operandsEq
     obtain ⟨images, read, listRelated⟩ := readArray_of_represents subjectRelated
     have loop := filterElements_refines bodyAtLower elements images trace state heapValid
-      closuresValid callbackRelated listRelated traceRefines
+      payloadsValid callbackRelated listRelated traceRefines
     cases sourceRun :
         Source.filterElements program fuel trace captured parameters body elements with
     | fault fault last =>
@@ -3457,7 +3458,7 @@ theorem runOperation_callback_refines {program : Ir.Program} {target : Target.Pr
           = Source.anyElements program fuel trace captured parameters body elements from
       by simp only [Source.applyOperation]]
     simp only [Target.runOperation, read]
-    exact anyElements_refines bodyAtLower elements images trace state heapValid closuresValid
+    exact anyElements_refines bodyAtLower elements images trace state heapValid payloadsValid
       callbackRelated listRelated traceRefines
   case listAll =>
     rcases listAll_operands (program := program) (target := target) (runtime := runtime)
@@ -3475,7 +3476,7 @@ theorem runOperation_callback_refines {program : Ir.Program} {target : Target.Pr
           = Source.allElements program fuel trace captured parameters body elements from
       by simp only [Source.applyOperation]]
     simp only [Target.runOperation, read]
-    exact allElements_refines bodyAtLower elements images trace state heapValid closuresValid
+    exact allElements_refines bodyAtLower elements images trace state heapValid payloadsValid
       callbackRelated listRelated traceRefines
   case listFoldLeft =>
     rcases listFoldLeft_operands (program := program) (target := target) (runtime := runtime)
@@ -3494,7 +3495,7 @@ theorem runOperation_callback_refines {program : Ir.Program} {target : Target.Pr
         from by simp only [Source.applyOperation]]
     simp only [Target.runOperation, read]
     exact foldLeftElements_refines bodyAtLower elements images initial initialImage trace state
-      heapValid closuresValid callbackRelated initialRelated listRelated traceRefines
+      heapValid payloadsValid callbackRelated initialRelated listRelated traceRefines
   case listFoldRight =>
     rcases listFoldRight_operands (program := program) (target := target) (runtime := runtime)
         (fuel := fuel) (typeArguments := typeArguments) (values := values) (operands := operands)
@@ -3512,7 +3513,7 @@ theorem runOperation_callback_refines {program : Ir.Program} {target : Target.Pr
         from by simp only [Source.applyOperation]]
     simp only [Target.runOperation, read]
     exact foldRightElements_refines bodyAtLower elements images initial initialImage trace state
-      heapValid closuresValid callbackRelated initialRelated listRelated traceRefines
+      heapValid payloadsValid callbackRelated initialRelated listRelated traceRefines
   all_goals exact absurd callback (by simp [Ir.Opcode.callback])
 
 /-- Argument evaluation keeps the argument count. -/
@@ -3680,12 +3681,12 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
     cases leftRun : Source.eval program fuel sourceScope trace left with
     | fault fault next => exact refines_fault
     | exhausted next =>
-        obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+        obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
           refines_exhausted_inv (leftRun ▸ leftStep sourceScope targetScope trace state aligned)
         rw [targetRun]
-        exact refines_exhausted extension closuresValid traceRefines
+        exact refines_exhausted extension payloadsValid traceRefines
     | value produced next =>
-        obtain ⟨image, targetState, targetRun, extension, closuresValid, related, traceRefines⟩ :=
+        obtain ⟨image, targetState, targetRun, extension, payloadsValid, related, traceRefines⟩ :=
           refines_value_inv (leftRun ▸ leftStep sourceScope targetScope trace state aligned)
         rw [targetRun]
         cases produced with
@@ -3695,12 +3696,12 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
             cases flag with
             | false =>
                 simp only [Value.toBoolean, Primitive.toBoolean, Bool.false_eq_true, if_false]
-                refine refines_value extension closuresValid ?_ traceRefines
+                refine refines_value extension payloadsValid ?_ traceRefines
                 unfold Relation.Represents
                 rfl
             | true =>
                 simp only [Value.toBoolean, Primitive.toBoolean, if_true]
-                have nextAligned := aligned.step extension closuresValid traceRefines
+                have nextAligned := aligned.step extension payloadsValid traceRefines
                 cases rightRun : Source.eval program fuel sourceScope next right with
                 | fault fault last => exact refines_fault
                 | exhausted last =>
@@ -3731,12 +3732,12 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
     cases leftRun : Source.eval program fuel sourceScope trace left with
     | fault fault next => exact refines_fault
     | exhausted next =>
-        obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+        obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
           refines_exhausted_inv (leftRun ▸ leftStep sourceScope targetScope trace state aligned)
         rw [targetRun]
-        exact refines_exhausted extension closuresValid traceRefines
+        exact refines_exhausted extension payloadsValid traceRefines
     | value produced next =>
-        obtain ⟨image, targetState, targetRun, extension, closuresValid, related, traceRefines⟩ :=
+        obtain ⟨image, targetState, targetRun, extension, payloadsValid, related, traceRefines⟩ :=
           refines_value_inv (leftRun ▸ leftStep sourceScope targetScope trace state aligned)
         rw [targetRun]
         cases produced with
@@ -3746,12 +3747,12 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
             cases flag with
             | true =>
                 simp only [Value.toBoolean, Primitive.toBoolean, if_true]
-                refine refines_value extension closuresValid ?_ traceRefines
+                refine refines_value extension payloadsValid ?_ traceRefines
                 unfold Relation.Represents
                 rfl
             | false =>
                 simp only [Value.toBoolean, Primitive.toBoolean, Bool.false_eq_true, if_false]
-                have nextAligned := aligned.step extension closuresValid traceRefines
+                have nextAligned := aligned.step extension payloadsValid traceRefines
                 cases rightRun : Source.eval program fuel sourceScope next right with
                 | fault fault last => exact refines_fault
                 | exhausted last =>
@@ -3786,13 +3787,13 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
     cases operandRun : Source.eval program fuel sourceScope trace operand with
     | fault fault next => exact refines_fault
     | exhausted next =>
-        obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+        obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
           refines_exhausted_inv
             (operandRun ▸ operandStep sourceScope targetScope trace state aligned)
         rw [targetRun]
-        exact refines_exhausted extension closuresValid traceRefines
+        exact refines_exhausted extension payloadsValid traceRefines
     | value produced next =>
-        obtain ⟨image, targetState, targetRun, extension, closuresValid, related, traceRefines⟩ :=
+        obtain ⟨image, targetState, targetRun, extension, payloadsValid, related, traceRefines⟩ :=
           refines_value_inv (operandRun ▸ operandStep sourceScope targetScope trace state aligned)
         rw [targetRun]
         dsimp only
@@ -3803,7 +3804,7 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
           subst producedEq
           unfold Relation.Represents at related
           subst related
-          refine refines_value extension closuresValid ?_ traceRefines
+          refine refines_value extension payloadsValid ?_ traceRefines
           unfold Relation.Represents
           rfl
         · rw [sourceOutcome]
@@ -3820,17 +3821,17 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
       cases leftRun : Source.eval program fuel sourceScope trace left with
       | fault fault next => exact refines_fault
       | exhausted next =>
-          obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+          obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
             refines_exhausted_inv (leftRun ▸ leftStep sourceScope targetScope trace state aligned)
           rw [targetRun]
-          exact refines_exhausted extension closuresValid traceRefines
+          exact refines_exhausted extension payloadsValid traceRefines
       | value first next =>
-          obtain ⟨firstImage, targetState, targetRun, extension, closuresValid, firstRelated,
+          obtain ⟨firstImage, targetState, targetRun, extension, payloadsValid, firstRelated,
             traceRefines⟩ :=
             refines_value_inv (leftRun ▸ leftStep sourceScope targetScope trace state aligned)
           rw [targetRun]
           dsimp only
-          have nextAligned := aligned.step extension closuresValid traceRefines
+          have nextAligned := aligned.step extension payloadsValid traceRefines
           cases rightRun : Source.eval program fuel sourceScope next right with
           | fault fault last => exact refines_fault
           | exhausted last =>
@@ -3869,12 +3870,12 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
       cases leftRun : Source.eval program fuel sourceScope trace left with
       | fault fault next => exact refines_fault
       | exhausted next =>
-          obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+          obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
             refines_exhausted_inv (leftRun ▸ leftStep sourceScope targetScope trace state aligned)
           rw [targetRun]
-          exact refines_exhausted extension closuresValid traceRefines
+          exact refines_exhausted extension payloadsValid traceRefines
       | value first next =>
-          obtain ⟨firstImage, targetState, targetRun, extension, closuresValid, firstRelated,
+          obtain ⟨firstImage, targetState, targetRun, extension, payloadsValid, firstRelated,
             traceRefines⟩ :=
             refines_value_inv (leftRun ▸ leftStep sourceScope targetScope trace state aligned)
           rw [targetRun]
@@ -3888,7 +3889,7 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
             subst secondFlagEq
             unfold Relation.Represents at firstRelated
             subst firstRelated
-            refine refines_value extension closuresValid ?_ traceRefines
+            refine refines_value extension payloadsValid ?_ traceRefines
             unfold Relation.Represents
             cases firstFlag <;> rfl
           · rw [sourceOutcome]
@@ -3903,13 +3904,13 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
       cases rightRun : Source.eval program fuel sourceScope trace right with
       | fault fault next => exact refines_fault
       | exhausted next =>
-          obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+          obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
             refines_exhausted_inv
               (rightRun ▸ rightStep sourceScope targetScope trace state aligned)
           rw [targetRun]
-          exact refines_exhausted extension closuresValid traceRefines
+          exact refines_exhausted extension payloadsValid traceRefines
       | value second next =>
-          obtain ⟨secondImage, targetState, targetRun, extension, closuresValid, secondRelated,
+          obtain ⟨secondImage, targetState, targetRun, extension, payloadsValid, secondRelated,
             traceRefines⟩ :=
             refines_value_inv (rightRun ▸ rightStep sourceScope targetScope trace state aligned)
           rw [targetRun]
@@ -3923,7 +3924,7 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
             subst firstFlagEq
             unfold Relation.Represents at secondRelated
             subst secondRelated
-            refine refines_value extension closuresValid ?_ traceRefines
+            refine refines_value extension payloadsValid ?_ traceRefines
             unfold Relation.Represents
             cases secondFlag <;> rfl
           · rw [sourceOutcome]
@@ -3939,13 +3940,13 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
     cases sourceRun : Source.evalList program fuel sourceScope trace arguments with
     | fault fault next => exact refines_fault
     | exhausted next =>
-        obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+        obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
           refinesList_exhausted_inv
             (sourceRun ▸ argumentsStep sourceScope targetScope trace state aligned)
         rw [targetRun]
-        exact refines_exhausted extension closuresValid traceRefines
+        exact refines_exhausted extension payloadsValid traceRefines
     | values produced next =>
-        obtain ⟨targets, targetState, targetRun, extension, closuresValid, listRelated,
+        obtain ⟨targets, targetState, targetRun, extension, payloadsValid, listRelated,
           traceRefines⟩ :=
           refinesList_inv (sourceRun ▸ argumentsStep sourceScope targetScope trace state aligned)
         rw [targetRun]
@@ -3967,9 +3968,9 @@ theorem operation {runtime : Runtime} : Op.Preserves runtime .operation := by
         refine refines_widen extension ?_
         by_cases callback : opcode.callback = true
         · exact runOperation_callback_refines callback bodyAtLower extension.nextWellFormed
-            closuresValid listRelated traceRefines fits
+            payloadsValid listRelated traceRefines fits
         · refine runOperation_firstOrder_refines (by simpa using callback) law ?_
-            extension.nextWellFormed closuresValid listRelated traceRefines fits
+            extension.nextWellFormed payloadsValid listRelated traceRefines fits
           intro form spelled
           rw [counted]
           exact notOperator form spelled
@@ -4138,7 +4139,7 @@ theorem variant {runtime : Runtime} : Op.Preserves runtime .variant := by
       rw [eval_variant_tagged notList]
       simp only [Source.evalList, Target.eval]
       refine refines_value (Target.State.Extension.refl state aligned.heapValid)
-        aligned.closuresValid ?_ aligned.trace
+        aligned.payloadsValid ?_ aligned.trace
       unfold Relation.Represents
       refine ⟨constructors, declared, constructor, selected, ?_⟩
       rw [if_pos nullary]
@@ -4149,14 +4150,14 @@ theorem variant {runtime : Runtime} : Op.Preserves runtime .variant := by
       cases sourceRun : Source.evalList program fuel sourceScope trace arguments with
       | fault fault next => exact refines_fault
       | exhausted next =>
-          obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+          obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
             refinesList_exhausted_inv
               (sourceRun ▸ argumentsStep sourceScope targetScope trace state aligned)
           rw [evalProperties_zip_exhausted (constructor.fields.map Ir.Field.name) emittedArguments
             state targetState (by simp [arity, emittedArity]) targetRun]
-          exact refines_exhausted extension closuresValid traceRefines
+          exact refines_exhausted extension payloadsValid traceRefines
       | values produced next =>
-          obtain ⟨targets, targetState, targetRun, extension, closuresValid, listRelated,
+          obtain ⟨targets, targetState, targetRun, extension, payloadsValid, listRelated,
             traceRefines⟩ :=
             refinesList_inv (sourceRun ▸ argumentsStep sourceScope targetScope trace state aligned)
           rw [evalProperties_zip_ok (constructor.fields.map Ir.Field.name) emittedArguments state
@@ -4169,11 +4170,11 @@ theorem variant {runtime : Runtime} : Op.Preserves runtime .variant := by
             rw [arity, ← evalList_length arguments trace produced next sourceRun,
               representsList_length produced targets listRelated]
             exact Nat.le_refl _
-          obtain ⟨ref, final, allocated, traceEq, _, finalExtension, finalValid, _, shape⟩ :=
+          obtain ⟨ref, final, allocated, traceEq, _, _, finalExtension, finalValid, _, shape⟩ :=
             Allocation.allocateLiteral_shape targetState
               (("kind", Value.primitive (.string (JSString.ofLeanString name)))
                 :: (constructor.fields.map Ir.Field.name).zip targets)
-              extension.nextWellFormed closuresValid
+              extension.nextWellFormed payloadsValid
               (by
                 intro entry member
                 rcases List.mem_cons.mp member with rfl | tail
@@ -4212,8 +4213,8 @@ theorem variant {runtime : Runtime} : Op.Preserves runtime .variant := by
   · intro element sourceScope targetScope trace state aligned
     rw [eval_variant_nil]
     simp only [Target.eval]
-    obtain ⟨ref, final, allocated, traceEq, _, extension, finalValid, dense⟩ :=
-      Allocation.allocateArray_shape state [] aligned.heapValid aligned.closuresValid
+    obtain ⟨ref, final, allocated, traceEq, _, _, extension, finalValid, dense⟩ :=
+      Allocation.allocateArray_shape state [] aligned.heapValid aligned.payloadsValid
         (by intro value member; exact absurd member (by simp)) (by simp)
     rw [allocated]
     refine refines_value extension finalValid ?_ ?_
@@ -4229,17 +4230,17 @@ theorem variant {runtime : Runtime} : Op.Preserves runtime .variant := by
     cases headRun : Source.eval program fuel sourceScope trace head with
     | fault fault next => exact refines_fault
     | exhausted next =>
-        obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+        obtain ⟨targetState, targetRun, extension, payloadsValid, traceRefines⟩ :=
           refines_exhausted_inv (headRun ▸ headStep sourceScope targetScope trace state aligned)
         rw [targetRun]
-        exact refines_exhausted extension closuresValid traceRefines
+        exact refines_exhausted extension payloadsValid traceRefines
     | value headValue next =>
-        obtain ⟨headImage, targetState, targetRun, extension, closuresValid, headRelated,
+        obtain ⟨headImage, targetState, targetRun, extension, payloadsValid, headRelated,
           traceRefines⟩ :=
           refines_value_inv (headRun ▸ headStep sourceScope targetScope trace state aligned)
         rw [targetRun]
         dsimp only
-        have nextAligned := aligned.step extension closuresValid traceRefines
+        have nextAligned := aligned.step extension payloadsValid traceRefines
         cases tailRun : Source.eval program fuel sourceScope next tail with
         | fault fault last => exact refines_fault
         | exhausted last =>
