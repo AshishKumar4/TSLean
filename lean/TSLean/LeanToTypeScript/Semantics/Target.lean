@@ -39,6 +39,20 @@ open TSLean.JS
 
 namespace Target
 
+/--
+How the emitted `if` chain of a statement-form match decides one alternative. The shape is fixed by
+the scrutinee's representation rather than chosen: an enum with no payload anywhere is its own tag
+string, so the test compares the value itself, and every other structural union is a tagged object,
+so the test compares its `kind` property. `alternativeTest` in `emitter.ts` decides exactly these two
+forms.
+-/
+inductive Discriminator where
+  /-- `subject === "constructor"`. -/
+  | tag
+  /-- `subject.kind === "constructor"`. -/
+  | tagged
+  deriving DecidableEq, Repr
+
 mutual
 
 /-- An emitted TypeScript expression. Every constructor is a shape `emitter.ts` builds. -/
@@ -85,10 +99,27 @@ inductive Expr where
   | callValue (callee : Expr) (arguments : List Expr)
   deriving Repr
 
-/-- An emitted function body: a run of `const` statements ending in one `return`. -/
+/--
+An emitted function body: a run of `const` statements, a statement-form `if`, a statement-form
+match, or one `return`. Every branch returns, so a body is a tree of statements whose every leaf is
+a `return` — which is exactly what `emitReturn` in `emitter.ts` builds for a function or
+host-boundary declaration.
+-/
 inductive Body where
+  /-- `const name = value;`, then the statements that follow it. -/
   | constBind (name : String) (value : Expr) (rest : Body)
+  /-- `return value;`. -/
   | ret (value : Expr)
+  /-- `if (condition) { … }`, then the statements that follow it. The consequent returns, so the
+  alternate is the narrowed remainder rather than an `else` block. -/
+  | ifThen (condition : Expr) (consequent alternate : Body)
+  /-- A statement-form match. The subject is evaluated exactly once — `emitter.ts` names it with a
+  `const` unless it is already an identifier, and that name is not a positional binding, so no index
+  in an arm shifts — and one `if` per arm decides an alternative in declaration order, with the last
+  arm unconditional. Each arm carries the constructor it decides and the payload fields it names as
+  `const`s, in declaration order. -/
+  | branch (subject : Expr) (discriminator : Discriminator)
+      (arms : List (String × List String × Body))
   deriving Repr
 
 end
@@ -162,6 +193,9 @@ inductive Fault where
   | notAnArrow
   /-- The heap properties an arrow call read differ from the closure payload that allocated them. -/
   | capturedScopeMismatch (ref : RefId)
+  /-- A statement-form match with no arms, which `emitter.ts` refuses to emit and the lowering
+  refuses to produce: a match that decides no constructor has no `if` chain at all. -/
+  | noAlternative
   /-- An operand an opcode requires to be a dense array, and which is not. -/
   | notAnArray
   /-- An opcode applied to the wrong number of emitted operands. -/
@@ -273,6 +307,53 @@ def readCaptured (state : State) (ref : RefId) (start : Nat) : Nat → ListResul
       match readMember state (Ir.capturedKey start) (.object ref) with
       | .ok value next =>
           match readCaptured next ref (start + 1) remaining with
+          | .ok values last => .ok (value :: values) last
+          | .thrown error last => .thrown error last
+          | .fault fault last => .fault fault last
+          | .exhausted last => .exhausted last
+      | .thrown error next => .thrown error next
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+
+/--
+The value the emitted test compares a constructor name with. A bare tag compares the subject itself;
+a tagged object compares its `kind` property, which is an own data-property read and so changes no
+state.
+-/
+def discriminate (state : State) (discriminator : Discriminator) (subject : Value) : Result :=
+  match discriminator with
+  | .tag => .ok subject state
+  | .tagged => readMember state "kind" subject
+
+/--
+The test one arm's `if` runs. Every arm but the last compares the subject's tag with the constructor
+it decides. The last arm carries no test at all: every earlier alternative returned, so `emitter.ts`
+emits the last one's statements as the narrowed remainder rather than as a branch of its own.
+-/
+def decideArm (state : State) (discriminator : Discriminator) (subject : Value)
+    (constructor : String) (final : Bool) : Result :=
+  if final then .ok (.primitive (.boolean true)) state
+  else
+    match discriminate state discriminator subject with
+    | .ok tag next =>
+        .ok (.primitive (.boolean (strictEqual tag
+          (.primitive (.string (JSString.ofLeanString constructor)))))) next
+    | .thrown error next => .thrown error next
+    | .fault fault next => .fault fault next
+    | .exhausted next => .exhausted next
+
+/--
+Reads one alternative's payload off the value that decided it: one own-property read per declared
+field, in declaration order. Every read is an own data-property read, so the sequence changes no
+state, and the arm binds the values innermost last — which is why the arm's scope is the reversed
+sequence, exactly as the source arm's scope is the reversed argument list.
+-/
+def readPayload (state : State) (subject : Value) : List String → ListResult
+  | [] => .ok [] state
+  | field :: rest =>
+      match readMember state field subject with
+      | .ok value next =>
+          match readPayload next subject rest with
           | .ok values last => .ok (value :: values) last
           | .thrown error last => .thrown error last
           | .fault fault last => .fault fault last
@@ -737,14 +818,47 @@ def invoke (program : Program) (runtime : Runtime) (fuel : Nat) (state : State) 
           | .exhausted next => .exhausted next
 termination_by (fuel, 0, 0)
 
-/-- Runs one emitted function body: the `const` run, then the `return`. -/
+/-- Runs one emitted function body: the `const` run and the statement-form branches, then the
+`return`. -/
 def evalBody (program : Program) (runtime : Runtime) (fuel : Nat) (scope : List Value) (state : State) : Body → Result
   | .ret value => eval program runtime fuel scope state value
   | .constBind _ value rest =>
       match eval program runtime fuel scope state value with
       | .ok bound next => evalBody program runtime fuel (bound :: scope) next rest
       | other => other
+  | .ifThen condition consequent alternate =>
+      match eval program runtime fuel scope state condition with
+      | .ok decision next =>
+          if decision.toBoolean then evalBody program runtime fuel scope next consequent
+          else evalBody program runtime fuel scope next alternate
+      | other => other
+  | .branch subject discriminator arms =>
+      match eval program runtime fuel scope state subject with
+      | .ok value next => evalArms program runtime fuel scope next value discriminator arms
+      | other => other
 termination_by body => (fuel, 3, sizeOf body)
+
+/-- Runs the `if` chain of a statement-form match: one test per arm in declaration order, the last
+arm unconditional, and the arm that decides names its payload fields as `const`s before running its
+own statements. -/
+def evalArms (program : Program) (runtime : Runtime) (fuel : Nat) (scope : List Value)
+    (state : State) (subject : Value) (discriminator : Discriminator) :
+    List (String × List String × Body) → Result
+  | [] => .fault .noAlternative state
+  | (constructor, fields, body) :: rest =>
+      match decideArm state discriminator subject constructor rest.isEmpty with
+      | .ok decision next =>
+          if decision.toBoolean then
+            match readPayload next subject fields with
+            | .ok values last => evalBody program runtime fuel (values.reverse ++ scope) last body
+            | .thrown error last => .thrown error last
+            | .fault fault last => .fault fault last
+            | .exhausted last => .exhausted last
+          else evalArms program runtime fuel scope next subject discriminator rest
+      | .thrown error next => .thrown error next
+      | .fault fault next => .fault fault next
+      | .exhausted next => .exhausted next
+termination_by arms => (fuel, 3, sizeOf arms)
 
 /-- Runs a list of emitted expressions left to right. -/
 def evalList (program : Program) (runtime : Runtime) (fuel : Nat) (scope : List Value) (state : State) :

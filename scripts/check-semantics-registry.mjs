@@ -969,6 +969,9 @@ function selfTest() {
   expectLeanFailure('semantics-eager-boolean-and.lean', 'unsolved goals');
   expectLeanFailure('semantics-array-hole-reads-undefined.lean', 'unsolved goals');
   expectLeanFailure('semantics-map-reverses-event-order.lean', 'unsolved goals');
+  // The statement-form dispatch: the arm at each position decides the constructor the declaration
+  // carries there, which is the correspondence the emitted `if` chain reads positionally.
+  expectLeanFailure('semantics-drifted-arm-order.lean', 'unsolved goals');
 
   const withoutAssumption = cloneJson(registry);
   // The dropped assumption has to be one no other opcode requires, or the plane still has a requirer
@@ -1491,7 +1494,7 @@ function selfTest() {
       '2 opcode-reader fixtures, 4 inline-form fixtures, 3 helper-body fixtures, ' +
       '3 host-opcode fixtures, 3 certificate-coverage fixtures, 7 dispatch-reader fixtures, ' +
       '4 frozen-source fixtures, 1 lock fixture, 1 probe fixture, ' +
-      '10 Lean fixtures, 2 token scans\n',
+      '11 Lean fixtures, 2 token scans\n',
   );
 }
 

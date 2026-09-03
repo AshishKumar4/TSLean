@@ -27,7 +27,7 @@ structure LoweredProgram (program : Ir.Program) (target : Target.Program) : Prop
     (recursion : Ir.Recursion) (body : Ir.Expr),
     program.function? name = some (parameters, result, recursion, body) →
     ∃ emitted, target.find? name = some emitted ∧ emitted.parameters = parameters.length ∧
-      Compile.body program body = .ok emitted.body
+      Compile.returnBody program body = .ok emitted.body
 
 /--
 The one premise a host boundary adds to the trusted computing base.
@@ -49,7 +49,7 @@ def HostSubstrate (program : Ir.Program) (target : Target.Program) : Prop :=
   ∀ (name : String) (parameters : List Ir.Field) (result : Ir.Ty) (reference : Ir.Expr),
     (∃ host, program.find? name = some (.foreign name host parameters result reference)) →
     ∃ emitted, target.find? name = some emitted ∧ emitted.parameters = parameters.length ∧
-      Compile.body program reference = .ok emitted.body
+      Compile.returnBody program reference = .ok emitted.body
 
 /--
 Every admitted opcode's recorded assumption closure holds of the engine.
@@ -342,6 +342,35 @@ theorem body_inversion {program : Ir.Program} {expression : Ir.Expr} {emitted : 
     simp only [pure, Except.pure] at shape
     injection shape with emittedEq
     exact Or.inr ⟨emittedExpression, emittedEq.symm, expressionCompiled⟩)
+
+/--
+The payload check accepts exactly the alternatives whose payload the emitted object presents back:
+every field name is an own key in declaration order, no two of them are the same, and none of them is
+the `kind` the tag occupies. Those are the three conditions `readPayload_of_represents` reads the
+payload under.
+-/
+theorem payloadKeys_of_checkPayloads {type : Ir.Ty} :
+    ∀ (constructors : List Ir.Constructor),
+      Compile.checkPayloads type constructors = .ok () →
+      ∀ constructor ∈ constructors, (∀ field ∈ constructor.fields, field.name ≠ "kind") ∧
+        (constructor.fields.map Ir.Field.name).Nodup
+  | [], _, _, member => absurd member (by simp)
+  | head :: rest, checked, constructor, member => by
+      simp only [Compile.checkPayloads] at checked
+      by_cases unpresentable : Compile.presentableKeys (head.fields.map Ir.Field.name) = false
+      · rw [if_pos unpresentable] at checked
+        simp [throw, throwThe, MonadExceptOf.throw] at checked
+      · rw [if_neg unpresentable] at checked
+        by_cases reserved : (head.fields.map Ir.Field.name).all (· != "kind") = false
+        · rw [if_pos reserved] at checked
+          simp [throw, throwThe, MonadExceptOf.throw] at checked
+        · rw [if_neg reserved] at checked
+          rcases List.mem_cons.mp member with headEq | tailMember
+          · subst headEq
+            obtain ⟨_, distinct⟩ :=
+              Compile.presentableKeys_iff.mp (by simpa using unpresentable)
+            exact ⟨by simpa using reserved, distinct⟩
+          · exact payloadKeys_of_checkPayloads rest checked constructor tailMember
 
 /-! ## Inverting the lowering of an operation
 
@@ -675,7 +704,8 @@ theorem everywhere {program : Ir.Program} {target : Target.Program} {runtime : R
       simp only [pure, Except.pure] at shape
       injection shape with emittedEq
       subst emittedEq
-      exact ifThenElse program target fuel condition consequent alternate emittedCondition
+      exact (ifThenElse (runtime := runtime)).1 program target fuel condition consequent alternate
+        emittedCondition
         emittedConsequent emittedAlternate
         (everywhere lowered laws listsFit fuel condition emittedCondition conditionCompiled)
         (everywhere lowered laws listsFit fuel consequent emittedConsequent consequentCompiled)
@@ -850,7 +880,8 @@ theorem everywhere {program : Ir.Program} {target : Target.Program} {runtime : R
               injection shape with emittedEq
               subst emittedEq
               have readable : Compile.readableScrutinee scrutinee = true := by simpa using computed
-              exact matchOn program target fuel type scrutinee cases emittedScrutinee
+              exact (matchOn (runtime := runtime)).1 program target fuel type scrutinee cases
+                emittedScrutinee
                 emittedCases chain constructors declared (by simpa using payload)
                 ⟨everywhere lowered laws listsFit fuel scrutinee emittedScrutinee scrutineeCompiled,
                   sourcePure_of_readable scrutinee readable,
@@ -917,7 +948,8 @@ theorem everywhere {program : Ir.Program} {target : Target.Program} {runtime : R
         injection found with functionEq
         subst step
         rw [functionEq] at bodyCompiled
-        exact everywhereBody lowered laws listsFit smaller body emittedFunction.body bodyCompiled
+        exact everywhereReturnBody lowered laws listsFit smaller body emittedFunction.body
+          bodyCompiled
 termination_by expression => (fuel, sizeOf expression, 0)
 
 /-- Every function body the lowering admits refines its source. -/
@@ -1027,6 +1059,141 @@ theorem everywhereCases {program : Ir.Program} {target : Target.Program} {runtim
         everywhereCases lowered laws listsFit fuel rest emittedRest restCompiled⟩
 termination_by cases => (fuel, sizeOf cases, 0)
 
+/-- Every declaration body the lowering admits refines its source, through the statements
+`emitReturn` builds for it: the `const` run, the statement-form `if`, the statement-form dispatch,
+and the `return` a branch ends in. -/
+theorem everywhereReturnBody {program : Ir.Program} {target : Target.Program} {runtime : Runtime}
+    (lowered : LoweredProgram program target) (laws : RuntimeLaws runtime)
+    (listsFit : ListsFit program) (fuel : Nat) :
+    ∀ (body : Ir.Expr) (emitted : Target.Body),
+      Compile.returnBody program body = .ok emitted →
+      EverywhereBody program target runtime fuel body emitted
+  | .letBind name value rest, emitted, compiled => by
+      simp only [Compile.returnBody] at compiled
+      obtain ⟨emittedValue, valueCompiled, more⟩ := bind_ok compiled
+      obtain ⟨emittedRest, restCompiled, shape⟩ := bind_ok more
+      simp only [pure, Except.pure] at shape
+      injection shape with emittedEq
+      subst emittedEq
+      exact letBind program target fuel name value rest emittedValue emittedRest
+        (everywhere lowered laws listsFit fuel value emittedValue valueCompiled)
+        (everywhereReturnBody lowered laws listsFit fuel rest emittedRest restCompiled)
+  | .ifThenElse condition consequent alternate, emitted, compiled => by
+      simp only [Compile.returnBody] at compiled
+      obtain ⟨emittedCondition, conditionCompiled, more⟩ := bind_ok compiled
+      obtain ⟨emittedConsequent, consequentCompiled, rest⟩ := bind_ok more
+      obtain ⟨emittedAlternate, alternateCompiled, shape⟩ := bind_ok rest
+      simp only [pure, Except.pure] at shape
+      injection shape with emittedEq
+      subst emittedEq
+      exact ifThenBody program target fuel condition consequent alternate emittedCondition
+        emittedConsequent emittedAlternate
+        (everywhere lowered laws listsFit fuel condition emittedCondition conditionCompiled)
+        (everywhereReturnBody lowered laws listsFit fuel consequent emittedConsequent
+          consequentCompiled)
+        (everywhereReturnBody lowered laws listsFit fuel alternate emittedAlternate
+          alternateCompiled)
+  | .matchOn type scrutinee cases, emitted, compiled => by
+      rw [Compile.returnBody.eq_def] at compiled
+      dsimp only at compiled
+      rcases option_cases (program.constructorsOf type) with declared | ⟨constructors, declared⟩
+      · rw [declared] at compiled
+        simp [throw, throwThe, MonadExceptOf.throw] at compiled
+      · rw [declared] at compiled
+        dsimp only at compiled
+        by_cases listType : type.element?.isSome = true
+        · rw [if_pos listType] at compiled
+          simp [throw, throwThe, MonadExceptOf.throw] at compiled
+        · rw [if_neg listType] at compiled
+          by_cases structured : Compile.destructurable program type = false
+          · rw [if_pos structured] at compiled
+            simp [throw, throwThe, MonadExceptOf.throw] at compiled
+          · rw [if_neg structured] at compiled
+            by_cases noArms : cases.isEmpty = true
+            · rw [if_pos noArms] at compiled
+              simp [throw, throwThe, MonadExceptOf.throw] at compiled
+            · rw [if_neg noArms] at compiled
+              by_cases drifted : Compile.decidesInOrder constructors cases = false
+              · rw [if_pos drifted] at compiled
+                simp [throw, throwThe, MonadExceptOf.throw] at compiled
+              · rw [if_neg drifted] at compiled
+                obtain ⟨_, checked, rest⟩ := bind_ok compiled
+                obtain ⟨emittedScrutinee, scrutineeCompiled, more⟩ := bind_ok rest
+                obtain ⟨emittedArms, armsCompiled, shape⟩ := bind_ok more
+                simp only [pure, Except.pure] at shape
+                injection shape with emittedEq
+                subst emittedEq
+                have notList : type.element? = none := by
+                  cases held : type.element? with
+                  | none => rfl
+                  | some element => rw [held] at listType; simp at listType
+                have ordered : cases.map Prod.fst = constructors.map Ir.Constructor.name := by
+                  have decided : Compile.decidesInOrder constructors cases = true := by
+                    simpa using drifted
+                  simp only [Compile.decidesInOrder, Bool.and_eq_true, beq_iff_eq] at decided
+                  exact decided.1
+                exact (matchOn (runtime := runtime)).2 program target fuel type scrutinee cases
+                  emittedScrutinee emittedArms
+                  (if Ir.allNullary constructors = true then .tag else .tagged) constructors
+                  declared notList (fun nullary => by rw [if_pos nullary])
+                  (fun payload => by rw [if_neg (by simp [payload])])
+                  (payloadKeys_of_checkPayloads constructors checked)
+                  (everywhere lowered laws listsFit fuel scrutinee emittedScrutinee
+                    scrutineeCompiled)
+                  (everywhereArms lowered laws listsFit fuel type constructors cases emittedArms
+                    ordered armsCompiled)
+  | .varRef _, emitted, compiled | .boolLit _, emitted, compiled
+  | .natLit _, emitted, compiled | .stringLit _, emitted, compiled
+  | .fieldGet _ _, emitted, compiled | .operation _ _ _, emitted, compiled
+  | .variant _ _ _, emitted, compiled | .record _ _, emitted, compiled
+  | .lambda _ _, emitted, compiled | .apply _ _, emitted, compiled
+  | .call _ _ _, emitted, compiled => by
+      simp only [Compile.returnBody] at compiled
+      obtain ⟨emittedExpression, expressionCompiled, shape⟩ := bind_ok compiled
+      simp only [pure, Except.pure] at shape
+      injection shape with emittedEq
+      subst emittedEq
+      intro sourceScope targetScope trace state aligned
+      simp only [Target.evalBody]
+      exact everywhere lowered laws listsFit fuel _ emittedExpression expressionCompiled
+        sourceScope targetScope trace state aligned
+termination_by body => (fuel, sizeOf body, 1)
+
+/-- Every match arm the statement-form lowering admits refines its source, arm for arm. The arm at
+each position carries the constructor the declaration carries there, which is what the order check
+`Compile.decidesInOrder` secures and what this theorem consumes. -/
+theorem everywhereArms {program : Ir.Program} {target : Target.Program} {runtime : Runtime}
+    (lowered : LoweredProgram program target) (laws : RuntimeLaws runtime)
+    (listsFit : ListsFit program) (fuel : Nat) (type : Ir.Ty) :
+    ∀ (constructors : List Ir.Constructor) (cases : List (String × Ir.Expr))
+      (emitted : List (String × List String × Target.Body)),
+      cases.map Prod.fst = constructors.map Ir.Constructor.name →
+      Compile.returnArms program type constructors cases = .ok emitted →
+      EverywhereArms program target runtime fuel constructors cases emitted
+  | [], [], emitted, _, compiled => by
+      simp only [Compile.returnArms, pure, Except.pure] at compiled
+      injection compiled with emittedEq
+      subst emittedEq
+      unfold EverywhereArms
+      exact ⟨rfl, rfl⟩
+  | constructor :: constructors, (tag, arm) :: cases, emitted, ordered, compiled => by
+      simp only [List.map_cons, List.cons.injEq] at ordered
+      obtain ⟨tagEq, restOrdered⟩ := ordered
+      simp only [Compile.returnArms] at compiled
+      obtain ⟨emittedArm, armCompiled, more⟩ := bind_ok compiled
+      obtain ⟨emittedRest, restCompiled, shape⟩ := bind_ok more
+      simp only [pure, Except.pure] at shape
+      injection shape with emittedEq
+      subst emittedEq
+      unfold EverywhereArms
+      exact ⟨constructor, constructors, emittedArm, emittedRest, rfl, tagEq, rfl,
+        everywhereReturnBody lowered laws listsFit fuel arm emittedArm armCompiled,
+        everywhereArms lowered laws listsFit fuel type constructors cases emittedRest restOrdered
+          restCompiled⟩
+  | [], _ :: _, emitted, ordered, compiled => by simp at ordered
+  | _ :: _, [], emitted, ordered, compiled => by simp at ordered
+termination_by _ cases => (fuel, sizeOf cases, 0)
+
 end
 
 /-! ## The lowered-program premise, derived -/
@@ -1037,7 +1204,7 @@ theorem declaration_function {program : Ir.Program} {name : String} {parameters 
     (compiled : Compile.declaration program (.function name parameters result recursion body)
       = .ok emitted) :
     ∃ emittedBody, emitted = some ⟨name, parameters.length, emittedBody⟩ ∧
-      Compile.body program body = .ok emittedBody := by
+      Compile.returnBody program body = .ok emittedBody := by
   simp only [Compile.declaration] at compiled
   obtain ⟨emittedBody, bodyCompiled, shape⟩ := bind_ok compiled
   simp only [pure, Except.pure] at shape
@@ -1053,7 +1220,7 @@ theorem declaration_foreign {program : Ir.Program} {name : String} {host : Ir.Ho
     (compiled : Compile.declaration program (.foreign name host parameters result reference)
       = .ok emitted) :
     ∃ emittedBody, emitted = some ⟨name, parameters.length, emittedBody⟩ ∧
-      Compile.body program reference = .ok emittedBody := by
+      Compile.returnBody program reference = .ok emittedBody := by
   simp only [Compile.declaration] at compiled
   obtain ⟨emittedBody, bodyCompiled, shape⟩ := bind_ok compiled
   simp only [pure, Except.pure] at shape
@@ -1079,7 +1246,8 @@ theorem lowered_of_declarations {program : Ir.Program} :
           ∃ host, (declarations.find? fun declaration => declaration.name == name)
               = some (.foreign name host parameters result body)) →
         ∃ emitted, (functions.find? fun emitted => emitted.name == name) = some emitted ∧
-          emitted.parameters = parameters.length ∧ Compile.body program body = .ok emitted.body
+          emitted.parameters = parameters.length ∧
+            Compile.returnBody program body = .ok emitted.body
   | [], functions, _, name, _, _, _, _, found => by
       rcases found with found | ⟨_, found⟩ <;> simp at found
   | declaration :: rest, functions, compiled, name, parameters, result, recursion, body, found => by
@@ -1090,7 +1258,7 @@ theorem lowered_of_declarations {program : Ir.Program} :
       | true =>
         obtain ⟨emittedBody, headEq, bodyCompiled⟩ : ∃ emittedBody,
             head = some ⟨name, parameters.length, emittedBody⟩ ∧
-              Compile.body program body = .ok emittedBody := by
+              Compile.returnBody program body = .ok emittedBody := by
           rcases found with found | ⟨host, found⟩
           · rw [matched] at found
             dsimp only at found
@@ -1255,7 +1423,7 @@ theorem entering {program : Ir.Program} {target : Target.Program} {runtime : Run
         dsimp only
         have recorded := Target.State.record_extension state (.function name targets) heapValid
         refine refines_widen recorded ?_
-        refine everywhereBody lowered laws listsFit remaining body emitted.body bodyCompiled
+        refine everywhereReturnBody lowered laws listsFit remaining body emitted.body bodyCompiled
           arguments.reverse targets.reverse (trace ++ [.function name arguments])
           (state.record (.function name targets)) ?_
         exact ⟨heapValid, closuresValid,

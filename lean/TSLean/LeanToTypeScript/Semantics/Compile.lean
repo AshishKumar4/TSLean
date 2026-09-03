@@ -29,6 +29,20 @@ owns the compiled body. There is no program arrow table. An `apply` becomes a ca
 binding holds, and a callee that is not a bound variable is refused by name with
 `Fault.computedCallee`: the decoder admits no other target, so lowering one would be lowering a
 program the decoder cannot produce.
+
+## The two body positions, kept apart
+
+`emitter.ts` has two body forms, and this model has both. A function or host-boundary declaration is
+emitted by `emitReturn`, which builds *statements*: a `const` run, an `if` whose consequent returns,
+and a `match` as one `if` per alternative with the payload bound by `const`s inside the branch that
+decided it. `Compile.returnBody` lowers exactly that. An inline arrow is emitted by
+`emitExpression`, which builds one *expression* for its concise body, and `Compile.body` lowers
+that.
+
+The one shape left outside is a payload-carrying `match` in argument position: no statement can be
+emitted there, so `emitter.ts` substitutes each payload read into the arm that reads it, and this
+model refuses that form by name with `Fault.substitutedMatch` rather than claiming the theorem
+covers it.
 -/
 
 namespace TSLean.LeanToTypeScript.Semantics
@@ -48,8 +62,24 @@ inductive Fault where
   | undeclaredConstructor (type : Ir.Ty) (name : String)
   /-- A constructor applied to a different number of arguments than it declares fields. -/
   | constructorArity (type : Ir.Ty) (name : String) (expected actual : Nat)
-  /-- A `match` on an enum that carries a payload, which has no tag-comparison lowering. -/
-  | payloadMatch (type : Ir.Ty)
+  /-- A payload-carrying `match` outside return position. No statement can be emitted there, so
+  `emitter.ts` substitutes each payload read into the arm that reads it instead of naming it with a
+  `const`; this model lowers the statement form, where the payload is bound, so the substituted form
+  is refused by name rather than given a lowering the theorem does not cover. -/
+  | substitutedMatch (type : Ir.Ty)
+  /-- A `match` whose arms are not every declared constructor exactly once in declaration order, or
+  whose type declares two constructors under one name. The emitted `if` chain reads each arm's
+  payload field list positionally out of the declaration, so an arm out of order would name another
+  constructor's fields. `ir.ts` refuses the same document. -/
+  | armOrder (type : Ir.Ty)
+  /-- A `match` on a `List`. Its values reach the target as a dense array, so the emitted tests are
+  length comparisons and its payload reads are `subject[0]` and `subject.slice(1)` rather than a tag
+  comparison and two own-property reads: a third dispatch shape this model does not carry. -/
+  | listMatch (type : Ir.Ty)
+  /-- A `match` on a one-constructor structure — a `pair`, or a declared `record`. `Source.eval`
+  gives such a value the `record` form, whose fields are read with field reads, so a match on one is
+  refused rather than given a lowering whose refinement would hold only because the source faults. -/
+  | structureMatch (type : Ir.Ty)
   /-- A `match` whose scrutinee computes, which the tag chain would re-evaluate per arm. -/
   | computedScrutinee (type : Ir.Ty)
   /-- A `match` with no arms. -/
@@ -110,10 +140,10 @@ Anything that computes has to be named by a `let` first, because the chain evalu
 once per comparison.
 
 `isRereadable` in `emitter.ts` decides the same transitive condition, clause for clause, so a match
-that emitter lowers to a tag chain is one this model admits. That emitter also lowers a match in
-return position, where it names the scrutinee with a `const` and evaluates it exactly once; this
-model has no such form, because `Target.Body` is a `const` run ending in one `return`, so a match in
-return position is outside the shapes lowered here rather than a wider admission of them.
+that emitter lowers to a tag chain is one this model admits. It is the argument-position condition
+only: in return position the emitter names the scrutinee with a `const` and evaluates it exactly
+once, which is what `Compile.returnBody` lowers and what `Target.Body.branch` evaluates once, so no
+re-readability is required there.
 -/
 def readableScrutinee : Ir.Expr → Bool
   | .varRef _ => true
@@ -128,6 +158,47 @@ def tagChain (scrutinee : Target.Expr) : List (String × Target.Expr) → Option
   | (tag, value) :: rest =>
       (tagChain scrutinee rest).map fun alternate =>
         .conditional (.strictEquals scrutinee (.stringLit tag)) value alternate
+
+/--
+The types a `match` takes apart. `Source.eval` decides a `variant` value by its constructor, so a
+type whose values are `variant`s is one a tag dispatch can decide: the three mapped unions and a
+declared `enum`. A structure's value is a `record`, whose fields are read with field reads, and a
+`List`'s value is an array, whose alternatives are decided by length — neither is a tag dispatch, so
+each is refused under its own name.
+-/
+def destructurable (program : Ir.Program) : Ir.Ty → Bool
+  | .option _ | .except _ _ | .json => true
+  | .named name _ =>
+      match program.find? name with
+      | some (.enum _ _) => true
+      | _ => false
+  | .boolean | .nat | .string | .parameter _ | .list _ | .function _ _ | .int | .char | .bytes
+  | .array _ | .pair _ _ | .hashMap _ _ | .treeMap _ _ => false
+
+/--
+The arms decide every declared constructor exactly once, in declaration order, and no two declared
+constructors share a name. `ir.ts` refuses the same document, and the emitted `if` chain reads each
+arm's payload field list positionally out of the declaration, so an arm out of order would name
+another constructor's fields. The distinctness is what makes the constructor a decided tag selects
+the one the arm at that position declares.
+-/
+def decidesInOrder (constructors : List Ir.Constructor) (cases : List (String × Ir.Expr)) : Bool :=
+  (cases.map Prod.fst == constructors.map Ir.Constructor.name) &&
+    decide (constructors.map Ir.Constructor.name).Nodup
+
+/--
+Every alternative's payload can be read back off the value that decided it: its field names are own
+keys presentable in declaration order, and none of them is the `kind` the emitted tag occupies.
+`assertRepresentationNames` in `emitter.ts` refuses a declaration for the same collision.
+-/
+def checkPayloads (type : Ir.Ty) : List Ir.Constructor → Except Fault Unit
+  | [] => pure ()
+  | constructor :: rest =>
+      if presentableKeys (constructor.fields.map Ir.Field.name) = false then
+        throw (.unpresentableFields type)
+      else if (constructor.fields.map Ir.Field.name).all (· != "kind") = false then
+        throw (.reservedTagField type constructor.name)
+      else checkPayloads type rest
 
 mutual
 
@@ -193,7 +264,7 @@ def expr (program : Ir.Program) : Ir.Expr → Except Fault Target.Expr
       match program.constructorsOf type with
       | none => throw (.undeclaredType type)
       | some constructors =>
-          if Ir.allNullary constructors = false then throw (.payloadMatch type)
+          if Ir.allNullary constructors = false then throw (.substitutedMatch type)
           else if readableScrutinee scrutinee = false then throw (.computedScrutinee type)
           else
             let target ← expr program scrutinee
@@ -237,15 +308,55 @@ def exprCases (program : Ir.Program) :
       pure ((constructor, ← expr program arm) :: (← exprCases program rest))
 termination_by cases => (sizeOf cases, 0)
 
-/-- Lowers a function or inline-arrow body: the leading `let` run becomes `const` statements, and
-the expression it ends in becomes the `return`. The measure's second component ranks a body above
-the expression it delegates to, so the fall-through to `expr` on the same expression decreases even
-though its size does not. -/
+/-- Lowers an inline arrow's body, which `emitExpression` emits as one concise expression. The
+measure's second component ranks a body above the expression it delegates to, so the fall-through to
+`expr` on the same expression decreases even though its size does not. -/
 def body (program : Ir.Program) : Ir.Expr → Except Fault Target.Body
   | .letBind name value rest => do
       pure (.constBind name (← expr program value) (← body program rest))
   | expression => do pure (.ret (← expr program expression))
 termination_by expression => (sizeOf expression, 1)
+
+/--
+Lowers a function or host-boundary declaration body, which `emitReturn` emits as statements: the
+leading `let` run becomes `const` statements, an `if` becomes an `if` whose consequent returns, a
+`match` becomes the tag dispatch with its payload bound by `const`s inside the branch that decided
+it, and the expression a branch ends in becomes its `return`.
+-/
+def returnBody (program : Ir.Program) : Ir.Expr → Except Fault Target.Body
+  | .letBind name value rest => do
+      pure (.constBind name (← expr program value) (← returnBody program rest))
+  | .ifThenElse condition consequent alternate => do
+      pure (.ifThen (← expr program condition) (← returnBody program consequent)
+        (← returnBody program alternate))
+  | .matchOn type scrutinee cases => do
+      match program.constructorsOf type with
+      | none => throw (.undeclaredType type)
+      | some constructors =>
+          if type.element?.isSome = true then throw (.listMatch type)
+          else if destructurable program type = false then throw (.structureMatch type)
+          else if cases.isEmpty = true then throw (.emptyMatch type)
+          else if decidesInOrder constructors cases = false then throw (.armOrder type)
+          else do
+            checkPayloads type constructors
+            pure (.branch (← expr program scrutinee)
+              (if Ir.allNullary constructors = true then .tag else .tagged)
+              (← returnArms program type constructors cases))
+  | expression => do pure (.ret (← expr program expression))
+termination_by expression => (sizeOf expression, 1)
+
+/-- Lowers a match's arms against the constructors they decide, in declaration order. Each arm
+carries the constructor's name and its payload field names, which is exactly what the emitted `if`
+chain tests and names. -/
+def returnArms (program : Ir.Program) (type : Ir.Ty) :
+    List Ir.Constructor → List (String × Ir.Expr) →
+      Except Fault (List (String × List String × Target.Body))
+  | [], [] => pure []
+  | constructor :: constructors, (_, arm) :: cases => do
+      pure ((constructor.name, constructor.fields.map Ir.Field.name, ← returnBody program arm)
+        :: (← returnArms program type constructors cases))
+  | [], _ :: _ | _ :: _, [] => throw (.armOrder type)
+termination_by _ cases => (sizeOf cases, 1)
 
 end
 
@@ -263,9 +374,9 @@ here.
 def declaration (program : Ir.Program) : Ir.Decl → Except Fault (Option Target.Function)
   | .enum _ _ | .record _ _ _ => pure none
   | .function name parameters _ _ bodyExpr =>
-      do pure (some ⟨name, parameters.length, ← body program bodyExpr⟩)
+      do pure (some ⟨name, parameters.length, ← returnBody program bodyExpr⟩)
   | .foreign name _ parameters _ reference =>
-      do pure (some ⟨name, parameters.length, ← body program reference⟩)
+      do pure (some ⟨name, parameters.length, ← returnBody program reference⟩)
 
 
 /-- Lowers a declaration list to the functions it contributes. -/

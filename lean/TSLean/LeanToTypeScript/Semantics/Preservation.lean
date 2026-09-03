@@ -458,6 +458,25 @@ def EverywhereCases (program : Ir.Program) (target : Target.Program) (runtime : 
           EverywhereCases program target runtime fuel rest restEmitted
 
 /--
+Each arm of a statement-form match refines it, arm for arm. The arm at each position decides the
+constructor the declaration carries at that position and names exactly that constructor's payload
+fields, which is the positional correspondence `emitMatchStatements` reads out of the declaration and
+`Compile.decidesInOrder` refuses a document without.
+-/
+def EverywhereArms (program : Ir.Program) (target : Target.Program) (runtime : Runtime)
+    (fuel : Nat) : List Ir.Constructor → List (String × Ir.Expr) →
+      List (String × List String × Target.Body) → Prop
+  | constructors, [], emitted => constructors = [] ∧ emitted = []
+  | constructors, (tag, arm) :: rest, emitted =>
+      ∃ (constructor : Ir.Constructor) (remaining : List Ir.Constructor)
+        (emittedArm : Target.Body) (restEmitted : List (String × List String × Target.Body)),
+        constructors = constructor :: remaining ∧ tag = constructor.name ∧
+          emitted = (constructor.name, constructor.fields.map Ir.Field.name, emittedArm)
+            :: restEmitted ∧
+          EverywhereBody program target runtime fuel arm emittedArm ∧
+          EverywhereArms program target runtime fuel remaining rest restEmitted
+
+/--
 What one admitted IR operation owes: given that each of its subexpressions' lowerings refines it from
 every aligned configuration, its own lowering refines it. The lowering named in each clause is
 exactly the one `src/lean-to-typescript/emitter.ts` builds for that operation.
@@ -481,14 +500,22 @@ def Op.Preserves (runtime : Runtime) : Ir.Op → Prop
       (subject : Ir.Expr) (field : String) (emittedSubject : Target.Expr),
       Everywhere program target runtime fuel subject emittedSubject →
       Everywhere program target runtime fuel (.fieldGet subject field) (.member emittedSubject field)
-  | .ifThenElse => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat)
+  | .ifThenElse => (∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat)
       (condition consequent alternate : Ir.Expr)
       (emittedCondition emittedConsequent emittedAlternate : Target.Expr),
       Everywhere program target runtime fuel condition emittedCondition →
       Everywhere program target runtime fuel consequent emittedConsequent →
       Everywhere program target runtime fuel alternate emittedAlternate →
       Everywhere program target runtime fuel (.ifThenElse condition consequent alternate)
-        (.conditional emittedCondition emittedConsequent emittedAlternate)
+        (.conditional emittedCondition emittedConsequent emittedAlternate)) ∧
+    (∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat)
+      (condition consequent alternate : Ir.Expr) (emittedCondition : Target.Expr)
+      (emittedConsequent emittedAlternate : Target.Body),
+      Everywhere program target runtime fuel condition emittedCondition →
+      EverywhereBody program target runtime fuel consequent emittedConsequent →
+      EverywhereBody program target runtime fuel alternate emittedAlternate →
+      EverywhereBody program target runtime fuel (.ifThenElse condition consequent alternate)
+        (.ifThen emittedCondition emittedConsequent emittedAlternate))
   | .operation => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat),
       (∀ (typeArguments : List Ir.Ty) (left right : Ir.Expr)
           (emittedLeft emittedRight : Target.Expr),
@@ -562,7 +589,7 @@ def Op.Preserves (runtime : Runtime) : Ir.Op → Prop
       (fields.map Prod.fst).Nodup →
       EverywhereFields program target runtime fuel fields emittedFields →
       Everywhere program target runtime fuel (.record type fields) (.objectLiteral emittedFields)
-  | .matchOn => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat) (type : Ir.Ty)
+  | .matchOn => (∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat) (type : Ir.Ty)
       (scrutinee : Ir.Expr) (cases : List (String × Ir.Expr)) (emittedScrutinee : Target.Expr)
       (emittedCases : List (String × Target.Expr)) (chain : Target.Expr)
       (constructors : List Ir.Constructor),
@@ -571,7 +598,21 @@ def Op.Preserves (runtime : Runtime) : Ir.Op → Prop
       Readable program target runtime fuel scrutinee emittedScrutinee →
       EverywhereCases program target runtime fuel cases emittedCases →
       Compile.tagChain emittedScrutinee emittedCases = some chain →
-      Everywhere program target runtime fuel (.matchOn type scrutinee cases) chain
+      Everywhere program target runtime fuel (.matchOn type scrutinee cases) chain) ∧
+    (∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat) (type : Ir.Ty)
+      (scrutinee : Ir.Expr) (cases : List (String × Ir.Expr)) (emittedScrutinee : Target.Expr)
+      (emittedArms : List (String × List String × Target.Body))
+      (discriminator : Target.Discriminator) (constructors : List Ir.Constructor),
+      program.constructorsOf type = some constructors →
+      type.element? = none →
+      (Ir.allNullary constructors = true → discriminator = .tag) →
+      (Ir.allNullary constructors = false → discriminator = .tagged) →
+      (∀ constructor ∈ constructors, (∀ field ∈ constructor.fields, field.name ≠ "kind") ∧
+        (constructor.fields.map Ir.Field.name).Nodup) →
+      Everywhere program target runtime fuel scrutinee emittedScrutinee →
+      EverywhereArms program target runtime fuel constructors cases emittedArms →
+      EverywhereBody program target runtime fuel (.matchOn type scrutinee cases)
+        (.branch emittedScrutinee discriminator emittedArms))
   | .lambda => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat)
       (parameters : List Ir.Field) (body : Ir.Expr) (emittedBody : Target.Body),
       Compile.body program body = .ok emittedBody →
@@ -665,8 +706,62 @@ theorem refines_widen {program : Ir.Program} {start middle : Target.State} {sour
       subst resultEq
       exact refines_exhausted (extension.trans inner) closuresValid traceRefines
 
+/--
+A statement-form `if` selects by truthiness, exactly as the conditional expression does, and the
+branch it selects runs the statements the emitter placed under it. The consequent returns, so the
+alternate is the narrowed remainder and neither branch can fall into the other.
+-/
+theorem ifThenBody {runtime : Runtime} : ∀ (program : Ir.Program) (target : Target.Program)
+    (fuel : Nat) (condition consequent alternate : Ir.Expr) (emittedCondition : Target.Expr)
+    (emittedConsequent emittedAlternate : Target.Body),
+    Everywhere program target runtime fuel condition emittedCondition →
+    EverywhereBody program target runtime fuel consequent emittedConsequent →
+    EverywhereBody program target runtime fuel alternate emittedAlternate →
+    EverywhereBody program target runtime fuel (.ifThenElse condition consequent alternate)
+      (.ifThen emittedCondition emittedConsequent emittedAlternate) := by
+  intro program target fuel condition consequent alternate emittedCondition emittedConsequent
+    emittedAlternate conditionStep consequentStep alternateStep
+    sourceScope targetScope trace state aligned
+  simp only [Source.eval, Target.evalBody]
+  cases conditionRun : Source.eval program fuel sourceScope trace condition with
+  | fault fault next => exact refines_fault
+  | exhausted next =>
+      obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+        refines_exhausted_inv
+          (conditionRun ▸ conditionStep sourceScope targetScope trace state aligned)
+      rw [targetRun]
+      exact refines_exhausted extension closuresValid traceRefines
+  | value produced next =>
+      obtain ⟨image, targetState, targetRun, extension, closuresValid, related, traceRefines⟩ :=
+        refines_value_inv
+          (conditionRun ▸ conditionStep sourceScope targetScope trace state aligned)
+      rw [targetRun]
+      cases produced with
+      | boolean flag =>
+          unfold Relation.Represents at related
+          subst related
+          have nextAligned := aligned.step extension closuresValid traceRefines
+          cases flag with
+          | true =>
+              simp only [Value.toBoolean, Primitive.toBoolean, if_true]
+              exact refines_widen extension
+                (consequentStep sourceScope targetScope next targetState nextAligned)
+          | false =>
+              simp only [Value.toBoolean, Primitive.toBoolean]
+              exact refines_widen extension
+                (alternateStep sourceScope targetScope next targetState nextAligned)
+      | nat _ => exact refines_fault
+      | int _ => exact refines_fault
+      | char _ => exact refines_fault
+      | string _ => exact refines_fault
+      | record _ _ => exact refines_fault
+      | array _ _ => exact refines_fault
+      | variant _ _ _ => exact refines_fault
+      | closure _ _ _ => exact refines_fault
+
 /-- `? :` selects by truthiness, and a represented `Bool` is truthy exactly when it is `true`. -/
 theorem ifThenElse {runtime : Runtime} : Op.Preserves runtime .ifThenElse := by
+  refine ⟨?_, ifThenBody⟩
   intro program target fuel condition consequent alternate emittedCondition emittedConsequent
     emittedAlternate conditionStep consequentStep alternateStep
     sourceScope targetScope trace state aligned
@@ -4289,11 +4384,315 @@ theorem tagChain_refines {program : Ir.Program} {target : Target.Program} {runti
                 ((secondTag, emittedSecond) :: tailEmitted) alternate tagName sourceScope targetScope
                 trace state restStep alternateBuilt aligned scrutineeRun
 
+/-! ## The statement-form dispatch -/
+
+/-- A represented payload's own keys are the constructor's declared field names, in declaration
+order: the representation records one entry per field, under that field's own name. -/
+theorem representsArguments_keys {program : Ir.Program} {state : Target.State} :
+    ∀ (fields : List Ir.Field) (arguments : List Source.Value)
+      (entries : List (String × Value)),
+      Relation.RepresentsArguments program state fields arguments entries →
+      entries.map Prod.fst = fields.map Ir.Field.name
+  | fields, [], entries, related => by
+      unfold Relation.RepresentsArguments at related
+      obtain ⟨fieldsEq, entriesEq⟩ := related
+      subst fieldsEq
+      subst entriesEq
+      rfl
+  | fields, value :: rest, entries, related => by
+      unfold Relation.RepresentsArguments at related
+      obtain ⟨field, remaining, image, restEntries, fieldsEq, entriesEq, _, tailRelated⟩ := related
+      subst fieldsEq
+      subst entriesEq
+      simp only [List.map_cons]
+      rw [representsArguments_keys remaining rest restEntries tailRelated]
+
+/-- A represented payload's images are exactly the entry values, in declaration order. -/
+theorem representsArguments_values {program : Ir.Program} {state : Target.State} :
+    ∀ (fields : List Ir.Field) (arguments : List Source.Value)
+      (entries : List (String × Value)),
+      Relation.RepresentsArguments program state fields arguments entries →
+      Relation.RepresentsList program state arguments (entries.map Prod.snd)
+  | _, [], entries, related => by
+      unfold Relation.RepresentsArguments at related
+      obtain ⟨_, entriesEq⟩ := related
+      subst entriesEq
+      exact represents_nil
+  | _, value :: rest, entries, related => by
+      unfold Relation.RepresentsArguments at related
+      obtain ⟨field, remaining, image, restEntries, _, entriesEq, headRelated, tailRelated⟩ :=
+        related
+      subst entriesEq
+      unfold Relation.RepresentsList
+      exact ⟨image, restEntries.map Prod.snd, by simp, headRelated,
+        representsArguments_values remaining rest restEntries tailRelated⟩
+
 /--
-A total case analysis over an enum with no payload anywhere becomes a chain of tag comparisons, in
-declaration order, with the final arm unconditional.
+Reading a run of own properties off an object answers exactly the values the shape records for them,
+in order, and changes no state.
+
+`consumed` is the entry run the reads have already passed: the emitted tag, and then each field in
+turn. Stating it that way is what makes the lemma true of the whole own-property sequence rather than
+of a suffix — a field name that collided with the tag, or with an earlier field, would resolve to the
+earlier own property, and `Compile.checkPayloads` refuses a declaration for exactly that.
+-/
+theorem readPayload_of_entries {state : Target.State} {ref : RefId} :
+    ∀ (consumed entries : List (String × Value)),
+      Relation.HasOwnFields state.heap ref (consumed ++ entries) →
+      (∀ entry ∈ entries, ∀ earlier ∈ consumed, earlier.1 ≠ entry.1) →
+      (entries.map Prod.fst).Nodup →
+      Target.readPayload state (.object ref) (entries.map Prod.fst)
+        = .ok (entries.map Prod.snd) state
+  | _, [], _, _, _ => by simp [Target.readPayload]
+  | consumed, (name, value) :: rest, shape, fresh, distinct => by
+      simp only [List.map_cons] at distinct
+      obtain ⟨notLater, distinctRest⟩ := List.nodup_cons.mp distinct
+      have missing : (consumed.find? fun entry => entry.1 == name) = none := by
+        refine List.find?_eq_none.mpr ?_
+        intro entry member
+        have different := fresh (name, value) (by simp) entry member
+        simpa using different
+      have read : Target.readMember state name (.object ref) = .ok value state := by
+        refine readMember_of_shape state shape name value ?_
+        rw [List.find?_append, missing]
+        simp
+      have shifted :
+          Relation.HasOwnFields state.heap ref ((consumed ++ [(name, value)]) ++ rest) := by
+        simpa using shape
+      have freshRest : ∀ entry ∈ rest, ∀ earlier ∈ consumed ++ [(name, value)],
+          earlier.1 ≠ entry.1 := by
+        intro entry member earlier earlierMember
+        rcases List.mem_append.mp earlierMember with inConsumed | inNew
+        · exact fresh entry (by simp [member]) earlier inConsumed
+        · have earlierEq : earlier = (name, value) := by simpa using inNew
+          subst earlierEq
+          intro same
+          have nameEq : name = entry.1 := same
+          have keyMember : entry.1 ∈ rest.map Prod.fst := List.mem_map_of_mem member
+          exact notLater (by rw [nameEq]; exact keyMember)
+      simp only [List.map_cons, Target.readPayload, read,
+        readPayload_of_entries (consumed ++ [(name, value)]) rest shifted freshRest distinctRest]
+
+/--
+The payload of a tagged alternative reads back exactly: reading the constructor's declared field
+names off the object the value is represented by answers images representing its arguments, in
+declaration order, and changes no state.
+-/
+theorem readPayload_of_represents {program : Ir.Program} {state : Target.State} {ref : RefId}
+    {name : String} {entries : List (String × Value)} {fields : List Ir.Field}
+    {arguments : List Source.Value}
+    (shape : Relation.HasOwnFields state.heap ref
+      (("kind", .primitive (.string (JSString.ofLeanString name))) :: entries))
+    (related : Relation.RepresentsArguments program state fields arguments entries)
+    (free : ∀ field ∈ fields, field.name ≠ "kind")
+    (distinct : (fields.map Ir.Field.name).Nodup) :
+    Target.readPayload state (.object ref) (fields.map Ir.Field.name)
+      = .ok (entries.map Prod.snd) state := by
+  have keys := representsArguments_keys fields arguments entries related
+  rw [← keys]
+  refine readPayload_of_entries [("kind", .primitive (.string (JSString.ofLeanString name)))]
+    entries (by simpa using shape) ?_ (by rw [keys]; exact distinct)
+  intro entry member earlier earlierMember
+  have earlierEq : earlier = ("kind", .primitive (.string (JSString.ofLeanString name))) := by
+    simpa using earlierMember
+  subst earlierEq
+  have keyMember : entry.1 ∈ fields.map Ir.Field.name := by
+    rw [← keys]
+    exact List.mem_map_of_mem member
+  obtain ⟨field, fieldMember, fieldName⟩ := List.mem_map.mp keyMember
+  intro same
+  exact free field fieldMember (fieldName.trans same.symm)
+
+/--
+The `if` chain of a statement-form match decides the arm whose constructor the value carries, names
+that alternative's payload with `const`s, and runs its statements in the scope the source arm sees:
+the payload images reversed onto the enclosing scope, which is exactly the scope `evalCases` binds.
+
+Every arm but the last compares the tag the value carries; the last is unconditional, so when the
+value decides no arm the source has run out of cases and faults, and a faulting source claims
+nothing of the target.
+-/
+theorem evalArms_refines {program : Ir.Program} {target : Target.Program} {runtime : Runtime}
+    {fuel : Nat} {discriminator : Target.Discriminator} {name : String}
+    {arguments : List Source.Value} {image : Value} :
+    ∀ (cases : List (String × Ir.Expr)) (constructors : List Ir.Constructor)
+      (emittedArms : List (String × List String × Target.Body))
+      (sourceScope : List Source.Value) (targetScope : List Value) (trace : Source.Trace)
+      (state : Target.State),
+      EverywhereArms program target runtime fuel constructors cases emittedArms →
+      Aligned program sourceScope targetScope trace state →
+      Target.discriminate state discriminator image
+        = .ok (.primitive (.string (JSString.ofLeanString name))) state →
+      (∀ chosen, Ir.constructor? constructors name = some chosen →
+        ∃ images, Target.readPayload state image (chosen.fields.map Ir.Field.name)
+            = .ok images state ∧
+          Relation.RepresentsList program state arguments images) →
+      Relation.Refines program state
+        (Source.evalCases program fuel sourceScope trace name arguments cases)
+        (Target.evalArms target runtime fuel targetScope state image discriminator emittedArms)
+  | [], _, _, _, _, _, _, _, _, _, _ => by
+      simp only [Source.evalCases]
+      exact refines_fault
+  | (tag, arm) :: rest, constructors, emittedArms, sourceScope, targetScope, trace, state,
+      armsStep, aligned, tagRead, payloadRead => by
+      unfold EverywhereArms at armsStep
+      obtain ⟨constructor, remaining, emittedArm, restEmitted, constructorsEq, tagEq, emittedEq,
+        armStep, restStep⟩ := armsStep
+      subst constructorsEq
+      subst tagEq
+      subst emittedEq
+      simp only [Source.evalCases, Target.evalArms]
+      by_cases matched : constructor.name = name
+      · rw [if_pos matched]
+        obtain ⟨images, read, related⟩ :=
+          payloadRead constructor (by simp [Ir.constructor?, matched])
+        have decided : Target.decideArm state discriminator image constructor.name
+            restEmitted.isEmpty = .ok (.primitive (.boolean true)) state := by
+          unfold Target.decideArm
+          cases final : restEmitted.isEmpty with
+          | true => simp
+          | false =>
+              simp only [Bool.false_eq_true, if_false, tagRead,
+                TSLean.Refinement.String.strictEqual_commutes, matched, beq_self_eq_true]
+        rw [decided]
+        simp only [Value.toBoolean, Primitive.toBoolean, if_true, read]
+        refine armStep (arguments.reverse ++ sourceScope) (images.reverse ++ targetScope) trace
+          state ⟨aligned.heapValid, aligned.closuresValid, ?_, aligned.trace⟩
+        exact represents_append arguments.reverse images.reverse sourceScope targetScope
+          (represents_reverse arguments images related) aligned.scope
+      · rw [if_neg matched]
+        cases final : restEmitted.isEmpty with
+        | true =>
+            have restEmpty : rest = [] := by
+              rcases rest with _ | ⟨⟨secondTag, secondArm⟩, tail⟩
+              · rfl
+              · unfold EverywhereArms at restStep
+                obtain ⟨_, _, _, _, _, _, restEmittedEq, _, _⟩ := restStep
+                rw [restEmittedEq] at final
+                simp at final
+            subst restEmpty
+            simp only [Source.evalCases]
+            exact refines_fault
+        | false =>
+            have decided : Target.decideArm state discriminator image constructor.name false
+                = .ok (.primitive (.boolean false)) state := by
+              unfold Target.decideArm
+              have different : (name == constructor.name) = false :=
+                beq_eq_false_iff_ne.mpr fun same => matched same.symm
+              simp only [Bool.false_eq_true, if_false, tagRead,
+                TSLean.Refinement.String.strictEqual_commutes, different]
+            rw [decided]
+            simp only [Value.toBoolean, Primitive.toBoolean, Bool.false_eq_true, if_false]
+            refine evalArms_refines rest remaining restEmitted sourceScope targetScope trace state
+              restStep aligned tagRead ?_
+            intro chosen selected
+            exact payloadRead chosen (by simpa [Ir.constructor?, matched] using selected)
+
+/--
+A total case analysis in return position becomes the statement form `emitMatchStatements` builds: the
+subject is evaluated once, one `if` per alternative decides it in declaration order with the last
+unconditional, and the alternative that decided names its payload with `const`s before running its
+own statements.
+
+No re-readability is required of the subject here, and none is assumed: the chain compares the value
+the subject already produced, which is what the emitted `const` secures.
+-/
+theorem branchBody {runtime : Runtime} : ∀ (program : Ir.Program) (target : Target.Program)
+    (fuel : Nat) (type : Ir.Ty) (scrutinee : Ir.Expr) (cases : List (String × Ir.Expr))
+    (emittedScrutinee : Target.Expr)
+    (emittedArms : List (String × List String × Target.Body))
+    (discriminator : Target.Discriminator) (constructors : List Ir.Constructor),
+    program.constructorsOf type = some constructors →
+    type.element? = none →
+    (Ir.allNullary constructors = true → discriminator = .tag) →
+    (Ir.allNullary constructors = false → discriminator = .tagged) →
+    (∀ constructor ∈ constructors, (∀ field ∈ constructor.fields, field.name ≠ "kind") ∧
+      (constructor.fields.map Ir.Field.name).Nodup) →
+    Everywhere program target runtime fuel scrutinee emittedScrutinee →
+    EverywhereArms program target runtime fuel constructors cases emittedArms →
+    EverywhereBody program target runtime fuel (.matchOn type scrutinee cases)
+      (.branch emittedScrutinee discriminator emittedArms) := by
+  intro program target fuel type scrutinee cases emittedScrutinee emittedArms discriminator
+    constructors declared notList bareTag taggedObject payloadKeys scrutineeStep armsStep
+    sourceScope targetScope trace state aligned
+  simp only [Source.eval, Target.evalBody]
+  cases scrutineeRun : Source.eval program fuel sourceScope trace scrutinee with
+  | fault fault next => exact refines_fault
+  | exhausted next =>
+      obtain ⟨targetState, targetRun, extension, closuresValid, traceRefines⟩ :=
+        refines_exhausted_inv
+          (scrutineeRun ▸ scrutineeStep sourceScope targetScope trace state aligned)
+      rw [targetRun]
+      exact refines_exhausted extension closuresValid traceRefines
+  | value produced next =>
+      obtain ⟨image, targetState, targetRun, extension, closuresValid, related, traceRefines⟩ :=
+        refines_value_inv
+          (scrutineeRun ▸ scrutineeStep sourceScope targetScope trace state aligned)
+      rw [targetRun]
+      have nextAligned := aligned.step extension closuresValid traceRefines
+      cases produced with
+      | variant valueType valueName valueArguments =>
+          dsimp only
+          by_cases sameType : valueType = type
+          case neg => rw [if_neg sameType]; exact refines_fault
+          rw [if_pos sameType]
+          subst sameType
+          unfold Relation.Represents at related
+          obtain ⟨found, foundEq, chosen, selected, body⟩ := related
+          rw [declared] at foundEq
+          injection foundEq with constructorsEq
+          subst constructorsEq
+          refine refines_widen extension ?_
+          by_cases nullary : Ir.allNullary constructors = true
+          · rw [if_pos nullary] at body
+            obtain ⟨noArguments, imageEq⟩ := body
+            subst noArguments
+            subst imageEq
+            rw [bareTag nullary]
+            refine evalArms_refines cases constructors emittedArms sourceScope targetScope next
+              targetState armsStep nextAligned rfl ?_
+            intro other otherSelected
+            refine ⟨[], ?_, represents_nil⟩
+            rw [nullary_fields nullary otherSelected]
+            rfl
+          · rw [if_neg nullary] at body
+            obtain ⟨ref, entries, imageEq, argumentsRelated, shape⟩ := body
+            subst imageEq
+            rw [taggedObject (by simpa using nullary)]
+            obtain ⟨free, distinct⟩ := payloadKeys chosen (List.mem_of_find?_eq_some selected)
+            refine evalArms_refines cases constructors emittedArms sourceScope targetScope next
+              targetState armsStep nextAligned ?_ ?_
+            · simp only [Target.discriminate]
+              exact readMember_of_shape targetState shape "kind"
+                (.primitive (.string (JSString.ofLeanString valueName))) (by simp)
+            · intro other otherSelected
+              rw [selected] at otherSelected
+              injection otherSelected with chosenEq
+              subst chosenEq
+              exact ⟨entries.map Prod.snd,
+                readPayload_of_represents shape argumentsRelated free distinct,
+                representsArguments_values chosen.fields valueArguments entries argumentsRelated⟩
+      | array valueElement valueElements =>
+          dsimp only
+          rw [if_neg (by
+            intro listType
+            rw [← listType] at notList
+            exact absurd notList (by simp [Ir.Ty.element?]))]
+          exact refines_fault
+      | boolean _ => exact refines_fault
+      | nat _ => exact refines_fault
+      | int _ => exact refines_fault
+      | char _ => exact refines_fault
+      | string _ => exact refines_fault
+      | record _ _ => exact refines_fault
+      | closure _ _ _ => exact refines_fault
+
+/--
+A total case analysis becomes one of the two forms `emitter.ts` builds for it: a chain of tag
+comparisons where no statement can be emitted, and the statement-form dispatch in return position.
 -/
 theorem matchOn {runtime : Runtime} : Op.Preserves runtime .matchOn := by
+  refine ⟨?_, branchBody⟩
   intro program target fuel type scrutinee cases emittedScrutinee emittedCases chain constructors
     declared nullary readable armsStep built sourceScope targetScope trace state aligned
   simp only [Source.eval]
@@ -4442,7 +4841,7 @@ def Family.Preserves (runtime : Runtime) : Ir.Family → Prop
   | .function => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat) (name : String)
       (parameters : List Ir.Field) (result : Ir.Ty) (recursion : Ir.Recursion) (body : Ir.Expr)
       (emittedBody : Target.Body) (emitted : Target.Function),
-      Compile.body program body = .ok emittedBody →
+      Compile.returnBody program body = .ok emittedBody →
       Compile.declaration program (.function name parameters result recursion body)
         = .ok (some emitted) →
       emitted.name = name ∧ emitted.parameters = parameters.length ∧
@@ -4456,7 +4855,7 @@ def Family.Preserves (runtime : Runtime) : Ir.Family → Prop
   | .foreign => ∀ (program : Ir.Program) (target : Target.Program) (fuel : Nat) (name : String)
       (host : Ir.HostOp) (parameters : List Ir.Field) (result : Ir.Ty) (reference : Ir.Expr)
       (emittedReference : Target.Body) (emitted : Target.Function),
-      Compile.body program reference = .ok emittedReference →
+      Compile.returnBody program reference = .ok emittedReference →
       Compile.declaration program (.foreign name host parameters result reference)
         = .ok (some emitted) →
       emitted.name = name ∧ emitted.parameters = parameters.length ∧

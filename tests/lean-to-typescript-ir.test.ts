@@ -1699,3 +1699,303 @@ describe('emission is the rooted export closure', () => {
     expect(code).toContain('export function caller');
   });
 });
+
+/**
+ * The statement form a payload-carrying `match` reaches the target as, byte for byte, beside the
+ * documents that shape is refused for. `Compile.returnBody` lowers this shape to
+ * `Target.Body.branch` and `Preservation.branchBody` proves it refines the source match, so what is
+ * pinned here is the correspondence between those bytes and the term the theorem is about.
+ */
+describe('a payload-carrying match in return position emits the modeled statement form', () => {
+  const jsonType = { kind: 'json' } as const;
+  const leaseType = { kind: 'named', name: 'Example.Lease', arguments: [] } as const;
+  const optionType = { kind: 'option', value: { kind: 'boolean' } } as const;
+
+  const leaseEnum = {
+    kind: 'enum',
+    name: 'Example.Lease',
+    module: 'Example',
+    namespace: 'Example',
+    typeParameters: [],
+    span: identitySpan,
+    constructors: [
+      { name: 'unheld', fields: [] },
+      {
+        name: 'held',
+        fields: [
+          { name: 'owner', type: { kind: 'string' } },
+          { name: 'exclusive', type: { kind: 'boolean' } },
+        ],
+      },
+    ],
+  };
+
+  /** Every `JsonValue` constructor decided once, in declaration order; `bool` reads its payload. */
+  const describeJson = {
+    kind: 'function',
+    name: 'Example.describeJson',
+    module: 'Example',
+    namespace: 'Example',
+    typeParameters: [],
+    span: identitySpan,
+    parameters: [{ name: 'value', type: jsonType }],
+    result: { kind: 'boolean' },
+    recursion: null,
+    body: {
+      kind: 'match',
+      type: jsonType,
+      scrutinee: { kind: 'variable', index: 0 },
+      cases: [
+        { constructor: 'null', value: { kind: 'boolean', value: false } },
+        { constructor: 'bool', value: { kind: 'variable', index: 0 } },
+        { constructor: 'int', value: { kind: 'boolean', value: false } },
+        { constructor: 'string', value: { kind: 'boolean', value: false } },
+        { constructor: 'array', value: { kind: 'boolean', value: false } },
+        { constructor: 'object', value: { kind: 'boolean', value: false } },
+      ],
+    },
+  };
+
+  /** A two-field alternative that reads both fields. */
+  const readsBoth = {
+    kind: 'function',
+    name: 'Example.readsBoth',
+    module: 'Example',
+    namespace: 'Example',
+    typeParameters: [],
+    span: identitySpan,
+    parameters: [{ name: 'lease', type: leaseType }],
+    result: { kind: 'boolean' },
+    recursion: null,
+    body: {
+      kind: 'match',
+      type: leaseType,
+      scrutinee: { kind: 'variable', index: 0 },
+      cases: [
+        { constructor: 'unheld', value: { kind: 'boolean', value: false } },
+        {
+          constructor: 'held',
+          value: {
+            kind: 'operation',
+            opcode: 'bool.and',
+            typeArguments: [],
+            arguments: [
+              { kind: 'variable', index: 0 },
+              {
+                kind: 'operation',
+                opcode: 'string.isEmpty',
+                typeArguments: [],
+                arguments: [{ kind: 'variable', index: 1 }],
+              },
+            ],
+          },
+        },
+      ],
+    },
+  };
+
+  /** A two-field alternative that reads neither field, and an enclosing binder above it. */
+  const capture = {
+    kind: 'function',
+    name: 'Example.capture',
+    module: 'Example',
+    namespace: 'Example',
+    typeParameters: [],
+    span: identitySpan,
+    parameters: [
+      { name: 'lease', type: leaseType },
+      { name: 'fallback', type: { kind: 'boolean' } },
+    ],
+    result: { kind: 'boolean' },
+    recursion: null,
+    body: {
+      kind: 'match',
+      type: leaseType,
+      scrutinee: { kind: 'variable', index: 1 },
+      cases: [
+        { constructor: 'unheld', value: { kind: 'variable', index: 0 } },
+        { constructor: 'held', value: { kind: 'variable', index: 2 } },
+      ],
+    },
+  };
+
+  /** A match inside an alternative of another match. */
+  const nested = {
+    kind: 'function',
+    name: 'Example.nested',
+    module: 'Example',
+    namespace: 'Example',
+    typeParameters: [],
+    span: identitySpan,
+    parameters: [
+      { name: 'flag', type: optionType },
+      { name: 'value', type: jsonType },
+    ],
+    result: { kind: 'boolean' },
+    recursion: null,
+    body: {
+      kind: 'match',
+      type: jsonType,
+      scrutinee: { kind: 'variable', index: 0 },
+      cases: [
+        {
+          constructor: 'null',
+          value: {
+            kind: 'match',
+            type: optionType,
+            scrutinee: { kind: 'variable', index: 1 },
+            cases: [
+              { constructor: 'none', value: { kind: 'boolean', value: false } },
+              { constructor: 'some', value: { kind: 'variable', index: 0 } },
+            ],
+          },
+        },
+        { constructor: 'bool', value: { kind: 'variable', index: 0 } },
+        { constructor: 'int', value: { kind: 'boolean', value: false } },
+        { constructor: 'string', value: { kind: 'boolean', value: false } },
+        { constructor: 'array', value: { kind: 'boolean', value: false } },
+        { constructor: 'object', value: { kind: 'boolean', value: false } },
+      ],
+    },
+  };
+
+  const decode = (declarations: readonly { readonly name: string }[], roots: readonly string[]) =>
+    decodeLeanSemanticProgram(
+      program(
+        declarations,
+        declarations
+          .map((declaration) => ({
+            declaration: declaration.name,
+            module: 'Example',
+            role: 'emitted',
+            reason: '',
+          }))
+          .sort((left, right) => (left.declaration < right.declaration ? -1 : 1)),
+        roots,
+      ),
+    );
+  const emit = (declarations: readonly { readonly name: string }[], roots: readonly string[]) =>
+    emitTypeScriptPackage(decode(declarations, roots), {
+      ...provenance,
+      semantic: { ...provenance.semantic, declarations: [...roots].sort() },
+    })
+      .modules.map((module) => module.code)
+      .join('\n');
+
+  test('a JsonValue match emits one test per alternative in declaration order, the last unconditional', () => {
+    // Byte for byte the statements `Compile.returnBody` lowers to
+    // `.branch (.binding 0) .tagged [("null", [], …), ("bool", ["value"], …), …]`: one `kind` test
+    // per alternative, the payload named by a `const` inside the branch that decided it, and no test
+    // for `object`, whose statements are the narrowed remainder.
+    expect(emit([describeJson], ['Example.describeJson'])).toContain(
+      [
+        'export function describeJson(value: JsonValue): boolean {',
+        '    if (value.kind === "null") {',
+        '        return false;',
+        '    }',
+        '    if (value.kind === "bool") {',
+        '        const value$2 = value.value;',
+        '        return value$2;',
+        '    }',
+        '    if (value.kind === "int") {',
+        '        return false;',
+        '    }',
+        '    if (value.kind === "string") {',
+        '        return false;',
+        '    }',
+        '    if (value.kind === "array") {',
+        '        return false;',
+        '    }',
+        '    return false;',
+        '}',
+      ].join('\n'),
+    );
+  });
+
+  test('a two-field alternative names its fields in declaration order', () => {
+    // The `const` run is `owner` then `exclusive`, so the innermost binding is the *last* field:
+    // de Bruijn index 0 is `exclusive` and index 1 is `owner`, which is the scope
+    // `Source.evalCases` binds and the one `Target.readPayload` reverses onto.
+    expect(emit([leaseEnum, readsBoth], ['Example.readsBoth'])).toContain(
+      [
+        'export function readsBoth(lease: Lease): boolean {',
+        '    if (lease.kind === "unheld") {',
+        '        return false;',
+        '    }',
+        '    const owner = lease.owner;',
+        '    const exclusive = lease.exclusive;',
+        '    return exclusive && owner.length === 0;',
+        '}',
+      ].join('\n'),
+    );
+  });
+
+  test('an alternative reading neither field names none, and the enclosing binder keeps its slot', () => {
+    // The liveness prune drops a `const` no alternative reads, and the binder it would have named
+    // keeps its de Bruijn position, so index 2 still resolves to `fallback` rather than to the
+    // scrutinee. The model names every declared field instead; the difference is unobservable,
+    // because the initializer it drops is an own data-property read, which
+    // `Tests.readPayload_changes_no_state` states.
+    expect(emit([leaseEnum, capture], ['Example.capture'])).toContain(
+      [
+        'export function capture(lease: Lease, fallback: boolean): boolean {',
+        '    if (lease.kind === "unheld") {',
+        '        return fallback;',
+        '    }',
+        '    return fallback;',
+        '}',
+      ].join('\n'),
+    );
+  });
+
+  test('a match inside an alternative emits the nested statement form', () => {
+    // The inner match is statements inside the branch that decided the outer one, which is the
+    // nested `.branch` inside an arm body that `Tests.nested_match_lowers` pins.
+    expect(emit([nested], ['Example.nested'])).toContain(
+      [
+        'export function nested(flag: Option<boolean>, value: JsonValue): boolean {',
+        '    if (value.kind === "null") {',
+        '        if (flag.kind === "none") {',
+        '            return false;',
+        '        }',
+        '        const value$2 = flag.value;',
+        '        return value$2;',
+        '    }',
+        '    if (value.kind === "bool") {',
+        '        const value$3 = value.value;',
+        '        return value$3;',
+        '    }',
+      ].join('\n'),
+    );
+  });
+
+  test('arms out of declaration order are refused', () => {
+    // The emitted chain reads each arm's payload field list positionally out of the declaration, so
+    // a drifted order would bind `held`'s payload under `unheld`'s branch. `Compile.decidesInOrder`
+    // refuses the same document, and `semantics-drifted-arm-order.lean` refuses the refinement.
+    const drifted = {
+      ...readsBoth,
+      body: { ...readsBoth.body, cases: [readsBoth.body.cases[1], readsBoth.body.cases[0]] },
+    };
+    expect(() => decode([leaseEnum, drifted], ['Example.readsBoth'])).toThrow(
+      'does not decide every constructor of Example.Lease exactly once in declaration order',
+    );
+  });
+
+  test('a missing alternative is refused', () => {
+    const partial = { ...readsBoth, body: { ...readsBoth.body, cases: [readsBoth.body.cases[0]] } };
+    expect(() => decode([leaseEnum, partial], ['Example.readsBoth'])).toThrow(
+      'does not decide every constructor of Example.Lease exactly once in declaration order',
+    );
+  });
+
+  test('two arms deciding one constructor are refused', () => {
+    const repeated = {
+      ...readsBoth,
+      body: { ...readsBoth.body, cases: [readsBoth.body.cases[0], readsBoth.body.cases[0]] },
+    };
+    expect(() => decode([leaseEnum, repeated], ['Example.readsBoth'])).toThrow(
+      'body.cases contains duplicates',
+    );
+  });
+});

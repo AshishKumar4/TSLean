@@ -2023,6 +2023,11 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
             `${location} does not decide every constructor of ${renderType(expression.type)} exactly once in declaration order`,
           );
         }
+        // `Compile.decidesInOrder` decides the same condition, and `Preservation.EverywhereArms` is
+        // stated on the positional correspondence it secures: the arm at position `i` names the
+        // fields of the constructor declared at position `i`, which is what the emitted `if` chain
+        // reads. A drifted arm order would bind another constructor's fields, so it is refused here,
+        // at the lowering, and by the `semantics-drifted-arm-order` fixture.
         // A payload-carrying alternative binds its constructor's fields, innermost binder last,
         // so the arm's scope is the constructor's field types reversed onto the enclosing scope.
         const armScope = (index: number): readonly LeanType[] => {

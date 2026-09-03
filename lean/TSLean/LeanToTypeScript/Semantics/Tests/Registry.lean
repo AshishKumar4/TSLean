@@ -339,6 +339,233 @@ theorem foreign_family_discriminates (name : String) (host : Ir.HostOp)
       ≠ (Ir.Decl.function name parameters result .nonrecursive reference).family := by
   simp [Ir.Decl.family]
 
+/-! ### The statement-form dispatch
+
+`JsonValue` is the payload-carrying union the emitted decoders and encoders take apart, so it is the
+one these rows are written over: six constructors, five of them carrying a payload, decided in
+declaration order.
+-/
+
+/-- A `JsonValue` match deciding every constructor once, in declaration order, whose `bool`
+alternative reads the payload its branch bound. -/
+def jsonDecision : Ir.Expr :=
+  .matchOn .json (.varRef 0)
+    [("null", .boolLit false), ("bool", .varRef 0), ("int", .boolLit false),
+      ("string", .boolLit false), ("array", .boolLit false), ("object", .boolLit false)]
+
+/-- The one-function program that decides it. -/
+def jsonProgram : Ir.Program :=
+  ⟨[.function "Fixture.isTrue" [⟨"value", .json⟩] .boolean .nonrecursive jsonDecision]⟩
+
+/-- The lowering of that match is the statement-form dispatch on the `kind` property: one arm per
+declared constructor, in declaration order, each naming its declared payload fields, and the last
+arm carrying no test. A lowering that emitted a conditional chain would produce a `ret` here. -/
+theorem json_match_lowers :
+    Compile.returnBody jsonProgram jsonDecision
+      = .ok (.branch (.binding 0) .tagged
+          [("null", [], .ret (.boolLit false)),
+            ("bool", ["value"], .ret (.binding 0)),
+            ("int", ["value"], .ret (.boolLit false)),
+            ("string", ["value"], .ret (.boolLit false)),
+            ("array", ["value"], .ret (.boolLit false)),
+            ("object", ["value"], .ret (.boolLit false))]) := by
+  simp [jsonProgram, jsonDecision, Compile.returnBody, Compile.returnArms, Compile.expr,
+    Compile.destructurable, Compile.decidesInOrder, Compile.checkPayloads, Compile.presentableKeys,
+    Ir.Program.constructorsOf, Ir.allNullary, Ir.Ty.element?,
+    show Ir.ValidKey "value" from by decide]
+  rfl
+
+/--
+The `JsonValue` match refines its source end to end: at every fuel, from the whole-program premises
+alone, the statements the emitter builds for it refine the source match — the payload included.
+-/
+theorem json_match_refines (target : Target.Program) (runtime : Runtime)
+    (lowered : Preservation.LoweredProgram jsonProgram target)
+    (laws : Preservation.RuntimeLaws runtime) (listsFit : Preservation.ListsFit jsonProgram)
+    (fuel : Nat) :
+    Preservation.EverywhereBody jsonProgram target runtime fuel jsonDecision
+      (.branch (.binding 0) .tagged
+        [("null", [], .ret (.boolLit false)),
+          ("bool", ["value"], .ret (.binding 0)),
+          ("int", ["value"], .ret (.boolLit false)),
+          ("string", ["value"], .ret (.boolLit false)),
+          ("array", ["value"], .ret (.boolLit false)),
+          ("object", ["value"], .ret (.boolLit false))]) :=
+  Preservation.everywhereReturnBody lowered laws listsFit fuel jsonDecision _ json_match_lowers
+
+/-- Arm-order drift is refused by name. The emitted `if` chain reads each arm's payload field list
+positionally out of the declaration, so a lowering that dispatched by name instead would accept this
+and bind `bool`'s payload under `null`'s branch. -/
+theorem json_match_refuses_arm_order_drift :
+    Compile.returnBody jsonProgram
+        (.matchOn .json (.varRef 0)
+          [("bool", .varRef 0), ("null", .boolLit false), ("int", .boolLit false),
+            ("string", .boolLit false), ("array", .boolLit false), ("object", .boolLit false)])
+      = .error (.armOrder .json) := by
+  simp [jsonProgram, Compile.returnBody, Compile.destructurable, Compile.decidesInOrder,
+    Ir.Program.constructorsOf, Ir.Ty.element?, throw, throwThe, MonadExceptOf.throw]
+
+/-- A missing alternative is refused by name: the arms are every declared constructor exactly once or
+they are refused, so no emitted chain can fall through to an alternative it never decided. -/
+theorem json_match_refuses_missing_arm :
+    Compile.returnBody jsonProgram
+        (.matchOn .json (.varRef 0)
+          [("null", .boolLit false), ("bool", .varRef 0), ("int", .boolLit false),
+            ("string", .boolLit false), ("array", .boolLit false)])
+      = .error (.armOrder .json) := by
+  simp [jsonProgram, Compile.returnBody, Compile.destructurable, Compile.decidesInOrder,
+    Ir.Program.constructorsOf, Ir.Ty.element?, throw, throwThe, MonadExceptOf.throw]
+
+/-- A `JsonValue` match one arm of which is itself a match lowers to the nested statement form, not
+to a conditional inside a `return`. -/
+def nestedDecision : Ir.Expr :=
+  .matchOn .json (.varRef 0)
+    [("null", .matchOn (.option .boolean) (.varRef 1)
+        [("none", .boolLit false), ("some", .varRef 0)]),
+      ("bool", .varRef 0), ("int", .boolLit false), ("string", .boolLit false),
+      ("array", .boolLit false), ("object", .boolLit false)]
+
+def nestedProgram : Ir.Program :=
+  ⟨[.function "Fixture.nested" [⟨"flag", .option .boolean⟩, ⟨"value", .json⟩] .boolean
+      .nonrecursive nestedDecision]⟩
+
+theorem nested_match_lowers :
+    Compile.returnBody nestedProgram nestedDecision
+      = .ok (.branch (.binding 0) .tagged
+          [("null", [], .branch (.binding 1) .tagged
+              [("none", [], .ret (.boolLit false)), ("some", ["value"], .ret (.binding 0))]),
+            ("bool", ["value"], .ret (.binding 0)),
+            ("int", ["value"], .ret (.boolLit false)),
+            ("string", ["value"], .ret (.boolLit false)),
+            ("array", ["value"], .ret (.boolLit false)),
+            ("object", ["value"], .ret (.boolLit false))]) := by
+  simp [nestedProgram, nestedDecision, Compile.returnBody, Compile.returnArms, Compile.expr,
+    Compile.destructurable, Compile.decidesInOrder, Compile.checkPayloads, Compile.presentableKeys,
+    Ir.Program.constructorsOf, Ir.allNullary, Ir.Ty.element?,
+    show Ir.ValidKey "value" from by decide]
+  rfl
+
+/-- A two-field alternative and an enclosing binder, where the arm reads the enclosing binder and
+neither payload field. -/
+def captureDecision : Ir.Expr :=
+  .matchOn (.named "Fixture.Lease" []) (.varRef 1)
+    [("unheld", .varRef 0), ("held", .varRef 2)]
+
+def captureProgram : Ir.Program :=
+  ⟨[.enum "Fixture.Lease"
+      [⟨"unheld", []⟩, ⟨"held", [⟨"owner", .string⟩, ⟨"exclusive", .boolean⟩]⟩],
+    .function "Fixture.reads"
+      [⟨"lease", .named "Fixture.Lease" []⟩, ⟨"fallback", .boolean⟩] .boolean .nonrecursive
+      captureDecision]⟩
+
+/-- Every declared field is named, whatever the alternative reads, so an index above the payload
+resolves to the binder it did before. A lowering that named only the fields an arm reads would leave
+`held`'s body reading `lease` where the source reads `fallback`. -/
+theorem capture_names_every_declared_field :
+    Compile.returnBody captureProgram captureDecision
+      = .ok (.branch (.binding 1) .tagged
+          [("unheld", [], .ret (.binding 0)),
+            ("held", ["owner", "exclusive"], .ret (.binding 2))]) := by
+  simp [captureProgram, captureDecision, Compile.returnBody, Compile.returnArms, Compile.expr,
+    Compile.destructurable, Compile.decidesInOrder, Compile.checkPayloads, Compile.presentableKeys,
+    Ir.Program.constructorsOf, Ir.Program.find?, Ir.Decl.name, Ir.allNullary, Ir.Ty.element?,
+    Ir.substituteFields, show Ir.ValidKey "owner" from by decide,
+    show Ir.ValidKey "exclusive" from by decide]
+  rfl
+
+/-- The other half of that statement, on the source side: the arm binds one value per declared field,
+innermost last, so index `2` is the enclosing binder and not the scrutinee. -/
+theorem capture_arm_reads_the_enclosing_binder (fuel : Nat) (trace : Source.Trace)
+    (fallback lease owner exclusive : Source.Value) :
+    Source.evalCases captureProgram fuel [fallback, lease] trace "held" [owner, exclusive]
+        [("unheld", .varRef 0), ("held", .varRef 2)]
+      = .value fallback trace := by
+  simp [Source.evalCases, Source.eval, Source.lookup]
+
+/-- Naming a payload field changes no state: every read is an own data-property read. This is what
+makes the emitter's prune of a field no alternative reads unobservable — the model names every
+declared field, so the `const` the emitter drops could not have been observed either way. -/
+theorem readMember_changes_no_state (state : Target.State) (name : String) (subject : JS.Value)
+    (value : JS.Value) (next : Target.State)
+    (read : Target.readMember state name subject = .ok value next) : next = state := by
+  unfold Target.readMember at read
+  split at read <;> (try split at read) <;>
+    first
+      | (injection read with _ stateEq; exact stateEq.symm)
+      | simp at read
+
+theorem readPayload_changes_no_state :
+    ∀ (fields : List String) (state : Target.State) (subject : JS.Value) (values : List JS.Value)
+      (next : Target.State),
+      Target.readPayload state subject fields = .ok values next → next = state
+  | [], state, subject, values, next, read => by
+      simp only [Target.readPayload] at read
+      injection read with _ stateEq
+      exact stateEq.symm
+  | field :: rest, state, subject, values, next, read => by
+      simp only [Target.readPayload] at read
+      cases member : Target.readMember state field subject with
+      | ok held middle =>
+          rw [member] at read
+          dsimp only at read
+          cases tail : Target.readPayload middle subject rest with
+          | ok tailValues last =>
+              rw [tail] at read
+              injection read with _ lastEq
+              rw [← lastEq, readPayload_changes_no_state rest middle subject tailValues last tail,
+                readMember_changes_no_state state field subject held middle member]
+          | thrown error last => rw [tail] at read; exact absurd read (by simp)
+          | fault fault last => rw [tail] at read; exact absurd read (by simp)
+          | exhausted last => rw [tail] at read; exact absurd read (by simp)
+      | thrown error middle => rw [member] at read; exact absurd read (by simp)
+      | fault fault middle => rw [member] at read; exact absurd read (by simp)
+      | exhausted middle => rw [member] at read; exact absurd read (by simp)
+
+/-- A payload-carrying match in argument position is still refused, and by its own name: no statement
+can be emitted there, so `emitter.ts` substitutes each payload read into the arm that reads it, which
+is a form no theorem here covers. -/
+theorem payload_match_in_argument_is_refused :
+    Compile.expr jsonProgram jsonDecision = .error (.substitutedMatch .json) := by
+  simp [jsonProgram, jsonDecision, Compile.expr, Ir.Program.constructorsOf, Ir.allNullary,
+    throw, throwThe, MonadExceptOf.throw]
+
+/-- A `List` match is refused by its own name: its alternatives are decided by array length and its
+payload is read with `subject[0]` and `subject.slice(1)`, which is a third dispatch shape this model
+does not carry. -/
+theorem list_match_is_refused (element : Ir.Ty) :
+    Compile.returnBody jsonProgram
+        (.matchOn (.list element) (.varRef 0) [("nil", .boolLit false), ("cons", .boolLit true)])
+      = .error (.listMatch (.list element)) := by
+  simp [Compile.returnBody, Ir.Program.constructorsOf, Ir.Ty.element?, throw, throwThe,
+    MonadExceptOf.throw]
+
+/-- A one-constructor structure is refused by its own name: `Source.eval` gives its value the
+`record` form, whose fields are read with field reads, so admitting a match on one would be admitting
+a lowering whose refinement holds only because the source faults. -/
+theorem pair_match_is_refused (first second : Ir.Ty) :
+    Compile.returnBody jsonProgram
+        (.matchOn (.pair first second) (.varRef 0) [("mk", .varRef 0)])
+      = .error (.structureMatch (.pair first second)) := by
+  simp [Compile.returnBody, Compile.destructurable, Ir.Program.constructorsOf, Ir.Ty.element?,
+    throw, throwThe, MonadExceptOf.throw]
+
+/-- A payload field spelled `kind` is refused by name: the emitted tag occupies that own key, so the
+read would answer the tag instead of the field. `assertRepresentationNames` in `emitter.ts` refuses
+the declaration for the same collision. -/
+def collidingProgram : Ir.Program :=
+  ⟨[.enum "Fixture.Tagged" [⟨"only", [⟨"kind", .boolean⟩]⟩],
+    .function "Fixture.reads" [⟨"tagged", .named "Fixture.Tagged" []⟩] .boolean .nonrecursive
+      (.matchOn (.named "Fixture.Tagged" []) (.varRef 0) [("only", .varRef 0)])]⟩
+
+theorem reserved_tag_field_is_refused :
+    Compile.returnBody collidingProgram
+        (.matchOn (.named "Fixture.Tagged" []) (.varRef 0) [("only", .varRef 0)])
+      = .error (.reservedTagField (.named "Fixture.Tagged" []) "only") := by
+  simp [collidingProgram, Compile.returnBody, Compile.destructurable, Compile.decidesInOrder,
+    Compile.checkPayloads, Compile.presentableKeys, Ir.Program.constructorsOf, Ir.Program.find?,
+    Ir.Decl.name, Ir.substituteFields, Ir.Ty.element?, throw, throwThe, MonadExceptOf.throw,
+    bind, Except.bind, show Ir.ValidKey "kind" from by decide]
+
 /-! ## Closure -/
 
 /--
@@ -366,7 +593,9 @@ theorem family_registry_closed (runtime : Runtime) :
 /--
 The whole-program theorem discharges every hypothesis the per-operation theorems take, from three
 premises: the program's lowering, the engine's recorded assumption closures, and ECMAScript's
-array-length cap.
+array-length cap. It covers both body positions — the inline arrow's concise expression and the
+declaration's statements — so a declaration whose body branches through statements is covered by the
+theorem rather than by the artifact's digests alone.
 -/
 theorem whole_program_closed {program : Ir.Program} {target : Target.Program} {runtime : Runtime}
     (lowered : Preservation.LoweredProgram program target)
@@ -374,9 +603,12 @@ theorem whole_program_closed {program : Ir.Program} {target : Target.Program} {r
     (∀ fuel expression emitted, Compile.expr program expression = .ok emitted →
         Preservation.Everywhere program target runtime fuel expression emitted) ∧
       (∀ fuel body emitted, Compile.body program body = .ok emitted →
+        Preservation.EverywhereBody program target runtime fuel body emitted) ∧
+      (∀ fuel body emitted, Compile.returnBody program body = .ok emitted →
         Preservation.EverywhereBody program target runtime fuel body emitted) :=
   ⟨fun fuel => Preservation.everywhere lowered laws listsFit fuel,
-    fun fuel => Preservation.everywhereBody lowered laws listsFit fuel⟩
+    fun fuel => Preservation.everywhereBody lowered laws listsFit fuel,
+    fun fuel => Preservation.everywhereReturnBody lowered laws listsFit fuel⟩
 
 /--
 The host boundary's premise is derivable from the program's lowering, so it is a replacement

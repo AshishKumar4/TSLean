@@ -3826,12 +3826,14 @@ function alternativeTest(
  * A `match` in return position. The scrutinee is bound once, every alternative but the last is a
  * test that returns, and the last alternative falls through to the narrowed remainder.
  *
- * `Target.Body` in the semantics is a `const` run ending in one `return`, so this statement form is
- * outside the shapes `Compile` produces: the model lowers every match to the tag chain that
- * `emitMatchExpression` builds and refuses a scrutinee it cannot name, while a `const` names the
- * scrutinee here and evaluates it exactly once. The refinement theorem therefore covers the
- * conditional form, and a declaration whose body branches through statements is bound by the
- * artifact's digests and its type check rather than by that theorem.
+ * `Compile.returnBody` in the semantics lowers exactly this shape to `Target.Body.branch`, and
+ * `Preservation.branchBody` proves it refines the source match: the subject is evaluated once, the
+ * alternatives are decided in declaration order with the last unconditional, and the alternative
+ * that decided names its payload with `const`s in declaration order, which is the scope the source
+ * arm binds. The two differences left are recorded rather than assumed: the emitter drops a `const`
+ * for a field no alternative reads, which is unobservable because the initializer is an own
+ * data-property read, and it names a non-identifier scrutinee with a `const` where the model
+ * evaluates the subject expression once — one statement, no de Bruijn slot, same value.
  */
 function emitMatchStatements(
   expression: Extract<LeanExpression, { readonly kind: 'match' }>,
@@ -4388,7 +4390,9 @@ function emitVariant(
  * a call would otherwise smuggle the call in behind one property read.
  *
  * This is the condition `Compile.readableScrutinee` decides, clause for clause, so a tag chain this
- * emitter builds is one the preservation theorem admits rather than a wider set of them.
+ * emitter builds is one the preservation theorem admits rather than a wider set of them. It is the
+ * argument-position condition only: in return position `emitMatchStatements` names the scrutinee and
+ * `Target.Body.branch` evaluates the subject exactly once, so nothing there needs to be re-readable.
  */
 function isRereadable(expression: LeanExpression): boolean {
   if (expression.kind === 'variable') return true;
