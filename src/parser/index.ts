@@ -1189,14 +1189,14 @@ class ParserCtx {
       const else_ = stmt.elseStatement
         ? (ts.isBlock(stmt.elseStatement) ? this.parseBlock(stmt.elseStatement, eff) : this.parseStmt(stmt.elseStatement, rest, eff))
         : this.parseStmts(rest, eff);
-      return { tag: 'IfThenElse', cond, then: then_, else_, type: else_.type, effect: combineEffects([cond.effect, then_.effect, else_.effect]) };
+      return { tag: 'IfThenElse', cond, consequent: then_, else_, type: else_.type, effect: combineEffects([cond.effect, then_.effect, else_.effect]) };
     }
 
     const else_ = stmt.elseStatement
       ? (ts.isBlock(stmt.elseStatement) ? this.parseBlock(stmt.elseStatement, eff) : this.parseStmt(stmt.elseStatement, [], eff))
       : litUnit();
 
-    const ifExpr: IRExpr = { tag: 'IfThenElse', cond, then: then_, else_, type: else_.type, effect: combineEffects([cond.effect, then_.effect, else_.effect]) };
+    const ifExpr: IRExpr = { tag: 'IfThenElse', cond, consequent: then_, else_, type: else_.type, effect: combineEffects([cond.effect, then_.effect, else_.effect]) };
 
     if (rest.length === 0) return ifExpr;
     const c = this.parseStmts(rest, eff);
@@ -1387,7 +1387,7 @@ class ParserCtx {
     const lName  = `_loop_${node.pos}`;
     const recurse: IRExpr = { tag: 'App', fn: varExpr(lName), args: [incrArg], type: TyUnit, effect: Pure };
     const loopBody: IRExpr = {
-      tag: 'IfThenElse', cond, then: seq(body, recurse),
+      tag: 'IfThenElse', cond, consequent: seq(body, recurse),
       else_: litUnit(), type: TyUnit, effect: combineEffects([cond.effect, body.effect]),
     };
     return {
@@ -1409,7 +1409,7 @@ class ParserCtx {
   private buildWhileLoop(name: string, cond: IRExpr, body: IRExpr): IRExpr {
     const recurse: IRExpr = { tag: 'App', fn: varExpr(name), args: [], type: TyUnit, effect: Pure };
     const lBody: IRExpr = {
-      tag: 'IfThenElse', cond, then: seq(body, recurse),
+      tag: 'IfThenElse', cond, consequent: seq(body, recurse),
       else_: litUnit(), type: TyUnit, effect: combineEffects([cond.effect, body.effect]),
     };
     return {
@@ -1501,7 +1501,7 @@ class ParserCtx {
       const cond  = this.parseExpr(node.condition);
       const then_ = this.parseExpr(node.whenTrue);
       const else_ = this.parseExpr(node.whenFalse);
-      return { tag: 'IfThenElse', cond, then: then_, else_, type: then_.type, effect: combineEffects([cond.effect, then_.effect, else_.effect]) };
+      return { tag: 'IfThenElse', cond, consequent: then_, else_, type: then_.type, effect: combineEffects([cond.effect, then_.effect, else_.effect]) };
     }
     if (ts.isObjectLiteralExpression(node)) return this.parseObjLit(node);
     if (ts.isArrayLiteralExpression(node)) {
@@ -2032,7 +2032,7 @@ function branchReturns(e: IRExpr): boolean {
   if (e.tag === 'Return' || e.tag === 'Throw') return true;
   if (e.tag === 'Sequence') return branchReturns(e.stmts[e.stmts.length - 1]);
   if (e.tag === 'Let')      return branchReturns(e.body);
-  if (e.tag === 'IfThenElse') return branchReturns(e.then) && branchReturns(e.else_);
+  if (e.tag === 'IfThenElse') return branchReturns(e.consequent) && branchReturns(e.else_);
   return false;
 }
 

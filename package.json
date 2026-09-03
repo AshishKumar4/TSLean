@@ -127,7 +127,7 @@
     "evidence:primitives:check": "bun scripts/generate-evidence-manifest.mjs --input evidence/phase1-primitives-input.json --check",
     "evidence:baseline:generate": "bun scripts/generate-evidence-manifest.mjs --input evidence/baseline-input.json",
     "evidence:baseline:check": "bun scripts/generate-evidence-manifest.mjs --input evidence/baseline-input.json --check",
-    "js:trust": "bun scripts/check-js-axioms.mjs --evidence evidence/phase5-emitted-tcb-input.json",
+    "js:trust": "node --import tsx scripts/check-js-axioms.mjs --evidence evidence/phase5-emitted-tcb-input.json",
     "verify": "bun run format:check:foundation && bun run differential:check && bun run semantics:check && bun run semantics:self-test && bun run js:trust && bun run evidence:check && bun run lint && bun run build && bun run lean-to-typescript:check && bun run lean-to-typescript:enforcement:check && bun run lean-to-typescript:package:check && bun run roundtrip:examples:check && bun run roundtrip:check && bun run test && bun run lean:gate && cd lean && lake build",
     "prepublishOnly": "bun run verify",
     "lean-to-typescript:package:generate": "node dist/cli.js lean-to-ts --project-root lean --module TSLean.Examples.Package.Decision --source lean/TSLean/Examples/Package/Decision.lean --declaration TSLean.Examples.Package.decideAccess --declaration TSLean.Examples.Package.grantedCapability --declaration TSLean.Examples.Package.Policy.effective --out-dir examples/lean-to-typescript/package/generated --manifest examples/lean-to-typescript/package/generated/tslean.manifest.json",

@@ -4,7 +4,7 @@
   "toolchain": {
     "bun": "1.4.0",
     "node": "v22.22.3",
-    "typescript": "6.0.2",
+    "typescript": "7.0.2",
     "vitest": "vitest/4.1.2 linux-x64 node-v22.22.3",
     "prettier": "3.9.6",
     "eslint": "v10.8.1",
@@ -179,13 +179,13 @@
     }
   ],
   "hashes": {
-    "source": "sha256:1c8ffa6f3b3d63cf3738fe3e3566def7ef5252b501a44329f9b69bf20e8fd8b8",
-    "semanticsGate": "sha256:699537bd8fae419fa7f4322feecb01481252cd2dd5bbf7f4f407302918d5ce36",
+    "source": "sha256:ac10433f2cda0d6e581f99af4008017ab7339fb3686b4edd6273e04ac8733907",
+    "semanticsGate": "sha256:502cbc3b5a11de63e9cb140175de9ee7a688104d6ba92664a9ea9031e3391772",
     "jsRuntime": "sha256:03f43c01641fd7379f87e7e2a56ad4fc92528c129efa2c736e289e70a3283deb",
     "refinementRuntimeAndBarrel": "sha256:3c4badb33a92287e32a4156353ca3ac594fa575336a633ce98cdcd21e82e1ae2",
     "refinementTestsAuditRegistry": "sha256:442fe58d68dc9252b1622506eeecbcd9cb57f400ff4474f385f3bbb8cf9a311c",
     "corpus": "sha256:813ba0e3fa8d02912872c4451cf33773aa0fc627dac24f68f770e25506fa1903",
-    "differentialSpecHarness": "sha256:a60e709b193d859da6521ab4179c645fd0c33cb50cfa9d1fba9f486a4feb6eb5",
-    "trustEvidenceInfrastructure": "sha256:1c9ccf71587f5c3c571f36417a2eb350547f915872ba835b744755e036d4de8d"
+    "differentialSpecHarness": "sha256:9f5a3afce85db3b88439c342c79f26a0b502c7033df200742cd30bfe74662c17",
+    "trustEvidenceInfrastructure": "sha256:20b1cb512f9acdd41c5ffd7d8b4c94bfb6a374077587b7f86644378d5a097739"
   }
 }

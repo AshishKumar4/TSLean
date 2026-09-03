@@ -116,7 +116,7 @@ class RewriteCtx {
       // Rewrite struct literals that are discriminated union constructor calls.
       // e.g. { type: "left", value: v } → CtorApp("Either.Left", [v])
       case 'StructLit':   return this.rewriteStructLit(e) ?? this.rewriteFields(e);
-      case 'IfThenElse':  return { ...e, cond: this.rewrite(e.cond), then: this.rewrite(e.then), else_: this.rewrite(e.else_) };
+      case 'IfThenElse':  return { ...e, cond: this.rewrite(e.cond), consequent: this.rewrite(e.consequent), else_: this.rewrite(e.else_) };
       case 'Let':         return { ...e, value: this.rewrite(e.value), body: this.rewrite(e.body) };
       case 'Bind':        return { ...e, monad: this.rewrite(e.monad), body: this.rewrite(e.body) };
       case 'Lambda':      return { ...e, body: this.rewrite(e.body) };
@@ -299,7 +299,7 @@ function substituteFieldAccesses(
       case 'Lambda':       return { ...e, body: go(e.body) };
       case 'Let':          return { ...e, value: go(e.value), body: go(e.body) };
       case 'Bind':         return { ...e, monad: go(e.monad), body: go(e.body) };
-      case 'IfThenElse':   return { ...e, cond: go(e.cond), then: go(e.then), else_: go(e.else_) };
+      case 'IfThenElse':   return { ...e, cond: go(e.cond), consequent: go(e.consequent), else_: go(e.else_) };
       case 'Match':        return { ...e, scrutinee: go(e.scrutinee), cases: e.cases.map(c => ({
         ...c, body: go(c.body), guard: c.guard ? go(c.guard) : undefined,
       })) };

@@ -230,7 +230,7 @@ export type IRExpr =
   | ({ tag: 'Let';  name: string; annot?: IRType; value: IRExpr; body: IRExpr } & IRNode)
   | ({ tag: 'Bind'; name: string; monad: IRExpr; body: IRExpr }            & IRNode)
   // Control flow
-  | ({ tag: 'IfThenElse'; cond: IRExpr; then: IRExpr; else_: IRExpr }      & IRNode)
+  | ({ tag: 'IfThenElse'; cond: IRExpr; consequent: IRExpr; else_: IRExpr }      & IRNode)
   | ({ tag: 'Match';      scrutinee: IRExpr; cases: IRCase[] }             & IRNode)
   | ({ tag: 'Sequence';   stmts: IRExpr[] }                                & IRNode)
   | ({ tag: 'Return';     value: IRExpr }                                  & IRNode)

@@ -861,7 +861,10 @@ describe('generic model differential infrastructure', () => {
         if (fixture.kind !== 'graph') return;
         const array = fixture.nodes.find(({ kind }) => kind === 'array');
         if (array !== undefined) array.elements.push({ index: 65_536, value: { kind: 'undefined' } });
-        else fixture.nodes[0].kind = 'array', fixture.nodes[0].elements.push({ index: 65_536, value: { kind: 'undefined' } });
+        else {
+          fixture.nodes[0].kind = 'array';
+          fixture.nodes[0].elements.push({ index: 65_536, value: { kind: 'undefined' } });
+        }
       }],
       ['argument-bound', (fixture) => {
         if (fixture.kind !== 'graph') return;

@@ -344,11 +344,11 @@ describe('Codegen depth: complex expressions', () => {
       body: {
         tag: 'IfThenElse',
         cond: { tag: 'BinOp', op: 'Lt', left: varExpr('n'), right: litNat(10), type: TyBool, effect: Pure },
-        then: litStr('small'),
+        consequent: litStr('small'),
         else_: {
           tag: 'IfThenElse',
           cond: { tag: 'BinOp', op: 'Lt', left: varExpr('n'), right: litNat(100), type: TyBool, effect: Pure },
-          then: litStr('medium'),
+          consequent: litStr('medium'),
           else_: litStr('large'),
           type: TyString, effect: Pure,
         },

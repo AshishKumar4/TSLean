@@ -158,7 +158,7 @@ describe('generateLean – functions', () => {
       params: [{ name: 'x', type: TyRef('T') }],
       retType: TyRef('T'), effect: Pure, body: varExpr('x', TyRef('T')),
     }]));
-    expect(code).toContain('{T : Type}' || '(T : Type)');
+    expect(code).toContain('{T : Type}');
     expect(code).toContain('(x : T)');
   });
 
@@ -238,7 +238,7 @@ describe('generateLean – expressions', () => {
     expect(expr({ tag: 'StructLit', typeName: 'Point', fields: [{ name: 'x', value: litNat(1) }, { name: 'y', value: litNat(2) }], type: TyRef('Point'), effect: Pure })).toContain('{ x := 1, y := 2 }'));
 
   it('if-then-else', () =>
-    expect(expr({ tag: 'IfThenElse', cond: litBool(true), then: litNat(1), else_: litNat(2), type: TyNat, effect: Pure })).toContain('if true then'));
+    expect(expr({ tag: 'IfThenElse', cond: litBool(true), consequent: litNat(1), else_: litNat(2), type: TyNat, effect: Pure })).toContain('if true then'));
 
   it('match expression', () => {
     const code = expr({

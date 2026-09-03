@@ -652,7 +652,7 @@ class LowerCtx {
     if (e.tag === 'Let') { this.scanExprImports(e.value, needs); this.scanExprImports(e.body, needs); }
     if (e.tag === 'Bind') { this.scanExprImports(e.monad, needs); this.scanExprImports(e.body, needs); }
     if (e.tag === 'IfThenElse') {
-      this.scanExprImports(e.cond, needs); this.scanExprImports(e.then, needs); this.scanExprImports(e.else_, needs);
+      this.scanExprImports(e.cond, needs); this.scanExprImports(e.consequent, needs); this.scanExprImports(e.else_, needs);
     }
     if (e.tag === 'Sequence') for (const s of e.stmts) this.scanExprImports(s, needs);
     if (e.tag === 'Match') {
@@ -889,7 +889,7 @@ class LowerCtx {
       if (e.tag === 'Lambda') collectRefs(e.body, refs);
       if (e.tag === 'Let') { collectRefs(e.value, refs); collectRefs(e.body, refs); }
       if (e.tag === 'Bind') { collectRefs(e.monad, refs); collectRefs(e.body, refs); }
-      if (e.tag === 'IfThenElse') { collectRefs(e.cond, refs); collectRefs(e.then, refs); collectRefs(e.else_, refs); }
+      if (e.tag === 'IfThenElse') { collectRefs(e.cond, refs); collectRefs(e.consequent, refs); collectRefs(e.else_, refs); }
       if (e.tag === 'Sequence') for (const s of e.stmts) collectRefs(s, refs);
       if (e.tag === 'BinOp') { collectRefs(e.left, refs); collectRefs(e.right, refs); }
       if (e.tag === 'UnOp') collectRefs(e.operand, refs);
@@ -1364,7 +1364,7 @@ class LowerCtx {
     if (e.tag === 'Let' && (e.name.startsWith('_while') || e.name.startsWith('_dowhile'))) return true;
     if (e.tag === 'Let') return this.bodyContainsWhileLoop(e.value) || this.bodyContainsWhileLoop(e.body);
     if (e.tag === 'Sequence') return e.stmts.some(s => this.bodyContainsWhileLoop(s));
-    if (e.tag === 'IfThenElse') return this.bodyContainsWhileLoop(e.then) || this.bodyContainsWhileLoop(e.else_);
+    if (e.tag === 'IfThenElse') return this.bodyContainsWhileLoop(e.consequent) || this.bodyContainsWhileLoop(e.else_);
     if (e.tag === 'Lambda') return this.bodyContainsWhileLoop(e.body);
     return false;
   }
@@ -2827,7 +2827,7 @@ class LowerCtx {
         fallback = current;
         break;
       }
-      if (!taken.has(test.constructor)) taken.set(test.constructor, current.then);
+      if (!taken.has(test.constructor)) taken.set(test.constructor, current.consequent);
       if (current.else_.tag === 'IfThenElse') {
         current = current.else_;
         continue;
@@ -2869,7 +2869,7 @@ class LowerCtx {
         cond = { tag: 'App', fn: { tag: 'Var', name: 'TSLean.toBool' }, args: [cond] };
       }
     }
-    let then_ = this.lowerExpr(e.then, ctx);
+    let then_ = this.lowerExpr(e.consequent, ctx);
     let else_ = this.lowerExpr(e.else_, ctx);
 
     // In monadic context, ensure branches return the monad type
@@ -3354,22 +3354,22 @@ class LowerCtx {
       // Do NOT absorb non-if statements into the else — that changes fall-through semantics.
       if (s.tag === 'IfThenElse' && isEmptyElse(s.else_) && i + 1 < stmts.length
           && stmts[i + 1].tag === 'IfThenElse') {
-        const chain: Array<{ cond: IRExpr; then: IRExpr }> = [{ cond: s.cond, then: s.then }];
+        const chain: Array<{ cond: IRExpr; consequent: IRExpr }> = [{ cond: s.cond, consequent: s.consequent }];
         i++;
         while (i < stmts.length) {
           const next = stmts[i];
           if (next.tag !== 'IfThenElse' || !isEmptyElse(next.else_) ||
               i + 1 >= stmts.length || stmts[i + 1].tag !== 'IfThenElse') break;
-          chain.push({ cond: next.cond, then: next.then });
+          chain.push({ cond: next.cond, consequent: next.consequent });
           i++;
         }
         // Last if in the chain: include its then and use its else (or LitUnit)
         const last = stmts[i];
         if (last?.tag === 'IfThenElse') {
-          chain.push({ cond: last.cond, then: last.then });
+          chain.push({ cond: last.cond, consequent: last.consequent });
           let chained: IRExpr = last.else_;
           for (let j = chain.length - 1; j >= 0; j--) {
-            chained = { tag: 'IfThenElse', cond: chain[j].cond, then: chain[j].then, else_: chained, type: s.type, effect: s.effect };
+            chained = { tag: 'IfThenElse', cond: chain[j].cond, consequent: chain[j].consequent, else_: chained, type: s.type, effect: s.effect };
           }
           result.push(chained);
           i++;
@@ -3377,7 +3377,7 @@ class LowerCtx {
           // No more ifs to chain — emit the accumulated chain with empty else
           let chained: IRExpr = { tag: 'LitUnit', type: s.type, effect: s.effect };
           for (let j = chain.length - 1; j >= 0; j--) {
-            chained = { tag: 'IfThenElse', cond: chain[j].cond, then: chain[j].then, else_: chained, type: s.type, effect: s.effect };
+            chained = { tag: 'IfThenElse', cond: chain[j].cond, consequent: chain[j].consequent, else_: chained, type: s.type, effect: s.effect };
           }
           result.push(chained);
         }
@@ -3590,7 +3590,7 @@ function bodyContainsVarRef(expr: IRExpr, name: string): boolean {
       case 'Lambda': return check(e.body);
       case 'Let': return check(e.value) || check(e.body);
       case 'Bind': return check(e.monad) || check(e.body);
-      case 'IfThenElse': return check(e.cond) || check(e.then) || check(e.else_);
+      case 'IfThenElse': return check(e.cond) || check(e.consequent) || check(e.else_);
       case 'Match': return check(e.scrutinee) || e.cases.some(c => check(c.body));
       case 'Sequence': return e.stmts.some(check);
       case 'BinOp': return check(e.left) || check(e.right);
