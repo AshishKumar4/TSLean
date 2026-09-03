@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Flags
  * Generated module: TSLean/Examples/Roundtrip/Flags.ts
  * Package entry module: TSLean.Examples.Roundtrip.Flags
- * Semantic identity: sha256:d3b8067b39f367749a5ca925221fab0e07a2693f2b10848e0a6bdc5dac6dfde4
- * Input closure: sha256:fd594f23881f33ddd30f16972fb4aff31ee9a97f5cd786e6890b3a3c30cb1ec4
+ * Semantic identity: sha256:0ccdcb455a6cafdf380c21506eb510f3fcec797720a18302470122a681061b72
+ * Input closure: sha256:35b6b0c779458361b4d8d583261dc0ecb6f61eef7e9e504e842f38891b5c6b05
  * Semantic IR: sha256:b5b551c503d5f21b040233c4297b472dbfbbc2a476f532bc1c5ef73e331e3d30
  * Generated module body: sha256:8e6581f88d3c37524e420cb68f45c8932b76451d579be2a5aa9167160cd7c160
  * Generated package body: sha256:2b35b600144b6f2a5a183b00d547629b62d16ea83957e06af58c80559a3f2e10

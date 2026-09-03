@@ -189,9 +189,15 @@ describe('Lean semantic IR runtime opcode registry', () => {
     }
     // The seven guarded roles, in the fixed print order the emitter allocates them in. A helper
     // opcode binds its role rather than an inline form, so this is the whole guarded set.
-    expect(
-      opcodes.filter((opcode) => LEAN_RUNTIME_OPCODES[opcode].runtimeSymbol.startsWith('helper:')),
-    ).toEqual(['nat.subtract', 'list.head', 'int.tdiv', 'int.tmod', 'int.toNat', 'char.ofNat', 'char.less']);
+    expect(opcodes.filter((opcode) => LEAN_RUNTIME_OPCODES[opcode].runtimeSymbol.startsWith('helper:'))).toEqual([
+      'nat.subtract',
+      'list.head',
+      'int.tdiv',
+      'int.tmod',
+      'int.toNat',
+      'char.ofNat',
+      'char.less',
+    ]);
     expect(
       opcodes
         .map((opcode) => runtimeHelperRole(LEAN_RUNTIME_OPCODES[opcode].runtimeSymbol))
@@ -906,9 +912,9 @@ describe('Lean semantic IR trust boundary', () => {
   });
 
   test('rejects the retired v5 fragment by name rather than reading its termination evidence', () => {
-    expect(() =>
-      decodeLeanSemanticProgram({ ...program(), fragmentVersion: 'tslean-semantic-typed-v5' }),
-    ).toThrowError(/Lean fragment tslean-semantic-typed-v5 is retired/u);
+    expect(() => decodeLeanSemanticProgram({ ...program(), fragmentVersion: 'tslean-semantic-typed-v5' })).toThrowError(
+      /Lean fragment tslean-semantic-typed-v5 is retired/u,
+    );
   });
 
   test.each([
@@ -1153,7 +1159,6 @@ describe('Lean semantic IR recursion policy', () => {
     span: identitySpan,
     parameters: [{ name: 'tree', type: treeType }],
     result: { kind: 'nat' },
-    recursion: null,
     recursion,
     body: {
       kind: 'match',
@@ -1215,7 +1220,10 @@ describe('Lean semantic IR recursion policy', () => {
     const group = { kind: 'mutual', group: ['Example.even', 'Example.odd'] };
     expect(() =>
       decodeLeanSemanticProgram(
-        mutualProgram(mutualMember('Example.even', 'Example.odd', group), mutualMember('Example.odd', 'Example.even', group)),
+        mutualProgram(
+          mutualMember('Example.even', 'Example.odd', group),
+          mutualMember('Example.odd', 'Example.even', group),
+        ),
       ),
     ).not.toThrow();
   });
@@ -1318,9 +1326,7 @@ describe('Lean semantic IR recursion policy', () => {
     ],
     [
       'an omitted recursion descriptor, which is not the same as a recorded null',
-      recursionProgram(
-        Object.fromEntries(Object.entries(depthDeclaration).filter(([key]) => key !== 'recursion')),
-      ),
+      recursionProgram(Object.fromEntries(Object.entries(depthDeclaration).filter(([key]) => key !== 'recursion'))),
       /declarations\[1\] fields must be exactly .*recursion/u,
     ],
     [
@@ -1639,7 +1645,12 @@ describe('emission is the rooted export closure', () => {
     host: 'host.store.get',
     parameters: [{ name: 'store', type: { kind: 'nat' } }],
     result: { kind: 'nat' },
-    reference: { kind: 'call', function: 'Example.shape', typeArguments: [], arguments: [{ kind: 'variable', index: 0 }] },
+    reference: {
+      kind: 'call',
+      function: 'Example.shape',
+      typeArguments: [],
+      arguments: [{ kind: 'variable', index: 0 }],
+    },
   };
   const caller = {
     kind: 'function',

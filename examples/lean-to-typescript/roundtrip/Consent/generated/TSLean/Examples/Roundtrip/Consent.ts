@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Consent
  * Generated module: TSLean/Examples/Roundtrip/Consent.ts
  * Package entry module: TSLean.Examples.Roundtrip.Consent
- * Semantic identity: sha256:d7b9a8b3810914f5ebcd473cc0295792ea3281d8853f66d83ffbd00f0b2973e0
- * Input closure: sha256:a8ce22916971a80cef7b639b044ea27102534c117e743d9d35128c05003a5d64
+ * Semantic identity: sha256:215261826982de71ac79d466f1817cce0c9c2b513fd8fcc986a1b7d82f6cec52
+ * Input closure: sha256:e634d58d9c90387d9e49d590d1044ad9851c337ef0deb20b3a71bfc6c0114d8e
  * Semantic IR: sha256:917fdaecaa4687677f57187e49f330bf0ad634638bdd217d0d6911918ecfc9c4
  * Generated module body: sha256:c91f5230a18101158ea7561efd860beeddf4b9c60d83cd8a854fa29a1ce6bbc4
  * Generated package body: sha256:26733ef4e5fac4a6f4b6a821e949dc6f6da761d899b677d45800129a6a50205f
