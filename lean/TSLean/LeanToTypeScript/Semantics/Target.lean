@@ -241,12 +241,6 @@ inductive Fault where
   /-- An operand an opcode requires to be a typed array carrying the byte slots, and which is
   not. -/
   | notBytes
-  /-- An operand an opcode requires to be a `Map` carrying `[[MapData]]`, and which is not. -/
-  | notAMap
-  /-- A map key whose image is not a JavaScript primitive. A `Map` matches keys by SameValueZero,
-  which is reference identity on objects, while Lean matches them by `BEq`, which is structural, so
-  an object-imaged key has no faithful `Map` representation. -/
-  | notAPrimitiveKey
   deriving DecidableEq
 
 /-- The result of running one emitted expression. -/
@@ -467,33 +461,12 @@ def readBytes (state : State) : Value → Except Fault (List UInt8)
           | some (.map _) | none => .error .notBytes
   | .primitive _ => .error .notBytes
 
-/-- Reads `[[MapData]]` out of a live `Map`'s internal slots. -/
-def readMap (state : State) : Value → Except Fault (List (Value × Value))
-  | .object ref =>
-      match state.heap.get? ref with
-      | .error fault => .error (.heap fault)
-      | .ok _ =>
-          match state.lookupSlots ref with
-          | some (.map entries) => .ok entries
-          | some (.bytes _) | none => .error .notAMap
-  | .primitive _ => .error .notAMap
-
 /-- Allocates a real typed array: a fresh object with no own properties, whose internal slots carry
 exactly these bytes. -/
 def allocateBytes (state : State) (elements : List UInt8) : Result :=
   match allocateLiteral state [] with
   | .ok (.object ref) next => .ok (.object ref) (next.registerSlots ref (.bytes elements))
   | .ok _value next => .fault .notBytes next
-  | .thrown error next => .thrown error next
-  | .fault fault next => .fault fault next
-  | .exhausted next => .exhausted next
-
-/-- Allocates a real `Map`: a fresh object with no own properties, whose internal slots carry
-exactly this `[[MapData]]`. -/
-def allocateMap (state : State) (entries : List (Value × Value)) : Result :=
-  match allocateLiteral state [] with
-  | .ok (.object ref) next => .ok (.object ref) (next.registerSlots ref (.map entries))
-  | .ok _value next => .fault .notAMap next
   | .thrown error next => .thrown error next
   | .fault fault next => .fault fault next
   | .exhausted next => .exhausted next
