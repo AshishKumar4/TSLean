@@ -186,6 +186,6 @@
     "refinementTestsAuditRegistry": "sha256:442fe58d68dc9252b1622506eeecbcd9cb57f400ff4474f385f3bbb8cf9a311c",
     "corpus": "sha256:813ba0e3fa8d02912872c4451cf33773aa0fc627dac24f68f770e25506fa1903",
     "differentialSpecHarness": "sha256:a60e709b193d859da6521ab4179c645fd0c33cb50cfa9d1fba9f486a4feb6eb5",
-    "trustEvidenceInfrastructure": "sha256:6d787baded5bc6ea93dcdeb7b9723a0a828e3da266dc7a801e119f30b03a928b"
+    "trustEvidenceInfrastructure": "sha256:1c9ccf71587f5c3c571f36417a2eb350547f915872ba835b744755e036d4de8d"
   }
 }

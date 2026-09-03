@@ -128,6 +128,11 @@ import TSLean.Stubs.WebAPIs
 -- Round-trip examples
 import TSLean.Examples.Roundtrip
 
+-- Kernel-surface examples: the compiled fixture the v6 exporter and the JS trust gate measure
+import TSLean.Examples.KernelSurface
+import TSLean.Examples.KernelSurfaceGaps
+import TSLean.Examples.KernelSurfaceHost
+
 -- Specification & Tests
 import TSLean.Specification
 import TSLean.Tests
