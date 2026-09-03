@@ -170,7 +170,7 @@ const provenance = {
 describe('Lean semantic IR runtime opcode registry', () => {
   test('is total, closed, and names one Lean symbol and one operand list per opcode', () => {
     const opcodes = Object.keys(LEAN_RUNTIME_OPCODES) as readonly LeanOpcode[];
-    expect(opcodes.length).toBe(54);
+    expect(opcodes.length).toBe(58);
     for (const opcode of opcodes) {
       const row = LEAN_RUNTIME_OPCODES[opcode];
       expect(row.opcode).toBe(opcode);
@@ -188,7 +188,7 @@ describe('Lean semantic IR runtime opcode registry', () => {
         expect(LEAN_RUNTIME_ASSUMPTIONS[assumption]).toBeTypeOf('string');
       }
     }
-    // The seven guarded roles, in the fixed print order the emitter allocates them in. A helper
+    // The eight guarded roles, in the fixed print order the emitter allocates them in. A helper
     // opcode binds its role rather than an inline form, so this is the whole guarded set.
     expect(opcodes.filter((opcode) => LEAN_RUNTIME_OPCODES[opcode].runtimeSymbol.startsWith('helper:'))).toEqual([
       'nat.subtract',
@@ -198,6 +198,7 @@ describe('Lean semantic IR runtime opcode registry', () => {
       'int.toNat',
       'char.ofNat',
       'char.less',
+      'bytes.append',
     ]);
     expect(
       opcodes
@@ -250,7 +251,7 @@ describe('Lean semantic IR runtime opcode registry', () => {
     expect(LEAN_RUNTIME_OPCODES['bool.and'].components).toBeUndefined();
     // Every model theorem is distinct, so two opcodes can never share one proof obligation.
     expect(new Set(opcodes.map((opcode) => LEAN_RUNTIME_OPCODES[opcode].modelTheorem)).size).toBe(opcodes.length);
-    expect(new Set(Object.keys(LEAN_RUNTIME_ASSUMPTIONS)).size).toBe(16);
+    expect(new Set(Object.keys(LEAN_RUNTIME_ASSUMPTIONS)).size).toBe(17);
   });
 
   test('closes the host-operation registry the substrate publishes', () => {

@@ -47,9 +47,9 @@
       "expressionOperations": 14,
       "declarationFamilies": 4,
       "typeForms": 17,
-      "opcodes": 54,
-      "assumptions": 16,
-      "probeGroups": 16
+      "opcodes": 58,
+      "assumptions": 17,
+      "probeGroups": 17
     }
   },
   "refinementProofs": {
