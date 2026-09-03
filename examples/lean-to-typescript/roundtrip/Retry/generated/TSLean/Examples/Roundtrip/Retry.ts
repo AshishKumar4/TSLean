@@ -4,11 +4,11 @@
  * Lean module: TSLean.Examples.Roundtrip.Retry
  * Generated module: TSLean/Examples/Roundtrip/Retry.ts
  * Package entry module: TSLean.Examples.Roundtrip.Retry
- * Semantic identity: sha256:4a6cbf1ac3f89b337474c73fa5108342e02ffd6a8836b1cab8876e84cdd6cb24
- * Input closure: sha256:27bd0e714afbcd0af9ccda3d7cf7ad251b76ed3da2ca3e2e21738c0b93d326a3
+ * Semantic identity: sha256:024016b90abd857800adb38d0acd8eaec3a81de6c6801a63e667be34a95468c5
+ * Input closure: sha256:37b646d62d9788035f5a75d41ee390ec8533ceb82d1ea6bd522bd58abba2a24d
  * Semantic IR: sha256:4c6ace9b0be74a2d96585758db8fb03f63be086ce5499a62057f045d036c735b
- * Generated module body: sha256:3bee973bd76de5f28ca4671d32439b47cddb5fffb81ed5c4cdbdc9d78a5a5fe5
- * Generated package body: sha256:269c7029b58ac023d70b4c06412ad371a2d0defad5c0ead3932bfb48bbeadbbc
+ * Generated module body: sha256:2275cf8f1a6476f05b451ce494d0b7d58173a236f61faaff1bca99165afc9800
+ * Generated package body: sha256:cfd1eaf154b8125a397fe78cee1af8f3369ca7574b643d0d6afd4623a4e70a67
  * Lean toolchain: leanprover/lean4:v4.33.1
  * Lean: Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)
  * Lake: Lake version 5.0.0-src+819816b (Lean version 4.33.1)
@@ -46,7 +46,7 @@ export function recover(failure: Failure): Recovery {
     return "retryNow";
 }
 
-function requireFailure(value: GeneratedData, name: string): Failure {
+function requireFailure(value: GeneratedData, _name: string): Failure {
     const data = requireDataFields(value, "Failure", ["transient", "budgetLeft", "throttled"]);
     return {
         transient: requireBoolean(data["transient"], "Failure transient"),

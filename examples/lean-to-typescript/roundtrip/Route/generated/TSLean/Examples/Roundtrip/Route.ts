@@ -4,11 +4,11 @@
  * Lean module: TSLean.Examples.Roundtrip.Route
  * Generated module: TSLean/Examples/Roundtrip/Route.ts
  * Package entry module: TSLean.Examples.Roundtrip.Route
- * Semantic identity: sha256:a47ea3cab6bf3d08039b0a1881671c36fea3225b04a1f54563079fd24dee9c77
- * Input closure: sha256:ee90d78e9119b0afd6fa465881f0354037e98397925e4fd3e63620ff1fb75ae2
+ * Semantic identity: sha256:7362911e8c5856c12426068651fbfe1879345e3b6ccd2a0e3337f6a8b713dfc8
+ * Input closure: sha256:39d0eee906534f5bf9f1b8144be824ac890405743c78360ad124ce91bac3fb2d
  * Semantic IR: sha256:9ae16be864d419af2fe85b2b425408eaa0b493115585ab4f957501a2df8d5c81
- * Generated module body: sha256:b344a221c7913bc2fc87f7ae832fa4d21a88a0c4289ad3af41e2077f44915ebb
- * Generated package body: sha256:8f9c2e6afd7bfdd2a2317f9f314bc56de4ad219d5543037da030c42a97286783
+ * Generated module body: sha256:a4a1dc955710e388edd173a3ec1070bf59fb52336c2e0258bd4f65e90f06741d
+ * Generated package body: sha256:5503dc7b5e1d3b6134003381fb1cd23c8bd16e38ac02360abedc6d03e3a60ac9
  * Lean toolchain: leanprover/lean4:v4.33.1
  * Lean: Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)
  * Lake: Lake version 5.0.0-src+819816b (Lean version 4.33.1)
@@ -43,7 +43,7 @@ export function routeOf(request: Request): Route {
     return "origin";
 }
 
-function requireRequest(value: GeneratedData, name: string): Request {
+function requireRequest(value: GeneratedData, _name: string): Request {
     const data = requireDataFields(value, "Request", ["cacheable", "fresh", "allowed"]);
     return {
         cacheable: requireBoolean(data["cacheable"], "Request cacheable"),

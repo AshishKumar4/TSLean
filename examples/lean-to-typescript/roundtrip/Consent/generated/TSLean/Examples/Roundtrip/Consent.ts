@@ -4,11 +4,11 @@
  * Lean module: TSLean.Examples.Roundtrip.Consent
  * Generated module: TSLean/Examples/Roundtrip/Consent.ts
  * Package entry module: TSLean.Examples.Roundtrip.Consent
- * Semantic identity: sha256:d4bb051beed98f6e2902991ac1ac320cd435183ca66027e8200907e4218efeb8
- * Input closure: sha256:58ba286457680032ec78785ad18384289112b3503f173dbcfbfdddd3dedef359
+ * Semantic identity: sha256:d7b9a8b3810914f5ebcd473cc0295792ea3281d8853f66d83ffbd00f0b2973e0
+ * Input closure: sha256:a8ce22916971a80cef7b639b044ea27102534c117e743d9d35128c05003a5d64
  * Semantic IR: sha256:917fdaecaa4687677f57187e49f330bf0ad634638bdd217d0d6911918ecfc9c4
- * Generated module body: sha256:3349fe9e0a8d5fe73674c1bf33ce615be5ada24b7e0fe9ab77ac359fdb887543
- * Generated package body: sha256:de3fa8b969e70346451e1bdf3c39c824faa5c032367e531008b1d37a209d2265
+ * Generated module body: sha256:c91f5230a18101158ea7561efd860beeddf4b9c60d83cd8a854fa29a1ce6bbc4
+ * Generated package body: sha256:26733ef4e5fac4a6f4b6a821e949dc6f6da761d899b677d45800129a6a50205f
  * Lean toolchain: leanprover/lean4:v4.33.1
  * Lean: Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)
  * Lake: Lake version 5.0.0-src+819816b (Lean version 4.33.1)
@@ -46,7 +46,7 @@ export function granted(consent: Consent): Option<Purpose> {
     return { kind: "some", value: "essential" };
 }
 
-function requireConsent(value: GeneratedData, name: string): Consent {
+function requireConsent(value: GeneratedData, _name: string): Consent {
     const data = requireDataFields(value, "Consent", ["analytics", "marketing", "withdrawn"]);
     return {
         analytics: requireBoolean(data["analytics"], "Consent analytics"),

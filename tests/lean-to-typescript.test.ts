@@ -17,6 +17,7 @@ import {
   type LeanToTypeScriptRequest,
 } from '../src/lean-to-typescript/index.js';
 import { generatedPackageDigest } from '../src/lean-to-typescript/manifest.js';
+import { LEAN_HOST_OPCODES } from '../src/lean-to-typescript/ir.js';
 import { createLeanProjectFixture } from './helpers/lean-project-fixture.js';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
@@ -1964,9 +1965,10 @@ describe('the v6 kernel surface lowers onto its exact target images', () => {
 
     const generated = evaluateGeneratedModuleExports(surfaceCode);
     expect(requireFunction(generated, 'total')([1n, 2n, 3n])).toBe(6n);
-    expect([requireFunction(generated, 'evenCount')([1n, 2n]), requireFunction(generated, 'oddCount')([1n, 2n])]).toEqual(
-      [true, false],
-    );
+    expect([
+      requireFunction(generated, 'evenCount')([1n, 2n]),
+      requireFunction(generated, 'oddCount')([1n, 2n]),
+    ]).toEqual([true, false]);
     expect(requireFunction(generated, 'countDown')(3n)).toBe(3n);
   });
 
@@ -2011,12 +2013,11 @@ describe('the v6 kernel surface lowers onto its exact target images', () => {
 });
 
 /**
- * End-to-end contracts for the v6 rows that the frozen compiler has not yet delivered.
- *
- * These intentionally stay as normal positive tests: every root is in the v6 registry and its
- * fixture elaborates in Lean, so a compiler refusal is a residual red rather than an accepted
- * limitation. When CompilerCompletion lands its repairs these tests will exercise the public
- * compile/verify boundary rather than a hand-built intermediate document.
+ * End-to-end contracts for the v6 rows the first frozen compiler could not deliver: the two Char
+ * opcode rows whose certified form did not type check, pair construction, the mapped JsonValue
+ * form, a type-class projection applied to its dictionary, and the foreign family whose exported
+ * declaration the decoder refused. Each compiles and verifies through the public boundary now, so
+ * what is asserted is the contract a consumer receives rather than a diagnostic pin.
  */
 describe('the remaining v6 surface contracts', () => {
   const surfaceModule = 'TSLean.Examples.KernelSurface';
@@ -2064,16 +2065,42 @@ describe('the remaining v6 surface contracts', () => {
     expect(requireFunction(generated, 'ticketLabel')({ code: 'T-1', weight: 1n })).toBe('T-1');
   });
 
-  test('compiles and verifies a foreign declaration as a host-bound package', () => {
+  test('compiles a foreign declaration into a host-bound package the substrate completes', () => {
+    // Contract (a): the package imports the substrate's module and never writes a second
+    // implementation of a host operation, so the consumer provides `tslean-host.ts`. The stub below
+    // is generated from the manifest's own `hosts` rows — wire and binding name — rather than
+    // hand-maintained, so a drift between the manifest and the fixture is the test's failure.
     const emitted = compileSurface(
       'TSLean.Examples.KernelSurfaceHost',
       join(leanRoot, 'TSLean', 'Examples', 'KernelSurfaceHost.lean'),
       'TSLean.LeanToTypeScript.Host.storeGet',
     );
+    const hosts = emitted.manifest.semantic.hosts;
+    expect(hosts.map((host) => host.host)).toEqual(['host.store.get']);
+    expect(hosts[0]?.declaration).toBe('TSLean.LeanToTypeScript.Host.storeGet');
+    expect(hosts[0]?.module).toBe('TSLean.Examples.KernelSurfaceHost');
+    // The wire names are validated against the decoder's own host table, which is the same join
+    // the manifest decoder performs on every read.
+    for (const host of hosts) {
+      expect(Object.hasOwn(LEAN_HOST_OPCODES, host.host)).toBe(true);
+      expect(LEAN_HOST_OPCODES[host.host as keyof typeof LEAN_HOST_OPCODES].length).toBeGreaterThan(0);
+    }
+    // The emitted tree imports the declared binding from the substrate's module and nothing else
+    // does, which is what `verifyLeanToTypeScriptPackage` now checks.
+    const entry = emitted.modules.find((module) => module.path.endsWith('KernelSurfaceHost.ts'));
+    if (entry === undefined) throw new TypeError('the host compilation produced no entry module');
+    expect(entry.code).toContain(`import { ${hosts[0]?.binding} } from "../../tslean-host.js";`);
+    for (const module of emitted.modules) {
+      const hostImports = module.code.split('\n').filter((line) => line.includes('tslean-host.js'));
+      if (module.path === entry.path) expect(hostImports.length).toBe(1);
+      else expect(hostImports.length).toBe(0);
+    }
+    // `verifyLeanToTypeScriptPackage` now states the owner's one-line expectation: a package whose
+    // manifest declares hosts emits no host module, and the declared host names are exactly the
+    // names the emitted tree imports. The compiler's own type check links a stub generated from
+    // these same manifest rows, so the layout a consumer receives is what was checked.
     expect(() => verifyLeanToTypeScriptPackage(emitted)).not.toThrow();
-    expect(emitted.manifest.semantic.modules.flatMap((module) => module.hosts).map((entry) => entry.host)).toContain(
-      'host.store.get',
-    );
+    expect(emitted.modules.some((module) => module.path === 'tslean-host.ts')).toBe(false);
   });
 });
 

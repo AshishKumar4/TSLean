@@ -26,9 +26,9 @@ import {
   type RuntimeCertificateBinding,
   type RuntimeConformanceAttestation,
 } from './certificates.js';
-import { compareCodePoints } from './ordering.js';
 import { LEAN_HOST_OPCODES, LEAN_RUNTIME_HELPER_ROLES } from './ir.js';
-
+import { LEAN_TO_TYPESCRIPT_HOST_MODULE_PATH } from './package-layout.js';
+import { compareCodePoints } from './ordering.js';
 /**
  * One shared manifest schema version, split as major.minor. A minor bump adds an optional field
  * and every reader in the major accepts it; only a major bump may remove or reinterpret a field,
@@ -144,9 +144,64 @@ export function verifyLeanToTypeScriptPackage(value: unknown): asserts value is 
       throw new TypeError(`generated source map does not match its manifest: ${module.path}`);
     }
   }
+  assertHostBoundaries(emitted);
   assertCertificateBodies(emitted);
   if (generatedPackageDigest(recorded) !== emitted.manifest.semantic.generatedBodySha256) {
     throw new TypeError('generated package digest does not match its module bodies');
+  }
+}
+
+/**
+ * A package that declares a host boundary imports the substrate's implementation through one module
+ * the consumer provides, and it deliberately contains no second implementation of a host operation:
+ * the refinement is about the exported reference body, and a generated definition would be the
+ * compiler claiming the boundary instead of naming it. Verification therefore checks the join the
+ * artifact can see: no emitted module claims the reserved host path, the emitted tree imports the
+ * declared host bindings under the names the manifest records, and nothing else imports the module.
+ */
+function assertHostBoundaries(emitted: LeanToTypeScriptPackage): void {
+  const hosts = emitted.manifest.semantic.hosts;
+  if (hosts.length === 0) return;
+  const bindings = new Set(hosts.map((host) => host.binding));
+  // The substrate provides the host module; a package that declared a boundary must not carry a
+  // second implementation of a host operation, so no emitted module may claim its reserved path.
+  if (emitted.modules.some((module) => module.path === LEAN_TO_TYPESCRIPT_HOST_MODULE_PATH)) {
+    throw new TypeError(
+      `the emitted package contains a host module, which the substrate provides: ${LEAN_TO_TYPESCRIPT_HOST_MODULE_PATH}`,
+    );
+  }
+  // Every import of the host module is recorded against its importing module, resolved to the
+  // reserved path, so the join reads the artifact's own record rather than re-parsing printed
+  // syntax: each declared host binding is imported exactly once, and nothing else is.
+  const imported = new Map<string, readonly string[]>();
+  for (const module of emitted.modules) {
+    const identity = requiredModuleIdentity(emitted.manifest.semantic, module.path);
+    if (!identity.imports.includes(LEAN_TO_TYPESCRIPT_HOST_MODULE_PATH)) continue;
+    const hostLine = module.code
+      .split('\n')
+      .find((line) => line.includes(LEAN_TO_TYPESCRIPT_HOST_MODULE_PATH.replace(/\.ts$/u, '.js')));
+    if (hostLine === undefined) {
+      throw new TypeError(`${module.path} records the substrate's host module as an import but prints no import of it`);
+    }
+    const names = [...hostLine.matchAll(/\{([^}]*)\}/gu)]
+      .flatMap((match) => match[1].split(','))
+      .map((name) => name.trim().replace(/^type /u, ''))
+      .filter((name) => name.length > 0);
+    imported.set(module.path, names);
+  }
+  for (const [path, names] of imported) {
+    const undeclared = names.filter((name) => !bindings.has(name));
+    if (undeclared.length > 0) {
+      throw new TypeError(
+        `${path} imports ${undeclared.join(', ')} from the substrate's host module, which its manifest does not declare`,
+      );
+    }
+  }
+  for (const host of hosts) {
+    const importing = [...imported.entries()].filter(([, names]) => names.includes(host.binding));
+    if (importing.length === 0) {
+      throw new TypeError(`the declared host binding ${host.binding} is imported by no emitted module: ${host.host}`);
+    }
   }
 }
 

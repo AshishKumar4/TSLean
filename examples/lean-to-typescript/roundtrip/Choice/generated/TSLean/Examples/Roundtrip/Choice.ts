@@ -4,11 +4,11 @@
  * Lean module: TSLean.Examples.Roundtrip.Choice
  * Generated module: TSLean/Examples/Roundtrip/Choice.ts
  * Package entry module: TSLean.Examples.Roundtrip.Choice
- * Semantic identity: sha256:2fa2c9088c752e0c494429742bd724200dbb29476d8a573b57b66c4cc2d6e0fe
- * Input closure: sha256:1467754095ba7465c60f0216166b4ca076a8005545f632de437c190dc109ab65
+ * Semantic identity: sha256:323e9923c8ab533c6aba6eaee6dca554bd7f7058664f97bbef6976f55224472c
+ * Input closure: sha256:f485f55e92e1be9753d9154fd35116b738109bd8d6a4fe309c5ebac19986634b
  * Semantic IR: sha256:955c40e16c9e84abdec201331ecf37bfcf3ac9a0c92fc8e3b34334ac13d88c65
- * Generated module body: sha256:82c35b211b9109f0c9cbb8b5052e213f8166d7532d2340a7cb19fa648cb42433
- * Generated package body: sha256:0686ae00b947d2c9bd78f9356988593978d83a8df7101556f09e5d4fd1e11e37
+ * Generated module body: sha256:591f74aeae5cb3ead173d11ac0cc149aa17c19e1e21310c45e5ae95965453c61
+ * Generated package body: sha256:8a4a0606b638065802bfcf90872bb6a1263f25126145daf52268b108b3c4d1c4
  * Lean toolchain: leanprover/lean4:v4.33.1
  * Lean: Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)
  * Lake: Lake version 5.0.0-src+819816b (Lean version 4.33.1)
@@ -46,7 +46,7 @@ export function choose(availability: Availability): Option<Candidate> {
     return { kind: "none" };
 }
 
-function requireAvailability(value: GeneratedData, name: string): Availability {
+function requireAvailability(value: GeneratedData, _name: string): Availability {
     const data = requireDataFields(value, "Availability", ["first", "second", "third"]);
     return {
         first: requireBoolean(data["first"], "Availability first"),

@@ -33,13 +33,9 @@ import {
 } from './certificates.js';
 import { emitTypeScriptPackage } from './emitter.js';
 import { UnsupportedLeanFragmentError } from './fragment.js';
-import {
-  decodeLeanSemanticProgram,
-  isLeanModuleName,
-  LEAN_RUNTIME_OPCODES,
-  referencedRuntimeOpcodes,
-} from './ir.js';
+import { decodeLeanSemanticProgram, isLeanModuleName, LEAN_RUNTIME_OPCODES, referencedRuntimeOpcodes } from './ir.js';
 import { compareCodePoints } from './ordering.js';
+import { LEAN_TO_TYPESCRIPT_HOST_MODULE_PATH } from './package-layout.js';
 import {
   assertLeanToTypeScriptPlatform,
   hostLeanToTypeScriptPlatform,
@@ -946,6 +942,24 @@ function assertPackageTypeChecks(emitted: LeanToTypeScriptPackage, directory: st
     writeFileSync(path, module.code, 'utf8');
     return path;
   });
+  // A package that declares a host boundary imports the substrate's module through a path the
+  // package itself reserves, so the tree the consumer links always carries one more file than the
+  // tree this compiler writes. The stub linked here is generated from the manifest's own hosts rows,
+  // so the type check exercises the same names the artifact declares and the substrate owes.
+  const hosts = emitted.manifest.semantic.hosts;
+  if (hosts.length > 0) {
+    const hostPath = join(root, LEAN_TO_TYPESCRIPT_HOST_MODULE_PATH);
+    writeFileSync(
+      hostPath,
+      [
+        '// Generated host-module stub: the substrate provides the real implementation.',
+        ...hosts.map((host) => `export declare const ${host.binding}: (...arguments_: readonly unknown[]) => unknown;`),
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    paths.push(hostPath);
+  }
   const program = ts.createProgram(paths, {
     module: ts.ModuleKind.NodeNext,
     moduleResolution: ts.ModuleResolutionKind.NodeNext,

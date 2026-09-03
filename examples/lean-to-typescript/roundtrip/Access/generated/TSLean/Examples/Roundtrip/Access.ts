@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Access
  * Generated module: TSLean/Examples/Roundtrip/Access.ts
  * Package entry module: TSLean.Examples.Roundtrip.Access
- * Semantic identity: sha256:ccc8f3aee1ae0bf8a8a3976a6dd5951217e57ea80cd9b5d5503e609dd9680ce5
- * Input closure: sha256:4d13fb3d76d4be9ed679ee2fe7cd4b8e5d4db3a7c500c1bac84a296864834d30
+ * Semantic identity: sha256:4095964409bc772043465420acb265dd97bbfcc26618135ff0617669384ed5d4
+ * Input closure: sha256:ce31246c0189f199930a419b08f12748233b154e97775bff03eea0d6caabcad8
  * Semantic IR: sha256:7e21bdc5ef07e5a54eb4d003a3f96a4b00c7f40c217ba5843512651609e5a06e
  * Generated module body: sha256:d082375c0ace21afa90b49285e34019bed74da189ca89e4a04bbf70f5f481c15
  * Generated package body: sha256:7482ea6c3f8a4dea291c46786cad7de9a1af7441c1d79a3b879907fb29dd63f4

@@ -35,7 +35,7 @@ differential agreement as proof or successful compilation as application correct
 
 Current local evidence includes:
 
-- 2,076 passing tests and 10 explicit todo tests
+- 2,078 passing tests and 10 explicit todo tests
 - 7,587 differential vectors
 - a complete 221-job Lean build
 - 604 JavaScript trusted-base checks

@@ -512,11 +512,7 @@ describe('constructs with no deterministic representation fail before publicatio
     ['a dependent result type', 'Adversarial.dependentResult', /outside the (?:checked fragment|frozen target)/u],
     ['an instance parameter', 'Adversarial.withInstance', /instance parameters/u],
     ['an effectful definition', 'Adversarial.effectful', /outside the (?:checked fragment|frozen target)/u],
-    [
-      'a Float',
-      'Adversarial.usesFloat',
-      /Float is outside the surface: no type form carries an IEEE double/u,
-    ],
+    ['a Float', 'Adversarial.usesFloat', /Float is outside the surface: no type form carries an IEEE double/u],
     ['a match on Nat', 'Adversarial.natMatched', /a match on Nat is outside this fragment version/u],
     [
       'a match on more than one discriminant',
@@ -530,16 +526,20 @@ describe('constructs with no deterministic representation fail before publicatio
     ],
     ['a proof as a root', 'Adversarial.proved', /root is not a function/u],
     ['a polymorphic root', 'Adversarial.polymorphicRoot', /a root's boundary is monomorphic/u],
-  ])('refuses %s', (_label, declaration, diagnostic) => {
-    let thrown: unknown;
-    try {
-      compile(declaration);
-    } catch (error: unknown) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(Error);
-    expect((thrown as Error).message).toMatch(diagnostic);
-  }, 300_000);
+  ])(
+    'refuses %s',
+    (_label, declaration, diagnostic) => {
+      let thrown: unknown;
+      try {
+        compile(declaration);
+      } catch (error: unknown) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).message).toMatch(diagnostic);
+    },
+    300_000,
+  );
 
   test.each([
     // The three rows the surface gained in v6, taken from the same adversarial fixture that used
@@ -552,13 +552,17 @@ describe('constructs with no deterministic representation fail before publicatio
       'export function stringLength(value: string): bigint {',
       'return BigInt([...value].length);',
     ],
-  ])('admits %s, which v6 carries with an exact image', (_label, declaration, signature, body) => {
-    const compiled = compile(declaration);
-    const [module] = compiled.modules;
-    if (module === undefined) throw new TypeError('the compilation produced no module');
-    expect(module.code).toContain(signature);
-    expect(module.code).toContain(body);
-  }, 300_000);
+  ])(
+    'admits %s, which v6 carries with an exact image',
+    (_label, declaration, signature, body) => {
+      const compiled = compile(declaration);
+      const [module] = compiled.modules;
+      if (module === undefined) throw new TypeError('the compilation produced no module');
+      expect(module.code).toContain(signature);
+      expect(module.code).toContain(body);
+    },
+    300_000,
+  );
 
   test('admits a well-founded recursion Lean proved, and emits the same call graph', () => {
     const compiled = compile('Adversarial.guessedRecursion');
@@ -714,9 +718,13 @@ describe('generated names never collide with the representation or with the runt
     );
     // One shared comparison per mapped type, so nesting cannot make an inner binder shadow an
     // outer one and cannot read a payload whose tag a nested callback has un-narrowed.
-    expect(code).toContain('function equalList<A>(left: readonly A[], right: readonly A[], same: (left: A, right: A) => boolean): boolean {');
+    expect(code).toContain(
+      'function equalList<A>(left: readonly A[], right: readonly A[], same: (left: A, right: A) => boolean): boolean {',
+    );
     expect(code).toContain('function equalOption<A>(');
-    expect(code).toContain('equalList(this.rows, other.rows, (left, right) => equalList(left, right, (left$2, right$2) => left$2 === right$2))');
+    expect(code).toContain(
+      'equalList(this.rows, other.rows, (left, right) => equalList(left, right, (left$2, right$2) => left$2 === right$2))',
+    );
     const exported = evaluateGeneratedModuleExports(code);
     const grid = exported['Grid'];
     if (typeof grid !== 'function') throw new TypeError('the generated module did not export Grid');
@@ -765,33 +773,68 @@ describe('generated names never collide with the representation or with the runt
   test.each([
     [
       'a constructor named after the tag constructor',
-      ['namespace Fixture', 'inductive Choice where', '  | from', '  | other', 'def Choice.rank (choice : Choice) : Nat :=', '  match choice with', '  | .from => 0', '  | .other => 1', 'def entry (choice : Choice) : Nat := choice.rank', 'end Fixture', ''],
+      [
+        'namespace Fixture',
+        'inductive Choice where',
+        '  | from',
+        '  | other',
+        'def Choice.rank (choice : Choice) : Nat :=',
+        '  match choice with',
+        '  | .from => 0',
+        '  | .other => 1',
+        'def entry (choice : Choice) : Nat := choice.rank',
+        'end Fixture',
+        '',
+      ],
       'Fixture.entry',
       /constructor from collides with the tag constructor/u,
     ],
     [
       'a field named after the discriminant',
-      ['namespace Fixture', 'inductive Shape where', '  | dot', '  | line (kind : Bool)', 'def entry (shape : Shape) : Bool :=', '  match shape with', '  | .dot => false', '  | .line kind => kind', 'end Fixture', ''],
+      [
+        'namespace Fixture',
+        'inductive Shape where',
+        '  | dot',
+        '  | line (kind : Bool)',
+        'def entry (shape : Shape) : Bool :=',
+        '  match shape with',
+        '  | .dot => false',
+        '  | .line kind => kind',
+        'end Fixture',
+        '',
+      ],
       'Fixture.entry',
       /field kind collides with the constructor discriminant/u,
     ],
     [
       'a dot-notation method named after the data image',
-      ['namespace Fixture', 'structure Box where', '  flag : Bool', 'def Box.toData (box : Box) : Bool := box.flag', 'def entry (box : Box) : Bool := box.toData', 'end Fixture', ''],
+      [
+        'namespace Fixture',
+        'structure Box where',
+        '  flag : Bool',
+        'def Box.toData (box : Box) : Bool := box.flag',
+        'def entry (box : Box) : Bool := box.toData',
+        'end Fixture',
+        '',
+      ],
       'Fixture.entry',
       /dot-notation method toData collides with the data image/u,
     ],
-  ])('refuses %s', (_label, lines, root, diagnostic) => {
-    let thrown: unknown;
-    try {
-      compileSource(lines.join('\n'), [root]);
-    } catch (error: unknown) {
-      thrown = error;
-    }
-    expect(thrown).toBeInstanceOf(Error);
-    expect((thrown as Error).message).toMatch(diagnostic);
-    expect((thrown as Error).message).toMatch(/rename it in the Lean source/u);
-  }, 300_000);
+  ])(
+    'refuses %s',
+    (_label, lines, root, diagnostic) => {
+      let thrown: unknown;
+      try {
+        compileSource(lines.join('\n'), [root]);
+      } catch (error: unknown) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).message).toMatch(diagnostic);
+      expect((thrown as Error).message).toMatch(/rename it in the Lean source/u);
+    },
+    300_000,
+  );
 
   test('refuses an applied projection, which is a field read where a bound function belongs', () => {
     let thrown: unknown;
@@ -811,9 +854,10 @@ describe('generated names never collide with the representation or with the runt
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(Error);
-    // v6 states the refusal at the apply rather than at the field's arity: what an `apply` admits
-    // is a bound function value, and a projection of a record is not one.
-    expect((thrown as Error).message).toMatch(/target is not a bound function value/u);
+    // The root's own boundary is refused first, because a structure whose field carries an arrow
+    // has no data image a caller could send: the parameter is the surface a consumer touches, so
+    // it is refused before the body the compiler would have read.
+    expect((thrown as Error).message).toMatch(/parameter 0: Fixture\.Box has no data image/u);
   }, 300_000);
 
   test('refuses a termination proof that was admitted rather than checked', () => {
@@ -860,12 +904,7 @@ describe('generated names never collide with the representation or with the runt
 
   test('accepts only well-formed UTF-16 at the String boundary', () => {
     const code = compileSource(
-      [
-        'namespace Fixture',
-        'def identity (text : String) : String := text',
-        'end Fixture',
-        '',
-      ].join('\n'),
+      ['namespace Fixture', 'def identity (text : String) : String := text', 'end Fixture', ''].join('\n'),
       ['Fixture.identity'],
     );
     expect(code).toContain('must contain only well-formed UTF-16 code units');

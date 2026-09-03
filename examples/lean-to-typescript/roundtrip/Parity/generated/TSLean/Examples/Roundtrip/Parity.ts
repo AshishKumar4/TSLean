@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Parity
  * Generated module: TSLean/Examples/Roundtrip/Parity.ts
  * Package entry module: TSLean.Examples.Roundtrip.Parity
- * Semantic identity: sha256:51a17ee591c6eb4d2a15d1bc8fb3f6b0f13b90579f386866c2f564e4c025f4c1
- * Input closure: sha256:bf52c4257bbc162fb6b089f7419a6d8ddd7b4c3ed6159dbfd5d685613d47e9f8
+ * Semantic identity: sha256:a0157682a66618c6537aa00c42b7c9de868fe816656c1c3e50de46f01bc21f26
+ * Input closure: sha256:6c68223d46cea54567e6669674aef89036b13727efc77b96d7508b97fbb51395
  * Semantic IR: sha256:4173b06ccf032b94d5e5a8e4ff6b0e97971003747bc6349c6dacc0c24a3d0d6f
  * Generated module body: sha256:0ce10ec35c75bc88dd56003884cf652b8f0ac9afcf465d5fd26d805084baefc2
  * Generated package body: sha256:2e65182c82e713f10dfc7947f019df3eea8f8503419d458f77c8aeb5768e2573

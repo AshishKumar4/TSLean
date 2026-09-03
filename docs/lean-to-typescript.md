@@ -162,7 +162,7 @@ Each external effect must enter through a modeled port. Generated pure code must
 
 The Lean 4.33.1 repository gate includes:
 
-- 2,076 passing tests and 10 explicit todo tests;
+- 2,078 passing tests and 10 explicit todo tests;
 - 7,587 differential vectors;
 - a complete 221-job Lean build;
 - five executable target checks;

@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Severity
  * Generated module: TSLean/Examples/Roundtrip/Severity.ts
  * Package entry module: TSLean.Examples.Roundtrip.Severity
- * Semantic identity: sha256:92d293cdb933ddb17a99d238775c5e13271c884f21a0ad36cd463ec22aa5daf9
- * Input closure: sha256:798e73baad8e13debe133777665741bce5419fa161b636fe21c141a4cf4d608c
+ * Semantic identity: sha256:bbfc124b7f7c92c84a6a9c13a84021e1054ef9fa3d079005545db7d4e29715d9
+ * Input closure: sha256:8dcc2df88d03414b92998d22c9812f3f888f3f254efd969822de1cc58ebac3f4
  * Semantic IR: sha256:5a8af39d8ead610727646bb76b461c7f2fcd5a225d1dfca0512ae9d45bdc75f5
  * Generated module body: sha256:fbc7102909e6044c17de7a1804386ecbf8ee6595fddab0fcf1fa778bba5d9ae5
  * Generated package body: sha256:f86f86c4b0721afbfbbe47523645eacd5ac63f26c5a42ceb5f601cbfb19a1ff5
