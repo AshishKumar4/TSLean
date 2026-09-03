@@ -164,33 +164,33 @@ function requireAbsolute(path: string): string {
 }
 
 /**
- * The deepest directory that contains every root file, which is where a synthetic configuration
- * is placed: option paths and root files are absolute, so the only thing the configuration's own
- * directory decides is where a package lookup starts, and the roots' own tree is that answer.
- *
- * The deepest directory that contains every root file, which is where a synthetic configuration
- * is placed: option paths and root files are absolute, so the only thing the configuration's own
- * directory decides is where a package lookup starts, and the roots' own tree is that answer.
- *
- * The answer carries no trailing separator and the empty string names the filesystem root, so a
- * root-level file joins into one `/...` path rather than the `//...` the server refuses — and a
- * refusal is not recoverable, because the failed name stays the one the snapshot holds.
+ * The components of the deepest directory that contains every root file, without a leading
+ * separator. This is where a synthetic configuration is placed: option paths and root files are
+ * absolute, so the only thing the configuration's own directory decides is where a package
+ * lookup starts, and the roots' own tree is that answer. The separator is re-attached by the
+ * caller, because an empty answer must join into one `/` that names the filesystem root — the
+ * two-separator `//...` the server refuses, and a refusal is not recoverable, since the failed
+ * name stays the one the snapshot holds.
  */
-function commonDirectory(files: readonly string[]): string {
+function commonDirectoryComponents(files: readonly string[]): readonly string[] {
   const [first] = files;
-  if (first === undefined) return process.cwd();
+  if (first === undefined)
+    return process
+      .cwd()
+      .split(sep)
+      .filter((part) => part !== '');
   let common = dirname(first)
     .split(sep)
-    .filter((part, index) => index > 0 || part !== '');
+    .filter((part) => part !== '');
   for (const file of files.slice(1)) {
     const parts = dirname(file)
       .split(sep)
-      .filter((part, index) => index > 0 || part !== '');
+      .filter((part) => part !== '');
     let index = 0;
     while (index < common.length && index < parts.length && common[index] === parts[index]) index += 1;
     common = common.slice(0, index);
   }
-  return common.join(sep);
+  return common;
 }
 
 /**
@@ -205,7 +205,11 @@ export function openProject(request: ProjectRequest): ReadProject {
     release([absolute]);
     overlay.set(absolute, text);
   }
-  const configPath = `${commonDirectory(files) || sep}${sep}tsconfig.tslean-session-${(projectCount += 1)}.json`;
+  const configPath = [
+    sep,
+    ...commonDirectoryComponents(files),
+    `tsconfig.tslean-session-${(projectCount += 1)}.json`,
+  ].join('');
   overlay.set(configPath, JSON.stringify({ compilerOptions: request.settings, files, include: [] }));
   const loaded = update({
     openProjects: [configPath],
