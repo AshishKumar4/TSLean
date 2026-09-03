@@ -1930,12 +1930,14 @@ function encodeExpression(value: ts.Expression, type: LeanType, context: EmitCon
 function assertIdentityDataImage(type: LeanType, context: EmitContext, path: readonly string[] = []): void {
   const at = path.length === 0 ? '' : ` at ${path.join('.')}`;
   switch (type.kind) {
+    // Every case in this group is its own data image; a JsonValue's is the tagged union it
+    // already is, exactly as an Option's is. A bare comment between two case labels is not a
+    // statement to the linter, so the note lives above the group it explains.
     case 'boolean':
     case 'nat':
     case 'string':
     case 'int':
     case 'char':
-    // A JsonValue's data image is the tagged union it already is, exactly as an Option's is.
     case 'json':
       return;
     case 'parameter':
