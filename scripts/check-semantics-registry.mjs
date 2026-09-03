@@ -451,14 +451,125 @@ export function joinInlineForms(registry, forms) {
 }
 
 /**
- * The inline forms the live emitter prints, read through the module the compiler lowers with.
- * The emitter is TypeScript source against modules that resolve through the installed compiler
- * packages, so it is loaded through the repo's own TypeScript loader rather than imported as if
- * it were plain JavaScript.
+ * The inline forms and helper bodies the live emitter prints, through the module the compiler
+ * lowers with. The emitter is TypeScript source against modules that resolve through the
+ * installed compiler packages, so it is loaded through the repo's own TypeScript loader rather
+ * than imported as if it were plain JavaScript.
  */
-async function emittedInlineForms() {
-  const { inlineOperationForms } = await import('../src/lean-to-typescript/emitter.ts');
-  return inlineOperationForms();
+async function emittedForms() {
+  const { inlineOperationForms, helperOperationForms } = await import('../src/lean-to-typescript/emitter.ts');
+  return { inline: inlineOperationForms(), helpers: helperOperationForms() };
+}
+
+/**
+ * Joins the body the Lean registry records for each `helper:` opcode against the body the live
+ * emitter prints for that helper's role.
+ *
+ * A helper reaches the target as a generated declaration rather than as a use-site form, so its
+ * row's `emittedForm` states the body. Printing that body through the one function the emitter
+ * builds it with, and comparing byte for byte, is what makes the two halves of the opcode registry
+ * covered: without it a helper row could drift from the declaration the package actually prints and
+ * only the digest of that drifted declaration would be recorded.
+ */
+export function joinHelperForms(registry, forms) {
+  const helpers = registry.opcodes.filter((opcode) => opcode.runtimeSymbol.startsWith('helper:'));
+  requireSameSet(
+    'helper emitted bodies',
+    [...forms.keys()].sort(),
+    'emitter.ts',
+    helpers.map((opcode) => opcode.opcode).sort(),
+    'the Lean semantics',
+  );
+  for (const opcode of helpers) {
+    const printed = forms.get(opcode.opcode);
+    if (printed !== opcode.emittedForm) {
+      fail(
+        `helper ${opcode.opcode} emits ${JSON.stringify(printed)} but the Lean semantics records ` +
+          `${JSON.stringify(opcode.emittedForm)}`,
+      );
+    }
+  }
+  return helpers.length;
+}
+
+/**
+ * Joins the host opcode registry the Lean side declares against the one `ir.ts` decodes.
+ *
+ * A `foreign` declaration names a host identity, and the decoder refuses any spelling outside its
+ * own table, so that table is the trust boundary for the whole host surface: a row on either side
+ * with no partner on the other is a boundary one language admits and the other does not.
+ */
+export function joinHostOpcodes(registry, declared) {
+  if (!registry.declarationFamilies.some((family) => family.kind === 'foreign')) return 0;
+  if (!Array.isArray(registry.hostOpcodes)) {
+    fail(
+      'the Lean registry admits the foreign declaration family but its report carries no hostOpcodes ' +
+        `inventory, so the ${declared.length} host rows ir.ts decodes are joined against nothing; ` +
+        'print Ir.HostOp.all from RegistryReport.lean',
+    );
+  }
+  const leanHosts = sortedUnique(
+    registry.hostOpcodes.map((entry) => entry.wire ?? entry.kind),
+    'Lean host registry',
+  );
+  requireSameSet('host opcodes', [...declared].sort(), 'ir.ts', leanHosts, 'the Lean semantics');
+  return leanHosts.length;
+}
+
+/** The host opcode table the live `ir.ts` declares. */
+export function readDeclaredHostOpcodes(file, text) {
+  const source = parsedSource(file, text);
+  let table;
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'LEAN_HOST_OPCODES') {
+      table = node.initializer;
+      return;
+    }
+    node.forEachChild(visit);
+  };
+  visit(source);
+  if (table === undefined) fail(`${file} declares no LEAN_HOST_OPCODES table`);
+  const literal = ts.isCallExpression(table) ? table.arguments[0] : table;
+  if (literal === undefined || !ts.isObjectLiteralExpression(literal)) {
+    fail('ir.ts LEAN_HOST_OPCODES is not an object literal');
+  }
+  return literal.properties.map((property) => {
+    if (!ts.isPropertyAssignment(property) || !ts.isStringLiteral(property.name)) {
+      fail('ir.ts LEAN_HOST_OPCODES carries a row whose key the gate cannot read');
+    }
+    return property.name.text;
+  });
+}
+
+/** The host opcode table the live `ir.ts` declares. */
+function declaredHostOpcodes() {
+  const file = irFile;
+  return readDeclaredHostOpcodes(file, readFileSync(file, 'utf8'));
+}
+
+/**
+ * Joins the locked registry against the certificate surface a generated package binds.
+ *
+ * Every opcode `ir.ts` admits has to carry a row, every row has to name an opcode `ir.ts` admits,
+ * and every row has to resolve to a runtime symbol the emitter can bind: an inline form it prints,
+ * or a helper role it declares. A gap in either direction is a certificate a package would spend
+ * without a proof, or a proof no package can spend.
+ */
+export function joinCertificateCoverage(registry, declared) {
+  if (declared === undefined) fail('certificate coverage is not joined: ir.ts declares no opcode table');
+  for (const [kind, row] of declared) {
+    const certificate = registry.opcodes.find((opcode) => opcode.opcode === kind);
+    if (certificate === undefined) fail(`opcode ${kind} is admitted by ir.ts and no registry row certifies it`);
+    if (certificate.runtimeSymbol !== row.runtimeSymbol) {
+      fail(`opcode ${kind} would bind ${row.runtimeSymbol} but its certificate names ${certificate.runtimeSymbol}`);
+    }
+  }
+  for (const certificate of registry.opcodes) {
+    if (!declared.has(certificate.opcode)) {
+      fail(`registry row ${certificate.opcode} certifies an opcode ir.ts does not admit`);
+    }
+  }
+  return registry.opcodes.length;
 }
 
 /** Every expression kind the emitter lowers. */
