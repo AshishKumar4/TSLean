@@ -510,20 +510,20 @@ describe('generic model differential infrastructure', () => {
     const nodeBound = structuredClone(graphSuite);
     const nodeTemplate = nodeBound.graphs.find((graph: { id: string }) => graph.id === 'canonical-cycle').nodes[0];
     nodeBound.graphs.find((graph: { id: string }) => graph.id === 'canonical-cycle').nodes =
-      new Array(1_025).fill(nodeTemplate);
+      Array.from({ length: 1_025 }, () => nodeTemplate);
     expect(() => buildDifferentialSuite(JSON.stringify(nodeBound))).toThrow('exceeds graph bounds');
     const propertyBound = structuredClone(graphSuite);
     const propertyNode = propertyBound.graphs.find((graph: { id: string }) => graph.id === 'canonical-cycle').nodes[0];
-    propertyNode.properties = new Array(4_097).fill(propertyNode.properties[0]);
+    propertyNode.properties = Array.from({ length: 4_097 }, () => propertyNode.properties[0]);
     expect(() => buildDifferentialSuite(JSON.stringify(propertyBound))).toThrow('exceeds node bounds');
     const elementBound = structuredClone(graphSuite);
     const elementNode = elementBound.graphs.find((graph: { id: string }) => graph.id === 'canonical-cycle')
       .nodes.find((node: { kind: string }) => node.kind === 'array');
-    elementNode.elements = new Array(65_537).fill(elementNode.elements[0]);
+    elementNode.elements = Array.from({ length: 65_537 }, () => elementNode.elements[0]);
     expect(() => buildDifferentialSuite(JSON.stringify(elementBound))).toThrow('exceeds node bounds');
     expect(() => validateFixture({ kind: 'graph', nodes: [], arguments: [] })).toThrow('must contain exactly');
 
-    const maximumString = { kind: 'string' as const, units: new Array<number>(65_536).fill(0xd800) };
+    const maximumString = { kind: 'string' as const, units: Array.from({ length: 65_536 }, () => 0xd800) };
     expect(() => validateFixture(maximumString)).not.toThrow();
     expect(materializeFixtures([maximumString], new Canonicalizer())[0]).toHaveLength(65_536);
     expect(() => validateFixture({ kind: 'string', units: [...maximumString.units, 0] }))
@@ -759,7 +759,7 @@ describe('generic model differential infrastructure', () => {
 
   it('enforces the shared UTF-16 boundary at the Lean protocol', async () => {
     const oracle = new LeanOracle(root);
-    const boundary = new Array<number>(65_536).fill(0xd800);
+    const boundary = Array.from({ length: 65_536 }, () => 0xd800);
     const responses = await oracle.exchangeLines([
       JSON.stringify({ id: 'utf16-boundary', operation: 'parse', fixtures: [{ kind: 'string', units: boundary }] }),
       JSON.stringify({ id: 'utf16-overflow', operation: 'parse', fixtures: [{ kind: 'string', units: [...boundary, 0] }] }),

@@ -9,11 +9,8 @@ import { rewriteModule } from '../src/rewrite/index.js';
 import { generateLean } from '../src/codegen/index.js';
 import {
   combineEffects, stateEffect, exceptEffect,
-  TyString, TyFloat, TyNat, TyRef, TyUnit, TyArray,
-  Pure, IO, Async,
-  litNat, litStr, varExpr,
-  IRModule, IRDecl, IRExpr,
-} from '../src/ir/types.js';
+  TyString, TyFloat, TyNat, Pure, IO, Async,
+  litNat, IRModule, } from '../src/ir/types.js';
 import { monadString } from '../src/effects/index.js';
 
 function pipeline(src: string, name = 'test.ts'): string {

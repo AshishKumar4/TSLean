@@ -5,11 +5,10 @@ import {
   Pure, IO, Async,
   stateEffect, exceptEffect, combineEffects,
   isPure, hasAsync, hasState, hasExcept, hasIO,
-  TyNat, TyInt, TyFloat, TyString, TyBool, TyUnit, TyNever,
-  TyOption, TyArray, TyTuple, TyFn, TyMap, TySet, TyRef, TyVar,
-  litStr, litNat, litBool, litUnit, litFloat, litInt,
-  varExpr, holeExpr, structUpdate, appExpr, seqExpr,
-  IRType, IRExpr, IRDecl, IRModule,
+  TyNat, TyInt, TyFloat, TyString, TyBool, TyUnit, TyOption, TyArray, TyTuple, TyFn, TyMap, TyRef, TyVar,
+  litStr, litNat, litFloat, litInt,
+  varExpr, structUpdate, appExpr, seqExpr,
+  IRExpr, IRDecl, IRModule,
 } from '../src/ir/types.js';
 import { generateLean } from '../src/codegen/index.js';
 

@@ -5,11 +5,9 @@ import { describe, it, expect } from 'vitest';
 import { generateLean } from '../src/codegen/index.js';
 import {
   IRModule, tp, IRDecl, IRExpr,
-  TyString, TyFloat, TyBool, TyNat, TyUnit, TyRef, TyArray, TyOption,
-  TyMap, TySet, TyTuple, TyFn,
-  Pure, IO, Async, stateEffect, exceptEffect, combineEffects,
-  litNat, litStr, litBool, litUnit, varExpr, holeExpr,
-} from '../src/ir/types.js';
+  TyString, TyFloat, TyBool, TyNat, TyUnit, TyRef, TyOption,
+  Pure, Async, stateEffect, exceptEffect, combineEffects,
+  litNat, litStr, litBool, litUnit, varExpr, } from '../src/ir/types.js';
 
 function mod(decls: IRDecl[]): IRModule {
   return { name: 'TSLean.Test', imports: [], decls, comments: [], sourceFile: 'test.ts' };
@@ -26,7 +24,7 @@ describe('Codegen: partial def', () => {
       body: {
         tag: 'IfThenElse',
         cond: { tag: 'BinOp', op: 'Le', left: varExpr('n', TyNat), right: litNat(0), type: TyBool, effect: Pure },
-        then: litNat(1),
+        consequent: litNat(1),
         else_: { tag: 'BinOp', op: 'Mul',
           left: varExpr('n', TyNat),
           right: { tag: 'App', fn: varExpr('fact'), args: [{ tag: 'BinOp', op: 'Sub', left: varExpr('n'), right: litNat(1), type: TyNat, effect: Pure }], type: TyNat, effect: Pure },
@@ -65,14 +63,14 @@ describe('Codegen: mutual recursion in namespace', () => {
     const isEvenBody: IRExpr = {
       tag: 'IfThenElse',
       cond: { tag: 'BinOp', op: 'Eq', left: varExpr('n'), right: litNat(0), type: TyBool, effect: Pure },
-      then: litBool(true),
+      consequent: litBool(true),
       else_: { tag: 'App', fn: varExpr('isOdd'), args: [{ tag: 'BinOp', op: 'Sub', left: varExpr('n'), right: litNat(1), type: TyNat, effect: Pure }], type: TyBool, effect: Pure },
       type: TyBool, effect: Pure,
     };
     const isOddBody: IRExpr = {
       tag: 'IfThenElse',
       cond: { tag: 'BinOp', op: 'Eq', left: varExpr('n'), right: litNat(0), type: TyBool, effect: Pure },
-      then: litBool(false),
+      consequent: litBool(false),
       else_: { tag: 'App', fn: varExpr('isEven'), args: [{ tag: 'BinOp', op: 'Sub', left: varExpr('n'), right: litNat(1), type: TyNat, effect: Pure }], type: TyBool, effect: Pure },
       type: TyBool, effect: Pure,
     };

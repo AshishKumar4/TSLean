@@ -9,8 +9,7 @@ import {
   TyOption, TyArray, TyTuple, TyFn, TyMap, TySet, TyPromise,
   TyResult, TyRef, TyVar,
   litStr, litNat, litBool, litUnit, varExpr, holeExpr,
-  IRType, Effect,
-} from '../src/ir/types.js';
+  } from '../src/ir/types.js';
 
 describe('Effects – constructors', () => {
   it('Pure.tag is Pure',   () => expect(Pure.tag).toBe('Pure'));

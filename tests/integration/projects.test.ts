@@ -37,11 +37,10 @@ function transpileProjectDir(name: string): { result: ProjectResult; outDir: str
 
 describe('Integration: calculator project', () => {
   let result: ProjectResult;
-  let outDir: string;
   let leanFiles: string[];
 
   beforeAll(() => {
-    ({ result, outDir, leanFiles } = transpileProjectDir('calculator'));
+    ({ result, leanFiles } = transpileProjectDir('calculator'));
   });
 
   it('transpiles all 3 files without errors', () => {

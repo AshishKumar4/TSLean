@@ -6,11 +6,7 @@ import { parseFile } from '../src/parser/index.js';
 import { rewriteModule } from '../src/rewrite/index.js';
 import { generateLean } from '../src/codegen/index.js';
 import {
-  combineEffects, stateEffect, exceptEffect, Async, IO, Pure,
-  TyString, TyFloat, TyNat, TyBool, TyUnit, TyRef, TyArray, TyOption,
-  litNat, litStr, litBool, varExpr,
-  IRModule, IRDecl, IRExpr,
-} from '../src/ir/types.js';
+  combineEffects, stateEffect, exceptEffect, Async, TyString, TyFloat, TyNat, litNat, IRModule, IRDecl, } from '../src/ir/types.js';
 import { monadString } from '../src/effects/index.js';
 import { leanTypeOf } from './helpers/lean-type.js';
 

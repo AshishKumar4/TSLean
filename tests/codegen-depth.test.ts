@@ -3,11 +3,10 @@
 import { describe, it, expect } from 'vitest';
 import { generateLean } from '../src/codegen/index.js';
 import {
-  IRModule, IRDecl, IRExpr,
-  TyString, TyFloat, TyBool, TyNat, TyUnit, TyNever, TyRef, TyArray, TyOption,
+  IRModule, IRDecl, TyString, TyFloat, TyBool, TyNat, TyUnit, TyNever, TyRef, TyArray, TyOption,
   TyMap, TySet, TyTuple, TyFn, TyVar, TyInt, TyPromise,
   Pure, IO, Async, stateEffect, exceptEffect, combineEffects,
-  litNat, litStr, litBool, litUnit, litFloat, varExpr, holeExpr, structUpdate,
+  litNat, litStr, litUnit, litFloat, varExpr, structUpdate,
   seqExpr, appExpr,
 } from '../src/ir/types.js';
 import { leanAliasOf, leanTypeOf } from './helpers/lean-type.js';

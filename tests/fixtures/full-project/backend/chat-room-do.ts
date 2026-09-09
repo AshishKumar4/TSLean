@@ -1,4 +1,4 @@
-import { RoomId, UserId } from '../shared/types.js';
+import { UserId } from '../shared/types.js';
 
 interface Message { id: string; userId: UserId; content: string; timestamp: number }
 

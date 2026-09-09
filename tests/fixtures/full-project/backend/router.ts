@@ -1,5 +1,3 @@
-import { ApiResponse, makeApiError } from '../shared/types.js';
-
 interface RouterEnv extends Env {
   AUTH_DO: DurableObjectNamespace;
 }

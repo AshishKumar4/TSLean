@@ -5,16 +5,11 @@ import * as path from 'path';
 import { parseFile } from '../src/parser/index.js';
 import { rewriteModule } from '../src/rewrite/index.js';
 import { generateLean } from '../src/codegen/index.js';
-import { IRModule } from '../src/ir/types.js';
 
 const FIX = path.join(process.cwd(), 'tests/fixtures');
 
 function pipeline(rel: string): string {
   return generateLean(rewriteModule(parseFile({ fileName: path.join(FIX, rel) })));
-}
-
-function parsed(rel: string): IRModule {
-  return parseFile({ fileName: path.join(FIX, rel) });
 }
 
 // ─── basic/hello.ts ──────────────────────────────────────────────────────────

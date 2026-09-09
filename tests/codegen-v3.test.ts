@@ -3,10 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateLean } from '../src/codegen/index.js';
 import {
-  IRModule, tp, IRDecl, IRExpr,
-  TyString, TyFloat, TyBool, TyNat, TyUnit, TyRef, TyArray, TyOption, TyMap,
-  Pure, IO, Async, stateEffect, exceptEffect, combineEffects,
-  litNat, litStr, litBool, litUnit, litFloat, varExpr, holeExpr, structUpdate,
+  IRModule, tp, IRDecl, TyString, TyFloat, TyBool, TyNat, TyUnit, TyRef, Pure, litNat, litStr, litUnit, varExpr, structUpdate,
 } from '../src/ir/types.js';
 
 function mod(decls: IRDecl[]): IRModule {
@@ -186,7 +183,6 @@ describe('Codegen v3: SectionDecl', () => {
 
 describe('Codegen v3: auto-instance generation', () => {
   it('emitAutoInstances generates BEq instance', () => {
-    const gen = new (generateLean as any).__proto__.constructor();  // Access Gen class
     // Test via output check — emit a struct then call autoInstances
     const m = mod([{
       tag: 'StructDef', name: 'Point', typeParams: [],

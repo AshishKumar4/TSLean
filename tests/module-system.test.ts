@@ -6,8 +6,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import {
-  fileToLeanModule, leanModuleToPath, fileToLeanPath,
-  resolveImportModule, isExternalModule,
+  fileToLeanModule, leanModuleToPath, resolveImportModule, isExternalModule,
 } from '../src/project/module-resolver.js';
 import {
   buildDependencyGraph, formatCycles,

@@ -9,8 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { printFile, printDeclStr, printExprStr, printTyStr } from '../src/codegen/printer.js';
 import type {
-  LeanFile, LeanDecl, LeanExpr, LeanTy, LeanPat,
-} from '../src/codegen/lean-ast.js';
+  LeanFile, LeanDecl, LeanExpr, LeanTy, } from '../src/codegen/lean-ast.js';
 
 // ─── Type printing ──────────────────────────────────────────────────────────────
 

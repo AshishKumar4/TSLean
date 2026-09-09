@@ -1,16 +1,13 @@
 // Advanced parser tests: export patterns, type narrowing, class inheritance,
 // index signatures, complex destructuring, for-in, JSDoc, generics.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import * as path from 'path';
 import { parseFile } from '../src/parser/index.js';
 import { rewriteModule } from '../src/rewrite/index.js';
 import { generateLean } from '../src/codegen/index.js';
 import {
-  IRModule, IRDecl, hasAsync, hasIO,
-  TyString, TyFloat, TyBool, TyNat, TyUnit, TyRef, TyArray, TyOption, TyMap,
-  Pure,
-} from '../src/ir/types.js';
+  IRModule, IRDecl, } from '../src/ir/types.js';
 
 const FIX = path.join(process.cwd(), 'tests/fixtures');
 

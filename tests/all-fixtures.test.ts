@@ -11,16 +11,7 @@ import {
   IRModule,
   IRDecl,
   hasAsync,
-  hasState,
-  hasExcept,
-  hasIO,
-  isPure,
-  TyString,
-  TyFloat,
-  TyBool,
-  TyNat,
-  TyUnit,
-} from '../src/ir/types.js';
+  } from '../src/ir/types.js';
 
 const FIX = path.join(process.cwd(), 'tests/fixtures');
 

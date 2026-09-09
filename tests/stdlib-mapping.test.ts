@@ -2,7 +2,6 @@
 // Bug 2 (exhaustive match catch-all removal).
 
 import { describe, it, expect } from 'vitest';
-import * as path from 'path';
 import { parseFile } from '../src/parser/index.js';
 import { rewriteModule } from '../src/rewrite/index.js';
 import { generateLean } from '../src/codegen/index.js';

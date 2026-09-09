@@ -290,7 +290,7 @@ export class LeanOracle {
     }
     return new Promise<OracleResponse[]>((resolveBatch, rejectBatch) => {
       const batch: Batch = {
-        responses: new Array<OracleResponse>(lines.length),
+        responses: Array.from<OracleResponse>({ length: lines.length }),
         remaining: lines.length,
         resolve: resolveBatch,
         reject: rejectBatch,

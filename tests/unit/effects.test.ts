@@ -6,8 +6,7 @@ import {
   Pure, IO, Async,
   stateEffect, exceptEffect, combineEffects,
   isPure, hasAsync, hasState, hasExcept, hasIO,
-  TyString, TyFloat, TyNat, TyUnit,
-  Effect,
+  TyString, TyFloat, TyNat, Effect,
 } from '../../src/ir/types.js';
 import { inferNodeEffect, monadString, joinEffects, effectSubsumes, doMonadType } from '../../src/effects/index.js';
 

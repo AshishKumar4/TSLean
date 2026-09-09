@@ -1,36 +1,10 @@
 // E2E v3 tests: comprehensive end-to-end tests for all expanded features.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import * as path from 'path';
-import * as fs from 'fs';
 import { parseFile } from '../src/parser/index.js';
 import { rewriteModule } from '../src/rewrite/index.js';
 import { generateLean } from '../src/codegen/index.js';
-import {
-  IRModule,
-  IRDecl,
-  IRExpr,
-  TyString,
-  TyFloat,
-  TyBool,
-  TyNat,
-  TyUnit,
-  TyRef,
-  TyArray,
-  TyOption,
-  Pure,
-  Async,
-  IO,
-  stateEffect,
-  exceptEffect,
-  combineEffects,
-  litNat,
-  litStr,
-  litBool,
-  litUnit,
-  litFloat,
-  varExpr,
-} from '../src/ir/types.js';
 
 const FIX = path.join(process.cwd(), 'tests/fixtures');
 
@@ -40,10 +14,6 @@ function pipeline(rel: string): string {
 
 function inline(src: string): string {
   return generateLean(rewriteModule(parseFile({ fileName: 'test.ts', sourceText: src })));
-}
-
-function mod(decls: IRDecl[]): IRModule {
-  return { name: 'T', imports: [], decls, comments: [] };
 }
 
 // ─── Export default → def fetch ────────────────────────────────────────────────

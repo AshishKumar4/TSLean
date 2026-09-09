@@ -7,9 +7,8 @@ import { parseFile } from '../src/parser/index.js';
 import { rewriteModule } from '../src/rewrite/index.js';
 import {
   IRModule, tp, IRDecl,
-  TyString, TyNat, TyBool, TyFloat, TyUnit, TyRef, TyArray, TyOption, TyVar,
-  Pure, IO,
-  litNat, litStr, litBool, varExpr,
+  TyString, TyNat, TyBool, TyRef, TyArray, TyVar,
+  Pure, litStr, litBool, varExpr,
   TypeParam,
 } from '../src/ir/types.js';
 import { extractTypeParams } from '../src/typemap/index.js';

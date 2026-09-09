@@ -1,37 +1,22 @@
 // Advanced pattern tests: template literals, optional chaining, class features,
 // destructuring, enums, for-loops, mutable vars, mutual recursion.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import * as path from 'path';
 import { parseFile } from '../../src/parser/index.js';
 import { rewriteModule } from '../../src/rewrite/index.js';
 import { generateLean } from '../../src/codegen/index.js';
 import {
   IRModule,
-  tp,
   IRDecl,
-  IRExpr,
   TyString,
   TyFloat,
-  TyBool,
   TyNat,
-  TyUnit,
-  TyRef,
-  TyArray,
-  TyOption,
   Pure,
-  Async,
-  IO,
-  stateEffect,
-  exceptEffect,
-  combineEffects,
   litNat,
   litStr,
-  litBool,
   varExpr,
-  holeExpr,
-} from '../../src/ir/types.js';
-import { monadString } from '../../src/effects/index.js';
+  } from '../../src/ir/types.js';
 
 const FIX = path.join(process.cwd(), 'tests/fixtures');
 

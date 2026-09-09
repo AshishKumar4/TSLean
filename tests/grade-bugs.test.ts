@@ -1,17 +1,15 @@
 // Regression tests for the 3 A-grade bugs found in code review.
 // Each test directly verifies the repaired behaviour.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import * as path from 'path';
 import { parseFile } from '../src/parser/index.js';
 import { rewriteModule } from '../src/rewrite/index.js';
 import { generateLean } from '../src/codegen/index.js';
 import {
   IRModule, IRDecl, IRExpr,
-  TyString, TyFloat, TyBool, TyNat, TyUnit, TyRef, TyArray, TyOption,
-  Pure, Async, IO,
-  litNat, litStr, litBool, litUnit, varExpr, holeExpr,
-} from '../src/ir/types.js';
+  TyString, TyFloat, TyNat, TyUnit, TyRef, TyArray, TyOption,
+  Pure, litNat, litStr, litUnit, varExpr, } from '../src/ir/types.js';
 import { monadString } from '../src/effects/index.js';
 import { combineEffects, stateEffect, exceptEffect } from '../src/ir/types.js';
 

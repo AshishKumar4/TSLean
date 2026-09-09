@@ -1,16 +1,13 @@
 // Tests for parser type-level features: conditional types, tuple types, mapped types,
 // template literal types, keyof, typeof, enum member access, computed properties.
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import * as path from 'path';
 import { parseFile } from '../src/parser/index.js';
 import { rewriteModule } from '../src/rewrite/index.js';
 import { generateLean } from '../src/codegen/index.js';
 import {
-  IRModule, IRDecl, IRExpr,
-  TyString, TyFloat, TyBool, TyNat, TyUnit, TyRef, TyArray, TyOption, TyTuple,
-  Pure, litNat, litStr, litBool, litUnit, varExpr,
-} from '../src/ir/types.js';
+  IRModule, IRDecl, } from '../src/ir/types.js';
 
 function inline(src: string): string {
   return generateLean(rewriteModule(parseFile({ fileName: 'test.ts', sourceText: src })));

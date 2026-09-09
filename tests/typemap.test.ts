@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import * as ts from 'typescript';
 import { mapType, detectDiscriminatedUnion, extractTypeParams } from '../src/typemap/index.js';
-import { TyString, TyFloat, TyBool, TyUnit, TyNat, TyNever, TyOption, TyArray, IRType } from '../src/ir/types.js';
+import { IRType } from '../src/ir/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -155,14 +155,6 @@ describe('mapType – generics', () => {
 });
 
 describe('detectDiscriminatedUnion', () => {
-  function unionAt(src: string): ts.UnionType | null {
-    const { prog, checker } = makeProgram(src);
-    const sf = prog.getSourceFile('test.ts')!;
-    const alias = sf.statements[0] as ts.TypeAliasDeclaration;
-    const t = checker.getTypeAtLocation(alias);
-    return t.isUnion() ? (t as ts.UnionType) : null;
-  }
-
   it('detects kind discriminant', () => {
     const { prog, checker } = makeProgram('type S = { kind: "a"; x: number } | { kind: "b"; y: number };');
     const sf  = prog.getSourceFile('test.ts')!;

@@ -137,7 +137,7 @@ describe('rewriteModule – recursive expression rewriting', () => {
         body: {
           tag: 'IfThenElse',
           cond: litStr('x') as any,
-          then: matchExpr(
+          consequent: matchExpr(
             fieldAccess(varExpr('c', TyRef('C')), 'kind'),
             [{ pattern: { tag: 'PString', value: 'a' }, body: litStr('a') }]
           ),
@@ -149,7 +149,7 @@ describe('rewriteModule – recursive expression rewriting', () => {
     const r = rewriteModule(m);
     const fn = r.decls.find(d => d.tag === 'FuncDef') as Extract<IRDecl, { tag: 'FuncDef' }>;
     const ifte = fn.body as Extract<IRExpr, { tag: 'IfThenElse' }>;
-    const m2   = ifte.then as Extract<IRExpr, { tag: 'Match' }>;
+    const m2   = ifte.consequent as Extract<IRExpr, { tag: 'Match' }>;
     expect(m2.cases[0].pattern.tag).toBe('PCtor');
   });
 

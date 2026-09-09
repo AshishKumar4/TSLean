@@ -4,8 +4,6 @@ import { describe, it, expect } from 'vitest';
 import * as ts from 'typescript';
 import { mapType, detectDiscriminatedUnion, extractTypeParams } from '../../src/typemap/index.js';
 import {
-  TyString, TyFloat, TyBool, TyUnit, TyNat, TyInt, TyNever,
-  TyOption, TyArray, TyMap, TySet, TyPromise, TyRef, TyVar, TyTuple,
   IRType,
 } from '../../src/ir/types.js';
 
