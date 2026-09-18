@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { SourceMapConsumer, type RawSourceMap } from 'source-map-js';
-import { emitted as ts } from '../src/typescript-api/emitted-syntax.js';
+import { openProject, renderDiagnostic } from '../src/typescript-api/session.js';
 import { describe, expect, test } from 'vitest';
 import {
   compileLeanToTypeScript,
@@ -242,24 +242,31 @@ describe('Lean package to TypeScript module tree', () => {
     const paths = generatedFiles()
       .filter((path) => path.endsWith('.ts'))
       .map((path) => join(generatedRoot, path));
-    const program = ts.createProgram(paths, {
-      exactOptionalPropertyTypes: true,
-      lib: ['lib.es2022.d.ts'],
-      module: ts.ModuleKind.NodeNext,
-      moduleResolution: ts.ModuleResolutionKind.NodeNext,
-      noEmit: true,
-      noImplicitOverride: true,
-      noUncheckedIndexedAccess: true,
-      noUnusedLocals: true,
-      noUnusedParameters: true,
-      strict: true,
-      target: ts.ScriptTarget.ES2022,
+    // Type-checking a tree is a read, and reads go through the compiler session, which is
+    // TypeScript 7. The options are unchanged in meaning and respelled the way a `tsconfig.json`
+    // writes them, because the session parses what it is handed as configuration text and
+    // refuses the resolved `lib: ['lib.es2022.d.ts']`.
+    const project = openProject({
+      files: paths,
+      settings: {
+        exactOptionalPropertyTypes: true,
+        lib: ['es2022'],
+        module: 'nodenext',
+        moduleResolution: 'nodenext',
+        noEmit: true,
+        noImplicitOverride: true,
+        noUncheckedIndexedAccess: true,
+        noUnusedLocals: true,
+        noUnusedParameters: true,
+        strict: true,
+        target: 'es2022',
+      },
     });
-    expect(
-      ts
-        .getPreEmitDiagnostics(program)
-        .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
-    ).toEqual([]);
+    try {
+      expect(project.diagnostics().map((diagnostic) => renderDiagnostic(diagnostic))).toEqual([]);
+    } finally {
+      project.close();
+    }
   });
 
   /**

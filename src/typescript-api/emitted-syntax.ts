@@ -4,9 +4,13 @@
  * The syntax the Lean-to-TypeScript compiler emits, and the printer that writes it out.
  *
  * This is the whole of TSLean's remaining dependency on TypeScript 6, and the only module that
- * may import it. Everything that *reads* TypeScript — the parser, the type map, the effect
- * inference, the project reader, the round trip, and the type check of the emitted tree — reads
- * through {@link module:typescript-api/session}, which is TypeScript 7.
+ * names the package. It is not the only module that uses it: everything that emits imports
+ * {@link emitted} from here — the emitter and the package layout that build the syntax, the
+ * certificates and the compiler that record what printed it, and the tests that transpile or
+ * print generated syntax. Everything that *reads* TypeScript — the parser, the type map, the
+ * effect inference, the project reader, the round trip, and the type check of the emitted tree —
+ * reads through {@link module:typescript-api/session}, which is TypeScript 7. The one parse on
+ * this side of the line is one that exists only to be printed again, which is emission.
  *
  * ## Why emission did not move
  *
@@ -36,10 +40,22 @@
  *
  * ## Removal condition
  *
- * This module goes away, and with it the 6.x pin, when TypeScript 7 can attach a comment to
- * constructed syntax and print it: an `addSyntheticLeadingComment` equivalent, or `jsDoc` on the
- * wire for factory-built nodes. `documented` in the emitter is the one caller that needs it, so
- * the check is mechanical, and `docs/trust.md` carries the pin as a trusted-base item until then.
+ * Three gaps have to close, not one, and each has its own callers:
+ *
+ * - **A comment on constructed syntax**: an `addSyntheticLeadingComment` equivalent, or `jsDoc`
+ *   on the wire for factory-built nodes. `documented` in the emitter is the caller, and this is
+ *   the gap the section above is about.
+ * - **A printer over a whole file**: `createPrinter().printFile` and `EmitHint`, which the
+ *   emitter and the certificates print through. 7.0.2 publishes `Emitter.printNode` and nothing
+ *   else, and printing a file that mixes parsed nodes with constructed ones — what a transform
+ *   over parsed source produces — panics the compiler server outright, on a nil dereference in
+ *   the printer's `IsOuterExpression`. So `mutateFirstConjunction` in
+ *   `tests/lean-to-typescript.test.ts` waits on this gap as well.
+ * - **An in-process transpiler**: `transpileModule`, which two test files lower a generated
+ *   module to JavaScript with so a decoder can be run against it. `typescript/unstable/sync` is
+ *   a client to a compiler server whose only emit is `printNode`.
+ *
+ * Until all three close, `docs/trust.md` carries the pin as a trusted-base item.
  */
 
 /**
