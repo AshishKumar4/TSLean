@@ -4,9 +4,9 @@
  * Lean module: TSLean.Examples.Roundtrip.Retry
  * Generated module: TSLean/Examples/Roundtrip/Retry.ts
  * Package entry module: TSLean.Examples.Roundtrip.Retry
- * Semantic identity: sha256:5d177c9009aa1b145632669b8d4eefec8913504f8328a8bea6b7e6b15d54dde2
- * Input closure: sha256:cbf3a41cfddf44deac4bf02f517dfebf60eb90363853c401f9b0beca5753110a
- * Semantic IR: sha256:4c6ace9b0be74a2d96585758db8fb03f63be086ce5499a62057f045d036c735b
+ * Semantic identity: sha256:567b42174273187d8476338e6f94915c388b391edcee6f190f61885836f9b218
+ * Input closure: sha256:e6c9e00b84b3b556fa578fefca0e652dc4ec8342b0d19b464f7f5fe75e518dd8
+ * Semantic IR: sha256:e38f888e2bc8d4cb21023c425e1a9c56b40cc40db6a7ea6975344c93ab7ada86
  * Generated module body: sha256:2275cf8f1a6476f05b451ce494d0b7d58173a236f61faaff1bca99165afc9800
  * Generated package body: sha256:cfd1eaf154b8125a397fe78cee1af8f3369ca7574b643d0d6afd4623a4e70a67
  * Lean toolchain: leanprover/lean4:v4.33.1

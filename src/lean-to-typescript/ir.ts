@@ -1200,6 +1200,15 @@ export type LeanDeclaration =
       /** The Lean constructor a match on this structure decides. */
       readonly constructor: string;
       readonly fields: readonly LeanField[];
+      /**
+       * The `Prop` fields erasure dropped, by name and in declaration order.
+       *
+       * Proof irrelevance is definitional in Lean, so the surviving fields determine the value and
+       * nothing a program computes can observe the drop. The decode direction is what it costs: the
+       * data alone does not establish the invariant, so a record with a non-empty list here has no
+       * `fromData` and cannot appear at a root's boundary.
+       */
+      readonly invariants: readonly string[];
     } & LeanDeclared)
   | ({
       readonly kind: 'function';
@@ -2570,15 +2579,26 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
     case 'record': {
       exactKeys(
         declaration,
-        ['kind', 'name', 'module', 'namespace', 'typeParameters', 'span', 'constructor', 'fields'],
+        ['kind', 'name', 'module', 'namespace', 'typeParameters', 'span', 'constructor', 'fields', 'invariants'],
         location,
         ['doc'],
       );
+      const fields = decodeFields(declaration['fields'], location);
+      const invariants = decodeInvariants(declaration['invariants'], location);
+      const dataFields = new Set(fields.map((field) => field.name));
+      for (const invariant of invariants) {
+        if (dataFields.has(invariant)) {
+          throw new TypeError(
+            `${location}.invariants names ${invariant}, which the record also declares as a data field`,
+          );
+        }
+      }
       return {
         kind,
         ...shared,
         constructor: identifier(declaration['constructor'], `${location}.constructor`),
-        fields: decodeFields(declaration['fields'], location),
+        fields,
+        invariants,
         ...documentation(declaration, location),
       };
     }
@@ -2774,6 +2794,23 @@ function decodeFields(value: unknown, location: string): readonly LeanField[] {
     `${location}.fields`,
   );
   return fields;
+}
+
+/**
+ * The `Prop` fields the exporter erased from a record, by name and in declaration order.
+ *
+ * Lean's proof irrelevance is definitional, so a record's surviving fields determine the value it
+ * came from and dropping these loses nothing a program can compute. What it does lose is the
+ * *decode* direction: the surviving data is not enough to rebuild the invariant, so a caller who
+ * hands the package raw data has not established what the Lean type asserts. These names are how
+ * the emitter refuses that boundary rather than casting past it.
+ */
+function decodeInvariants(value: unknown, location: string): readonly string[] {
+  const invariants = array(value, `${location}.invariants`).map((invariant, index) =>
+    identifier(invariant, `${location}.invariants[${index}]`),
+  );
+  requireUnique(invariants, `${location}.invariants`);
+  return invariants;
 }
 
 function decodeType(value: unknown, location: string): LeanType {

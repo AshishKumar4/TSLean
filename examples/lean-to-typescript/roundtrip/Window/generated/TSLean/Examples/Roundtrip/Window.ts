@@ -4,9 +4,9 @@
  * Lean module: TSLean.Examples.Roundtrip.Window
  * Generated module: TSLean/Examples/Roundtrip/Window.ts
  * Package entry module: TSLean.Examples.Roundtrip.Window
- * Semantic identity: sha256:4cabd9a203db0e829c2a161d921c6dbcfd020ff290ac8b47f56f08b374cf4574
- * Input closure: sha256:9857b47df7dc2b7e183a18f7f69af715631d4b54774f600309f1a02af1d4fe1a
- * Semantic IR: sha256:89ae6d9eb2a84ec4e044c6d4cffd12fd0238e1a12ef1019994a8480ff04c6708
+ * Semantic identity: sha256:d2e0d8cacafb454d28a97d492bb2ec5979fa6855c0180a10f74ea329800e8484
+ * Input closure: sha256:1165d0c4fca38e2212cae2fbe06b7e4a93839aca9a51c5709644d1990201280c
+ * Semantic IR: sha256:8f8fc0e521e342f117c8be4b30b867ddf572f004165e65270051019a13b2474b
  * Generated module body: sha256:2ed547aaf78ed150ffafed642dced844c9d1a0a3ed1858172c5148fae895458e
  * Generated package body: sha256:5e99a72e95e2fecf9430224649b715afaf255198091ea6db546daa4724669593
  * Lean toolchain: leanprover/lean4:v4.33.1

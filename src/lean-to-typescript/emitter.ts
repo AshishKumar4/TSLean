@@ -210,6 +210,10 @@ function helperInventory(
  * The codec statics the package emitted, per data type. A ground type carries `equals`, `toData`
  * and `fromData`; a generic one carries none, because a codec per instantiation would be a second
  * representation of one type.
+ *
+ * A record whose `Prop` fields erasure dropped carries no `fromData`: encoding drops a proof, which
+ * loses nothing, while decoding would have to establish the invariant the dropped fields assert,
+ * which data does not.
  */
 function codecInventory(context: EmitContext): readonly LeanToTypeScriptCodecSurface[] {
   return [...context.types.values()]
@@ -217,7 +221,10 @@ function codecInventory(context: EmitContext): readonly LeanToTypeScriptCodecSur
     .map((plan) => ({
       declaration: plan.declaration.name,
       type: plan.typeName,
-      statics: ['equals', 'fromData', 'toData'],
+      statics:
+        plan.declaration.kind === 'record' && plan.declaration.invariants.length > 0
+          ? ['equals', 'toData']
+          : ['equals', 'fromData', 'toData'],
     }))
     .sort((left, right) => compareCodePoints(left.declaration, right.declaration));
 }
@@ -1099,6 +1106,16 @@ function planBoundary(program: LeanSemanticProgram, context: EmitContext): Bound
       case 'named': {
         const plan = context.types.get(type.name);
         if (plan === undefined) throw new TypeError(`root parameter names an undeclared type ${type.name}`);
+        // A record whose `Prop` fields erasure dropped has no decode boundary at all. The data it
+        // carries does not establish the invariant those fields assert, and a decoder that read the
+        // fields anyway would hand the package a value the Lean type cannot hold. A caller reaches
+        // such a type through the Lean constructor that proves the invariant — the compiled
+        // `parse`-shaped declaration — rather than through `fromData`.
+        if (plan.declaration.kind === 'record' && plan.declaration.invariants.length > 0) {
+          throw new TypeError(
+            `a root declaration cannot accept ${type.name} at its boundary: erasure dropped its proof field(s) ${plan.declaration.invariants.join(', ')}, and no decoder can re-establish the invariant they assert; reach it through the Lean constructor that proves it`,
+          );
+        }
         // A value object already carries `fromData`; a structural type gets one beside its decoder.
         if (!plan.nominal) boundaryTypes.add(type.name);
         return;
@@ -1657,7 +1674,14 @@ function emitNominalRecord(plan: TypePlan, declaration: LeanStructure, context: 
       ),
     ),
   );
-  if (plan.ground) members.push(emitRecordFromData(plan, declaration, context));
+  // `fromData` exists only where the data it reads is everything the type asserts. A record whose
+  // `Prop` fields erasure dropped asserts more than its data, so it carries no decoder and
+  // `planBoundary` refuses a root that would need one. `toData` and `equals` stay: dropping a proof
+  // on the way out loses nothing, and `ProofErasure.record_determined_by_data` is why comparing the
+  // data fields is comparing the values.
+  if (plan.ground && declaration.invariants.length === 0) {
+    members.push(emitRecordFromData(plan, declaration, context));
+  }
   for (const method of plan.methods) members.push(emitBaseMethod(method, plan, context));
   if (plan.ground) {
     members.push(
@@ -2045,6 +2069,15 @@ function decodeExpression(
       const plan = requiredTypePlan(context, type.name);
       if (!plan.ground) {
         throw new TypeError(`the generic type ${plan.typeName} cannot be decoded at the package boundary`);
+      }
+      // A record whose `Prop` fields erasure dropped asserts more than any decoder can read out of
+      // data, so it has no decode direction at any depth — not at a root's boundary, and not as a
+      // field of a type that does have one. This is the choke point every named decode passes
+      // through, so a nested occurrence is refused here rather than decoded past.
+      if (plan.declaration.kind === 'record' && plan.declaration.invariants.length > 0) {
+        throw new TypeError(
+          `${plan.typeName} cannot be decoded at the package boundary: erasure dropped its proof field(s) ${plan.declaration.invariants.join(', ')}, and reading the data back does not establish the invariant they assert`,
+        );
       }
       if (plan.nominal) {
         return ts.factory.createCallExpression(

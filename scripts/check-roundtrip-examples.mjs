@@ -17,8 +17,14 @@ import { verifyLeanToTypeScriptRoundtrip, verifyTypeScriptToLeanRoundtrip } from
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const registry = JSON.parse(readFileSync(join(root, 'examples/lean-to-typescript/roundtrip/registry.json'), 'utf8'));
 
+// Every registered example whose generated tree the profile can read back, plus the three
+// hand-registered packages. An entry marked `behaviourProfile: "outside"` is checked in the other
+// direction below: it has to stay outside the profile, so a profile that widens to cover it fails
+// here instead of silently starting to assert something the ledger still records as refused.
+const inProfile = registry.filter((entry) => entry.behaviourProfile !== 'outside');
+const outsideProfile = registry.filter((entry) => entry.behaviourProfile === 'outside');
 const manifests = [
-  ...registry.map((entry) => join(root, entry.outDir, 'tslean.manifest.json')),
+  ...inProfile.map((entry) => join(root, entry.outDir, 'tslean.manifest.json')),
   join(root, 'examples/lean-to-typescript/generated/tslean.manifest.json'),
   join(root, 'examples/lean-to-typescript/package/generated/tslean.manifest.json'),
   join(root, 'examples/agent-core/facets/generated/tslean.manifest.json'),
@@ -45,6 +51,23 @@ for (const manifest of manifests) {
   }
   failed += 1;
   report_failure(name, report);
+}
+
+// An example the profile does not cover is recorded as such rather than left out. The reason is
+// declared beside the entry, and the check is that the profile still refuses it: a coverage gap
+// stops being a gap by being closed, not by a fixture quietly ceasing to exercise anything.
+for (const entry of outsideProfile) {
+  const manifest = join(root, entry.outDir, 'tslean.manifest.json');
+  const report = await verifyLeanToTypeScriptRoundtrip(manifest, options);
+  if (!report.holds) {
+    process.stdout.write(`outside-profile ${entry.name}: ${entry.behaviourReason}\n`);
+    continue;
+  }
+  failed += 1;
+  process.stderr.write(
+    `${entry.name}: the round-trip profile now covers it, so its recorded reason is stale — ` +
+      `update the coverage-ledger row and drop behaviourProfile from its registry entry\n`,
+  );
 }
 
 // The TypeScript-to-Lean direction is gated the same way, through the same public entry
@@ -83,6 +106,8 @@ function report_failure(name, report) {
 }
 
 if (failed > 0) {
-  process.stderr.write(`${String(failed)} of ${String(manifests.length + sources.length)} example(s) did not hold\n`);
+  process.stderr.write(
+    `${String(failed)} of ${String(manifests.length + outsideProfile.length + sources.length)} example(s) did not hold\n`,
+  );
   process.exitCode = 1;
 }

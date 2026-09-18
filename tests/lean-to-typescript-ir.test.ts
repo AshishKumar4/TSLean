@@ -44,6 +44,7 @@ const otherDeclaration = {
   typeParameters: [],
   span: identitySpan,
   constructor: 'mk',
+  invariants: [],
   fields: [],
 };
 
@@ -474,6 +475,7 @@ describe('emitted binder names survive a hostile semantic program', () => {
         typeParameters: [],
         span: identitySpan,
         constructor: 'mk',
+        invariants: [],
         fields: [{ name: 'flag', type: { kind: 'boolean' } }],
       };
       const method = {
@@ -1375,6 +1377,7 @@ describe('Lean semantic IR dot-notation evidence', () => {
     typeParameters: [],
     span: identitySpan,
     constructor: 'mk',
+    invariants: [],
     fields: [{ name: 'enabled', type: { kind: 'boolean' } }],
   };
   const methodDeclaration = {
@@ -1452,6 +1455,7 @@ describe('Lean semantic IR boundary', () => {
     typeParameters: ['payload'],
     span: identitySpan,
     constructor: 'mk',
+    invariants: [],
     fields: [{ name: 'held', type: { kind: 'parameter', index: 0 } }],
   };
   const boxClosure = { declaration: 'Example.Box', module: 'Example', role: 'emitted', reason: '' };
@@ -1510,6 +1514,20 @@ describe('Lean semantic IR boundary', () => {
         [boxClosure, identityClosure],
       ),
       /result: Example\.Box \(Bool\) has no data image; wrap it in a monomorphic structure/u,
+    ],
+    [
+      // A record's `invariants` are the `Prop` fields erasure dropped. A name that is also a data
+      // field would mean the exporter both kept and dropped it, so the decoder refuses rather than
+      // choosing one of the two readings.
+      'a record whose invariant names one of its own data fields',
+      program(
+        [
+          { ...boxDeclaration, typeParameters: [], fields: [{ name: 'held', type: { kind: 'boolean' } }], invariants: ['held'] },
+          { ...identityDeclaration, body: { kind: 'boolean', value: true } },
+        ],
+        [boxClosure, identityClosure],
+      ),
+      /invariants names held, which the record also declares as a data field/u,
     ],
   ])('refuses %s', (_label, mutation, diagnostic) => {
     expect(() => decodeLeanSemanticProgram(mutation)).toThrowError(diagnostic);
@@ -1576,6 +1594,7 @@ describe('Lean semantic IR refusals with no representation', () => {
             typeParameters: ['payload'],
             span: identitySpan,
             constructor: 'mk',
+            invariants: [],
             fields: [{ name: 'held', type: { kind: 'parameter', index: 0 } }],
           },
           {

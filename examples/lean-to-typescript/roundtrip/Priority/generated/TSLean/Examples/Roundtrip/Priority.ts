@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Priority
  * Generated module: TSLean/Examples/Roundtrip/Priority.ts
  * Package entry module: TSLean.Examples.Roundtrip.Priority
- * Semantic identity: sha256:e70150de55a6aafd8ddeb761f1e1bf959efafe27c7514fec1e8bdf58a7da156f
- * Input closure: sha256:55f0c3bd6bd2c8789cd79e3a99232062deb8aebf0f6a4093e6738e8896bad82c
+ * Semantic identity: sha256:a9c137c7ba16aa242e69c12b077ad08b488a5c5a766f70cf436a364bbe75429d
+ * Input closure: sha256:de570b57ba55cbd396215eb7ee95c81e7fbf319fcd5b6b63dd7116469e5cb205
  * Semantic IR: sha256:8ae81a9d5363ae1295707b25fe32be0bdaa02541d1c3a1fca5b2304e2a0932fe
  * Generated module body: sha256:22fb8cee38e376603f70d01dc15a61c44b87f20a048e91fded30ea14372918a4
  * Generated package body: sha256:ed1bdbbaec425c346d050af6fafe236d208d289d166e37867c17f67a8a144d36

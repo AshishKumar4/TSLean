@@ -191,5 +191,24 @@
       "TSLean.Examples.Roundtrip.Tier.honours"
     ],
     "outDir": "examples/lean-to-typescript/roundtrip/Tier/generated"
+  },
+  {
+    "name": "Invariant",
+    "module": "TSLean.Examples.Roundtrip.Invariant",
+    "source": "lean/TSLean/Examples/Roundtrip/Invariant.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Invariant.build",
+      "TSLean.Examples.Roundtrip.Invariant.widenedFrom",
+      "TSLean.Examples.Roundtrip.Invariant.widthAfterWidening",
+      "TSLean.Examples.Roundtrip.Invariant.shutGateOpened",
+      "TSLean.Examples.Roundtrip.Invariant.emptyTallySize",
+      "TSLean.Examples.Roundtrip.Invariant.room"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Invariant/generated",
+    "forms": [
+      "shape.field-erasure-projection"
+    ],
+    "behaviourProfile": "outside",
+    "behaviourReason": "the round-trip profile carries neither a record nor a bigint, so the erased-field projection has no reader yet; tracked as shape.field-erasure-projection"
   }
 ]

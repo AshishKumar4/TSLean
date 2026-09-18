@@ -64,12 +64,26 @@ def descendingLookup (_table : Std.TreeMap Nat String (fun left right => compare
     (fallback : String) : String :=
   fallback
 
-/-! ## Records that carry no data -/
+/-! ## Fields and constructor positions that carry no data
 
-/-- A structure with a proof field: the codec's `fromData` would have to rebuild the proof. -/
-structure NonEmptyRun where
+A `Prop` field is no longer here: erasure drops one, and
+`TSLean/Examples/Roundtrip/Invariant.lean` compiles the shapes that fill it. What stays refused is
+the field that carries no data for a *different* reason, and the variant position whose drop would
+shift the binders a match reads. -/
+
+/-- A structure whose field is a decidability instance. Lean's own lowering keeps one — it is the
+`isTrue`/`isFalse` value — while this exporter's boolean image for a decision is read from `decide`
+at a use site, and a field has no use site to read one at. -/
+structure DecidedRun where
   values : List Nat
-  populated : 0 < values.length
+  decision : Decidable (values.length = 0)
+
+/-- A variant constructor carrying a proof. A record's fields are named, so dropping one drops the
+same key at every construction site; a variant's are positional, and a match binds them by
+position, so dropping one would shift every later binder index. -/
+inductive BoundedRun where
+  | short (values : List Nat) (small : values.length < 3)
+  | long
 
 /-! ## Classes the elaborator resolves and the emitted program cannot -/
 

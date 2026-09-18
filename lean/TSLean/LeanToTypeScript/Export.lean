@@ -258,11 +258,55 @@ private def binderRole (environment : Environment) (binderType : Expr) : BinderR
     | _ => .value
 
 /--
-The term an erased argument is replaced by while a body is renumbered. It names no constant, so a
-body that still reads an erased binder is refused by name instead of emitted against a parameter
-that is not there.
+Whether a declaration states a proposition or proves one, rather than carrying data.
+
+Two readings of the declaration's own type, and nothing else. A type whose result is literally
+`Prop` *states* a proposition: `structure … : Prop`, `inductive … : Prop`, and a `def` whose result
+is `Prop`, which is how a kernel writes a named predicate such as `Outcome.RefusedWith`. A type
+that *is* a proposition proves one, which is how a `def` stands in for a `theorem`.
+
+Neither has a runtime image, so both are scaffolding the walk skips exactly as it skips a
+`theorem` — not refused. Refusing would block whole-module extraction: a library that proves
+anything declares propositions beside its executable definitions, in the same modules, and a
+refusal naming one of them stops every declaration in its closure. A skip is sound for the same
+reason a dropped proof argument is: there is nothing for the emitted program to compute.
 -/
-private def erasedMarker : Expr := .const `TSLean.LeanToTypeScript.erasedBinder []
+private def statesOrProvesProposition (environment : Environment) (info : ConstantInfo) : Bool :=
+  (arrowResult info.type).consumeMData == .sort .zero
+    || binderRole environment info.type == .proof
+
+/--
+The constant an erased argument is replaced by while a body is renumbered, one per role.
+
+It names no declaration, so the walk can neither read it nor mistake it for a program constant. An
+occurrence the walk reaches in an *erased* position — a proof argument, a `Prop` field of a
+constructor — disappears with that position, which is what admits a proof binder that only fills a
+proof; an occurrence in a value position reaches `markerRole?` and is refused by the role the
+binder carried. The two data roles are marked as well, so a substitution that missed a slot is a
+refusal rather than a silent renumbering against the wrong binder.
+-/
+private def erasedMarker : BinderRole → Expr
+  | .value => .const `TSLean.LeanToTypeScript.erasedValue []
+  | .typeArgument => .const `TSLean.LeanToTypeScript.erasedTypeArgument []
+  | .proof => .const `TSLean.LeanToTypeScript.erasedProof []
+  | .decidable => .const `TSLean.LeanToTypeScript.erasedDecidableInstance []
+  | .universe => .const `TSLean.LeanToTypeScript.erasedUniverseArgument []
+
+/-- The role an erased-binder marker records, for the refusal a read of one produces. A constant
+that is not a marker answers `none`. -/
+private def markerRole? (name : Name) : Option BinderRole :=
+  if name.getPrefix != `TSLean.LeanToTypeScript then none
+  else if name == `TSLean.LeanToTypeScript.erasedValue then some .value
+  else if name == `TSLean.LeanToTypeScript.erasedTypeArgument then some .typeArgument
+  else if name == `TSLean.LeanToTypeScript.erasedProof then some .proof
+  else if name == `TSLean.LeanToTypeScript.erasedDecidableInstance then some .decidable
+  else if name == `TSLean.LeanToTypeScript.erasedUniverseArgument then some .universe
+  else none
+
+/-- The refusal a read of an erased binder produces, naming the role the binder carried. The
+caller prefixes the declaration's own name, so the message names both. -/
+private def erasedReadDiagnostic (role : BinderRole) : String :=
+  s!"reads {role.description}, which erasure dropped, in a position that carries a value; the emitted declaration has no argument for it"
 
 /--
 A map key type and the instances its emitted image is proved at.
@@ -520,6 +564,10 @@ private partial def typeNode (context : Context) (expression : Expr) : Except St
       | some position => pure (node "parameter" [("index", .num position)])
       | none => throw "a value binder appears in a type; dependent types are outside the checked fragment"
   | .const name levels =>
+      -- A marker stands where an erased binder was. A type that mentions one is a dependent type
+      -- whose index erasure removed, so it is refused by the role rather than mapped.
+      if let some role := markerRole? name then
+        throw s!"a type mentions {role.description} that erasure dropped, so it names a binder the emitted declaration does not carry"
       -- A subtype is decided before the universe check: `Subtype` abstracts a `Sort u`, so a
       -- carrier in `Type 0` instantiates it at `u = 1`, and what has to be in the fragment is the
       -- carrier the subtype erases to rather than the level the abstraction was taken at.
@@ -724,24 +772,93 @@ private def structureFieldNames (environment : Environment) (name : Name) : Exce
   pure fields.toList
 
 /--
+One declared field of a structure, with the role that decides whether it reaches the IR.
+
+`type` is the field's own declared type, read one binder inside the structure value with the data
+type's parameters still the outermost binders — the numbering `fieldDeclaration` encodes against.
+
+This is the compiler's single answer to "does this field carry data". It reproduces the rule Lean's
+own compiler applies to a constructor's fields: `Lean.Compiler.LCNF.Irrelevant.getRelevantCtorFields?`
+walks the constructor's type past its `numParams` leading binders and asks `trivialType` of each
+field, and `Lean.Compiler.LCNF.setHasTrivialStructure?` supplies that argument as
+`fun type => Meta.isProp type <||> Meta.isTypeFormerType type`. `ensureFieldRelevanceAgrees` puts
+that same predicate — Lean's, not ours — beside this classification and refuses a disagreement, so
+the pure syntactic answer the walk needs can never drift from the kernel's own.
+-/
+private structure FieldRole where
+  name : Name
+  /-- The projection Lean generated for the field, which is where its documentation lives. -/
+  projection : Name
+  role : BinderRole
+  type : Expr
+
+/-- Every declared field of a structure, in declaration order, with its role and its type. The
+structure's own parameter count is read from its declaration rather than taken from the caller, so
+the projection telescope is never peeled by a number that belongs to another declaration. -/
+private def structureFieldRoles (environment : Environment) (structureName : Name) :
+    Except String (List FieldRole) := do
+  let some (.inductInfo declaration) := environment.find? structureName
+    | throw s!"type {structureName} is not an inductive data type"
+  (← structureFieldNames environment structureName).mapM fun fieldName => do
+    let some fieldInfo := getFieldInfo? environment structureName fieldName
+      | throw s!"structure field {structureName}.{fieldName} has no projection metadata"
+    let some info := environment.find? fieldInfo.projFn
+      | throw s!"structure field projection {fieldInfo.projFn} is absent from the environment"
+    -- The projection is `∀ (params) (self), field`, so the field type is one binder inside the
+    -- structure value, with the data type's parameters as the type parameters in scope.
+    let mut telescope := info.type
+    for _ in [0 : declaration.numParams + 1] do
+      match telescope.consumeMData with
+      | .forallE _ _ body _ => telescope := body
+      | _ => throw s!"structure field projection {fieldInfo.projFn} does not expose its telescope"
+    pure { name := fieldName, projection := fieldInfo.projFn,
+           role := binderRole environment telescope, type := telescope }
+
+/--
+The fields of a structure that reach the IR: the ones erasure keeps.
+
+A `Prop` field carries no data, so it is dropped here and at every construction site by the same
+rule, which is what keeps the record's declared arity and its constructed arity equal. Any other
+field that carries no data is refused by `fieldDeclaration`, by name.
+-/
+private def structureDataFieldNames (environment : Environment) (structureName : Name) :
+    Except String (List Name) := do
+  let fields ← structureFieldRoles environment structureName
+  pure ((fields.filter fun field => !field.role.erased).map (·.name))
+
+/-- How many of a constructor's fields erasure drops, which is the difference between the arity
+Lean declared and the arity the emitted record carries. A constructor of an inductive that is not
+a structure drops none: `constructorFields` refuses a variant field that carries no data, because
+a match binds a variant's fields positionally. -/
+private def erasedStructureFieldCount (environment : Environment) (constructor : ConstructorVal) :
+    Except String Nat := do
+  unless isStructure environment constructor.induct do return 0
+  let fields ← structureFieldRoles environment constructor.induct
+  pure (fields.filter fun field => field.role.erased).length
+
+/--
 The de Bruijn renumbering that drops one declaration's erased binders.
 
 A value abstracts every binder Lean declared, erased ones included, so the kept binders have to be
 renumbered against the emitted parameter list. The layout the rest of the compiler reads is: the
 kept value binders innermost, the type parameters outside them, which is what
-`Context.typeParameterIndex?` decides. An erased binder is checked to be unused before it is
-dropped, so a body that reads a proof is refused rather than emitted against a parameter that is
-not there.
+`Context.typeParameterIndex?` decides.
+
+An erased binder becomes the marker for its role rather than being checked unused. That is what
+admits a proof parameter a body reads only to fill a proof: the occurrence stands in a position the
+walk itself erases — a proof argument, a `Prop` field of a constructor — so it disappears with that
+position and never reaches a term node. An occurrence in a position that carries a value reaches
+`markerRole?` instead and is refused by the role the binder carried.
 
 `none` means nothing was erased and the body is already numbered as the emitted declaration needs.
 -/
 private def erasureSubstitution (name : Name) (typeParameters : Nat)
-    (binders : List (BinderRole × Option Parameter)) (body : Expr) :
+    (binders : List (BinderRole × Option Parameter)) :
     Except String (Option (Array Expr)) := do
   let valueCount := binders.length
   let keptCount := (binders.filter fun binder => binder.2.isSome).length
   if keptCount = valueCount then return none
-  let mut substitution := Array.replicate (typeParameters + valueCount) erasedMarker
+  let mut substitution := Array.replicate (typeParameters + valueCount) (erasedMarker .value)
   let mut kept := 0
   for position in [0 : valueCount] do
     let some (role, parameter) := binders[position]?
@@ -752,8 +869,7 @@ private def erasureSubstitution (name : Name) (typeParameters : Nat)
         substitution := substitution.set! index (.bvar (keptCount - 1 - kept))
         kept := kept + 1
     | none =>
-        if body.hasLooseBVar index then
-          throw s!"{name} reads its binder at position {position}, which carries {role.description} and is erased, so the emitted declaration has no parameter for it"
+        substitution := substitution.set! index (erasedMarker role)
   for position in [0 : typeParameters] do
     let offset := typeParameters - 1 - position
     substitution := substitution.set! (valueCount + offset) (.bvar (keptCount + offset))
@@ -762,9 +878,28 @@ private def erasureSubstitution (name : Name) (typeParameters : Nat)
 /-- One declaration's body, renumbered for the parameters erasure kept. -/
 private def eraseBinders (name : Name) (typeParameters : Nat)
     (binders : List (BinderRole × Option Parameter)) (body : Expr) : Except String Expr := do
-  match ← erasureSubstitution name typeParameters binders body with
+  match ← erasureSubstitution name typeParameters binders with
   | some substitution => pure (body.instantiate substitution)
   | none => pure body
+
+/--
+One branch of a dependent `if`, with the decision's own proof dropped.
+
+`dite` applies each branch to the proof its decision produced, so both branches are abstractions of
+that proof. Replacing the binder with the proof marker also shifts every other index down by one,
+so the body is numbered exactly as an `ite` branch in the same context would be, and a use of the
+hypothesis is decided where it stands: filling a `Prop` field or a proof argument drops it,
+anything else reaches `markerRole?` and is refused.
+
+A branch that is not an abstraction is refused rather than eta-expanded. `if h : p then … else …`
+elaborates to a `dite` whose branches abstract the hypothesis, and a branch of any other shape is a
+term this walk did not read.
+-/
+private def dependentBranchBody (branch : Expr) : Except String Expr :=
+  match branch.consumeMData with
+  | .lam _ _ body _ => pure (body.instantiate1 (erasedMarker .proof))
+  | _ =>
+      throw "a dependent if applies a branch that does not abstract its own decision proof, which is outside the checked fragment"
 
 mutual
 
@@ -811,12 +946,16 @@ private partial def expressionNode (context : Context) (returnPosition : Bool) (
       else if typeName == ``Array then
         throw "an Array field read reaches the exporter without the element type its opcode carries; write Array.toList, which is the array.toList row"
       else
-        let fields ← structureFieldNames context.environment typeName
+        -- The projection index counts every declared field, erased ones included, so the index is
+        -- read against the declared list and the role decides whether the field survived.
+        let fields ← structureFieldRoles context.environment typeName
         let some field := fields[index]?
           | throw s!"structure {typeName} has no field at index {index}"
+        if field.role.erased then
+          throw s!"a read of {typeName}.{field.name} reaches a value position, and the field carries {field.role.description}, so erasure left the emitted record no such field"
         pure (node "field" [
           ("target", ← expressionNode context false subject),
-          ("field", .str field.getString!)
+          ("field", .str field.name.getString!)
         ])
   | .fvar _ => throw "free variables are outside the checked fragment"
   | .mvar _ => throw "metavariables are outside the checked fragment"
@@ -1008,7 +1147,8 @@ private partial def applicationNode (context : Context) (returnPosition : Bool)
             ("arguments", array (← arguments.mapM (expressionNode context false)))
           ])
       | _ => throw s!"unsupported application head {head}"
-  if name == ``Bool.true then pure (node "boolean" [("value", .bool true)])
+  if let some role := markerRole? name then throw (erasedReadDiagnostic role)
+  else if name == ``Bool.true then pure (node "boolean" [("value", .bool true)])
   else if name == ``Bool.false then pure (node "boolean" [("value", .bool false)])
   else if name == ``ite then
     let [_, condition, decision, consequent, alternate] := arguments
@@ -1019,7 +1159,19 @@ private partial def applicationNode (context : Context) (returnPosition : Bool)
       ("alternate", ← expressionNode context returnPosition alternate)
     ])
   else if name == ``dite then
-    throw "a dependent if binds its own decision proof, which is outside the checked fragment"
+    -- A dependent `if` binds the decision's own proof in each branch. Both branches are lambdas of
+    -- that proof, so the binder is replaced by the proof marker and the branch is then walked
+    -- exactly as an `ite` branch is: an occurrence that fills a proof — the `Prop` field of a
+    -- record, a proof argument — disappears with the position it stands in, and an occurrence in a
+    -- value position is refused by `markerRole?`. `Erasure.dite_data_erasable` is the theorem: the
+    -- data of the dependent branch is the plain `if` of the two branches' data.
+    let [_, condition, decision, consequent, alternate] := arguments
+      | throw "dite received an unsupported elaborated shape"
+    pure (node "if" [
+      ("condition", ← decisionNode context condition decision),
+      ("consequent", ← expressionNode context returnPosition (← dependentBranchBody consequent)),
+      ("alternate", ← expressionNode context returnPosition (← dependentBranchBody alternate))
+    ])
   else if name == ``decide then
     let [proposition, decision] := arguments | throw "decide received an unsupported elaborated shape"
     decisionNode context proposition decision
@@ -1386,6 +1538,13 @@ private partial def constantApplicationNode (context : Context) (name : Name) (l
     let some target := arguments[subjectPosition]?
       | throw s!"projection {name} received an unsupported elaborated shape"
     ensureAsciiIdentifier name.getString! "structure field"
+    -- A projection of a field erasure dropped has no emitted read. It reaches here only from a
+    -- value position, because a proof position is dropped whole before the walk descends into it.
+    if let some structureName := context.environment.getProjectionStructureName? name then
+      let fields ← structureFieldRoles context.environment structureName
+      if let some field := fields.find? fun field => field.name.getString! == name.getString! then
+        if field.role.erased then
+          throw s!"a read of {structureName}.{field.name} reaches a value position, and the field carries {field.role.description}, so erasure left the emitted record no such field"
     let field := node "field" [
       ("target", ← expressionNode context false target),
       ("field", .str name.getString!)
@@ -1406,12 +1565,16 @@ private partial def constantApplicationNode (context : Context) (name : Name) (l
   | .ctorInfo constructor =>
       let (typeArguments, valueArguments) ←
         applicationArguments context (info.instantiateTypeLevelParams levels) arguments
+      -- Erasure drops a `Prop` field's argument here exactly as it drops the field from the
+      -- declaration, so the arity the emitted record carries is the declared one less the fields
+      -- that hold no data, and the two can never disagree.
+      let erasedFields ← erasedStructureFieldCount context.environment constructor
       unless typeArguments.length = constructor.numParams do
         throw s!"constructor {name} received {typeArguments.length} type arguments; expected {constructor.numParams}"
-      unless valueArguments.length = constructor.numFields do
-        throw s!"constructor {name} received {valueArguments.length} fields; expected {constructor.numFields}"
+      unless valueArguments.length = constructor.numFields - erasedFields do
+        throw s!"constructor {name} received {valueArguments.length} fields; expected {constructor.numFields - erasedFields}"
       if isStructure context.environment constructor.induct then
-        let fields ← structureFieldNames context.environment constructor.induct
+        let fields ← structureDataFieldNames context.environment constructor.induct
         unless fields.length = valueArguments.length do
           throw s!"structure constructor {name} received an unsupported elaborated shape"
         let encodedFields := (fields.zip valueArguments).map fun (field, value) =>
@@ -1442,36 +1605,51 @@ private partial def constantApplicationNode (context : Context) (name : Name) (l
 end
 
 /--
-One declared field of a record.
+One declared field of a record, or `none` for a field erasure drops.
 
-A field whose type carries no data is refused rather than erased: the codec surface (§8) generates
-`toData` and `fromData` over exactly the declared fields, and `fromData` would have to rebuild the
-proof a `Prop` field holds. Erasure drops a proof from a parameter list, where the caller supplies
-it; it cannot drop one from a record, where the record is what supplies it.
+A `Prop` field carries no data and is dropped, here and at every construction site, by the one rule
+`structureFieldRoles` states. Lean's proof irrelevance is definitional, so the dropped component is
+determined by nothing: `ProofErasure.record_determined_by_data` proves the surviving fields decide
+the value, and `ProofErasure.record_reconstructed` proves a caller holding the data and any proof of
+the invariant rebuilds exactly the value the data came from. What the record therefore owes at its
+*decode* boundary is that invariant, which a decoder cannot read out of bytes, so
+`invariantsField` records the dropped names and the emitter refuses that boundary by name.
+
+A field that carries no data for any other reason is refused instead. A `Decidable` field is data
+to Lean's own lowering — `Meta.isProp (Decidable p)` is false — and the exporter's boolean image
+for one is read from `decide` at a use site, which a field has none of; a universe-carrying field
+has no value at all.
 -/
-private def fieldDeclaration (context : Context) (structureName fieldName : Name) :
-    Except String Json := do
-  let some fieldInfo := getFieldInfo? context.environment structureName fieldName
-    | throw s!"structure field {structureName}.{fieldName} has no projection metadata"
-  let some info := context.environment.find? fieldInfo.projFn
-    | throw s!"structure field projection {fieldInfo.projFn} is absent from the environment"
-  ensureAsciiIdentifier fieldName.getString! "structure field"
-  -- The projection is `∀ (params) (self), field`, so the field type is read one binder inside the
-  -- structure value, with the data type's parameters as the type parameters in scope.
-  let mut telescope := info.type
-  for _ in [0 : context.typeParameters + 1] do
-    match telescope.consumeMData with
-    | .forallE _ _ body _ => telescope := body
-    | _ => throw s!"structure field projection {fieldInfo.projFn} does not expose its telescope"
-  let role := binderRole context.environment telescope
-  if role.erased then
-    throw s!"structure field {structureName}.{fieldName} carries {role.description}, which holds no data; the record codec's fromData would have to rebuild it"
-  let fieldType ← typeNode { context with valueDepth := 1 } telescope
-  pure (object ([("name", .str fieldName.getString!), ("type", fieldType)]
-    ++ documentationFields context.environment fieldInfo.projFn))
+private def fieldDeclaration (context : Context) (structureName : Name) (field : FieldRole) :
+    Except String (Option Json) := do
+  ensureAsciiIdentifier field.name.getString! "structure field"
+  match field.role with
+  | .proof => pure none
+  | .decidable =>
+      throw s!"structure field {structureName}.{field.name} is a decidability instance, which carries data in Lean's own lowering; the exporter reads a decision from `decide` at a use site and a field has no use site to read one at"
+  | .universe =>
+      throw s!"structure field {structureName}.{field.name} carries a universe argument, which has no runtime image and no value the record could hold"
+  | .value | .typeArgument =>
+      let fieldType ← typeNode { context with valueDepth := 1 } field.type
+      pure (some (object ([("name", .str field.name.getString!), ("type", fieldType)]
+        ++ documentationFields context.environment field.projection)))
 
-/-- The fields a constructor carries, read from its own declared type behind its type parameters. A
-field that carries no data is refused for the reason `fieldDeclaration` names. -/
+/-- The `Prop` fields erasure dropped, by name and in declaration order. It is what a consumer of
+the generated package is owed: the record's emitted shape carries the data fields, and these names
+are the invariants a caller has to re-establish rather than decode. The decoder refuses a root
+boundary that would need them. -/
+private def invariantsField (fields : List FieldRole) : String × Json :=
+  ("invariants", array ((fields.filter fun field => field.role == .proof).map
+    fun field => .str field.name.getString!))
+
+/--
+The fields a constructor carries, read from its own declared type behind its type parameters.
+
+A variant field that carries no data is refused rather than dropped. A record's fields are named,
+so dropping one changes a key set the construction site drops the same way; a variant's fields are
+positional, and a `match` binds them by position, so dropping one would shift every binder index in
+every arm that decides the constructor. The shift belongs to the match forms, not here.
+-/
 private def constructorFields (context : Context) (constructorName : Name) :
     Except String (List Parameter) := do
   let some (.ctorInfo constructor) := context.environment.find? constructorName
@@ -1486,7 +1664,7 @@ private def constructorFields (context : Context) (constructorName : Name) :
   let (binders, _) ← peelValueParameters context telescope
   for (role, parameter) in binders do
     if parameter.isNone then
-      throw s!"constructor {constructorName} carries {role.description}, which holds no data; the enum codec's fromData would have to rebuild it"
+      throw s!"constructor {constructorName} carries {role.description}, which holds no data, and a variant's fields are positional: dropping one would shift the binder index of every field a match binds after it"
   let fields := binders.filterMap (·.2)
   unless fields.length = constructor.numFields do
     throw s!"constructor {constructorName} does not expose its fields as first-order parameters"
@@ -1508,16 +1686,18 @@ private def dataDeclaration (environment : Environment) (targetModules : NameSet
   let context : Context :=
     { environment, targetModules, typeParameters := declaration.numParams, valueDepth := 0 }
   if isStructure environment name then
-    let fields ← structureFieldNames environment name
+    let fields ← structureFieldRoles environment name
     let constructor := getStructureCtor environment name
     ensureAsciiIdentifier constructor.name.getString! "structure constructor"
+    let declaredFields ← fields.mapM (fieldDeclaration context name)
     pure (node "record" ([
       ("name", .str name.toString),
       ← declarationModuleField environment name,
       namespaceField name,
       typeParameterField typeParameterNames,
       ("constructor", .str constructor.name.getString!),
-      ("fields", array (← fields.mapM (fieldDeclaration context name)))
+      ("fields", array (declaredFields.filterMap id)),
+      invariantsField fields
     ] ++ documentationFields environment name))
   else
     if declaration.ctors.isEmpty then
@@ -1919,7 +2099,10 @@ private def classifyConstant (environment : Environment) (targetModules : NameSe
   if emitted.contains name then
     return { name, module, role := "emitted", reason := "" }
   let reason ← match info with
-    | .ctorInfo _ => pure "constructor lowered with its inductive type"
+    | .ctorInfo constructor =>
+        if (environment.find? constructor.induct).any (statesOrProvesProposition environment) then
+          pure "constructor of a proposition; it introduces a proof, which has no runtime image"
+        else pure "constructor lowered with its inductive type"
     | .recInfo _ => pure "recursor"
     | .thmInfo _ => pure "proof"
     | .axiomInfo _ => throw s!"{name}: axioms are outside the checked fragment"
@@ -1930,12 +2113,16 @@ private def classifyConstant (environment : Environment) (targetModules : NameSe
           pure "match auxiliary inlined at its application sites"
         else if (environment.getProjectionStructureName? name).isSome then
           pure "structure projection lowered as field access"
+        else if statesOrProvesProposition environment info then
+          pure "proposition; its type is Prop or is itself a Prop, so it has no runtime image"
         else if viaScaffolding then
           pure "generated helper reached only through erased scaffolding"
         else
           throw s!"{name}: reachable definition was neither emitted nor erased"
     | .inductInfo _ =>
-        if viaScaffolding then
+        if statesOrProvesProposition environment info then
+          pure "proposition declared in Prop; its values are proofs, which have no runtime image"
+        else if viaScaffolding then
           pure "generated type reached only through erased scaffolding"
         else
           throw s!"{name}: reachable inductive type was neither emitted nor erased"
@@ -1989,6 +2176,14 @@ private partial def collectDeclarationsAux (environment : Environment) (targetMo
         let some info := environment.find? name
           | throw s!"declaration {name} is absent from the elaborated environment"
         let seen := seen.insert name
+        -- A declaration that states a proposition or proves one is skipped exactly as a `theorem`
+        -- is: it has no runtime image, and refusing it would stop every declaration in the same
+        -- module closure. Its own dependencies are not walked either, because nothing that is
+        -- emitted reads them through it. A `Prop` inductive's constructor answers this too, since
+        -- its declared type is the proposition it introduces.
+        if statesOrProvesProposition environment info then
+          collectDeclarationsAux environment targetModules rest seen ordered
+        else
         match info with
         | .ctorInfo constructor =>
             collectDeclarationsAux environment targetModules (constructor.induct :: rest) seen ordered
@@ -2016,6 +2211,60 @@ private partial def collectDeclarationsAux (environment : Environment) (targetMo
 private def collectDeclarations (environment : Environment) (targetModules : NameSet)
     (roots : List Name) : Except String (List Name) :=
   collectDeclarationsAux environment targetModules roots {} []
+
+/--
+Lean's own answer to which of a structure's fields are computationally relevant, put beside this
+exporter's, with a disagreement refused by name.
+
+`Lean.Compiler.LCNF.Irrelevant.getRelevantCtorFields?` (Irrelevant.lean:21-37) decides that
+question for the Lean compiler: it walks the constructor's type with `Meta.forallTelescopeReducing`,
+skips the `numParams` leading binders and asks `trivialType` of each field's inferred type.
+`Lean.Compiler.LCNF.setHasTrivialStructure?` supplies that argument as
+`fun type => Meta.isProp type <||> Meta.isTypeFormerType type` (MonoTypes.lean:21-23). The function
+itself is not `public` in Lean 4.33.1, so the traversal and the predicate are reproduced here
+rather than called; `Meta.isProp` and `Meta.isTypeFormerType` are.
+
+The walk's own classification is syntactic and pure, because every stage has to agree about it
+without a monad. This is the one place the two are joined, and it is a gate, not a fallback: a field
+this exporter drops that Lean keeps, or keeps that Lean drops, is refused. It is not the soundness
+argument either — `Semantics.ProofErasure.record_determined_by_data` is — it is what stops the fast
+syntactic answer drifting from the kernel's.
+
+A `Decidable` field is exactly such a disagreement, because Lean keeps one, which is why
+`fieldDeclaration` refuses it before this gate can see it.
+-/
+private def ensureFieldRelevanceAgrees (name : Name) : CoreM Unit := do
+  let environment ← getEnv
+  unless isStructure environment name do return
+  let fields ← match structureFieldRoles environment name with
+    | .ok value => pure value
+    | .error message => throwError "{name}: {message}"
+  let constructor := getStructureCtor environment name
+  let info ← getConstInfo constructor.name
+  let relevance ← Meta.MetaM.run' do
+    Meta.forallTelescopeReducing info.type fun binders _ => do
+      let mut answers := #[]
+      for binder in binders.toList.drop constructor.numParams do
+        let fieldType ← Meta.inferType binder
+        answers := answers.push !((← Meta.isProp fieldType) || (← Meta.isTypeFormerType fieldType))
+      pure answers
+  unless relevance.size = fields.length do
+    throwError "{name}: Lean reads {relevance.size} constructor fields and the exporter read {fields.length}"
+  for index in [0 : fields.length] do
+    let some field := fields[index]?
+      | throwError "{name}: the exporter lost the field at position {index}"
+    let some relevant := relevance[index]?
+      | throwError "{name}: Lean reports no relevance for the field at position {index}"
+    match field.role with
+    -- A field the exporter refuses outright is not an erasure to join. `fieldDeclaration` names it
+    -- with its own reason; the join is about the fields that do reach the IR, dropped or kept.
+    | .decidable | .universe => pure ()
+    | .proof =>
+        if relevant then
+          throwError "{name}.{field.name}: the exporter drops this field as a proof and Lean's own computational-relevance rule keeps it, so the two disagree about what the record carries"
+    | .value | .typeArgument =>
+        unless relevant do
+          throwError "{name}.{field.name}: the exporter keeps this field and Lean's own computational-relevance rule drops it, so the two disagree about what the record carries"
 
 /--
 `entryModule` is the module Lake builds and the driver imports; `targetModules` is that module's
@@ -2065,6 +2314,10 @@ private def exportPackage (entryModule : Name) (targetModules : NameSet) (roots 
       | none => throwError "{name}: no unfolding theorem is available for its recursion"
   for name in names do
     ensureAdmittedAxioms name "definition"
+  -- Every emitted structure's field erasure is joined with Lean's own before any of it is encoded,
+  -- so a record whose shape the two disagree about never reaches the IR.
+  for name in names do
+    ensureFieldRelevanceAgrees name
   let mut declarations := []
   for name in names do
     let some info := environment.find? name

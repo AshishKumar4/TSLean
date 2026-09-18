@@ -10,6 +10,7 @@ import TSLean.Examples.Roundtrip.Consent
 import TSLean.Examples.Roundtrip.Direction
 import TSLean.Examples.Roundtrip.Flags
 import TSLean.Examples.Roundtrip.Guard
+import TSLean.Examples.Roundtrip.Invariant
 import TSLean.Examples.Roundtrip.Lifecycle
 import TSLean.Examples.Roundtrip.Parity
 import TSLean.Examples.Roundtrip.Priority

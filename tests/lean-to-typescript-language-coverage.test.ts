@@ -497,6 +497,40 @@ describe('constructs with no deterministic representation fail before publicatio
     'termination_by value',
     'decreasing_by omega',
     '',
+    // Erasure drops a `Prop` field and admits the forms that fill one, so what has to stay refused
+    // is every neighbouring shape that is NOT a proof field. Each of these elaborates in Lean.
+    'structure DecidedCount where',
+    '  count : Nat',
+    '  decision : Decidable (count = 0)',
+    '',
+    'def decidedCount (value : DecidedCount) : Nat := value.count',
+    '',
+    'inductive Bounded where',
+    '  | below (value : Nat) (small : value < 3)',
+    '  | above',
+    '',
+    'def boundedTag (value : Bounded) : Bool :=',
+    '  match value with',
+    '  | .below _ _ => true',
+    '  | .above => false',
+    '',
+    'def Positive (value : Nat) : Prop := 0 < value',
+    '',
+    'structure Counted where',
+    '  count : Nat',
+    '  positive : Positive count',
+    '',
+    'def countOf (value : Counted) : Nat := value.count',
+    '',
+    'structure CountedPair where',
+    '  left : Counted',
+    '  right : Counted',
+    '',
+    'def leftCount (value : CountedPair) : Nat := value.left.count',
+    '',
+    'def countedBuild (value : Nat) : Option Counted :=',
+    '  if positive : 0 < value then some ⟨value, positive⟩ else none',
+    '',
     'end Adversarial',
     '',
   ].join('\n');
@@ -542,6 +576,29 @@ describe('constructs with no deterministic representation fail before publicatio
     ],
     ['a proof as a root', 'Adversarial.proved', /root is not a function/u],
     ['a polymorphic root', 'Adversarial.polymorphicRoot', /a root's boundary is monomorphic/u],
+    // The shapes that neighbour proof-field erasure and are NOT it. Each names the declaration and
+    // the reason, which is what keeps an admitted erasure from widening into a guess.
+    [
+      'a structure field that is a decidability instance',
+      'Adversarial.decidedCount',
+      /structure field Adversarial\.DecidedCount\.decision is a decidability instance/u,
+    ],
+    [
+      'a variant constructor carrying a proof',
+      'Adversarial.boundedTag',
+      /constructor Adversarial\.Bounded\.below carries a proof, which holds no data, and a variant's fields are positional/u,
+    ],
+    [
+      'a root that accepts a proof-carrying record',
+      'Adversarial.countOf',
+      /cannot accept Adversarial\.Counted at its boundary: erasure dropped its proof field\(s\) positive/u,
+    ],
+    [
+      'a root whose boundary decodes a proof-carrying record through a field',
+      'Adversarial.leftCount',
+      /Counted cannot be decoded at the package boundary: erasure dropped its proof field\(s\) positive/u,
+    ],
+    ['a Prop-sorted declaration as a root', 'Adversarial.Positive', /root is not a function/u],
   ])(
     'refuses %s',
     (_label, declaration, diagnostic) => {
@@ -579,6 +636,21 @@ describe('constructs with no deterministic representation fail before publicatio
     },
     300_000,
   );
+
+  test('admits a Prop field by dropping it, and leaves the record no decode boundary', () => {
+    // Three observable consequences of erasing `Counted.positive`, none of which a caller can get
+    // to by reading the source: the emitted record carries the data field alone; the dependent
+    // `if` that filled the proof is the plain condition; and the type exports no `fromData`,
+    // because reading a number back does not establish `0 < count`.
+    const compiled = compile('Adversarial.countedBuild');
+    const [module] = compiled.modules;
+    if (module === undefined) throw new TypeError('the compilation produced no module');
+    expect(module.code).toContain('export interface Counted {\n    readonly count: bigint;\n}');
+    expect(module.code).not.toMatch(/positive/u);
+    expect(module.code).toContain('if (0n < value) {');
+    expect(module.code).not.toMatch(/fromData/u);
+    expect(compiled.manifest.semantic.codecs.flatMap((codec) => codec.statics)).not.toContain('fromData');
+  }, 300_000);
 
   test('admits a well-founded recursion Lean proved, and emits the same call graph', () => {
     const compiled = compile('Adversarial.guessedRecursion');

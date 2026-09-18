@@ -94,6 +94,21 @@ These families are admitted:
   is what the model runs against.
 - Modules and namespaces. One Lean module becomes one TypeScript file, and cross-module references
   become relative imports.
+- A structure's `Prop` fields, erased. The emitted record carries the data fields alone, and the
+  three ways a program fills such a field all lower: the anonymous constructor, a
+  `{ record with … }` update that re-proves the invariant, and a dependent `if` whose bound
+  hypothesis *is* the proof the field needs. The shape of the proposition does not matter — a
+  function-typed field, a `∀`-quantified one, and one named by a `Prop`-sorted definition are each
+  one irrelevant proof. Soundness is a theorem, not an assumption: Lean's proof irrelevance is
+  definitional, so `Semantics.ProofErasure.record_determined_by_data` proves the surviving fields
+  decide the value and `record_reconstructed` proves the data plus the invariant rebuilds exactly
+  the value it came from. `Export.lean` joins its own field classification with Lean's
+  (`ensureFieldRelevanceAgrees`, trust row **19**) and refuses a disagreement.
+- A declaration that states a proposition or proves one — `structure … : Prop`,
+  `inductive … : Prop`, a `def` whose result is `Prop`, a `def` standing in for a theorem — is
+  skipped exactly as a `theorem` is, and recorded in the closure as `proposition`. Refusing one
+  would stop every declaration in its module closure, because a library that proves anything
+  declares propositions beside the definitions that keep them.
 
 Method ownership comes from elaborated evidence. The exporter resolves a receiver against the
 environment and records which parameter carries it; the compiler reads that record and never the
@@ -130,6 +145,24 @@ Two audits run over the whole reachable closure. A declaration that rests on an 
 `propext`, `Classical.choice` and `Quot.sound` is refused, and so is one whose unfolding proof
 depends on `sorry`. A root's boundary is monomorphic: a polymorphic root, or one whose parameter or
 result has no data image, is refused rather than given a decoder a caller cannot use.
+
+A proof-carrying record is admitted in every direction but one. Encoding drops a proof, which loses
+nothing, so `toData` and `equals` exist and are correct by `record_determined_by_data`. Decoding
+would have to establish the invariant the dropped fields assert, and data does not establish it — a
+`String` is not a `Digest`. So such a record carries no `fromData`, a root that accepts one is
+refused by name with the dropped field names, and so is a root whose boundary would decode one
+through another type's field. A caller reaches such a type through the compiled Lean constructor
+that proves the invariant. The checker's coverage ledger tracks this asymmetry as
+`shape.field-erasure-projection`: the emitted fields are exactly the Lean data fields and the
+dropped components are exactly the `Prop`-sorted ones, which is an assertion rather than an
+arity the reader ignores.
+
+Two neighbouring shapes stay refused, each by name. A structure field that is a *decidability
+instance* is data to Lean's own lowering — `Meta.isProp (Decidable p)` is false — while this
+exporter reads a decision from `decide` at a use site and a field has no use site to read one at. A
+*variant* constructor field that carries no data stays refused because a match binds a variant's
+fields by position, so dropping one would shift every later binder index; a record's fields are
+named, and the construction site drops the same key the declaration does.
 
 ## Generated package
 
