@@ -979,47 +979,47 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:artifact",
-        "sha256": "sha256:251dff2515593e1fa25750dd312224c16d51f67378341cffc93852e1a5033933"
+        "sha256": "sha256:c337d40b3676cacb7aba879ff5fb3347abf18b651c1fbc2ca2b29836734f71f2"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:artifact-transaction",
-        "sha256": "sha256:be688b8a21cae888cf8d98c6de56a148715cc936952637de0a1f3739ec835509"
+        "sha256": "sha256:d27b3c768603db4a5adf6b36db0e6473f9ddab6d5888abca2e4c2e8e824316ed"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:certificates",
-        "sha256": "sha256:71e6ea00860a8e85514b3c6d1b4509ca42a9d68f614c80da380ea0f7a1ab13dd"
+        "sha256": "sha256:f31322ea9f80ab79dc2e22b7f3056047df765a9182b4c28d4a731c5204b8dac3"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:cli",
-        "sha256": "sha256:50c877c22f48b3eb7e407ca580eae0f206f6f6452dc385ed0f79b109174021b8"
+        "sha256": "sha256:59497abe57ab79d53284d344098e0ee81f00bd31fbd61c2f0a674ff87134ec75"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:compiler",
-        "sha256": "sha256:2f42145d18ed39cc4aded241de75a4f68f50944e69c006cfa5ddc55cf097d766"
+        "sha256": "sha256:cc4a4f593329c9952d4636c88994778107524bbe890abf9e572de0fffc854dc5"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:emitter",
-        "sha256": "sha256:71279f66458a57577e042f84f891ed82a8163940d06f4ea71a66ff450bd5a782"
+        "sha256": "sha256:9f6cf5d6eaaef30f1bd9bc75f7f88e7a70ea9197aaac895e5c2d1eaee6f989ea"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:fragment",
-        "sha256": "sha256:7df86a7779d86bbbf0c10c485902460c7c67fbac6d45fecb320abe20acbeab9a"
+        "sha256": "sha256:a730a286b2842be79925ea93f12e5bda6245f0f13e7eeca81f276e143f03353a"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:index",
-        "sha256": "sha256:912c8f5b07a0e3c134618c429928ea768555f4225a92218f46e0fe60379cb8c9"
+        "sha256": "sha256:5900e45b08e7599de4891767b1d835cc3dce1d02bef4a1078656b1fd3b651a7f"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:ir",
-        "sha256": "sha256:c4822894ccf7554482f443ecde62033f7817787276f4a5397486e5529b951e9b"
+        "sha256": "sha256:9110c4180837d1984849ce206076f7acc9754fc3fc03162ea836fbd113473aa5"
       },
       {
         "kind": "compiler-source",
@@ -1119,37 +1119,37 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:manifest",
-        "sha256": "sha256:a43deed7c8767a427d8a1da9ff1c77fcfde5c66b94bdee36268057dbd667a333"
+        "sha256": "sha256:91b022652189eeb922033438665cd5531af463e821cbd9c5a5beda77be4a28e1"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:ordering",
-        "sha256": "sha256:8842dbfee6aa31cafca39eb050f7060dc22e67d3d9b038fa27fd7203b5dd6561"
+        "sha256": "sha256:9732a79dcda5fc659cd41ad8c54666f33b9858baa604d01e52dc0a270ebb0ea5"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:package",
-        "sha256": "sha256:31dcb907f128bce61d234829e60f2def4bbf932fbb29441df50036f79ce1234c"
+        "sha256": "sha256:63e7c12414adfbdf30936724ee0d05c5a90482103332b451ca4ea03e6006e443"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:package-layout",
-        "sha256": "sha256:3bded79e23d14e81de8a3a33eb581ff27640ef23b8ee0945ea594240052d9459"
+        "sha256": "sha256:052a1c9bc18be917c0e04ee53c427dc94b5480bba5b396a28eea2d0039a2861f"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:platform",
-        "sha256": "sha256:798a4d7943c9e13c2440167f2c2aa98859d8e81f8d963bfc7c183cc375ccadea"
+        "sha256": "sha256:19861ce7dba4e0f30b4dc890272546fd1c2ba94ec91702b774382839483bf630"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:runtime-conformance",
-        "sha256": "sha256:3fa75ea450f6f7912315bcac18d3ae5f4293dbb37555b8fb6d11972a6ae1d377"
+        "sha256": "sha256:233b8c62b6a61fad7ce34450a16c9ca3a8905941db174fdc5d3fb883febe9af8"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:runtime-provenance",
-        "sha256": "sha256:3608cdb9a616a613e755adc199a45b7c79400c7d834e501ae5133254a4aa01fc"
+        "sha256": "sha256:4ed5d3a9fca052214dec364d62877525897ebd9b317d2dc391a446707a4b9e74"
       },
       {
         "kind": "compiler-source",
@@ -1202,7 +1202,7 @@
         "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       }
     ],
-    "inputClosureSha256": "sha256:1dfd945feb700a0e60ba979ccfb4e5166856a1a42583fd84df2992eda0020095",
+    "inputClosureSha256": "sha256:bfa081e7f4fc927cdd8bd86cb11c2965dcfcb7c987ff5da3bd7880cc24f7ad43",
     "semanticIrSha256": "sha256:ccb1fcda3168c2350835bce824fc14c780faeaef05b1802dd9db0f11187255c7",
     "certificates": [
       {

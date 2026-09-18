@@ -28,6 +28,7 @@
   },
   "files": [
     "dist/",
+    "src/",
     "scripts/*.mjs",
     "scripts/*.d.mts",
     "lean/**/*.lean",

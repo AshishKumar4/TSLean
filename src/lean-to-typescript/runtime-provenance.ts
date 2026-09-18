@@ -10,19 +10,36 @@ export interface RuntimeInputSnapshot extends LeanToTypeScriptInput {
   readonly contents: Buffer;
 }
 
-const compilerDirectory = dirname(fileURLToPath(import.meta.url));
-const packageRoot = realpathSync(resolve(compilerDirectory, '..', '..'));
-const extension = extname(fileURLToPath(import.meta.url));
+// `src/lean-to-typescript/*.ts` and `dist/lean-to-typescript/*.js` sit at the same depth, so the
+// two-level walk names the package root from either invocation.
+const packageRoot = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'));
 const typescriptPath = realpathSync(createRequire(import.meta.url).resolve('typescript'));
 const specificationDirectory = realpathSync(join(packageRoot, 'spec', 'lean-to-typescript'));
+/**
+ * The compiler's own source, resolved from the package root rather than from whichever directory
+ * the running module happens to live in. The closure names the reviewed source: every
+ * `compiler:*` digest is then reproducible from a checkout by
+ * `git show <ref>:src/lean-to-typescript/<name>.ts | sha256sum`, with nothing built, and a run
+ * from source agrees with a run from `dist/` by construction rather than by coincidence.
+ *
+ * Snapshotting the running module's siblings instead — the directory and the extension both taken
+ * from `import.meta.url` — gave one identity two byte sources, chosen by how the compiler was
+ * launched. It also broke the plane split: `compiler-source` is a semantic-plane kind, and the
+ * semantic closure digested in `compiler.ts` deliberately excludes the toolchain, which is pinned
+ * separately by the environment plane's `compiler:runtime` and `typescript:*` entries. Hashing
+ * compiled output made that closure vary with a TypeScript version the plane does not record, and
+ * pinned bytes no commit contains under a kind asserting they are source.
+ */
+const compilerSourceDirectory = realpathSync(join(packageRoot, 'src', 'lean-to-typescript'));
+const compilerSourceExtension = '.ts';
 
 export const runtimeInputSnapshots: readonly RuntimeInputSnapshot[] = capture([
-  ...readdirSync(compilerDirectory, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && extname(entry.name) === extension)
+  ...readdirSync(compilerSourceDirectory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && extname(entry.name) === compilerSourceExtension)
     .map((entry) => ({
       kind: 'compiler-source' as const,
-      identity: `compiler:${entry.name.slice(0, -extension.length)}`,
-      path: realpathSync(join(compilerDirectory, entry.name)),
+      identity: `compiler:${entry.name.slice(0, -compilerSourceExtension.length)}`,
+      path: realpathSync(join(compilerSourceDirectory, entry.name)),
     })),
   { kind: 'compiler-source', identity: 'compiler:package', path: realpathSync(join(packageRoot, 'package.json')) },
   // Every registered model's specification, so adding one cannot silently escape provenance.

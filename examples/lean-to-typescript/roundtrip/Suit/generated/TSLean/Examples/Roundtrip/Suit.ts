@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Suit
  * Generated module: TSLean/Examples/Roundtrip/Suit.ts
  * Package entry module: TSLean.Examples.Roundtrip.Suit
- * Semantic identity: sha256:68b6e1fcdfa7ccc8f14dd8f6229f2e7fd49150412b3e5a58a4479f9ac0ee3fff
- * Input closure: sha256:831a1091f123150d4da30714679a02841eba8078761e1d9d146200e7c41ba7f4
+ * Semantic identity: sha256:5fe733f675881da9816db2f631501e33e8c62f3cd7b531b48690b2da0aa203be
+ * Input closure: sha256:412b368a08130919d923aabaf05db3e952b32b526885d17f37ef40e91fcc61bf
  * Semantic IR: sha256:0bae61d5dd0ff7cbf076d33e507374a6b299c369ba1ced99b629260b10c47e39
  * Generated module body: sha256:49823c9787746de6e67c9cc25a9dc543070c1bb220a0e859b4f1da702005ba78
  * Generated package body: sha256:41a64872054ac5de2789793bb8f4b45003d6ef19ca40d09b0b7710a98ee5379c

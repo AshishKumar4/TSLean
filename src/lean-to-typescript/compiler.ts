@@ -456,6 +456,19 @@ function inputFiles(request: LeanToTypeScriptRequest, moduleFiles: readonly Inpu
   return [...projectInputs(request.projectRoot, 'target-project'), ...moduleFiles];
 }
 
+/**
+ * The compiler's own Lean sources, read from the package's shipped `lean/` tree. `Export.lean` is
+ * also recorded as `source:TSLean.LeanToTypeScript.Export` by `collectModuleFiles`, and the two
+ * identities are deliberately not collapsed: this one asserts the file is part of the compiler and
+ * is recorded unconditionally, while the `source:*` entry asserts that Lake's build trace resolved
+ * that module's artifact to this source inside the staged project. Both kinds are true and both
+ * sit in the semantic plane, so neither label is a duplicate of the other. The digests coincide
+ * only because `stageCompilerProject` byte-copies these snapshots: a staging divergence would show
+ * up as two digests for one file, and nothing else would catch it, because
+ * `assertSameModuleClosure` compares identities and paths rather than bytes. `assertTargetSource`
+ * and `leanSourcePaths` also key on a uniform `source:<module>` across the whole closure, so
+ * exempting the exporter from it would need an exception in each.
+ */
 function compilerLeanSources(projectRoot: string): readonly InputFile[] {
   const sourceRoot = join(projectRoot, 'TSLean', 'LeanToTypeScript');
   const exporterPath = realpathSync(join(sourceRoot, 'Export.lean'));
