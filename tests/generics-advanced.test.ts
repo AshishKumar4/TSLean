@@ -1,6 +1,7 @@
 // Phase 4: Comprehensive generics tests covering TypeParam, constraints,
 // utility type resolution, and inexpressible type handling.
 
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { generateLean } from '../src/codegen/index.js';
 import { parseFile } from '../src/parser/index.js';
@@ -12,7 +13,8 @@ import {
   TypeParam,
 } from '../src/ir/types.js';
 import { extractTypeParams } from '../src/typemap/index.js';
-import * as ts from 'typescript';
+import * as ts from '../src/typescript-api/index.js';
+import { openProject, type ReadProject } from '../src/typescript-api/session.js';
 
 function mod(decls: IRDecl[]): IRModule {
   return { name: 'TSLean.Test', imports: [{ module: 'TSLean.Runtime.Basic' }], decls, comments: [], sourceFile: 'test.ts' };
@@ -51,76 +53,106 @@ describe('TypeParam type', () => {
 // ─── extractTypeParams with constraints ─────────────────────────────────────────
 
 describe('extractTypeParams constraint extraction', () => {
-  function makeProg(src: string) {
-    const prog = ts.createProgram({
-      rootNames: ['test.ts'],
-      options: { target: ts.ScriptTarget.ES2022, strict: true, noEmit: true },
-      host: {
-        ...ts.createCompilerHost({ target: ts.ScriptTarget.ES2022 }),
-        getSourceFile(name: string) {
-          if (name === 'test.ts') return ts.createSourceFile(name, src, ts.ScriptTarget.ES2022, true);
-          return undefined;
-        },
-        fileExists: (f: string) => f === 'test.ts',
-        readFile: (f: string) => f === 'test.ts' ? src : undefined,
-      },
+  /**
+   * The path a fixture is read as. No file lives there: the compiler session holds the text in
+   * its overlay, and the path sits beside this test so a lookup starting from it reaches the
+   * same `node_modules` a real source file here would.
+   */
+  const FIXTURE = join(import.meta.dirname, 'generics-advanced.fixture.ts');
+
+  /**
+   * A project over one fixture, which the caller closes.
+   *
+   * Reading TypeScript is the session's half, which is TypeScript 7: it builds a program from a
+   * configuration rather than from a compiler host, so the source travels as overlay text for a
+   * path with no file behind it. The options are unchanged in meaning and respelled the way a
+   * `tsconfig.json` writes them.
+   */
+  function makeProg(src: string): ReadProject {
+    return openProject({
+      files: [FIXTURE],
+      settings: { target: 'es2022', strict: true, noEmit: true },
+      virtual: new Map([[FIXTURE, src]]),
     });
-    return { prog, checker: prog.getTypeChecker() };
   }
 
   it('extracts constraint from <T extends string>', () => {
-    const { prog, checker } = makeProg('function f<T extends string>(x: T): T { return x; }');
-    const fn = prog.getSourceFile('test.ts')!.statements[0] as ts.FunctionDeclaration;
-    const tps = extractTypeParams(fn, checker);
-    expect(tps.length).toBe(1);
-    expect(tps[0].name).toBe('T');
-    expect(tps[0].constraint).toBeDefined();
-    expect(tps[0].constraint?.tag).toBe('String');
+    const project = makeProg('function f<T extends string>(x: T): T { return x; }');
+    try {
+      const fn = project.requireSourceFile(FIXTURE).statements[0] as ts.FunctionDeclaration;
+      const tps = extractTypeParams(fn, project.checker);
+      expect(tps.length).toBe(1);
+      expect(tps[0].name).toBe('T');
+      expect(tps[0].constraint).toBeDefined();
+      expect(tps[0].constraint?.tag).toBe('String');
+    } finally {
+      project.close();
+    }
   });
 
   it('extracts constraint from <T extends number>', () => {
-    const { prog, checker } = makeProg('function f<T extends number>(x: T): T { return x; }');
-    const fn = prog.getSourceFile('test.ts')!.statements[0] as ts.FunctionDeclaration;
-    const tps = extractTypeParams(fn, checker);
-    expect(tps[0].constraint?.tag).toBe('Float');
+    const project = makeProg('function f<T extends number>(x: T): T { return x; }');
+    try {
+      const fn = project.requireSourceFile(FIXTURE).statements[0] as ts.FunctionDeclaration;
+      const tps = extractTypeParams(fn, project.checker);
+      expect(tps[0].constraint?.tag).toBe('Float');
+    } finally {
+      project.close();
+    }
   });
 
   it('extracts default from <T = string>', () => {
-    const { prog, checker } = makeProg('function f<T = string>(x: T): T { return x; }');
-    const fn = prog.getSourceFile('test.ts')!.statements[0] as ts.FunctionDeclaration;
-    const tps = extractTypeParams(fn, checker);
-    expect(tps[0].name).toBe('T');
-    expect(tps[0].default_).toBeDefined();
-    expect(tps[0].default_?.tag).toBe('String');
+    const project = makeProg('function f<T = string>(x: T): T { return x; }');
+    try {
+      const fn = project.requireSourceFile(FIXTURE).statements[0] as ts.FunctionDeclaration;
+      const tps = extractTypeParams(fn, project.checker);
+      expect(tps[0].name).toBe('T');
+      expect(tps[0].default_).toBeDefined();
+      expect(tps[0].default_?.tag).toBe('String');
+    } finally {
+      project.close();
+    }
   });
 
   it('extracts named interface constraint', () => {
-    const { prog, checker } = makeProg(`
+    const project = makeProg(`
       interface Comparable { compareTo(other: any): number; }
       function sort<T extends Comparable>(arr: T[]): T[] { return arr; }
     `);
-    const fn = prog.getSourceFile('test.ts')!.statements[1] as ts.FunctionDeclaration;
-    const tps = extractTypeParams(fn, checker);
-    expect(tps[0].constraint?.tag).toBe('TypeRef');
-    if (tps[0].constraint?.tag === 'TypeRef') {
-      expect(tps[0].constraint.name).toBe('Comparable');
+    try {
+      const fn = project.requireSourceFile(FIXTURE).statements[1] as ts.FunctionDeclaration;
+      const tps = extractTypeParams(fn, project.checker);
+      expect(tps[0].constraint?.tag).toBe('TypeRef');
+      if (tps[0].constraint?.tag === 'TypeRef') {
+        expect(tps[0].constraint.name).toBe('Comparable');
+      }
+    } finally {
+      project.close();
     }
   });
 
   it('no constraint yields undefined', () => {
-    const { prog, checker } = makeProg('function f<T>(x: T): T { return x; }');
-    const fn = prog.getSourceFile('test.ts')!.statements[0] as ts.FunctionDeclaration;
-    const tps = extractTypeParams(fn, checker);
-    expect(tps[0].constraint).toBeUndefined();
-    expect(tps[0].default_).toBeUndefined();
+    const project = makeProg('function f<T>(x: T): T { return x; }');
+    try {
+      const fn = project.requireSourceFile(FIXTURE).statements[0] as ts.FunctionDeclaration;
+      const tps = extractTypeParams(fn, project.checker);
+      expect(tps[0].constraint).toBeUndefined();
+      expect(tps[0].default_).toBeUndefined();
+    } finally {
+      project.close();
+    }
   });
 
   it('works without checker (backwards compat)', () => {
-    const { prog } = makeProg('function f<T, U>(x: T): U { return x as any; }');
-    const fn = prog.getSourceFile('test.ts')!.statements[0] as ts.FunctionDeclaration;
-    const tps = extractTypeParams(fn);
-    expect(tps.map(t => t.name)).toEqual(['T', 'U']);
-    expect(tps[0].constraint).toBeUndefined();
+    const project = makeProg('function f<T, U>(x: T): U { return x as any; }');
+    try {
+      const fn = project.requireSourceFile(FIXTURE).statements[0] as ts.FunctionDeclaration;
+      const tps = extractTypeParams(fn);
+      expect(tps.map((t) => t.name)).toEqual(['T', 'U']);
+      expect(tps[0].constraint).toBeUndefined();
+    } finally {
+      project.close();
+    }
   });
 });
 

@@ -1,38 +1,63 @@
 // Tests for the type mapper.
 
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import * as ts from 'typescript';
+import * as ts from '../src/typescript-api/index.js';
+import { openProject, type ReadProject } from '../src/typescript-api/session.js';
 import { mapType, detectDiscriminatedUnion, extractTypeParams } from '../src/typemap/index.js';
 import { IRType } from '../src/ir/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeProgram(src: string, file = 'test.ts') {
-  const opts: ts.CompilerOptions = { strict: true, target: ts.ScriptTarget.ES2022, skipLibCheck: true };
-  const host = ts.createCompilerHost(opts);
-  const prog = ts.createProgram({
-    rootNames: [file], options: opts,
-    host: {
-      ...host,
-      getSourceFile: (n, v) => n === file ? ts.createSourceFile(n, src, v, true) : host.getSourceFile(n, v),
-      fileExists: f => f === file || host.fileExists(f),
-      readFile:   f => f === file ? src : host.readFile(f),
-    },
+/**
+ * The path a fixture is read as. No file lives there: the compiler session holds the text in its
+ * overlay, and the path sits beside this test so a lookup starting from it reaches the same
+ * `node_modules` a real source file here would.
+ */
+const FIXTURE = join(import.meta.dirname, 'typemap.fixture.ts');
+
+/**
+ * A project over one fixture, which the caller closes.
+ *
+ * Reading TypeScript is the session's half, which is TypeScript 7: it builds a program from a
+ * configuration rather than from a compiler host, so the source travels as overlay text for a
+ * path with no file behind it. The options are unchanged in meaning and respelled the way a
+ * `tsconfig.json` writes them.
+ */
+function openFixture(src: string, file = FIXTURE): ReadProject {
+  return openProject({
+    files: [file],
+    settings: { strict: true, target: 'es2022', skipLibCheck: true },
+    virtual: new Map([[file, src]]),
   });
-  return { prog, checker: prog.getTypeChecker() };
+}
+
+/** The type at one node. The checker declines to answer for a node it never checked. */
+function typeAt(checker: ts.Checker, node: ts.Node): ts.Type {
+  const type = checker.getTypeAtLocation(node);
+  if (type === undefined) throw new TypeError('the checker gave no type for the fixture node');
+  return type;
 }
 
 function typeOf(decl: string): IRType {
-  const { prog, checker } = makeProgram(`const x: ${decl} = undefined!;`);
-  const sf   = prog.getSourceFile('test.ts')!;
-  const stmt = sf.statements[0] as ts.VariableStatement;
-  return mapType(checker.getTypeAtLocation(stmt.declarationList.declarations[0]), checker);
+  const project = openFixture(`const x: ${decl} = undefined!;`);
+  try {
+    const stmt = project.requireSourceFile(FIXTURE).statements[0] as ts.VariableStatement;
+    const declaration = stmt.declarationList.declarations[0];
+    return mapType(typeAt(project.checker, declaration), project.checker);
+  } finally {
+    project.close();
+  }
 }
 
 function aliasType(src: string): IRType {
-  const { prog, checker } = makeProgram(src);
-  const sf = prog.getSourceFile('test.ts')!;
-  return mapType(checker.getTypeAtLocation(sf.statements[0] as ts.TypeAliasDeclaration), checker);
+  const project = openFixture(src);
+  try {
+    const alias = project.requireSourceFile(FIXTURE).statements[0] as ts.TypeAliasDeclaration;
+    return mapType(typeAt(project.checker, alias), project.checker);
+  } finally {
+    project.close();
+  }
 }
 
 // ─── Primitives ───────────────────────────────────────────────────────────────
@@ -134,66 +159,92 @@ describe('mapType – branded types', () => {
 
 describe('mapType – generics', () => {
   it('TypeParameter → TypeVar', () => {
-    const src = 'function id<T>(x: T): T { return x; }';
-    const { prog, checker } = makeProgram(src);
-    const sf   = prog.getSourceFile('test.ts')!;
-    const fn   = sf.statements[0] as ts.FunctionDeclaration;
-    const t    = mapType(checker.getTypeAtLocation(fn.parameters[0]), checker);
-    expect(t.tag).toBe('TypeVar');
+    const project = openFixture('function id<T>(x: T): T { return x; }');
+    try {
+      const fn = project.requireSourceFile(FIXTURE).statements[0] as ts.FunctionDeclaration;
+      const t = mapType(typeAt(project.checker, fn.parameters[0]), project.checker);
+      expect(t.tag).toBe('TypeVar');
+    } finally {
+      project.close();
+    }
   });
   it('extractTypeParams picks up <T,U>', () => {
-    const src = 'function f<T,U>(a: T, b: U): [T,U] { return [a,b]; }';
-    const { prog } = makeProgram(src);
-    const fn = prog.getSourceFile('test.ts')!.statements[0] as ts.FunctionDeclaration;
-    expect(extractTypeParams(fn).map(t => t.name)).toEqual(['T', 'U']);
+    const project = openFixture('function f<T,U>(a: T, b: U): [T,U] { return [a,b]; }');
+    try {
+      const fn = project.requireSourceFile(FIXTURE).statements[0] as ts.FunctionDeclaration;
+      expect(extractTypeParams(fn).map((t) => t.name)).toEqual(['T', 'U']);
+    } finally {
+      project.close();
+    }
   });
   it('no type params → []', () => {
-    const { prog } = makeProgram('function noop(): void {}');
-    const fn = prog.getSourceFile('test.ts')!.statements[0] as ts.FunctionDeclaration;
-    expect(extractTypeParams(fn)).toEqual([]);
+    const project = openFixture('function noop(): void {}');
+    try {
+      const fn = project.requireSourceFile(FIXTURE).statements[0] as ts.FunctionDeclaration;
+      expect(extractTypeParams(fn)).toEqual([]);
+    } finally {
+      project.close();
+    }
   });
 });
 
 describe('detectDiscriminatedUnion', () => {
   it('detects kind discriminant', () => {
-    const { prog, checker } = makeProgram('type S = { kind: "a"; x: number } | { kind: "b"; y: number };');
-    const sf  = prog.getSourceFile('test.ts')!;
-    const t   = checker.getTypeAtLocation(sf.statements[0] as ts.TypeAliasDeclaration);
-    if (!t.isUnion()) return;
-    const d = detectDiscriminatedUnion(t as ts.UnionType, checker);
-    expect(d).not.toBeNull();
-    expect(d!.field).toBe('kind');
-    expect(d!.variants).toHaveLength(2);
-    expect(d!.variants.map(v => v.literal)).toContain('a');
-    expect(d!.variants.map(v => v.literal)).toContain('b');
+    const project = openFixture('type S = { kind: "a"; x: number } | { kind: "b"; y: number };');
+    try {
+      const alias = project.requireSourceFile(FIXTURE).statements[0] as ts.TypeAliasDeclaration;
+      const t = typeAt(project.checker, alias);
+      if (!t.isUnionType()) return;
+      const d = detectDiscriminatedUnion(t, project.checker);
+      expect(d).not.toBeNull();
+      expect(d!.field).toBe('kind');
+      expect(d!.variants).toHaveLength(2);
+      expect(d!.variants.map((v) => v.literal)).toContain('a');
+      expect(d!.variants.map((v) => v.literal)).toContain('b');
+    } finally {
+      project.close();
+    }
   });
 
   it('detects type discriminant', () => {
-    const { prog, checker } = makeProgram('type E = { type: "x" } | { type: "y" };');
-    const sf  = prog.getSourceFile('test.ts')!;
-    const t   = checker.getTypeAtLocation(sf.statements[0] as ts.TypeAliasDeclaration);
-    if (!t.isUnion()) return;
-    const d = detectDiscriminatedUnion(t as ts.UnionType, checker);
-    expect(d).not.toBeNull();
-    expect(d!.field).toBe('type');
+    const project = openFixture('type E = { type: "x" } | { type: "y" };');
+    try {
+      const alias = project.requireSourceFile(FIXTURE).statements[0] as ts.TypeAliasDeclaration;
+      const t = typeAt(project.checker, alias);
+      if (!t.isUnionType()) return;
+      const d = detectDiscriminatedUnion(t, project.checker);
+      expect(d).not.toBeNull();
+      expect(d!.field).toBe('type');
+    } finally {
+      project.close();
+    }
   });
 
   it('non-discriminated union returns null', () => {
-    const { prog, checker } = makeProgram('type T = { a: string } | { b: number };');
-    const sf  = prog.getSourceFile('test.ts')!;
-    const t   = checker.getTypeAtLocation(sf.statements[0] as ts.TypeAliasDeclaration);
-    if (!t.isUnion()) return;
-    const d = detectDiscriminatedUnion(t as ts.UnionType, checker);
-    expect(d).toBeNull();
+    const project = openFixture('type T = { a: string } | { b: number };');
+    try {
+      const alias = project.requireSourceFile(FIXTURE).statements[0] as ts.TypeAliasDeclaration;
+      const t = typeAt(project.checker, alias);
+      if (!t.isUnionType()) return;
+      expect(detectDiscriminatedUnion(t, project.checker)).toBeNull();
+    } finally {
+      project.close();
+    }
   });
 
   it('variant fields exclude discriminant', () => {
-    const { prog, checker } = makeProgram('type S = { kind: "circle"; radius: number } | { kind: "rect"; w: number; h: number };');
-    const sf  = prog.getSourceFile('test.ts')!;
-    const t   = checker.getTypeAtLocation(sf.statements[0] as ts.TypeAliasDeclaration);
-    if (!t.isUnion()) return;
-    const d = detectDiscriminatedUnion(t as ts.UnionType, checker);
-    if (!d) return;
-    for (const v of d.variants) expect(v.fields.map(f => f.name)).not.toContain('kind');
+    const project = openFixture(
+      'type S = { kind: "circle"; radius: number } | { kind: "rect"; w: number; h: number };',
+    );
+    try {
+      const alias = project.requireSourceFile(FIXTURE).statements[0] as ts.TypeAliasDeclaration;
+      const t = typeAt(project.checker, alias);
+      if (!t.isUnionType()) return;
+      const d = detectDiscriminatedUnion(t, project.checker);
+      if (!d) return;
+      for (const v of d.variants) expect(v.fields.map((f) => f.name)).not.toContain('kind');
+    } finally {
+      project.close();
+    }
   });
 });

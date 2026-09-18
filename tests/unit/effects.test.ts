@@ -1,7 +1,7 @@
 // Unit tests for effect inference and the effect algebra.
 
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import * as ts from 'typescript';
 import {
   Pure, IO, Async,
   stateEffect, exceptEffect, combineEffects,
@@ -9,24 +9,36 @@ import {
   TyString, TyFloat, TyNat, Effect,
 } from '../../src/ir/types.js';
 import { inferNodeEffect, monadString, joinEffects, effectSubsumes, doMonadType } from '../../src/effects/index.js';
+import { openProject } from '../../src/typescript-api/session.js';
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
+/**
+ * The path the inferred source is read as. No file lives there: the compiler session holds the
+ * text in its overlay, and the path sits beside this test so a lookup starting from it reaches
+ * the same `node_modules` a real source file here would.
+ */
+const FIXTURE = join(import.meta.dirname, 'effect-inference.fixture.ts');
+
+/**
+ * The effect of the first statement of `src`.
+ *
+ * Reading TypeScript is the session's half, which is TypeScript 7: it builds a program from a
+ * configuration rather than from a compiler host, so the source travels as overlay text for a
+ * path with no file behind it, and the project supplies both the AST and the checker. The
+ * options are unchanged in meaning and respelled the way a `tsconfig.json` writes them.
+ */
 function inferFrom(src: string): Effect {
-  const opts: ts.CompilerOptions = { strict: true, target: ts.ScriptTarget.ES2022, skipLibCheck: true };
-  const host = ts.createCompilerHost(opts);
-  const prog = ts.createProgram({
-    rootNames: ['t.ts'], options: opts,
-    host: {
-      ...host,
-      getSourceFile: (n, v) => n === 't.ts' ? ts.createSourceFile(n, src, v, true) : host.getSourceFile(n, v),
-      fileExists: f => f === 't.ts' || host.fileExists(f),
-      readFile: f => f === 't.ts' ? src : host.readFile(f),
-    },
+  const project = openProject({
+    files: [FIXTURE],
+    settings: { strict: true, target: 'es2022', skipLibCheck: true },
+    virtual: new Map([[FIXTURE, src]]),
   });
-  const checker = prog.getTypeChecker();
-  const sf = prog.getSourceFile('t.ts')!;
-  return inferNodeEffect(sf.statements[0], checker);
+  try {
+    return inferNodeEffect(project.requireSourceFile(FIXTURE).statements[0], project.checker);
+  } finally {
+    project.close();
+  }
 }
 
 // ─── Pure functions ───────────────────────────────────────────────────────────

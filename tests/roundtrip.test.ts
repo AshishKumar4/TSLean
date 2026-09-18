@@ -11,7 +11,8 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir as home, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import ts from 'typescript';
+import * as ts from '../src/typescript-api/index.js';
+import { openProject, type CompilerSettings, type ReadProject } from '../src/typescript-api/session.js';
 import { leanAccepts, leanRun } from '../src/lean-check.js';
 import { generateLean } from '../src/codegen/index.js';
 import { parseFile } from '../src/parser/index.js';
@@ -27,29 +28,44 @@ import { domainSize, enumerateTuples, enumerateValues, renderValue, valueAt } fr
 import { transpileProject } from '../src/project/index.js';
 import { decodeManifest } from '../src/lean-to-typescript/manifest.js';
 
-const OPTIONS: ts.CompilerOptions = {
-  target: ts.ScriptTarget.ES2022,
-  module: ts.ModuleKind.NodeNext,
-  moduleResolution: ts.ModuleResolutionKind.NodeNext,
+/**
+ * The options a module is read with, spelled the way a `tsconfig.json` writes them rather than
+ * the way the compiler resolves them, because the session parses what it is handed as
+ * configuration text and refuses the resolved `lib: ['lib.es2022.d.ts']`.
+ */
+const OPTIONS: CompilerSettings = {
+  target: 'es2022',
+  module: 'nodenext',
+  moduleResolution: 'nodenext',
   strict: true,
   skipLibCheck: true,
-  lib: ['lib.es2022.d.ts'],
+  lib: ['es2022'],
 };
 
-/** Open one in-memory module so a test states its input as source rather than as a fixture path. */
-function open(source: string, fileName = '/roundtrip.ts'): { file: ts.SourceFile; checker: ts.TypeChecker } {
-  const host = ts.createCompilerHost(OPTIONS);
-  const original = host.getSourceFile.bind(host);
-  host.getSourceFile = (name, version, onError, shouldCreate) =>
-    name === fileName
-      ? ts.createSourceFile(name, source, version, true, ts.ScriptKind.TS)
-      : original(name, version, onError, shouldCreate);
-  host.fileExists = (name) => (name === fileName ? true : ts.sys.fileExists(name));
-  host.readFile = (name) => (name === fileName ? source : ts.sys.readFile(name));
-  const program = ts.createProgram([fileName], OPTIONS, host);
-  const file = program.getSourceFile(fileName);
-  if (file === undefined) throw new Error(`no source file at ${fileName}`);
-  return { file, checker: program.getTypeChecker() };
+/** Every project {@link open} holds. Each is read after `open` returns, so none closes there. */
+const opened: ReadProject[] = [];
+
+afterAll(() => {
+  for (const project of opened) project.close();
+  opened.length = 0;
+});
+
+/**
+ * Open one in-memory module so a test states its input as source rather than as a fixture path.
+ *
+ * Reading TypeScript is the session's half, which is TypeScript 7: it builds a program from a
+ * configuration rather than from a compiler host, so the module travels as overlay text for a
+ * path with no file behind it, and every other path is read off the disk by the session itself,
+ * which is all the host's `ts.sys` fall-through ever did.
+ */
+function open(source: string, fileName = '/roundtrip.ts'): { file: ts.SourceFile; checker: ts.Checker } {
+  const project = openProject({
+    files: [fileName],
+    settings: OPTIONS,
+    virtual: new Map([[fileName, source]]),
+  });
+  opened.push(project);
+  return { file: project.requireSourceFile(fileName), checker: project.checker };
 }
 
 /** The Lean the TypeScript-to-Lean compiler emits for one in-memory module. */
@@ -134,7 +150,11 @@ describe('booleans, options and structures', () => {
     const declaration = file.statements.filter(ts.isFunctionDeclaration)[0];
     const signature = checker.getSignatureFromDeclaration(declaration);
     expect(signature).toBeDefined();
-    const result = resolveProfileType(signature!.getReturnType(), checker);
+    // A signature's return type is the checker's to answer for in TypeScript 7, not the
+    // signature object's, and the checker declines for a signature it cannot complete.
+    const returned = checker.getReturnTypeOfSignature(signature!);
+    expect(returned).toBeDefined();
+    const result = resolveProfileType(returned!, checker);
     expect(result).toEqual({
       kind: 'option',
       inner: { kind: 'enumeration', name: 'Placement', members: ['bundled', 'dynamic'] },
@@ -156,7 +176,9 @@ describe('booleans, options and structures', () => {
     expect(signature).toBeDefined();
     // The two spellings denote one Lean `Option`, so they resolve to one profile type and
     // differ only in how a value crosses the JavaScript boundary.
-    expect(resolveProfileType(signature!.getReturnType(), checker)).toEqual({
+    const returned = checker.getReturnTypeOfSignature(signature!);
+    expect(returned).toBeDefined();
+    expect(resolveProfileType(returned!, checker)).toEqual({
       kind: 'option',
       inner: { kind: 'enumeration', name: 'Placement', members: ['bundled', 'dynamic'] },
       encoding: 'tagged',
