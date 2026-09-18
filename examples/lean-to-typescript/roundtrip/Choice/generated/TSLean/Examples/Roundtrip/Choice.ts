@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Choice
  * Generated module: TSLean/Examples/Roundtrip/Choice.ts
  * Package entry module: TSLean.Examples.Roundtrip.Choice
- * Semantic identity: sha256:419a5b528c0b63a15a1da05736537bf869eb4761e3f922732d78ccc46119d6d3
- * Input closure: sha256:5219c242a3198bad884c9adaa57665d0ab1926be2088752aea05fea66ace823d
+ * Semantic identity: sha256:4ff24fed4fac04934f116d16de4f30ed51eebb9b62dff01745a9870830c0c858
+ * Input closure: sha256:b1dec26d538ceae303c385bf31edf1f62c847d28f8467f47f25cb250534154ce
  * Semantic IR: sha256:5b75c3604fafce88b576e983e0d7c48e2bd2ab6f8f0651a825a226a64dbe4d20
  * Generated module body: sha256:591f74aeae5cb3ead173d11ac0cc149aa17c19e1e21310c45e5ae95965453c61
  * Generated package body: sha256:8a4a0606b638065802bfcf90872bb6a1263f25126145daf52268b108b3c4d1c4

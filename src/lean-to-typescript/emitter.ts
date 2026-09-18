@@ -546,6 +546,13 @@ function moduleDeclarations(
         emitted: context.methods.get(name)?.name ?? requiredDeclarationName(context.declarationNames, name),
         line: PROVENANCE_HEADER_LINES + line,
         span: { source: source ?? '', ...declaration.span },
+        // A type former with a term index emits an unparameterised type, so its Lean arity is not
+        // recoverable from the bytes. Carried through from the IR rather than recomputed.
+        ...(declaration.kind === 'record' || declaration.kind === 'enum'
+          ? declaration.erasedParameters === undefined
+            ? {}
+            : { erasedParameters: declaration.erasedParameters.map((parameter) => parameter.name) }
+          : {}),
       };
     });
 }

@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Lifecycle
  * Generated module: TSLean/Examples/Roundtrip/Lifecycle.ts
  * Package entry module: TSLean.Examples.Roundtrip.Lifecycle
- * Semantic identity: sha256:f42ad8262fbc0ab8d3eae9ae4cef7c785be7ac2697d52a9c57b1dd657cd65177
- * Input closure: sha256:aa0a831ad5aee1df6c269cc7952150e5fdbe6d5eda2c7dff671f9151525f11e9
+ * Semantic identity: sha256:1b909aced0384cbe40c28ebbebeae99d9bd610858c9a3cccb941c10660d3b6b9
+ * Input closure: sha256:b443f6184f0db01e5ac53ee504bfc5f755e8d7167369f8d1ffd0a7585478e01a
  * Semantic IR: sha256:b9e339943b5e6f3e8c01b5b513b266cc055582afd943ac39951d4330e13a5635
  * Generated module body: sha256:b1861c7cddd523e0ed05304ca4cbf66dc3f1ce2dfb4c2ddb985235f0bde1361d
  * Generated package body: sha256:d1f9f7215a6de318aaa6a25e7d58212b9212c16fdc4ec61ea56430a0a4a81b7e

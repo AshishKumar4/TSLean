@@ -334,7 +334,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:emitter",
-        "sha256": "sha256:788f585949373c4ea65555c9931dca300ee3a019d1f2039d9c3144cf9a951f52"
+        "sha256": "sha256:71279f66458a57577e042f84f891ed82a8163940d06f4ea71a66ff450bd5a782"
       },
       {
         "kind": "compiler-source",
@@ -349,12 +349,12 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:ir",
-        "sha256": "sha256:c1b5c719a97660c76702c070fc2557fa2d3d3245f5c5daabb328a5348960d112"
+        "sha256": "sha256:c4822894ccf7554482f443ecde62033f7817787276f4a5397486e5529b951e9b"
       },
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-exporter",
-        "sha256": "sha256:07755e6a375c73c385c8db22f93b74392615ee2f6ef98ec3451683c0edfcdb43"
+        "sha256": "sha256:17381163aca575d3b121a5cd8fd645874e7385fdf2388965a0309bc53b5d8582"
       },
       {
         "kind": "compiler-source",
@@ -394,7 +394,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Erasure.lean",
-        "sha256": "sha256:3bd1afe022b48e5421751bc3cd8a9baac46623e1cbc2fda6d6c35fd776395675"
+        "sha256": "sha256:6c03d9aebb8f3714b3862a480edbb924d8e580188f8e84bfc068b8e620123e4c"
       },
       {
         "kind": "compiler-source",
@@ -449,7 +449,7 @@
       {
         "kind": "compiler-source",
         "identity": "compiler:manifest",
-        "sha256": "sha256:bce6635e988ddf03a195d9416dd7fa6a756a0e3720e8e2e156006f18a55dfac9"
+        "sha256": "sha256:a43deed7c8767a427d8a1da9ff1c77fcfde5c66b94bdee36268057dbd667a333"
       },
       {
         "kind": "compiler-source",
@@ -514,7 +514,7 @@
       {
         "kind": "lean-source",
         "identity": "source:TSLean.LeanToTypeScript.Export",
-        "sha256": "sha256:07755e6a375c73c385c8db22f93b74392615ee2f6ef98ec3451683c0edfcdb43"
+        "sha256": "sha256:17381163aca575d3b121a5cd8fd645874e7385fdf2388965a0309bc53b5d8582"
       },
       {
         "kind": "lean-project",
@@ -532,7 +532,7 @@
         "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
       }
     ],
-    "inputClosureSha256": "sha256:aa0a831ad5aee1df6c269cc7952150e5fdbe6d5eda2c7dff671f9151525f11e9",
+    "inputClosureSha256": "sha256:b443f6184f0db01e5ac53ee504bfc5f755e8d7167369f8d1ffd0a7585478e01a",
     "semanticIrSha256": "sha256:b9e339943b5e6f3e8c01b5b513b266cc055582afd943ac39951d4330e13a5635",
     "certificates": [],
     "generatedBodySha256": "sha256:d1f9f7215a6de318aaa6a25e7d58212b9212c16fdc4ec61ea56430a0a4a81b7e",
@@ -573,13 +573,18 @@
       },
       {
         "kind": "lean-module",
+        "identity": "module:Lean.Compiler.LCNF",
+        "sha256": "sha256:5d452bbb7bd627e75f066f54a13e9a67637d0ff4f2f99cee0993f198ab927a15"
+      },
+      {
+        "kind": "lean-module",
         "identity": "module:TSLean.Examples.Roundtrip.Lifecycle",
         "sha256": "sha256:d4661ea0ddcde1d2fefea387b35ef6ad73ddaabd0a2e1b674640156903a52df7"
       },
       {
         "kind": "lean-module",
         "identity": "module:TSLean.LeanToTypeScript.Export",
-        "sha256": "sha256:3cf4af6ca52ba4125ed19b1197df4020265187bfa00534126ed5950739da5d15"
+        "sha256": "sha256:1a69a906fb336069dfcee7efd6f6a7c9b8b3672d011509bbd277324e999a255f"
       },
       {
         "kind": "lean-toolchain",
@@ -662,7 +667,7 @@
         "sha256": "sha256:3722b30210616a13a3213ded11575ba6b2dbab10c32a5ef67afca8513e27017e"
       }
     ],
-    "inputClosureSha256": "sha256:36d4d64aa700e45e32118352337eb0b397486dc5044694d23983f30950a3358a",
+    "inputClosureSha256": "sha256:8d32a6dc9702022710c2a7669b95fe7cf6e510f4fd34e249a49984507e169e74",
     "runtimeConformance": []
   }
 }

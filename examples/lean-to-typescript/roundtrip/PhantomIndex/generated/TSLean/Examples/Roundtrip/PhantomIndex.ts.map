@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "file": "PhantomIndex.ts",
+  "sourceRoot": "",
+  "sources": [
+    "../../../../../../../../lean/TSLean/Examples/Roundtrip/PhantomIndex.lean"
+  ],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;AAkCA;;;;;AANA;;;;;AA2BA;;;;;;;;AAiBA;;;;;;;;;;AAJA;;;;;;;;AAeA;;;;;;;;;;;;;;AA3CA;;;;;;;;;;AAKA;;;;;;;;;;;AAMA;;;;;;;;;;AAUA;;;;;;;;;;;;;AAmBA"
+}

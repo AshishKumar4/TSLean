@@ -203,6 +203,7 @@ export async function verifyLeanToTypeScriptRoundtrip(
           leanImports: [...new Set(original.map((entry) => entry.leanModule))],
           functions: original,
           typeModules: originalTypeModules(manifest, reprojected, workspace, recovered),
+          erasedIndices: originalErasedIndices(manifest, reprojected, workspace, recovered),
           projectRoot: originalRoot,
         }), 'the generated typescript computes what its Lean source does', counterexamples);
     const source = sourceAttempt.report;
@@ -980,6 +981,41 @@ function originalTypeModules(
     registerTypeModule(modules, name, namespace, 'original');
   }
   return modules;
+}
+
+/**
+ * How many declared parameters the original Lean type former behind each profile type name erased.
+ *
+ * A type former with a term index emits an unparameterised TypeScript type, so the projection the
+ * profile is read from cannot show the index and the source-side driver would name an arity-1 Lean
+ * former with no argument. The count comes from the manifest, which records it per generated
+ * declaration, so the driver reads the fact rather than re-deriving it from bytes that do not
+ * carry it. A type whose former erased nothing is absent, which is the same as zero.
+ */
+function originalErasedIndices(
+  manifest: LeanToTypeScriptManifest,
+  opened: ReadProject,
+  workspace: string,
+  recovered: RecoveredLean,
+): ReadonlyMap<string, number> {
+  const erased = new Map<string, number>();
+  const declared = new Set(declaringModules(opened, workspace, recovered).keys());
+  for (const module of manifest.semantic.modules) {
+    for (const declaration of module.declarations) {
+      const count = declaration.erasedParameters?.length ?? 0;
+      if (count === 0 || !declared.has(declaration.emitted)) continue;
+      const previous = erased.get(declaration.emitted);
+      // Two Lean declarations behind one emitted name would make the arity ambiguous, and an
+      // ambiguous arity would silently produce a driver that elaborates against the wrong former.
+      if (previous !== undefined && previous !== count) {
+        throw new TypeError(
+          `profile type ${declaration.emitted} is declared with ${String(previous)} and ${String(count)} erased indices`,
+        );
+      }
+      erased.set(declaration.emitted, count);
+    }
+  }
+  return erased;
 }
 
 /** Which recovered Lean module declares each profile type name. */

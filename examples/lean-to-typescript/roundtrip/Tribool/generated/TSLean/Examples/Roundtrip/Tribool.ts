@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Tribool
  * Generated module: TSLean/Examples/Roundtrip/Tribool.ts
  * Package entry module: TSLean.Examples.Roundtrip.Tribool
- * Semantic identity: sha256:eba7e3496a467b404144b00112898d2ed288c5a47825a2782e3d11d45e608d5e
- * Input closure: sha256:34e6af43883047c0e9848aa5351eee06203aad07de0556d008eafb49f3171919
+ * Semantic identity: sha256:8297f607705466e9ddfbf903dcc12144b4a0564ce2ae7ac291098375604d6e79
+ * Input closure: sha256:eb0d8258c606dd453def9d246f6a8e5f92f06cc11e30b6525e947833604c6b27
  * Semantic IR: sha256:f99d524bfb93664244e9765c34c168d56921f382b0af2299bba116c5af5cea08
  * Generated module body: sha256:8d816a106853c18dcf7749b54ad6ff9461e4e738cd1c5fc123189ca6109ff351
  * Generated package body: sha256:a59d2701ff956f3b1ec396e399f74faf1d7a6f39090647e8da256b1f34b7edfc

@@ -1,0 +1,924 @@
+{
+  "schemaVersion": 5001,
+  "semantic": {
+    "fragmentVersion": "tslean-semantic-typed-v6",
+    "entryModule": "TSLean.Examples.Roundtrip.IndexedInvariant",
+    "leanProjectPath": "../../../../../lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.IndexedInvariant.highRunLevel",
+      "TSLean.Examples.Roundtrip.IndexedInvariant.runStamp",
+      "TSLean.Examples.Roundtrip.IndexedInvariant.stamp",
+      "TSLean.Examples.Roundtrip.IndexedInvariant.stampedLevel"
+    ],
+    "leanToolchain": {
+      "identity": "leanprover/lean4:v4.33.1",
+      "leanVersion": "Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)",
+      "lakeVersion": "Lake version 5.0.0-src+819816b (Lean version 4.33.1)"
+    },
+    "modules": [
+      {
+        "path": "TSLean/Examples/Roundtrip/IndexedInvariant.ts",
+        "leanModule": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "imports": [],
+        "declarations": [
+          {
+            "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Level",
+            "emitted": "Level",
+            "line": 19,
+            "span": {
+              "source": "TSLean/Examples/Roundtrip/IndexedInvariant.lean",
+              "startLine": 43,
+              "startColumn": 0,
+              "endLine": 47,
+              "endColumn": 28
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Stamp",
+            "emitted": "Stamp",
+            "line": 29,
+            "span": {
+              "source": "TSLean/Examples/Roundtrip/IndexedInvariant.lean",
+              "startLine": 70,
+              "startColumn": 0,
+              "endLine": 79,
+              "endColumn": 31
+            },
+            "erasedParameters": [
+              "tag"
+            ]
+          },
+          {
+            "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Tag",
+            "emitted": "Tag",
+            "line": 24,
+            "span": {
+              "source": "TSLean/Examples/Roundtrip/IndexedInvariant.lean",
+              "startLine": 37,
+              "startColumn": 0,
+              "endLine": 41,
+              "endColumn": 28
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.admits",
+            "emitted": "admits",
+            "line": 86,
+            "span": {
+              "source": "TSLean/Examples/Roundtrip/IndexedInvariant.lean",
+              "startLine": 60,
+              "startColumn": 0,
+              "endLine": 62,
+              "endColumn": 47
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.allowsHigh",
+            "emitted": "allowsHigh",
+            "line": 75,
+            "span": {
+              "source": "TSLean/Examples/Roundtrip/IndexedInvariant.lean",
+              "startLine": 54,
+              "startColumn": 0,
+              "endLine": 58,
+              "endColumn": 18
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.highRun",
+            "emitted": "highRun",
+            "line": 48,
+            "span": {
+              "source": "TSLean/Examples/Roundtrip/IndexedInvariant.lean",
+              "startLine": 96,
+              "startColumn": 0,
+              "endLine": 98,
+              "endColumn": 40
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.highRunLevel",
+            "emitted": "highRunLevel",
+            "line": 58,
+            "span": {
+              "source": "TSLean/Examples/Roundtrip/IndexedInvariant.lean",
+              "startLine": 111,
+              "startColumn": 0,
+              "endLine": 112,
+              "endColumn": 48
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.isHigh",
+            "emitted": "isHigh",
+            "line": 65,
+            "span": {
+              "source": "TSLean/Examples/Roundtrip/IndexedInvariant.lean",
+              "startLine": 49,
+              "startColumn": 0,
+              "endLine": 52,
+              "endColumn": 17
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.levelOf",
+            "emitted": "levelOf",
+            "line": 41,
+            "span": {
+              "source": "TSLean/Examples/Roundtrip/IndexedInvariant.lean",
+              "startLine": 89,
+              "startColumn": 0,
+              "endLine": 90,
+              "endColumn": 66
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.runStamp",
+            "emitted": "runStamp",
+            "line": 112,
+            "span": {
+              "source": "TSLean/Examples/Roundtrip/IndexedInvariant.lean",
+              "startLine": 92,
+              "startColumn": 0,
+              "endLine": 94,
+              "endColumn": 70
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.stamp",
+            "emitted": "stamp",
+            "line": 96,
+            "span": {
+              "source": "TSLean/Examples/Roundtrip/IndexedInvariant.lean",
+              "startLine": 81,
+              "startColumn": 0,
+              "endLine": 87,
+              "endColumn": 77
+            }
+          },
+          {
+            "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.stampedLevel",
+            "emitted": "stampedLevel",
+            "line": 120,
+            "span": {
+              "source": "TSLean/Examples/Roundtrip/IndexedInvariant.lean",
+              "startLine": 100,
+              "startColumn": 0,
+              "endLine": 109,
+              "endColumn": 16
+            }
+          }
+        ],
+        "bodySha256": "sha256:e14866981e6e7458174d20051ea9a3fe1897766d49c89537258d2fa7a1aa0628",
+        "sourceMapSha256": "sha256:b3848fafaf646ae50c016b72be6052db6a99c0a40593a040138d417adb9d4331"
+      }
+    ],
+    "closure": [
+      {
+        "declaration": "Bool",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.casesOn",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.decEq",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.decEq.match_1",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.false",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.noConfusion",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.noConfusionType",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.rec",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Bool.true",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Decidable",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Decidable.casesOn",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Decidable.isFalse",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Decidable.isTrue",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Decidable.rec",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "DecidableEq",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Eq",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Eq.ndrec",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Eq.rec",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Eq.refl",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "False",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Not",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Option",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Option.casesOn",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Option.none",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Option.rec",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Option.some",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "PUnit",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "PUnit.unit",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Admitted",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "proposition; its type is Prop or is itself a Prop, so it has no runtime image"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Level",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Level.casesOn",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "generated helper reached only through erased scaffolding"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Level.high",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Level.low",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Level.rec",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "recursor"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Stamp",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Stamp.level",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "structure projection lowered as field access"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Stamp.mk",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Tag",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Tag.casesOn",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "generated helper reached only through erased scaffolding"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Tag.rec",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "recursor"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Tag.run",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.Tag.turn",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "constructor lowered with its inductive type"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.admits",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.allowsHigh",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.highRun",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.highRun._proof_1",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "proof"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.highRunLevel",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.instReprLevel.repr.match_1",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "match auxiliary inlined at its application sites"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.instReprTag.repr.match_1",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "match auxiliary inlined at its application sites"
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.isHigh",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.levelOf",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.runStamp",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.stamp",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.stampedLevel",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "emitted",
+        "reason": ""
+      },
+      {
+        "declaration": "TSLean.Examples.Roundtrip.IndexedInvariant.stampedLevel.match_1",
+        "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+        "role": "erased",
+        "reason": "match auxiliary inlined at its application sites"
+      },
+      {
+        "declaration": "Unit",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "Unit.unit",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "dite",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "instDecidableEqBool",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "ite",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      },
+      {
+        "declaration": "rfl",
+        "module": "Init.Prelude",
+        "role": "runtime-boundary",
+        "reason": "constant outside the target module closure; its TypeScript image is fixed by the type mapping"
+      }
+    ],
+    "inputs": [
+      {
+        "kind": "lean-project",
+        "identity": "compiler-project:lake-manifest.json",
+        "sha256": "sha256:5d6b334baa39de6864ceffcd02bfbfe758d8ce336a571dc171f831c9c29af944"
+      },
+      {
+        "kind": "lean-project",
+        "identity": "compiler-project:lakefile.toml",
+        "sha256": "sha256:374caa2ac9bf32d4aea72dd7b6c2b5c3328ce2d85eff2948b612f1c41c8c35df"
+      },
+      {
+        "kind": "lean-project",
+        "identity": "compiler-project:lean-toolchain",
+        "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:artifact",
+        "sha256": "sha256:251dff2515593e1fa25750dd312224c16d51f67378341cffc93852e1a5033933"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:artifact-transaction",
+        "sha256": "sha256:be688b8a21cae888cf8d98c6de56a148715cc936952637de0a1f3739ec835509"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:certificates",
+        "sha256": "sha256:71e6ea00860a8e85514b3c6d1b4509ca42a9d68f614c80da380ea0f7a1ab13dd"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:cli",
+        "sha256": "sha256:50c877c22f48b3eb7e407ca580eae0f206f6f6452dc385ed0f79b109174021b8"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:compiler",
+        "sha256": "sha256:2f42145d18ed39cc4aded241de75a4f68f50944e69c006cfa5ddc55cf097d766"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:emitter",
+        "sha256": "sha256:71279f66458a57577e042f84f891ed82a8163940d06f4ea71a66ff450bd5a782"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:fragment",
+        "sha256": "sha256:7df86a7779d86bbbf0c10c485902460c7c67fbac6d45fecb320abe20acbeab9a"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:index",
+        "sha256": "sha256:912c8f5b07a0e3c134618c429928ea768555f4225a92218f46e0fe60379cb8c9"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:ir",
+        "sha256": "sha256:c4822894ccf7554482f443ecde62033f7817787276f4a5397486e5529b951e9b"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-exporter",
+        "sha256": "sha256:17381163aca575d3b121a5cd8fd645874e7385fdf2388965a0309bc53b5d8582"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Json.lean",
+        "sha256": "sha256:209e1c86cc776e3d70e9b9404be3047f4d76f00aaae2a51c05ae689aa3850d26"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics.lean",
+        "sha256": "sha256:75c0e6e12fe543b9b5ba841fe653e1cdf0823007c8c0b94721233a8cfaab4dbb"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Allocation.lean",
+        "sha256": "sha256:33ba72f00ced71886c937e70dd67f14876f63c79c9f4c8ea88c34f2d73676514"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Assumption.lean",
+        "sha256": "sha256:b518409a1d2f321e6db78615e7f135c1da4168f845687a70cda8c49edab6a1fe"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Closure.lean",
+        "sha256": "sha256:036b9b785a28c98097a5c23806a25d2ef81274cecb6612b395e0f674f2021d61"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Compile.lean",
+        "sha256": "sha256:4627b2000fc0b83ec6a7e662de19f47b805212b2b360886cb7dc4d4d6c5d9338"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Effect.lean",
+        "sha256": "sha256:f942cb11ee207ba9d32ebc99ecdf6736ea9fc5bfda3f507327569a7c2204c9ee"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Erasure.lean",
+        "sha256": "sha256:6c03d9aebb8f3714b3862a480edbb924d8e580188f8e84bfc068b8e620123e4c"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Ir.lean",
+        "sha256": "sha256:c94033eaa9cc9516b81a5b2127fa0680c2b5b5f207960a4a0df3f16fe0e0a064"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Opcode.lean",
+        "sha256": "sha256:58a832ff46c142619ad0391ff1cffd13a3995e268bae17ea7161f58dd4b0f3d9"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Preservation.lean",
+        "sha256": "sha256:d5af75a39a23d63fe757797470a2cb98e3f8f4ece4ed0abec0f7a97e2460ca0f"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Program.lean",
+        "sha256": "sha256:a7c1ed24d2b0fc2178f50bd1c95481dab61b794d79bb1e7989fbb32e23ae9243"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/ProofErasure.lean",
+        "sha256": "sha256:a6b16a97a8cf3a55053f0c3bb8b1a8ea3b6cc15916c53258f11c811f847abacb"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/RegistryReport.lean",
+        "sha256": "sha256:1ce84b0a9cbe85a5f48dc07d24c1f20d86a8d6111e6cd1e9186ca97f0bc32660"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Relation.lean",
+        "sha256": "sha256:33cb54e7ba1fc46fd60ec02e7bbe44bd84964d6c10c959f3e1f831a522582f2b"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Source.lean",
+        "sha256": "sha256:36930f22aebd66e4f3d698f6299c3b9130225963292e8e364418548f8bf466c9"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Target.lean",
+        "sha256": "sha256:ae3d5aee8e29c978d7215a10e73e8ec68f94b6109e48f54e32e9282cf16815ba"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:lean-source:TSLean/LeanToTypeScript/Semantics/Tests/Registry.lean",
+        "sha256": "sha256:20c062023617f9865da529e5867ac650b5784f238be4f65c96fe38c73224b749"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:manifest",
+        "sha256": "sha256:a43deed7c8767a427d8a1da9ff1c77fcfde5c66b94bdee36268057dbd667a333"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:ordering",
+        "sha256": "sha256:8842dbfee6aa31cafca39eb050f7060dc22e67d3d9b038fa27fd7203b5dd6561"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:package",
+        "sha256": "sha256:31dcb907f128bce61d234829e60f2def4bbf932fbb29441df50036f79ce1234c"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:package-layout",
+        "sha256": "sha256:3bded79e23d14e81de8a3a33eb581ff27640ef23b8ee0945ea594240052d9459"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:platform",
+        "sha256": "sha256:798a4d7943c9e13c2440167f2c2aa98859d8e81f8d963bfc7c183cc375ccadea"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:runtime-conformance",
+        "sha256": "sha256:3fa75ea450f6f7912315bcac18d3ae5f4293dbb37555b8fb6d11972a6ae1d377"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:runtime-provenance",
+        "sha256": "sha256:3608cdb9a616a613e755adc199a45b7c79400c7d834e501ae5133254a4aa01fc"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:spec:compiler-registry.json",
+        "sha256": "sha256:61b7bd5b65e06f7f65e1b743903565d5e41dbdc950e25aa8591fe82ba3f3287b"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:spec:enforcement.bounds.json",
+        "sha256": "sha256:080bc73df7bc9c37349650298f602157f3e32576bfb881a07ef0d97b62dee67b"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:spec:placement.bounds.json",
+        "sha256": "sha256:435d9687952de671f6a01c7376b6284c3615fa0125ed02d0367ff41e915c4ce8"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:spec:semantics/probes.json",
+        "sha256": "sha256:4d8d73299bed3fbce0bd55a9d355afa7b3aa990f71377f6c2c64640d8d9b6713"
+      },
+      {
+        "kind": "compiler-source",
+        "identity": "compiler:spec:semantics/registry.json",
+        "sha256": "sha256:b3f4884a937b14480ec5cda2ee49a489c9d999e79a6a917db8e3e85cd46d5ae7"
+      },
+      {
+        "kind": "lean-source",
+        "identity": "source:TSLean.Examples.Roundtrip.IndexedInvariant",
+        "sha256": "sha256:bab496e86951919d1b23fc4108199dcc349c07fdc88f50b348677bcdab309e6b"
+      },
+      {
+        "kind": "lean-source",
+        "identity": "source:TSLean.LeanToTypeScript.Export",
+        "sha256": "sha256:17381163aca575d3b121a5cd8fd645874e7385fdf2388965a0309bc53b5d8582"
+      },
+      {
+        "kind": "lean-project",
+        "identity": "target-project:lake-manifest.json",
+        "sha256": "sha256:5d6b334baa39de6864ceffcd02bfbfe758d8ce336a571dc171f831c9c29af944"
+      },
+      {
+        "kind": "lean-project",
+        "identity": "target-project:lakefile.toml",
+        "sha256": "sha256:374caa2ac9bf32d4aea72dd7b6c2b5c3328ce2d85eff2948b612f1c41c8c35df"
+      },
+      {
+        "kind": "lean-project",
+        "identity": "target-project:lean-toolchain",
+        "sha256": "sha256:3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
+      }
+    ],
+    "inputClosureSha256": "sha256:54f675234f8696b23b0ea4f14e4401ed2246fe606570f9f1f826951ba532bf8d",
+    "semanticIrSha256": "sha256:e9b100e8ba6f6f7a6cfa33f6d2cedb2d4c220cd149e1f9a06c4144482c9c4508",
+    "certificates": [],
+    "generatedBodySha256": "sha256:09fed1e6758d83862dbc7fa9a95305d6b5218b133206ce4fac850f168b11421c",
+    "hosts": [],
+    "helpers": [],
+    "codecs": []
+  },
+  "environment": {
+    "runtime": "node:v22.22.3",
+    "typescriptVersion": "7.0.2",
+    "printerVersion": "6.0.2",
+    "platform": "linux-x64",
+    "inputs": [
+      {
+        "kind": "lean-toolchain",
+        "identity": "compiler-toolchain:lake-executable",
+        "sha256": "sha256:60330ab6f07dce20f3fa9ebb08e8b984ea9549eac172afeb15d9d2227060e2b3"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "compiler-toolchain:lean-executable",
+        "sha256": "sha256:e8baaa71855a616dc351028f3ad2200051b0671f423a1696a100e809302d5550"
+      },
+      {
+        "kind": "compiler-runtime",
+        "identity": "compiler:runtime",
+        "sha256": "sha256:e6ec2c188d83d813f81f2de8aea084d74dce603ac1abedd0a30ad941b10087b2"
+      },
+      {
+        "kind": "lean-module",
+        "identity": "module:Init",
+        "sha256": "sha256:9ed3667be31b6ce04b831418a8bc9e99c44804b8ddaf52f6ebbdebfd26d8409e"
+      },
+      {
+        "kind": "lean-module",
+        "identity": "module:Lean",
+        "sha256": "sha256:b6d86d9546713512afdbbaecee5fbc5355e06a30cd70a405f4fa061dce3d56a7"
+      },
+      {
+        "kind": "lean-module",
+        "identity": "module:Lean.Compiler.LCNF",
+        "sha256": "sha256:5d452bbb7bd627e75f066f54a13e9a67637d0ff4f2f99cee0993f198ab927a15"
+      },
+      {
+        "kind": "lean-module",
+        "identity": "module:TSLean.Examples.Roundtrip.IndexedInvariant",
+        "sha256": "sha256:2455b8f2c8b2a2c988bd964fb1de0c5da5226fe51686fd1dba8864e450fb6aba"
+      },
+      {
+        "kind": "lean-module",
+        "identity": "module:TSLean.LeanToTypeScript.Export",
+        "sha256": "sha256:1a69a906fb336069dfcee7efd6f6a7c9b8b3672d011509bbd277324e999a255f"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "target-toolchain:lake-executable",
+        "sha256": "sha256:60330ab6f07dce20f3fa9ebb08e8b984ea9549eac172afeb15d9d2227060e2b3"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "target-toolchain:lean-executable",
+        "sha256": "sha256:e8baaa71855a616dc351028f3ad2200051b0671f423a1696a100e809302d5550"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "toolchain-launcher:lake",
+        "sha256": "sha256:840179e70803ef373c2ec53342d6a45ea7d022533e4145489fc1278b4f716385"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "toolchain-runtime:00:libInit_shared.so",
+        "sha256": "sha256:2f96493ac9046f64ec7bcb78102a4c1e7cd9a7042487f246af45eda8a96667f5"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "toolchain-runtime:01:libLake_shared.so",
+        "sha256": "sha256:b1d164bf248f35b9e9664e696f4cd05a79a7066065510fb9b459139c78beb354"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "toolchain-runtime:02:libleanshared.so",
+        "sha256": "sha256:23d636cac1cadcba37beac30eff9b9b20d66cee726cf5defb4ae39f1284a3e5a"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "toolchain-runtime:03:libleanshared_1.so",
+        "sha256": "sha256:2f96493ac9046f64ec7bcb78102a4c1e7cd9a7042487f246af45eda8a96667f5"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "toolchain-runtime:04:libleanshared_2.so",
+        "sha256": "sha256:2f96493ac9046f64ec7bcb78102a4c1e7cd9a7042487f246af45eda8a96667f5"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "toolchain-runtime:05:ld-linux-x86-64.so.2",
+        "sha256": "sha256:bda779ea9e9ad234f60315477d7cfd0bdde861cd8ddd9df8cdaf62f18c4cec14"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "toolchain-runtime:06:libc.so.6",
+        "sha256": "sha256:85e64f97e348786a8fb4d9f3d52fec289e2fb86bba20f0731dfe61990525e0f7"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "toolchain-runtime:07:libdl.so.2",
+        "sha256": "sha256:59d725ca30596a9863f4fa2552a7125f834842abc86b40890231c129358965d2"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "toolchain-runtime:08:libm.so.6",
+        "sha256": "sha256:1c488db6f4fe8cecb72456bc018de000b7a9b539c2994864b0416b5e8371b3d8"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "toolchain-runtime:09:libpthread.so.0",
+        "sha256": "sha256:1327fc40710691dbd94e88b6cf4efce27fefe8fbb93f7d1164a75b4dccaea696"
+      },
+      {
+        "kind": "lean-toolchain",
+        "identity": "toolchain-runtime:10:librt.so.1",
+        "sha256": "sha256:9f3cc59207bcaaac74aaf7aca961f4816f0f4d945e4bd1c3cb98ec516becf161"
+      },
+      {
+        "kind": "compiler-runtime",
+        "identity": "typescript:compiler",
+        "sha256": "sha256:b0a2b4a3976dad0f31325bd18eeee8e7d2a1ed674d3e486b1ad5c501207960a9"
+      },
+      {
+        "kind": "compiler-runtime",
+        "identity": "typescript:package",
+        "sha256": "sha256:3722b30210616a13a3213ded11575ba6b2dbab10c32a5ef67afca8513e27017e"
+      }
+    ],
+    "inputClosureSha256": "sha256:2b5b74fe349a4f0543ace898ec3f5cd99cee7ef71b49d1a6e31b5f6fe430bad3",
+    "runtimeConformance": []
+  }
+}

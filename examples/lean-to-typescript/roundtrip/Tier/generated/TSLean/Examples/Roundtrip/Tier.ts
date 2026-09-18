@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Tier
  * Generated module: TSLean/Examples/Roundtrip/Tier.ts
  * Package entry module: TSLean.Examples.Roundtrip.Tier
- * Semantic identity: sha256:eb9ae3163524388c200179d08a8bc205c1ff21312d25b26bc3a8930dbad42b22
- * Input closure: sha256:35d6e0d070ce3e2123dc3c13421303c4f5b986ca23200c72ae353d6a4e542e98
+ * Semantic identity: sha256:1dcc840f3a5a31c73274a46b65b81c65710c32a1c603dae64afdb63cd2bf6421
+ * Input closure: sha256:00c62b985f08097cb959830c36ee80235137d817fbeb66c2ae484a442b8702cf
  * Semantic IR: sha256:21cfa02e9fa002975767aa35c90f15f65a30f4a4e28a0fa490c50cd57efb6f52
  * Generated module body: sha256:cbe3559044ac1e2546ee1ba10b3aa4b12668787c2e5cbd23517015351136c4de
  * Generated package body: sha256:6bd990c730cacabe3d79c98b8da282675261ffc570c70f10bcd57de74c6e3ead

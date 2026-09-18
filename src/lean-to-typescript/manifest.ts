@@ -283,6 +283,9 @@ function canonicalSemanticIdentity(semantic: LeanToTypeScriptSemanticIdentity): 
           endLine: declaration.span.endLine,
           endColumn: declaration.span.endColumn,
         },
+        ...(declaration.erasedParameters === undefined
+          ? {}
+          : { erasedParameters: [...declaration.erasedParameters] }),
       })),
       bodySha256: module.bodySha256,
       sourceMapSha256: module.sourceMapSha256,
@@ -534,12 +537,16 @@ function decodeModuleIdentity(value: unknown, location: string): LeanToTypeScrip
 
 function decodeGeneratedDeclaration(value: unknown, location: string): LeanToTypeScriptGeneratedDeclaration {
   const declaration = record(value, location);
-  exactKeys(declaration, ['declaration', 'emitted', 'line', 'span'], location);
+  exactKeys(declaration, ['declaration', 'emitted', 'line', 'span'], location, ['erasedParameters']);
+  const erasedParameters = declaration['erasedParameters'];
   return {
     declaration: string(declaration['declaration'], `${location} declaration`),
     emitted: string(declaration['emitted'], `${location} emitted name`),
     line: position(declaration['line'], `${location} line`),
     span: decodeSourceSpan(declaration['span'], `${location} span`),
+    ...(erasedParameters === undefined
+      ? {}
+      : { erasedParameters: strings(erasedParameters, `${location} erased parameters`) }),
   };
 }
 
@@ -880,11 +887,27 @@ function offset(value: unknown, location: string): number {
   return Number(value);
 }
 
-function exactKeys(value: Record<string, unknown>, expected: readonly string[], location: string): void {
+/**
+ * The keys a manifest object may carry: every required key present, and nothing beyond the
+ * required and optional sets. An optional key whose absence and whose empty value would mean the
+ * same thing is absent — a manifest has one spelling per fact — so the decoders that read one
+ * refuse an empty value.
+ */
+function exactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+  location: string,
+  optional: readonly string[] = [],
+): void {
   const actual = Object.keys(value).sort(compareCodePoints);
   const canonical = [...expected].sort(compareCodePoints);
-  if (actual.length !== canonical.length || actual.some((key, index) => key !== canonical[index])) {
-    throw new TypeError(`${location} fields must be exactly ${canonical.join(', ')}`);
+  // An unrecognised key survives this filter, so it lengthens `present` and fails the comparison
+  // below; no separate membership test is needed.
+  const present = actual.filter((key) => !optional.includes(key));
+  if (present.length !== canonical.length || present.some((key, index) => key !== canonical[index])) {
+    throw new TypeError(
+      `${location} fields must be exactly ${canonical.join(', ')}${optional.length === 0 ? '' : `, optionally ${[...optional].sort(compareCodePoints).join(', ')}`}`,
+    );
   }
 }
 

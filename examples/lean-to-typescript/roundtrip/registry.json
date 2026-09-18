@@ -210,5 +210,36 @@
     ],
     "behaviourProfile": "outside",
     "behaviourReason": "the round-trip profile carries neither a record nor a bigint, so the erased-field projection has no reader yet; tracked as shape.field-erasure-projection"
+  },
+  {
+    "name": "PhantomIndex",
+    "module": "TSLean.Examples.Roundtrip.PhantomIndex",
+    "source": "lean/TSLean/Examples/Roundtrip/PhantomIndex.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.PhantomIndex.parse",
+      "TSLean.Examples.Roundtrip.PhantomIndex.levelOf",
+      "TSLean.Examples.Roundtrip.PhantomIndex.runLabel",
+      "TSLean.Examples.Roundtrip.PhantomIndex.pairOf"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/PhantomIndex/generated",
+    "forms": ["shape.phantom-index-projection"]
+  },
+  {
+    "name": "IndexedInvariant",
+    "module": "TSLean.Examples.Roundtrip.IndexedInvariant",
+    "source": "lean/TSLean/Examples/Roundtrip/IndexedInvariant.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.IndexedInvariant.stamp",
+      "TSLean.Examples.Roundtrip.IndexedInvariant.runStamp",
+      "TSLean.Examples.Roundtrip.IndexedInvariant.stampedLevel",
+      "TSLean.Examples.Roundtrip.IndexedInvariant.highRunLevel"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/IndexedInvariant/generated",
+    "forms": [
+      "shape.field-erasure-projection",
+      "shape.phantom-index-projection"
+    ],
+    "behaviourProfile": "outside",
+    "behaviourReason": "one constructor meets both erasures, and the observation driver cannot build its value: the driver elaborates a structure literal against the original Lean module, where the dropped Prop field is still declared and still has to be discharged; tracked as shape.field-erasure-projection"
   }
 ]

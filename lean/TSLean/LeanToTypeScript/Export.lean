@@ -1,4 +1,5 @@
 import Lean
+import Lean.Compiler.LCNF
 
 namespace TSLean.LeanToTypeScript
 
@@ -455,9 +456,108 @@ private def arrayOpcode? (name : Name) : Option (String × Nat) :=
   else none
 
 /--
+A declared parameter of a data type that carries no runtime representation.
+
+`TextId (kind : IdKind)` is agent-core's kernel identifier. `kind` separates `TextId .run` from
+`TextId .turn` in the type checker and appears in no field, so a value of either type is the same
+record at runtime and one TypeScript type is correct at every index. That is the form admitted
+here, and the obligation below is checked per type rather than assumed for the shape.
+-/
+private structure ErasedParameter where
+  /-- The declared parameter position, counted from the outermost binder. -/
+  position : Nat
+  /-- The binder name Lean gave it, for the diagnostic a use site produces. -/
+  name : String
+  /-- Its declared Lean type, kept as the elaborated expression. The wire carries this as a type
+  node: a reader that has to relate the emitted type back to the Lean family needs the index's type
+  to name the index at all, and the round-trip driver needs it to write an index-polymorphic
+  renderer. An erased thing still has to be nameable. -/
+  binderType : Expr
+
+/--
+Whether one declared parameter reaches a field of one constructor that carries data.
+
+This is the whole soundness argument for erasing a term-level index, so it is a check rather than a
+convention. Lean's own compiler erases such a parameter unconditionally: in
+`Lean.Compiler.LCNF.toMonoType` a parameter whose LCNF type is neither `lcErased` nor a sort has
+its argument replaced by `lcAny` (`MonoTypes.lean:84-87` under the pinned toolchain). That erasure
+is stated for a runtime whose values are boxed and carry no type, so it holds just as well for a
+length-indexed vector, whose length the emitted TypeScript would have to forget — measured under
+Lean 4.33.1, `toMonoType` answers the same mono type at two different indices for a genuinely
+dependent structure as it does for a phantom-indexed one. A target that carries types therefore
+needs the stronger fact, which is the one checked here: every field that survives erasure has a
+type that does not mention the parameter, so the single emitted type is the right type at every
+index.
+
+The constructor's own declared telescope is what is read. After the `numParams` parameter binders
+are peeled, parameter `position` sits at loose de Bruijn index `numParams - 1 - position`, and each
+field binder walked inwards adds one, so the field at `depth` reads the parameter at
+`numParams - 1 - position + depth`. A field whose role is erased is not checked: it carries no
+data, so nothing its type mentions reaches the target. Only the fields are walked — a constructor's
+result is `T p…`, which names every parameter by construction and says nothing about content.
+-/
+private def parameterReachesData (environment : Environment) (constructorName : Name)
+    (numParams position : Nat) : Except String Bool := do
+  let some (.ctorInfo constructor) := environment.find? constructorName
+    | throw s!"constructor {constructorName} is absent from the elaborated environment"
+  let mut telescope := constructor.type
+  for _ in [0 : numParams] do
+    match telescope.consumeMData with
+    | .forallE _ _ body _ => telescope := body
+    | _ => throw s!"constructor {constructorName} does not expose its parameter telescope"
+  let target := numParams - 1 - position
+  let mut reaches := false
+  for depth in [0 : constructor.numFields] do
+    match telescope.consumeMData with
+    | .forallE _ binderType body _ =>
+        unless (binderRole environment binderType).erased do
+          if binderType.hasLooseBVar (target + depth) then
+            reaches := true
+        telescope := body
+    | _ => throw s!"constructor {constructorName} does not expose its fields as first-order parameters"
+  pure reaches
+
+/--
+The declared parameters of a data type that carry no representation, in declared order.
+
+A parameter is erasable when it is a term rather than a `Type 0` — a `Type 0` parameter is what
+makes the generated type generic and stays — and when no constructor's data field mentions it. A
+parameter some data field mentions is genuinely dependent: a length-indexed vector's element
+sequence has the length its index names, and one TypeScript type cannot be right at every length,
+so the type is refused by name instead of erased. A parameter that is neither a `Type 0` nor a
+term — a universe, or a proposition — is refused too, because neither has an index this compiler
+reads.
+-/
+private def erasedDataParameters (environment : Environment) (declaration : InductiveVal) :
+    Except String (List ErasedParameter) := do
+  let mut erased := []
+  let mut telescope := declaration.type
+  for position in [0 : declaration.numParams] do
+    match telescope.consumeMData with
+    | .forallE binderName binderType body _ =>
+        unless isTypeSort binderType do
+          let role := binderRole environment binderType
+          unless role == .value do
+            throw s!"data type {declaration.name} takes a parameter that carries {role.description}, which is neither a Type 0 nor a term index this compiler erases"
+          -- The index's own type has to be closed. A parameter whose type names an earlier
+          -- parameter — `(n : Nat) (m : Fin n)` — is a chain of dependencies the record could not
+          -- state, because the type recorded for `m` would mention a parameter the wire dropped.
+          unless binderType.looseBVarRange == 0 do
+            throw s!"data type {declaration.name} takes the term parameter {binderName} whose type mentions an earlier parameter; an index whose type is itself indexed is outside the checked fragment"
+          for constructorName in declaration.ctors do
+            if ← parameterReachesData environment constructorName declaration.numParams position then
+              throw s!"data type {declaration.name} is indexed by the term parameter {binderName}, and {constructorName} declares a data field whose type mentions it, so no single TypeScript type is correct at every index; an indexed type whose content depends on its index is outside the checked fragment"
+          erased := { position, name := binderName.toString, binderType } :: erased
+        telescope := body
+    | _ => throw s!"data type {declaration.name} does not expose its declared parameters"
+  pure erased.reverse
+
+/--
 An inductive data type the fragment admits: declared by the frozen target closure, in `Type 0`,
-with no indices, no universe parameters, and every parameter a `Type 0`. A parameter is what makes
-the generated type generic, so it has to be a type and nothing else.
+with no indices, no universe parameters, and every parameter either a `Type 0` or a term index that
+carries no representation. A `Type 0` parameter is what makes the generated type generic; a term
+index is erased, and `erasedDataParameters` decides per type whether erasing it is sound rather
+than assuming it for the shape.
 
 A type class is admitted here too, because an instance is an elaborated structure value and the
 class is the record it inhabits. A class that dispatches on an output parameter is refused: its
@@ -482,13 +582,14 @@ private def ordinaryDataInfo (environment : Environment) (targetModules : NameSe
   let mut telescope := declaration.type
   for _ in [0 : declaration.numParams] do
     match telescope.consumeMData with
-    | .forallE _ binderType body _ =>
-        unless isTypeSort binderType do
-          throw s!"data type {name} takes a parameter that is not a Type 0"
-        telescope := body
+    | .forallE _ _ body _ => telescope := body
     | _ => throw s!"data type {name} does not expose its declared parameters"
   unless isTypeSort telescope do
     throw s!"data type {name} must be declared in Type 0"
+  -- A parameter that is not a `Type 0` is admitted only when it carries no representation. The
+  -- check runs on every path that admits a data type, so a genuinely dependent index is refused
+  -- wherever the type is reached rather than only where its parameters are counted.
+  let _ ← erasedDataParameters environment declaration
   pure declaration
 
 /-- The binder names a data type gives its parameters, kept for diagnostics only. -/
@@ -504,26 +605,134 @@ private def dataTypeParameterNames (declaration : InductiveVal) : List String :=
 Where a de Bruijn index points, relative to one declaration's binders. The type parameters are the
 outermost binders, so an index at or above the current value depth names a type parameter and its
 position is counted from the outside in.
+
+Two of the positions counted that way carry no representation, and both are recorded rather than
+re-derived. `erasedParameters` names the declared parameters of the enclosing data type that
+`erasedDataParameters` erased, so an emitted type argument is numbered against the parameters the
+generated declaration actually takes and a type that mentions an erased one is refused by name.
+`erasedValueBinders` names the enclosing declaration's value binders that erasure dropped, counted
+from the outermost, which is what turns a de Bruijn index in a result type into the position of the
+emitted parameter that supplies it.
 -/
 private structure Context where
   environment : Environment
   targetModules : NameSet
   typeParameters : Nat
   valueDepth : Nat
+  /-- Declared parameter positions of the enclosing data type that carry no representation. -/
+  erasedParameters : List Nat := []
+  /-- Value-binder positions, outermost first, that erasure dropped from the parameter list. -/
+  erasedValueBinders : List Nat := []
 
 private def Context.push (context : Context) (count : Nat := 1) : Context :=
   { context with valueDepth := context.valueDepth + count }
 
-private def Context.typeParameterIndex? (context : Context) (index : Nat) : Option Nat :=
+/-- The context under an erased value binder, which records the binder's own position so a type
+written inside it can still name the emitted parameter list. -/
+private def Context.pushErased (context : Context) : Context :=
+  { context with valueDepth := context.valueDepth + 1,
+                 erasedValueBinders := context.valueDepth :: context.erasedValueBinders }
+
+/-- The declared parameter position a de Bruijn index names, erased or not. -/
+private def Context.declaredParameterIndex? (context : Context) (index : Nat) : Option Nat :=
   if index < context.valueDepth then none
   else if index < context.valueDepth + context.typeParameters then
     some (context.typeParameters - 1 - (index - context.valueDepth))
   else none
 
+/-- The emitted type-argument position a de Bruijn index names, which counts only the parameters
+erasure kept. An index naming an erased parameter has no emitted position and answers `none`. -/
+private def Context.typeParameterIndex? (context : Context) (index : Nat) : Option Nat := do
+  let declared ← context.declaredParameterIndex? index
+  if context.erasedParameters.contains declared then none
+  else some (declared - (context.erasedParameters.filter (· < declared)).length)
+
+/-- The emitted parameter position a de Bruijn index into the enclosing value binders names. A
+binder erasure dropped has no emitted position and answers `none`, which is what makes an erased
+index's origin unrecordable rather than silently misnumbered. -/
+private def Context.valueParameterIndex? (context : Context) (index : Nat) : Option Nat :=
+  if index < context.valueDepth then
+    let declared := context.valueDepth - 1 - index
+    if context.erasedValueBinders.contains declared then none
+    else some (declared - (context.erasedValueBinders.filter (· < declared)).length)
+  else none
+
+/--
+Where an erased index came from, recorded so the exporter's record of it stays total.
+
+Erasing an index without recording it would leave the emitted type unrelatable to the Lean type it
+stands for: `TextId` alone does not say which `IdKind` it was written at, and a checker reading it
+back would have to guess. So the index is recorded, and exactly two origins are admitted. A
+nullary constructor is the concrete case — `TextId .tenant` in a record field. A reference to one
+of the enclosing declaration's own emitted value parameters is the varying case — `kind` in
+`TextId.parse (kind : IdKind) : … → Outcome (TextId kind)`, whose index arrives at runtime in the
+parameter the position names, because the index is erased from the type and kept in the value.
+
+Anything else is refused. A computed index would be a term in a type position that the emitted
+program never evaluates, so there is no parameter and no constructor a reader could name it by; an
+index the exporter cannot name is one the checker could not relate to its source, and a partial
+record is worse than a refusal.
+-/
+private def erasedArgumentNode (context : Context) (typeName : Name) (parameter : Nat)
+    (argument : Expr) : Except String Json := do
+  let origin ←
+    match argument.consumeMData with
+    | .const constructorName _ =>
+        match context.environment.find? constructorName with
+        | some (.ctorInfo constructor) =>
+            unless constructor.numFields = 0 do
+              throw s!"type {typeName} is applied at an index built by {constructorName}, which takes fields; only a nullary constructor names an index the emitted type can be related back to"
+            pure (node "constructor" [("name", .str constructorName.toString)])
+        | _ =>
+            throw s!"type {typeName} is applied at an index that is the constant {constructorName} rather than a constructor of its index type, which is outside the checked fragment"
+    | .bvar index =>
+        match context.valueParameterIndex? index with
+        | some position => pure (node "binder" [("index", .num position)])
+        | none =>
+            match context.declaredParameterIndex? index with
+            | some declared =>
+                throw s!"type {typeName} is applied at an index taken from declared parameter {declared}, which carries no representation, so the emitted type has no parameter to name it by"
+            | none =>
+                throw s!"type {typeName} is applied at an index taken from a binder the emitted declaration does not take, so no parameter supplies it"
+    | _ =>
+        throw s!"type {typeName} is applied at a computed index, which the emitted program never evaluates; only a nullary constructor or one of the declaration's own parameters names an index this compiler records"
+  pure (object [("parameter", .num parameter), ("origin", origin)])
+
+/--
+One named type's arguments, split into the parameters the target represents and the indices erasure
+records, each in declared order.
+-/
+private def splitErasedArguments (erased : List Nat) (arguments : List Expr) :
+    List Expr × List (Nat × Expr) :=
+  let rec go (position : Nat) (remaining : List Expr) : List Expr × List (Nat × Expr) :=
+    match remaining with
+    | [] => ([], [])
+    | argument :: rest =>
+        let (represented, recorded) := go (position + 1) rest
+        if erased.contains position then (represented, (position, argument) :: recorded)
+        else (argument :: represented, recorded)
+  go 0 arguments
+
+/-- The declared parameter names the emitted declaration is generic in, which are the ones erasure
+kept. An erased index contributes no TypeScript type parameter, so the printed arity matches the
+arguments every use site supplies. -/
+private def representedParameterNames (erased : List Nat) (names : List String) : List String :=
+  let rec go (position : Nat) (remaining : List String) : List String :=
+    match remaining with
+    | [] => []
+    | parameterName :: rest =>
+        let kept := go (position + 1) rest
+        if erased.contains position then kept else parameterName :: kept
+  go 0 names
+
 /-- The Lean data types the compiler maps rather than lowers, plus a user data type applied to
 exactly its declared parameters. One function builds the type node for both, so a constructor
-application and a type annotation can never disagree about a type's image. -/
-private def dataTypeNode (name : Name) (arguments : List Json) : Except String Json :=
+application and a type annotation can never disagree about a type's image.
+
+`erasedArguments` is empty for every mapped type: `Option`, `Except`, `List`, `Prod` and the json
+type form take type arguments only, so only a user data type can carry an erased index. -/
+private def dataTypeNode (name : Name) (arguments : List Json)
+    (erasedArguments : List Json := []) : Except String Json :=
   if name == ``Option then
     match arguments with
     | [value] => pure (node "option" [("value", value)])
@@ -545,7 +754,8 @@ private def dataTypeNode (name : Name) (arguments : List Json) : Except String J
     | [] => pure (node "json")
     | _ => throw "JsonValue takes no type arguments"
   else
-    pure (node "named" [("name", .str name.toString), ("arguments", array arguments)])
+    pure (node "named" ([("name", .str name.toString), ("arguments", array arguments)]
+      ++ (if erasedArguments.isEmpty then [] else [("erasedArguments", array erasedArguments)])))
 
 mutual
 
@@ -562,7 +772,12 @@ private partial def typeNode (context : Context) (expression : Expr) : Except St
         throw "a type parameter applied to arguments is outside the checked fragment"
       match context.typeParameterIndex? index with
       | some position => pure (node "parameter" [("index", .num position)])
-      | none => throw "a value binder appears in a type; dependent types are outside the checked fragment"
+      | none =>
+          match context.declaredParameterIndex? index with
+          | some declared =>
+              throw s!"declared parameter {declared} carries no representation, so no type can mention it; a field whose type depends on an erased index is outside the checked fragment"
+          | none =>
+              throw "a value binder appears in a type; dependent types are outside the checked fragment"
   | .const name levels =>
       -- A marker stands where an erased binder was. A type that mentions one is a dependent type
       -- whose index erasure removed, so it is refused by the role rather than mapped.
@@ -614,7 +829,14 @@ private partial def typeNode (context : Context) (expression : Expr) : Except St
         let declaration ← ordinaryDataInfo context.environment context.targetModules name
         unless arguments.length = declaration.numParams do
           throw s!"data type {name} is applied to {arguments.length} arguments; it declares {declaration.numParams}"
-        dataTypeNode name (← arguments.mapM (typeNode context))
+        -- The erased indices are split off before the rest are mapped, because an index is a term
+        -- and `typeNode` has no image for a term. Each one is recorded instead of dropped, so the
+        -- emitted type stays relatable to the Lean type it stands for.
+        let erased := (← erasedDataParameters context.environment declaration).map (·.position)
+        let (represented, recorded) := splitErasedArguments erased arguments
+        dataTypeNode name (← represented.mapM (typeNode context))
+          (← recorded.mapM fun (position, argument) =>
+            erasedArgumentNode context name position argument)
   | _ => throw s!"unsupported type expression {expression}"
 
 /--
@@ -709,7 +931,9 @@ The value binders of a telescope, each with the role that decides whether it sur
 
 A binder is pushed onto the type context whether or not it is erased, because the rest of the
 telescope is written under it either way: erasure changes what the emitted declaration takes, never
-what the Lean type means.
+what the Lean type means. An erased binder is pushed with its own position recorded, so a result
+type written inside it can still say which emitted parameter an index arrives in — the case
+`TextId.parse` is, where the index is dropped from the result type and kept in the value.
 -/
 private partial def peelValueParameters (context : Context) (expression : Expr) :
     Except String (List (BinderRole × Option Parameter) × Json) := do
@@ -717,7 +941,7 @@ private partial def peelValueParameters (context : Context) (expression : Expr) 
   | .forallE binderName binderType body binderInfo =>
       let role := binderRole context.environment binderType
       if role.erased then
-        let (binders, result) ← peelValueParameters context.push body
+        let (binders, result) ← peelValueParameters context.pushErased body
         pure ((role, none) :: binders, result)
       else
         unless binderInfo == .default do
@@ -900,6 +1124,73 @@ private def dependentBranchBody (branch : Expr) : Except String Expr :=
   | .lam _ _ body _ => pure (body.instantiate1 (erasedMarker .proof))
   | _ =>
       throw "a dependent if applies a branch that does not abstract its own decision proof, which is outside the checked fragment"
+
+/-- A constructor application's leading parameter arguments, split by erasure, and what is left of
+its telescope for its fields. -/
+private structure ConstructorParameters where
+  /-- The type arguments the emitted constructor carries, in declared order. -/
+  typeArguments : List Json
+  /-- The indices erasure recorded, in declared order. -/
+  erasedArguments : List Json
+  /-- The number of declared parameters erasure dropped. -/
+  erasedCount : Nat
+  /-- The telescope beginning at the constructor's first field, with every parameter substituted. -/
+  fieldTelescope : Expr
+  /-- The arguments that remain for the fields. -/
+  fieldArguments : List Expr
+
+/--
+A constructor application's parameters, split the same way `typeNode` splits a type's arguments.
+
+A data type's parameters lead its constructor's telescope, so `TextId.mk .run value proof` applies
+the index before the fields. `binderRole` classifies that index as a value — `IdKind` is neither a
+sort nor a proposition — so left alone it would be emitted as a runtime argument the generated
+constructor does not take, and the record would carry a field that is not a field. It is dropped
+here instead, at exactly the positions `erasedDataParameters` names, which is the same erasure the
+type side performs: one rule decides both, so a construction and its type annotation cannot
+disagree about a type's arity.
+
+Every parameter is substituted into the remaining telescope whether or not it survives, so the
+field types the caller's arguments are read against are the instantiated ones.
+-/
+private def constructorParameters (context : Context) (constructor : ConstructorVal)
+    (telescope : Expr) (arguments : List Expr) : Except String ConstructorParameters := do
+  let some (.inductInfo declaration) := context.environment.find? constructor.induct
+    | throw s!"constructor {constructor.name} names no inductive data type"
+  -- A universe-polymorphic inductive is either one the fragment maps by name — `Option`, `Except`,
+  -- `List`, `Prod` — or one `ordinaryDataInfo` refuses for its universes, so it never carries an
+  -- erased index and its parameters are read exactly as they were before this erasure existed. The
+  -- guard also keeps the erasability question off a type whose declared parameter is `Type u`
+  -- rather than `Type 0`, which is a universe to classify and not an index to erase.
+  let erased ←
+    if declaration.levelParams.isEmpty then
+      pure ((← erasedDataParameters context.environment declaration).map (·.position))
+    else pure []
+  let mut current := telescope
+  let mut remaining := arguments
+  let mut typeArguments := []
+  let mut erasedArguments := []
+  for position in [0 : constructor.numParams] do
+    match current.consumeMData, remaining with
+    | .forallE _ binderType body _, argument :: rest =>
+        if erased.contains position then
+          erasedArguments :=
+            (← erasedArgumentNode context constructor.induct position argument) :: erasedArguments
+        else
+          unless isTypeSort binderType do
+            throw s!"constructor {constructor.name} takes a parameter that is neither a Type 0 nor an index its data type erases"
+          typeArguments := (← typeNode context argument) :: typeArguments
+        current := body.instantiate1 argument
+        remaining := rest
+    | _, _ =>
+        throw s!"constructor {constructor.name} is applied to {arguments.length} arguments, which does not expose its data type's {constructor.numParams} parameters"
+  pure {
+    typeArguments := typeArguments.reverse,
+    erasedArguments := erasedArguments.reverse,
+    erasedCount := erased.length,
+    fieldTelescope := current,
+    fieldArguments := remaining
+  }
 
 mutual
 
@@ -1563,14 +1854,20 @@ private partial def constantApplicationNode (context : Context) (name : Name) (l
     ]
   match info with
   | .ctorInfo constructor =>
-      let (typeArguments, valueArguments) ←
-        applicationArguments context (info.instantiateTypeLevelParams levels) arguments
+      let parameters ←
+        constructorParameters context constructor (info.instantiateTypeLevelParams levels) arguments
+      let typeArguments := parameters.typeArguments
+      let erasedParameters := parameters.erasedCount
+      let (extraTypeArguments, valueArguments) ←
+        applicationArguments context parameters.fieldTelescope parameters.fieldArguments
       -- Erasure drops a `Prop` field's argument here exactly as it drops the field from the
       -- declaration, so the arity the emitted record carries is the declared one less the fields
       -- that hold no data, and the two can never disagree.
       let erasedFields ← erasedStructureFieldCount context.environment constructor
-      unless typeArguments.length = constructor.numParams do
-        throw s!"constructor {name} received {typeArguments.length} type arguments; expected {constructor.numParams}"
+      unless extraTypeArguments.isEmpty do
+        throw s!"constructor {name} is applied to a type argument beyond its data type's parameters, which is outside the checked fragment"
+      unless typeArguments.length = constructor.numParams - erasedParameters do
+        throw s!"constructor {name} received {typeArguments.length} type arguments; expected {constructor.numParams - erasedParameters}"
       unless valueArguments.length = constructor.numFields - erasedFields do
         throw s!"constructor {name} received {valueArguments.length} fields; expected {constructor.numFields - erasedFields}"
       if isStructure context.environment constructor.induct then
@@ -1580,13 +1877,13 @@ private partial def constantApplicationNode (context : Context) (name : Name) (l
         let encodedFields := (fields.zip valueArguments).map fun (field, value) =>
           object [("name", .str field.getString!), ("value", value)]
         pure (node "record" [
-          ("type", ← dataTypeNode constructor.induct typeArguments),
+          ("type", ← dataTypeNode constructor.induct typeArguments parameters.erasedArguments),
           ("fields", array encodedFields)
         ])
       else
         ensureAsciiIdentifier name.getString! "constructor name"
         pure (node "variant" [
-          ("type", ← dataTypeNode constructor.induct typeArguments),
+          ("type", ← dataTypeNode constructor.induct typeArguments parameters.erasedArguments),
           ("name", .str name.getString!),
           ("arguments", array valueArguments)
         ])
@@ -1679,12 +1976,44 @@ private def constructorFields (context : Context) (constructorName : Name) :
 private def typeParameterField (names : List String) : String × Json :=
   ("typeParameters", array (names.map Json.str))
 
+/--
+The declared parameters erasure dropped, recorded on the declaration so the emitted type's arity is
+relatable to the Lean type's own.
+
+Without this the wire would say only that `Label` takes no type parameters, and a reader could not
+tell a type that never had one from a type whose index was erased — which is the difference between
+an unread construct and a deliberately discarded one. The key is absent when nothing was erased, so
+every declaration that existed before this erasure is byte-identical.
+-/
+private def erasedParameterFields (context : Context) (erased : List ErasedParameter) :
+    Except String (List (String × Json)) := do
+  if erased.isEmpty then return []
+  -- The index's own type is read at the data type's parameter depth, where no value binder is in
+  -- scope: `erasedDataParameters` refuses a parameter whose type mentions an earlier parameter, so
+  -- a type read here is closed.
+  let parameterContext := { context with valueDepth := 0 }
+  let entries ← erased.mapM fun parameter => do
+    pure (object [
+      ("position", .num parameter.position),
+      ("name", .str parameter.name),
+      ("type", ← typeNode parameterContext parameter.binderType)
+    ])
+  pure [("erasedParameters", array entries)]
+
 private def dataDeclaration (environment : Environment) (targetModules : NameSet)
     (name : Name) : Except String Json := do
   let declaration ← ordinaryDataInfo environment targetModules name
-  let typeParameterNames := dataTypeParameterNames declaration
+  -- A term index contributes no TypeScript type parameter, so the declared list is filtered to the
+  -- parameters erasure kept and the context records the dropped positions. A field whose type
+  -- mentions a dropped one is then refused by name rather than emitted against a type parameter
+  -- the generated declaration does not take.
+  let erased ← erasedDataParameters environment declaration
+  let erasedPositions := erased.map (·.position)
+  let typeParameterNames :=
+    representedParameterNames erasedPositions (dataTypeParameterNames declaration)
   let context : Context :=
-    { environment, targetModules, typeParameters := declaration.numParams, valueDepth := 0 }
+    { environment, targetModules, typeParameters := declaration.numParams, valueDepth := 0,
+      erasedParameters := erasedPositions }
   if isStructure environment name then
     let fields ← structureFieldRoles environment name
     let constructor := getStructureCtor environment name
@@ -1698,7 +2027,7 @@ private def dataDeclaration (environment : Environment) (targetModules : NameSet
       ("constructor", .str constructor.name.getString!),
       ("fields", array (declaredFields.filterMap id)),
       invariantsField fields
-    ] ++ documentationFields environment name))
+    ] ++ (← erasedParameterFields context erased) ++ documentationFields environment name))
   else
     if declaration.ctors.isEmpty then
       throw s!"inductive data type {name} has no constructors"
@@ -1718,7 +2047,7 @@ private def dataDeclaration (environment : Environment) (targetModules : NameSet
       namespaceField name,
       typeParameterField typeParameterNames,
       ("constructors", array constructors.reverse)
-    ] ++ documentationFields environment name))
+    ] ++ (← erasedParameterFields context erased) ++ documentationFields environment name))
 
 /--
 Which recursion discipline Lean proved for a definition, read from the elaborator's own record.
@@ -2056,6 +2385,80 @@ private def ensureAdmittedAxioms (name : Name) (role : String) : CoreM Unit := d
     unless admittedAxioms.contains axiomName do
       throwError "{name}: its {role} depends on the axiom {axiomName}, which is outside the checked fragment"
 
+/--
+Lean's own lowering, consulted as an independent oracle on every index this exporter erased.
+
+The soundness argument for erasing a term index is `erasedDataParameters`' obligation: no surviving
+field's type mentions the parameter, so one emitted TypeScript type is correct at every index. That
+argument is this compiler's, and it is checked syntactically. This pass adds the *other* authority
+— Lean's — and refuses a disagreement rather than preferring either side.
+
+What Lean says is read in two ways, both from `Lean.Compiler.LCNF` under the pinned toolchain:
+
+* `getOtherDeclBaseType` gives the type former's own LCNF base type. `toMonoType` replaces an
+  argument with `lcAny` exactly when the corresponding parameter's LCNF type is neither `lcErased`
+  nor a sort (`MonoTypes.lean:84-87`), so reading that parameter's LCNF type is reading the
+  precondition of Lean's erasure rule rather than guessing at its outcome. A parameter this
+  compiler erased whose LCNF type *is* a sort would be a type parameter misclassified as an index,
+  and it is refused.
+* `toMonoType` is then executed at two distinct closed indices, when the index type offers two
+  nullary constructors, and the two mono types must agree. That is the differential: it is Lean
+  itself reporting that the compiled type does not vary with the index.
+
+The second read is necessary and deliberately not sufficient. Measured under Lean 4.33.1,
+`toMonoType` answers the same mono type at two different indices for a genuinely dependent
+structure too, because Lean's runtime boxes its values and carries no types — which is why the
+refusal of a dependent index lives in `erasedDataParameters` and not here. A pass that trusted this
+one alone would erase a length index.
+-/
+private def ensureLeanErasesIndex (declaration : InductiveVal) (parameter : ErasedParameter) :
+    CoreM Unit := do
+  let former := declaration.name
+  let mut base ← Lean.Compiler.LCNF.getOtherDeclBaseType former []
+  for _ in [0 : parameter.position] do
+    match base.consumeMData with
+    | .forallE _ _ body _ => base := body
+    | _ =>
+        throwError "{former}: its LCNF base type does not expose parameter {parameter.position}"
+  let .forallE _ parameterType _ _ := base.consumeMData
+    | throwError "{former}: its LCNF base type does not expose parameter {parameter.position}"
+  if parameterType.consumeMData.isSort || parameterType.consumeMData.isErased then
+    throwError "{former}: parameter {parameter.name} was erased as a term index, but Lean's own LCNF base type gives it the type {parameterType}, which Lean keeps rather than erases"
+  -- The differential, where the index type offers two distinct closed values to run it at.
+  let indexType ← Lean.Compiler.LCNF.toMonoType parameterType
+  let some indexName := constHead? indexType
+    | return ()
+  let some (.inductInfo indexDeclaration) := (← getEnv).find? indexName
+    | return ()
+  let nullary ← indexDeclaration.ctors.filterM fun constructorName => do
+    match (← getEnv).find? constructorName with
+    | some (.ctorInfo constructor) => pure (constructor.numFields == 0 && constructor.numParams == 0)
+    | _ => pure false
+  let (first :: second :: _) := nullary
+    | return ()
+  let instantiate (index : Name) : CoreM Expr := do
+    let mut arguments := #[]
+    for position in [0 : declaration.numParams] do
+      arguments := arguments.push
+        (if position == parameter.position then mkConst index else Lean.Compiler.LCNF.anyExpr)
+    Lean.Compiler.LCNF.toMonoType (mkAppN (mkConst former) arguments)
+  let atFirst ← instantiate first
+  let atSecond ← instantiate second
+  unless atFirst == atSecond do
+    throwError "{former}: parameter {parameter.name} was erased as a term index, but Lean's own lowering gives {former} the mono type {atFirst} at {first} and {atSecond} at {second}, so the compiled representation does vary with the index"
+
+/-- Every index this export erased, checked against Lean's own lowering. A data type reaches here
+once, whatever number of use sites named it. -/
+private def ensureLeanErasesEveryIndex (names : List Name) : CoreM Unit := do
+  let environment ← getEnv
+  for name in names do
+    let some (.inductInfo declaration) := environment.find? name | continue
+    let erased ← match erasedDataParameters environment declaration with
+      | .ok value => pure value
+      | .error message => throwError "{name}: {message}"
+    for parameter in erased do
+      ensureLeanErasesIndex declaration parameter
+
 private structure ClosureEntry where
   name : Name
   module : String
@@ -2318,6 +2721,10 @@ private def exportPackage (entryModule : Name) (targetModules : NameSet) (roots 
   -- so a record whose shape the two disagree about never reaches the IR.
   for name in names do
     ensureFieldRelevanceAgrees name
+  -- Every term index this export erases is checked against Lean's own lowering before a single
+  -- declaration is encoded, so a disagreement between the two authorities stops the export rather
+  -- than reaching the generated tree.
+  ensureLeanErasesEveryIndex names
   let mut declarations := []
   for name in names do
     let some info := environment.find? name

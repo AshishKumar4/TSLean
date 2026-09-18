@@ -3,14 +3,16 @@ import TSLean.LeanToTypeScript.Semantics.Relation
 /-!
 # Erasure, as laws rather than as a convention
 
-`Export.lean` drops four kinds of thing on its way from an elaborated Lean term to the IR: a
-`Prop`-typed binder, a proof in argument position, a `Decidable` instance, and a subtype wrapper. It
-also drops every type argument, because the IR carries `Ty` annotations for representation only and
-the emitted TypeScript carries none at all.
+`Export.lean` drops five kinds of thing on its way from an elaborated Lean term to the IR: a
+`Prop`-typed binder, a proof in argument position, a `Decidable` instance, a subtype wrapper, and a
+type former's term-level index. It also drops every type argument, because the IR carries `Ty`
+annotations for representation only and the emitted TypeScript carries none at all.
 
 Each of those drops is sound for a reason, and this module states the reason as a theorem instead of
-leaving it as a convention. Three of the four are facts about Lean itself and hold for every program;
-the fourth is a fact about this model's own refinement relation, so it is stated where it is used.
+leaving it as a convention. Three of the first four are facts about Lean itself and hold for every
+program; the fourth is a fact about this model's own refinement relation, so it is stated where it is
+used. The fifth — the index — is the one drop that is *not* sound for every program, so its section
+states both the condition that makes it sound and a witness that the condition is necessary.
 
 Nothing here is an axiom, and the file adds no premise: it is the justification the exporter's
 refusals are written against.
@@ -157,6 +159,114 @@ theorem substitute_reached_parameter (arguments : List Ir.Ty) (index : Nat) (arg
     (reached : arguments[index]? = some argument) :
     Ir.Ty.substitute arguments (.parameter index) = argument := by
   simp [Ir.Ty.substitute, reached]
+
+/-! ## Term-level indices
+
+A type former may take a parameter that is a value rather than a type: agent-core's kernel
+identifier is `structure TextId (kind : IdKind)`, whose `kind` separates `TextId .run` from
+`TextId .turn` in the type checker and appears in no field. Erasing such a parameter is what lets
+one TypeScript type stand for the whole family.
+
+Unlike the four erasures above, this one is **not** sound in general, and that is the point of this
+section. Lean's own compiler erases a term-level index unconditionally — in
+`Lean.Compiler.LCNF.toMonoType` a parameter whose LCNF type is neither `lcErased` nor a sort has its
+argument replaced by `lcAny` — but Lean can afford that because its runtime boxes every value and
+carries no types. Measured under the pinned toolchain, `toMonoType` answers the same mono type at two
+different indices for a genuinely dependent structure as it does for a phantom-indexed one, so
+reading Lean's erasure alone would erase a length index.
+
+The condition that makes it sound for a target that carries types is that the family's content does
+not depend on the index. `Phantom` below is that shape, and `Sized` is a witness that the condition
+cannot be dropped: there is no uniform content type for a family whose content varies, so no single
+emitted type could be correct at every index. `Export.lean:erasedDataParameters` decides the
+condition per type by checking that no surviving field's type mentions the parameter, and refuses
+the type by name when one does.
+-/
+
+/-- A family indexed by a term whose content does not mention the index. This is the shape
+`erasedDataParameters` admits: the index is a parameter of the type and of nothing else. -/
+structure Phantom (ι : Type u) (α : Type v) (_index : ι) where
+  content : α
+
+namespace Phantom
+
+/-- Moving a value from one index to another, which is the identity on content. This map is what the
+emitted program's single type *is*: one TypeScript value stands for the whole family because every
+member has the same content and this transport witnesses it. -/
+def reindex {ι : Type u} {α : Type v} {source target : ι} (value : Phantom ι α source) :
+    Phantom ι α target := ⟨value.content⟩
+
+/-- **Reindexing keeps the content.** The emitted value is unchanged by the index it is read at. -/
+theorem reindex_content {ι : Type u} {α : Type v} {source target : ι} (value : Phantom ι α source) :
+    (reindex value : Phantom ι α target).content = value.content := rfl
+
+/-- **Reindexing is invertible.** Going to another index and back is the identity, so no information
+is lost by erasing the index — the family is one type's worth of data, not many. -/
+theorem reindex_reindex {ι : Type u} {α : Type v} {source target : ι} (value : Phantom ι α source) :
+    (reindex (reindex value : Phantom ι α target) : Phantom ι α source) = value := rfl
+
+/-- **Content determines the value.** Together with `reindex_content` this is the statement that the
+emitted record is a faithful image: two members of the family agree exactly when their contents do,
+at any pair of indices. -/
+theorem eq_of_content {ι : Type u} {α : Type v} {index : ι} {left right : Phantom ι α index}
+    (contents : left.content = right.content) : left = right := by
+  cases left
+  cases right
+  simp only [mk.injEq]
+  exact contents
+
+/-- **The index is not observable.** A function of a phantom-indexed value factors through the
+content, so no emitted program can tell which index its argument was built at. That is why dropping
+the index cannot change what a generated function computes. -/
+theorem function_factors_through_content {ι : Type u} {α : Type v} {β : Sort w} {index : ι}
+    (function : α → β) (value : Phantom ι α index) :
+    function value.content = function (reindex value : Phantom ι α index).content := rfl
+
+end Phantom
+
+/-! ### Why the condition is necessary
+
+`Sized` is a family whose content genuinely depends on its index. It is the `Vector α n` case in its
+smallest honest form: at one index the content type is inhabited and at the other it is empty, so
+there is no uniform content type and therefore no `reindex`. A compiler that erased this index would
+be claiming a value exists where none can.
+-/
+
+/-- A family whose content type varies with the index. -/
+def Sized : Bool → Type
+  | true => Unit
+  | false => Empty
+
+/-- **A dependent index has no uniform content type.** There is no single type the family's content
+always is, so one emitted TypeScript type cannot be correct at every index and the type former is
+refused rather than erased. -/
+theorem sized_not_uniform : Sized true ≠ Sized false := fun uniform =>
+  (uniform ▸ (() : Sized true) : Sized false).elim
+
+/-- The same fact as the statement `erasedDataParameters` is written against: it is not the case that
+every term index admits a uniform content type, so erasability has to be decided per type. -/
+theorem index_erasability_is_not_universal :
+    ¬ ∀ (left right : Bool), Sized left = Sized right :=
+  fun uniform => sized_not_uniform (uniform true false)
+
+/-- **A phantom index, by contrast, admits a transport in both directions.** `reindex` is its own
+inverse between any two indices, so the family is one type's worth of data presented at many
+indices — which is what makes a single emitted TypeScript type correct at every one of them. This is
+the positive half of the condition `erasedDataParameters` decides; `sized_not_uniform` is why it has
+to be decided rather than assumed.
+
+`Sized` admits no such pair: a transport `Sized true → Sized false` would inhabit `Empty`. -/
+theorem phantom_transport_inverse {ι : Type u} {α : Type v} (left right : ι) :
+    (∀ value : Phantom ι α left,
+        (Phantom.reindex (Phantom.reindex value : Phantom ι α right) : Phantom ι α left) = value) ∧
+      ∀ value : Phantom ι α right,
+        (Phantom.reindex (Phantom.reindex value : Phantom ι α left) : Phantom ι α right) = value :=
+  ⟨fun _ => rfl, fun _ => rfl⟩
+
+/-- **No transport exists for a dependent index.** Stated over `Sized` directly: a total map from the
+inhabited index to the empty one cannot exist, so there is no emitted type that stands for both. -/
+theorem sized_no_transport : ¬ ∃ _ : Sized true → Sized false, True :=
+  fun ⟨transport, _⟩ => (transport ()).elim
 
 end Erasure
 

@@ -35,6 +35,30 @@ export function isLeanDeclarationName(value: string): boolean {
 }
 
 /**
+ * Where an index the exporter erased came from.
+ *
+ * A `constructor` origin is a use site at a concrete index — Lean `Label .run`. A `binder` origin
+ * is a use site whose index varies with one of the enclosing declaration's own parameters, and
+ * `index` is that parameter's position in the *emitted* parameter list, already renumbered past
+ * any binder erasure dropped. `Label.parse (tag : Tag) : … → Option (Label tag)` records
+ * `{ kind: 'binder', index: 0 }`: the index is gone from the result type and still arrives at
+ * runtime in parameter 0.
+ *
+ * The two cases are the whole vocabulary. An index the exporter could name neither way is refused
+ * there rather than recorded partially here.
+ */
+export type LeanErasedOrigin =
+  | { readonly kind: 'constructor'; readonly name: string }
+  | { readonly kind: 'binder'; readonly index: number };
+
+/** One erased index: the declared parameter position it filled, and where its value came from. */
+export interface LeanErasedArgument {
+  /** The declared parameter position on the type former, outermost first. */
+  readonly parameter: number;
+  readonly origin: LeanErasedOrigin;
+}
+
+/**
  * The types the fragment admits, each with one fixed TypeScript image:
  *
  * - `boolean` is `boolean`.
@@ -43,7 +67,11 @@ export function isLeanDeclarationName(value: string): boolean {
  * - `string` is `string`.
  * - `parameter` is the enclosing declaration's type parameter at that position. Type parameters
  *   are positional, never named, so a generated generic cannot drift with a Lean binder name.
- * - `named` is a data type this compilation exported, applied to exactly its declared arity.
+ * - `named` is a data type this compilation exported, applied to exactly its declared arity of
+ *   represented parameters. A parameter the exporter erased is not among those: it carries no
+ *   representation, so the emitted type is the same at every index. It is still recorded, in
+ *   `erasedArguments`, because a type whose index was deliberately discarded has to be
+ *   distinguishable from one that never had an index — otherwise the erasure is unreadable.
  * - `option`, `except` and `list` are the three Lean data types the compiler maps rather than
  *   lowers: tagged unions for the first two, a readonly array for the third.
  * - `function` is an uncurried arrow at its full Lean arity. A partially applied function value
@@ -58,7 +86,12 @@ export type LeanType =
   | { readonly kind: 'bytes' }
   | { readonly kind: 'json' }
   | { readonly kind: 'parameter'; readonly index: number }
-  | { readonly kind: 'named'; readonly name: string; readonly arguments: readonly LeanType[] }
+  | {
+      readonly kind: 'named';
+      readonly name: string;
+      readonly arguments: readonly LeanType[];
+      readonly erasedArguments?: readonly LeanErasedArgument[];
+    }
   | { readonly kind: 'option'; readonly value: LeanType }
   | { readonly kind: 'except'; readonly error: LeanType; readonly value: LeanType }
   | { readonly kind: 'list'; readonly element: LeanType }
@@ -1146,6 +1179,21 @@ export interface LeanSpan {
   readonly endColumn: number;
 }
 
+/**
+ * One declared parameter erasure dropped: its position on the type former, its Lean binder name,
+ * and its Lean type.
+ *
+ * The type is what makes the erased index nameable. A reader relating the emitted type back to the
+ * Lean family needs it to write the index down at all — the round-trip driver uses it to give a
+ * source-side renderer an index-polymorphic signature — so an erased parameter is still recorded
+ * with enough to reconstruct the Lean type expression it came from.
+ */
+export interface LeanErasedParameter {
+  readonly position: number;
+  readonly name: string;
+  readonly type: LeanType;
+}
+
 interface LeanDeclared extends LeanDocumented {
   readonly name: string;
   /** The Lean module that declares it, which decides the generated file that carries it. */
@@ -1157,6 +1205,15 @@ interface LeanDeclared extends LeanDocumented {
   readonly namespace: string;
   /** The Lean binder names of its type parameters, in order, for diagnostics only. */
   readonly typeParameters: readonly string[];
+  /**
+   * The declared parameters the exporter erased, if any: a term index that reaches no data field,
+   * so the emitted type is the same at every index and takes no TypeScript type parameter for it.
+   *
+   * Recorded because the emitted arity alone cannot distinguish a type that never had an index
+   * from one whose index was discarded, and every use site's `erasedArguments` is checked against
+   * this list. Absent when nothing was erased.
+   */
+  readonly erasedParameters?: readonly LeanErasedParameter[];
   readonly span: LeanSpan;
 }
 
@@ -1950,6 +2007,25 @@ function validateProgramReferences(program: LeanSemanticProgram): void {
         type.arguments.forEach((argument, index) =>
           validateType(argument, typeParameters, `${location}.arguments[${index}]`),
         );
+        // An erased index is recorded, so the record is checked rather than trusted: the use site
+        // has to name exactly the parameters the declaration erased, at the same positions. A use
+        // site that recorded no index for a type former that has one would leave the emitted type
+        // unrelatable to its Lean source, which is the whole reason the record exists.
+        const erasedParameters = declaration.erasedParameters ?? [];
+        const erasedArguments = type.erasedArguments ?? [];
+        if (erasedParameters.length !== erasedArguments.length) {
+          throw new TypeError(
+            `${location} records ${erasedArguments.length} erased index/indices for ${type.name}; it declares ${erasedParameters.length}`,
+          );
+        }
+        erasedArguments.forEach((argument, index) => {
+          const declared = erasedParameters[index];
+          if (declared === undefined || declared.position !== argument.parameter) {
+            throw new TypeError(
+              `${location}.erasedArguments[${index}] fills parameter ${argument.parameter} of ${type.name}, which does not erase a parameter at that position`,
+            );
+          }
+        });
         return;
       }
     }
@@ -2540,6 +2616,43 @@ function calledDeclarations(expression: LeanExpression): ReadonlySet<string> {
   return names;
 }
 
+/**
+ * The declared parameters a data type erased, read back as the exporter recorded them.
+ *
+ * Positions have to be distinct and ascending, and names have to be Lean binder names: a repeated
+ * or unordered position describes no declaration. An absent key means nothing was erased, which is
+ * a different claim from an empty list, so an empty list is refused.
+ */
+function decodeErasedParameters(
+  value: unknown,
+  location: string,
+): readonly LeanErasedParameter[] | undefined {
+  if (value === undefined) return undefined;
+  const entries = array(value, location);
+  if (entries.length === 0) {
+    throw new TypeError(`${location} is empty; the key is absent when nothing was erased`);
+  }
+  let previous = -1;
+  return entries.map((entry, index) => {
+    const entryLocation = `${location}[${index}]`;
+    const decoded = object(entry, entryLocation);
+    exactKeys(decoded, ['position', 'name', 'type'], entryLocation);
+    const position = decoded['position'];
+    if (!Number.isSafeInteger(position) || Number(position) < 0) {
+      throw new TypeError(`${entryLocation}.position must be a nonnegative safe integer`);
+    }
+    if (Number(position) <= previous) {
+      throw new TypeError(`${entryLocation}.position must be greater than the previous position`);
+    }
+    previous = Number(position);
+    return {
+      position: Number(position),
+      name: string(decoded['name'], `${entryLocation}.name`),
+      type: decodeType(decoded['type'], `${entryLocation}.type`),
+    };
+  });
+}
+
 function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
   const declaration = object(value, location);
   const kind = string(declaration['kind'], `${location}.kind`);
@@ -2548,14 +2661,25 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
   const namespaceName = declarationNamespace(declaration['namespace'], `${location}.namespace`);
   const typeParameters = typeParameterNames(declaration['typeParameters'], `${location}.typeParameters`);
   const span = decodeSpan(declaration['span'], `${location}.span`);
-  const shared = { name, module, namespace: namespaceName, typeParameters, span };
+  const erasedParameters = decodeErasedParameters(
+    declaration['erasedParameters'],
+    `${location}.erasedParameters`,
+  );
+  const shared = {
+    name,
+    module,
+    namespace: namespaceName,
+    typeParameters,
+    span,
+    ...(erasedParameters === undefined ? {} : { erasedParameters }),
+  };
   switch (kind) {
     case 'enum': {
       exactKeys(
         declaration,
         ['kind', 'name', 'module', 'namespace', 'typeParameters', 'span', 'constructors'],
         location,
-        ['doc'],
+        ['doc', 'erasedParameters'],
       );
       const constructors = array(declaration['constructors'], `${location}.constructors`).map(
         (constructor, index): LeanEnumConstructor => {
@@ -2581,7 +2705,7 @@ function decodeDeclaration(value: unknown, location: string): LeanDeclaration {
         declaration,
         ['kind', 'name', 'module', 'namespace', 'typeParameters', 'span', 'constructor', 'fields', 'invariants'],
         location,
-        ['doc'],
+        ['doc', 'erasedParameters'],
       );
       const fields = decodeFields(declaration['fields'], location);
       const invariants = decodeInvariants(declaration['invariants'], location);
@@ -2813,6 +2937,56 @@ function decodeInvariants(value: unknown, location: string): readonly string[] {
   return invariants;
 }
 
+/**
+ * The indices a use site erased, read back exactly as the exporter recorded them.
+ *
+ * The origin vocabulary is closed and the parameter positions have to be distinct and ascending:
+ * a repeated or out-of-order position would describe no Lean type, and an absent list is not the
+ * same claim as an empty one, so an empty array is refused rather than normalised away.
+ */
+function decodeErasedArguments(value: unknown, location: string): readonly LeanErasedArgument[] {
+  const entries = array(value, location);
+  if (entries.length === 0) {
+    throw new TypeError(`${location} is empty; the key is absent when nothing was erased`);
+  }
+  let previous = -1;
+  return entries.map((entry, index) => {
+    const entryLocation = `${location}[${index}]`;
+    const decoded = object(entry, entryLocation);
+    exactKeys(decoded, ['parameter', 'origin'], entryLocation);
+    const parameter = decoded['parameter'];
+    if (!Number.isSafeInteger(parameter) || Number(parameter) < 0) {
+      throw new TypeError(`${entryLocation}.parameter must be a nonnegative safe integer`);
+    }
+    if (Number(parameter) <= previous) {
+      throw new TypeError(`${entryLocation}.parameter must be greater than the previous position`);
+    }
+    previous = Number(parameter);
+    const origin = object(decoded['origin'], `${entryLocation}.origin`);
+    const originKind = string(origin['kind'], `${entryLocation}.origin.kind`);
+    switch (originKind) {
+      case 'constructor':
+        exactKeys(origin, ['kind', 'name'], `${entryLocation}.origin`);
+        return {
+          parameter: Number(parameter),
+          origin: { kind: originKind, name: qualifiedName(origin['name'], `${entryLocation}.origin.name`) },
+        };
+      case 'binder': {
+        exactKeys(origin, ['kind', 'index'], `${entryLocation}.origin`);
+        const binder = origin['index'];
+        if (!Number.isSafeInteger(binder) || Number(binder) < 0) {
+          throw new TypeError(`${entryLocation}.origin.index must be a nonnegative safe integer`);
+        }
+        return { parameter: Number(parameter), origin: { kind: originKind, index: Number(binder) } };
+      }
+      default:
+        throw new TypeError(
+          `${entryLocation}.origin.kind ${originKind} is not an erased-index origin this fragment records`,
+        );
+    }
+  });
+}
+
 function decodeType(value: unknown, location: string): LeanType {
   const type = object(value, location);
   const kind = string(type['kind'], `${location}.kind`);
@@ -2834,15 +3008,21 @@ function decodeType(value: unknown, location: string): LeanType {
       }
       return { kind, index: Number(index) };
     }
-    case 'named':
-      exactKeys(type, ['kind', 'name', 'arguments'], location);
+    case 'named': {
+      exactKeys(type, ['kind', 'name', 'arguments'], location, ['erasedArguments']);
+      const erasedArguments =
+        type['erasedArguments'] === undefined
+          ? undefined
+          : decodeErasedArguments(type['erasedArguments'], `${location}.erasedArguments`);
       return {
         kind,
         name: qualifiedName(type['name'], `${location}.name`),
         arguments: array(type['arguments'], `${location}.arguments`).map((argument, index) =>
           decodeType(argument, `${location}.arguments[${index}]`),
         ),
+        ...(erasedArguments === undefined ? {} : { erasedArguments }),
       };
+    }
     case 'option':
       exactKeys(type, ['kind', 'value'], location);
       return { kind, value: decodeType(type['value'], `${location}.value`) };
