@@ -59,11 +59,15 @@ export interface CompilerSettings {
   readonly lib?: readonly string[];
   readonly types?: readonly string[];
   readonly strict?: boolean;
+  readonly exactOptionalPropertyTypes?: boolean;
+  readonly noImplicitOverride?: boolean;
+  readonly noUncheckedIndexedAccess?: boolean;
   readonly skipLibCheck?: boolean;
   readonly noLib?: boolean;
   readonly noEmit?: boolean;
   readonly noResolve?: boolean;
   readonly noUnusedLocals?: boolean;
+  readonly noUnusedParameters?: boolean;
   readonly rootDir?: string;
   readonly baseUrl?: string;
   readonly paths?: Readonly<Record<string, readonly string[]>>;
