@@ -19,7 +19,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import ts from 'typescript';
+import * as ts from '../src/typescript-api/index.js';
 import { describe, expect, test } from 'vitest';
 import { choosePlacementFromData } from '../examples/lean-to-typescript/placement.adapter.js';
 import {
@@ -34,6 +34,7 @@ import { runLeanToTypeScriptCli } from '../src/lean-to-typescript/cli.js';
 import { compileLeanToTypeScriptWithInputs } from '../src/lean-to-typescript/compiler.js';
 import { compareCodePoints } from '../src/lean-to-typescript/ordering.js';
 import { createLeanProjectFixture } from './helpers/lean-project-fixture.js';
+import { openProject } from '../src/typescript-api/session.js';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const PACKED_COMPILER_TIMEOUT_MS = 60_000;
@@ -2183,62 +2184,79 @@ function registryPaths(model: Record<string, unknown>): readonly string[] {
  * consumer could only get past by asserting.
  */
 function undecodedInputs(source: string, declarations: readonly string[]): readonly string[] {
-  const program = ts.createProgram([source], {
-    lib: ['lib.es2022.d.ts'],
-    module: ts.ModuleKind.NodeNext,
-    moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    noEmit: true,
-    strict: true,
-    target: ts.ScriptTarget.ES2022,
+  // Reading a program is the session's half, which is TypeScript 7. It spells options the way a
+  // `tsconfig.json` writes them, because it builds a program only from a configuration file and
+  // parses what it is handed as configuration text; `lib: ['lib.es2022.d.ts']` is the resolved
+  // spelling and is refused.
+  const project = openProject({
+    files: [source],
+    settings: {
+      lib: ['es2022'],
+      module: 'nodenext',
+      moduleResolution: 'nodenext',
+      noEmit: true,
+      strict: true,
+      target: 'es2022',
+    },
   });
-  const checker = program.getTypeChecker();
-  const file = program.getSourceFile(source);
-  if (file === undefined) throw new TypeError(`generated module did not load: ${source}`);
-  const moduleSymbol = checker.getSymbolAtLocation(file);
-  if (moduleSymbol === undefined) throw new TypeError(`generated module exports nothing: ${source}`);
-  const exported = checker.getExportsOfModule(moduleSymbol);
-  const decoded = decodableTypes(checker, exported);
-  const undecoded: string[] = [];
-  for (const declaration of declarations) {
-    const name = declaration.split('.').slice(-1).join('');
-    const symbol = exported.find((candidate) => candidate.name === name);
-    if (symbol === undefined) throw new TypeError(`generated module does not export ${name}`);
-    const [signature] = symbolType(checker, symbol).getCallSignatures();
-    if (signature === undefined) throw new TypeError(`registered declaration ${name} is not callable`);
-    for (const parameter of signature.getParameters()) {
-      const type = symbolType(checker, parameter);
-      if (decoded.has(type)) continue;
-      undecoded.push(`${name}(${parameter.name}: ${checker.typeToString(type)})`);
+  try {
+    const { checker } = project;
+    const file = project.sourceFile(source);
+    if (file === undefined) throw new TypeError(`generated module did not load: ${source}`);
+    const moduleSymbol = checker.getSymbolAtLocation(file);
+    if (moduleSymbol === undefined) throw new TypeError(`generated module exports nothing: ${source}`);
+    const exported = checker.getExportsOfModule(moduleSymbol);
+    const decoded = decodableTypes(checker, exported);
+    const undecoded: string[] = [];
+    for (const declaration of declarations) {
+      const name = declaration.split('.').slice(-1).join('');
+      const symbol = exported.find((candidate) => candidate.name === name);
+      if (symbol === undefined) throw new TypeError(`generated module does not export ${name}`);
+      const calls = checker.getSignaturesOfType(symbolType(checker, symbol), ts.SignatureKind.Call);
+      const [signature] = calls;
+      if (signature === undefined) throw new TypeError(`registered declaration ${name} is not callable`);
+      for (const parameter of signature.getParameters()) {
+        const type = symbolType(checker, parameter);
+        if (decoded.has(type)) continue;
+        undecoded.push(`${name}(${parameter.name}: ${checker.typeToString(type)})`);
+      }
     }
+    return undecoded;
+  } finally {
+    project.close();
   }
-  return undecoded;
 }
 
 /** The exact types the module's exported boundary builds out of its own data union. */
-function decodableTypes(checker: ts.TypeChecker, exported: readonly ts.Symbol[]): ReadonlySet<ts.Type> {
+function decodableTypes(checker: ts.Checker, exported: readonly ts.Symbol[]): ReadonlySet<ts.Type> {
   const decoded = new Set<ts.Type>();
   for (const symbol of exported) {
-    if (symbol.valueDeclaration === undefined) continue;
-    const type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration);
-    const signatures = [...type.getCallSignatures()];
-    const fromData = type.getProperty('fromData');
-    const member = fromData?.declarations?.[0];
+    // A declaration arrives as a handle rather than as a node, so the node is fetched from it.
+    const valueDeclaration = symbol.valueDeclaration?.resolve();
+    if (valueDeclaration === undefined) continue;
+    const type = checker.getTypeOfSymbolAtLocation(symbol, valueDeclaration);
+    const signatures = [...checker.getSignaturesOfType(type, ts.SignatureKind.Call)];
+    const fromData = checker.getPropertyOfType(type, 'fromData');
+    const member = fromData?.declarations[0]?.resolve();
     if (fromData !== undefined && member !== undefined) {
-      signatures.push(...checker.getTypeOfSymbolAtLocation(fromData, member).getCallSignatures());
+      const carrier = checker.getTypeOfSymbolAtLocation(fromData, member);
+      signatures.push(...checker.getSignaturesOfType(carrier, ts.SignatureKind.Call));
     }
     for (const signature of signatures) {
       const [input] = signature.getParameters();
       if (input === undefined) continue;
       if (checker.typeToString(symbolType(checker, input)) !== 'GeneratedData') continue;
-      decoded.add(signature.getReturnType());
+      const returned = checker.getReturnTypeOfSignature(signature);
+      if (returned === undefined) continue;
+      decoded.add(returned);
     }
   }
   return decoded;
 }
 
 /** A symbol's type at its own declaration. A mapped-type member has declarations but no value one. */
-function symbolType(checker: ts.TypeChecker, symbol: ts.Symbol): ts.Type {
-  const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
+function symbolType(checker: ts.Checker, symbol: ts.Symbol): ts.Type {
+  const declaration = (symbol.valueDeclaration ?? symbol.declarations[0])?.resolve();
   if (declaration === undefined) throw new TypeError(`symbol ${symbol.name} has no declaration`);
   return checker.getTypeOfSymbolAtLocation(symbol, declaration);
 }
