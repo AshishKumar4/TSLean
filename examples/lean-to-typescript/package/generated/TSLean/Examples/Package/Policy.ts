@@ -4,9 +4,9 @@
  * Lean module: TSLean.Examples.Package.Policy
  * Generated module: TSLean/Examples/Package/Policy.ts
  * Package entry module: TSLean.Examples.Package.Decision
- * Semantic identity: sha256:374bc3255da2118990e5b13301148a0c29a440b9900b65869ed3870b0739e502
- * Input closure: sha256:0137c9797b6a2ac0734b49cebff3c77dcb6e9f317c7df89fe3f8048dace52174
- * Semantic IR: sha256:1b631e6db5913e441ceceb3c3b2dcc3ed5b602c9590fd368cb28859d06988409
+ * Semantic identity: sha256:34aa41b9b636d89745cdf2bf94a2d15b42b31ef6e30256f5a6c55d581fc693c4
+ * Input closure: sha256:01c94c5ffeaa744afdb16c1f3f057d138ea44aed44a8068b809e79cb8642aa70
+ * Semantic IR: sha256:3aa37837cb461c17c10462b06dc4154d55084a83684037c11bee281d662a1a9c
  * Generated module body: sha256:34402756d6e71b7548d9189a6d11e893268a4166ea6bce96f8ca195343bc54a6
  * Generated package body: sha256:a9dba7443058e3087bc0510da71b93022b81413cc64732024a64194748f193e3
  * Lean toolchain: leanprover/lean4:v4.33.1
