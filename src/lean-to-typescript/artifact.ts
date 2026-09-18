@@ -122,6 +122,11 @@ export interface LeanToTypeScriptHelperDeclaration {
  * One data type's generated codec statics. `equals`, `toData` and `fromData` are what the schema
  * directed codec proves about a structure, so the artifact records which types actually carry them
  * rather than leaving a reader to infer it from the emitted class bodies.
+ *
+ * A record whose `Prop` fields erasure dropped records `equals` and `toData` and no `fromData`:
+ * encoding drops a proof, which loses nothing, while decoding would have to establish the invariant
+ * those fields assert, which the data does not. So this list is a per-type fact rather than the
+ * same three names for every ground type.
  */
 export interface LeanToTypeScriptCodecSurface {
   readonly declaration: string;
