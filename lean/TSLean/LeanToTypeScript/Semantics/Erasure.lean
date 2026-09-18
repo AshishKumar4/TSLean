@@ -267,6 +267,89 @@ theorem phantom_transport_inverse {ι : Type u} {α : Type v} (left right : ι) 
 inhabited index to the empty one cannot exist, so there is no emitted type that stands for both. -/
 theorem sized_no_transport : ¬ ∃ _ : Sized true → Sized false, True :=
   fun ⟨transport, _⟩ => (transport ()).elim
+/-! ## Universes
+
+A universe-polymorphic declaration reaches the target with its levels gone, because TypeScript has
+no universes to carry them to. The erasure is the declaration's own level-zero instance: the
+exporter instantiates the level parameters at zero and exports that, so what the emitted program
+computes is a declaration Lean itself elaborated rather than a level-erased approximation of one.
+
+Two things a level could have changed are both absent from the image, and that is what makes the
+instance the right one to pick. First, the type image: `Ir.Ty` has no universe form at all, so a
+type's `Ty` is the same at every level its head constants could be taken at. Second, the value
+image: the semantics reads a `Ty` annotation only through `Program.constructorsOf` and
+`Ty.element?`, and neither mentions a level — the theorems below state exactly that, for the two
+expression forms that read an annotation.
+
+What is left is the identity of the callee, which no theorem can settle: a call at levels other
+than the ones the exported body was elaborated at would be a call to another instance. The exporter
+pins it by refusing such a call rather than erasing it, which is the refusal `docs/trust.md` records
+for this form.
+-/
+
+/-- The type registry carries no universe: every `Ty` belongs to the finite registry `TyKind.all`,
+which has no form for a level. A type's image is therefore the same at every level, which is what
+lets the exporter export one instance rather than one per level. -/
+theorem no_universe_type_form (type : Ir.Ty) : type.kind ∈ Ir.TyKind.all :=
+  Ir.TyKind.mem_all type.kind
+
+/--
+The one way `Source.eval` reads a `match`'s type annotation: structural equality against the
+annotation the scrutinised value carries, and nothing else.
+
+That is what makes a level unobservable rather than merely unrecorded. The equality is decided on
+`Ir.Ty`, whose grammar `no_universe_type_form` shows has no form for a universe, so two
+instantiations of one Lean type produce one annotation and are decided identically.
+-/
+theorem eval_matchOn_reads_annotation {program : Ir.Program} {fuel : Nat}
+    {scope : List Source.Value} {trace : Source.Trace} (type valueType : Ir.Ty)
+    (scrutinee : Ir.Expr) (cases : List (String × Ir.Expr)) (name : String)
+    (arguments : List Source.Value)
+    (read : Source.eval program fuel scope trace scrutinee
+      = .value (.variant valueType name arguments) trace) :
+    Source.eval program fuel scope trace (.matchOn type scrutinee cases)
+      = if valueType = type then Source.evalCases program fuel scope trace name arguments cases
+        else .fault .notAVariant trace := by
+  rw [Source.eval.eq_def]
+  simp only [read]
+
+/-- The one way `Source.eval` reads a `variant`'s type annotation: `Ty.element?`, to decide whether
+the constructor builds a dense array or a tagged variant. A type carrying no element type keeps its
+annotation on the value and nothing is read out of it. -/
+theorem eval_variant_reads_element {program : Ir.Program} {fuel : Nat} {scope : List Source.Value}
+    {trace : Source.Trace} (type : Ir.Ty) (name : String) (notList : type.element? = none) :
+    Source.eval program fuel scope trace (.variant type name [])
+      = .value (.variant type name []) trace := by
+  rw [Source.eval.eq_def]
+  simp only [Source.evalList, notList]
+
+/-! ## A dependent match whose motive erases
+
+A dependent match is admitted only when its motive erases to one result type. That is the condition
+under which the dependent eliminator *is* the ordinary case analysis, which these two theorems
+state on Lean's own eliminators: at a constant motive, `casesOn` is the `match` the fragment already
+lowers. A motive that does not erase to one type has no such theorem, and the exporter refuses it by
+name.
+-/
+
+/-- At a constant motive, `Bool`'s dependent eliminator is the ordinary conditional. -/
+theorem bool_casesOn_constant_motive {α : Sort u} (whenFalse whenTrue : α) (value : Bool) :
+    @Bool.casesOn (fun _ => α) value whenFalse whenTrue = (if value then whenTrue else whenFalse) := by
+  cases value <;> rfl
+
+/-- At a constant motive, `Nat`'s dependent eliminator is the ordinary case analysis — the very one
+`MatchForms.natDecision` lowers. -/
+theorem nat_casesOn_constant_motive {α : Sort u} (whenZero : α) (whenSuccessor : Nat → α)
+    (value : Nat) :
+    @Nat.casesOn (fun _ => α) value whenZero whenSuccessor
+      = (match value with | 0 => whenZero | next + 1 => whenSuccessor next) := by
+  cases value <;> rfl
+
+/-- A motive that erases to one type is a motive no alternative can disagree with: the result type
+every arm is checked against is that one type, which is what the emitted function's single return
+type has to be. -/
+theorem constant_motive_result {α : Sort u} {β : Sort v} (motive : α → Sort v)
+    (erases : ∀ value : α, motive value = β) (value : α) : motive value = β := erases value
 
 end Erasure
 

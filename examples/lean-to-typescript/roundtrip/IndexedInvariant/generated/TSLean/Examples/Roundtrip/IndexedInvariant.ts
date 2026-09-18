@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.IndexedInvariant
  * Generated module: TSLean/Examples/Roundtrip/IndexedInvariant.ts
  * Package entry module: TSLean.Examples.Roundtrip.IndexedInvariant
- * Semantic identity: sha256:08be46f9046ddc3889d75e70117163bc06e6682801e13439e1f0d98db056cdda
- * Input closure: sha256:388e4b656d891ce9103615dd5db205915c30aaba2021e03eb93a2e1a5120020c
+ * Semantic identity: sha256:9c5fa473643941d20c6545de1c3cd92a8aa15561af243eb2a639ede1f207cd01
+ * Input closure: sha256:9374c47a0004a81a16c2a84924a8fc68a540d971dbdfb7f461965110e7530ea8
  * Semantic IR: sha256:e9b100e8ba6f6f7a6cfa33f6d2cedb2d4c220cd149e1f9a06c4144482c9c4508
  * Generated module body: sha256:e14866981e6e7458174d20051ea9a3fe1897766d49c89537258d2fa7a1aa0628
  * Generated package body: sha256:09fed1e6758d83862dbc7fa9a95305d6b5218b133206ce4fac850f168b11421c

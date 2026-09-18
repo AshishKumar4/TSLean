@@ -456,6 +456,17 @@ private def arrayOpcode? (name : Name) : Option (String × Nat) :=
   else none
 
 /--
+A declared type or value with its universe parameters instantiated at zero.
+
+This is the universe erasure, and it is a choice of *instance* rather than a deletion: what the
+emitted program computes is the declaration Lean elaborated at `Type 0`, which every admitted type
+form lives in. A call at other levels would be a call to another instance, and `applicationNode`
+refuses one rather than erasing it.
+-/
+private def groundLevelType (levelParams : List Name) (expression : Expr) : Expr :=
+  expression.instantiateLevelParams levelParams (levelParams.map fun _ => Level.zero)
+
+/--
 A declared parameter of a data type that carries no runtime representation.
 
 `TextId (kind : IdKind)` is agent-core's kernel identifier. `kind` separates `TextId .run` from
@@ -554,10 +565,11 @@ private def erasedDataParameters (environment : Environment) (declaration : Indu
 
 /--
 An inductive data type the fragment admits: declared by the frozen target closure, in `Type 0`,
-with no indices, no universe parameters, and every parameter either a `Type 0` or a term index that
-carries no representation. A `Type 0` parameter is what makes the generated type generic; a term
-index is erased, and `erasedDataParameters` decides per type whether erasing it is sound rather
-than assuming it for the shape.
+with no indices, and every parameter either a `Type 0` or a term index that carries no
+representation. A `Type 0` parameter is what makes the generated type generic; a term index is
+erased, and `erasedDataParameters` decides per type whether erasing it is sound rather than
+assuming it for the shape. A universe-polymorphic declaration is admitted as its own level-zero
+instance, which `groundLevelType` selects.
 
 A type class is admitted here too, because an instance is an elaborated structure value and the
 class is the record it inhabits. A class that dispatches on an output parameter is refused: its
@@ -575,8 +587,13 @@ private def ordinaryDataInfo (environment : Environment) (targetModules : NameSe
   if let some outParameters := getOutParamPositions? environment name then
     unless outParameters.isEmpty do
       throw s!"class {name} dispatches on output parameter {outParameters}, which no concrete dictionary resolves at export time"
-  unless declaration.levelParams.isEmpty do
-    throw s!"data type {name} is universe polymorphic, which is outside the checked fragment"
+  -- Universe erasure. TypeScript has no universes, so a universe-polymorphic declaration reaches
+  -- the target as its own level-zero instance: the level parameters are instantiated at zero and
+  -- the rest of the walk sees a `Type 0` declaration Lean itself elaborated, not a level-erased
+  -- approximation of one. `Erasure.no_universe_type_form` and
+  -- `Erasure.eval_matchOn_reads_annotation` are why the image cannot record which instance it was:
+  -- `Ir.Ty` carries no universe, and the semantics reads a type annotation only by comparing it.
+  let declaration := { declaration with type := groundLevelType declaration.levelParams declaration.type }
   unless declaration.numIndices = 0 do
     throw s!"indexed data type {name} is outside the checked fragment"
   let mut telescope := declaration.type
@@ -1029,8 +1046,10 @@ private def structureFieldRoles (environment : Environment) (structureName : Nam
     let some info := environment.find? fieldInfo.projFn
       | throw s!"structure field projection {fieldInfo.projFn} is absent from the environment"
     -- The projection is `∀ (params) (self), field`, so the field type is one binder inside the
-    -- structure value, with the data type's parameters as the type parameters in scope.
-    let mut telescope := info.type
+    -- structure value, with the data type's parameters as the type parameters in scope. The
+    -- projection of a universe-polymorphic structure is taken at level zero, which is the instance
+    -- universe erasure exports.
+    let mut telescope := groundLevelType info.levelParams info.type
     for _ in [0 : declaration.numParams + 1] do
       match telescope.consumeMData with
       | .forallE _ _ body _ => telescope := body
@@ -1191,6 +1210,354 @@ private def constructorParameters (context : Context) (constructor : Constructor
     fieldTelescope := current,
     fieldArguments := remaining
   }
+/-! ## Match forms that lower to nested decisions
+
+A `Nat` pattern, a match on more than one discriminant, and a match binding its discriminant
+equations all reach the IR as forms the fragment already carries: nested `match` nodes, and — for a
+`Nat` — an ordered `if` on the bigint image with the predecessor bound by a `let`.
+`TSLean/LeanToTypeScript/Semantics/MatchForms.lean` states what each shape means and proves the
+correspondence against Lean's own case analysis, so nothing here invents a second dispatch.
+
+The evidence these readers consume is the matcher's own declared type. Its alternatives are in
+Lean's source order, and each one is typed `motive pat₁ … patₖ` behind its own binders, so the
+pattern tuple and the arm order are the kernel's record rather than a re-derivation. What the
+expansion adds is the check that every combination of declared constructors is accepted by some
+recorded alternative: Lean guarantees that a matcher it defined is total, so the check can only
+refuse a match Lean accepted — never admit one it rejected — and a combination it cannot place is
+refused by name.
+-/
+
+/-- One pattern position of one matcher alternative.
+
+`constructor` names the constructor the position decides and the alternative-binder positions its
+fields are bound at, counted outermost binder first. `wildcard` names the position the whole
+discriminant is bound at. A nested constructor pattern, a repeated pattern variable and a numeric
+literal the equation compiler did not turn into a constructor all have no reading here, and each is
+refused by name rather than flattened. -/
+private inductive MatchPattern where
+  | constructor (name : Name) (fields : List Nat)
+  | wildcard (binder : Nat)
+
+/-- One alternative of a matcher: its pattern tuple and the number of binders it abstracts. -/
+private structure MatchRow where
+  patterns : List MatchPattern
+  binders : Nat
+
+/-- The alternative-binder positions one pattern position binds, in field order. -/
+private def MatchPattern.variables : MatchPattern → List Nat
+  | .constructor _ fields => fields
+  | .wildcard binder => [binder]
+
+/-- Whether an alternative's pattern tuple accepts one combination of declared constructors. A
+`wildcard` accepts every constructor, which is what makes the alternatives overlap and the order
+matter. -/
+private def MatchRow.accepts (row : MatchRow) (path : List Name) : Bool :=
+  row.patterns.length == path.length &&
+    (row.patterns.zip path).all fun (pattern, constructorName) =>
+      match pattern with
+      | .constructor name _ => name == constructorName
+      | .wildcard _ => true
+
+/-- The alternative one combination selects: the first one accepting it, in the matcher's own
+alternative order, which is the source order Lean's first-match semantics selects by. -/
+private def selectRow (rows : List MatchRow) (path : List Name) : Option Nat :=
+  rows.findIdx? (·.accepts path)
+
+/--
+A term the expansion may read once per level and once per pattern variable bound to it: a binder, or
+a field of one.
+
+This is the condition `Compile.readableScrutinee` decides on the IR and
+`MatchForms.steppable_of_readableScrutinee` proves semantic. A multi-discriminant match needs it of
+every discriminant, because a `_` position binds the whole discriminant and the expansion supplies
+that binding by reading the discriminant again.
+-/
+private partial def readableTerm (environment : Environment) (expression : Expr) : Bool :=
+  match expression.consumeMData with
+  | .bvar _ => true
+  | .proj _ _ subject => readableTerm environment subject
+  | expression =>
+      let (head, arguments) := appView expression
+      match head with
+      | .const name _ =>
+          match environment.getProjectionFnInfo? name with
+          | some projection =>
+              arguments.length == projection.numParams + 1 &&
+                (arguments[projection.numParams]?).all (readableTerm environment)
+          | none => false
+      | _ => false
+
+/-- `Nat.zero`, as the equation compiler spells it in a pattern. A `0` pattern elaborates to the
+`OfNat` literal rather than to the constructor, so the literal is read back to the constructor it
+denotes; any other `Nat` literal pattern is left unread and refused by its caller. -/
+private def natZeroPattern? (head : Name) (arguments : List Expr) : Option Name :=
+  if head == ``OfNat.ofNat then
+    match arguments with
+    | [ofType, literal, _] =>
+        if ofType.consumeMData.isConstOf ``Nat then
+          match literal.consumeMData with
+          | .lit (.natVal 0) => some ``Nat.zero
+          | _ => none
+        else none
+    | _ => none
+  else none
+
+/--
+The pattern tuple of every alternative of a matcher, in the matcher's own alternative order, read
+out of its declared type.
+
+Alternative `i` is typed `motive pat₁ … patₖ` behind its own binders, so the tuple is recovered
+structurally rather than assumed from the source. The order is the matcher's, which is Lean's source
+order, which is the order its first-match semantics selects by.
+-/
+private partial def matcherAlternativeRows (environment : Environment) (matcherName : Name)
+    (info : Meta.MatcherInfo) : Except String (List MatchRow) := do
+  let some constantInfo := environment.find? matcherName
+    | throw s!"matcher {matcherName} is absent from the elaborated environment"
+  let mut telescope := constantInfo.type
+  for _ in [0 : info.numParams + 1 + info.numDiscrs] do
+    match telescope.consumeMData with
+    | .forallE _ _ body _ => telescope := body
+    | _ => throw s!"matcher {matcherName} does not expose the expected discriminant telescope"
+  let mut rows := []
+  for index in [0 : info.numAlts] do
+    match telescope.consumeMData with
+    | .forallE _ binderType body _ =>
+        let some binders := info.altNumParams[index]?
+          | throw s!"matcher {matcherName} has no parameter count for alternative {index}"
+        let mut applied := binderType
+        for _ in [0 : binders] do
+          match applied.consumeMData with
+          | .forallE _ _ inner _ => applied := inner
+          | _ => throw s!"matcher {matcherName} alternative {index} has an unexpected telescope"
+        let (head, appliedArguments) := appView applied.consumeMData
+        let .bvar _ := head
+          | throw s!"matcher {matcherName} alternative {index} is not an application of its motive"
+        unless appliedArguments.length = info.numDiscrs do
+          throw s!"matcher {matcherName} alternative {index} does not decide every discriminant"
+        let patterns ← appliedArguments.mapM fun pattern => do
+          let (patternHead, patternArguments) := appView pattern.consumeMData
+          match patternHead with
+          | .bvar level =>
+              unless patternArguments.isEmpty do
+                throw s!"matcher {matcherName} alternative {index} applies a pattern variable, which is outside the checked fragment"
+              unless level < binders do
+                throw s!"matcher {matcherName} alternative {index} reads a binder it does not abstract"
+              pure (MatchPattern.wildcard (binders - 1 - level))
+          | .const headName _ =>
+              match natZeroPattern? headName patternArguments with
+              | some zero => pure (MatchPattern.constructor zero [])
+              | none =>
+                  let some (.ctorInfo constructorInfo) := environment.find? headName
+                    | throw s!"matcher {matcherName} alternative {index} decides {headName}, which is not a constructor: a Nat literal pattern other than 0 is outside this fragment version, and a pattern the equation compiler did not reduce to a constructor is refused rather than flattened"
+                  unless patternArguments.length
+                      = constructorInfo.numParams + constructorInfo.numFields do
+                    throw s!"matcher {matcherName} alternative {index} does not apply {headName} to its own arity"
+                  let fields ← (patternArguments.drop constructorInfo.numParams).mapM fun field =>
+                    match field.consumeMData with
+                    | .bvar level =>
+                        if level < binders then pure (binders - 1 - level)
+                        else throw s!"matcher {matcherName} alternative {index} reads a binder it does not abstract"
+                    | _ =>
+                        throw s!"matcher {matcherName} alternative {index} does not bind every field of {headName} to a binder of its own; a nested pattern is refused rather than flattened"
+                  unless fields.length = fields.eraseDups.length do
+                    throw s!"matcher {matcherName} alternative {index} binds a field of {headName} twice"
+                  pure (MatchPattern.constructor headName fields)
+          | _ => throw s!"matcher {matcherName} alternative {index} pattern is not a constructor"
+        rows := { patterns, binders } :: rows
+        telescope := body
+    | _ => throw s!"matcher {matcherName} does not expose the expected alternative telescope"
+  pure rows.reverse
+
+/-- One level of a nested decision: the data type its discriminant has, the `Ty` node the IR
+carries for it, the constructors it declares in declaration order, the term the level reads, and
+whether it is the `Nat` level the ordered decision handles rather than a tag dispatch. -/
+private structure MatchLevel where
+  dataName : Name
+  encodedType : Json
+  constructors : List Name
+  discriminant : Expr
+  natural : Bool
+
+/-- A `Nat` literal node, which is how the zero test and the predecessor carry their operand. -/
+private def natLiteralNode (value : Nat) : Json := node "nat" [("value", .str (toString value))]
+
+/-- Whether the model's tag dispatch decides a data type's constructors. A `List` is decided by a
+length test and a structure by field reads, so neither is a level of a nest; `Compile.listMatch` and
+`Compile.structureMatch` are the refusals those two carry in the lowering. -/
+private def tagDispatched (environment : Environment) (dataName : Name) : Bool :=
+  if dataName == ``Option || dataName == ``Except || dataName == jsonValueTypeName then true
+  else if dataName == ``List || dataName == ``Prod then false
+  else
+    match environment.find? dataName with
+    | some (.inductInfo declaration) =>
+        !isStructure environment dataName && !declaration.ctors.isEmpty
+    | _ => false
+
+/-- The combinations one nested decision may expand to. Beyond it the match is refused with the
+count rather than emitted at whatever size it came to: a wildcard row is the leaf of every
+combination it accepts, so the tree grows with the product of the discriminants' constructor
+counts. -/
+private def nestedDecisionBound : Nat := 64
+
+/-! ## Hoisting a `let` out of an argument
+
+A `let` in argument position has no statement to become, so it is hoisted to a `const` in front of
+the expression that held it. The hoist steps over the operands to its left and lifts every other
+operand by the binding it introduces, so it is sound exactly when stepping over and lifting those
+operands is unobservable. `MatchForms.hoist_eval` and `MatchForms.hoist_faults` are the two halves
+of that: with re-readable operands the two forms have the same outcome and the same trace, and when
+an operand faults the source faults, which claims nothing of the target.
+
+The condition is a restriction rather than a convenience. A general de Bruijn shift lemma is false
+for this semantics — `Source.Value.closure` carries its captured scope and `Target.Closure` carries
+both a captured scope and the heap object whose own properties hold it, so shifting an expression
+under an extra binding changes the value it produces and the heap it produces it in. An operand
+that computes is therefore refused by name rather than lifted.
+
+Two positions are never hoisted out of. A branch of an `if` and a lazy operand of `&&` or `||` are
+evaluated conditionally, so moving a binding in front of the whole expression would evaluate it
+where the source does not; and an argument erasure drops — a proof, an instance, a type — has no
+statement to move a binding to, so its own binder role decides it out.
+-/
+
+/-- An operand the hoist may step over and lift. `MatchForms.Steppable` is the semantic condition
+each of these satisfies: reading one produces no trace event, so stepping over it is unobservable,
+and lifting one is an index bump the source semantics reads through. -/
+private partial def steppableTerm (environment : Environment) (expression : Expr) : Bool :=
+  match expression.consumeMData with
+  | .bvar _ => true
+  | .lit _ => true
+  | .proj _ _ subject => steppableTerm environment subject
+  | expression =>
+      let (head, arguments) := appView expression
+      match head with
+      | .const name _ =>
+          match environment.getProjectionFnInfo? name with
+          | some projection =>
+              arguments.length == projection.numParams + 1 &&
+                (arguments[projection.numParams]?).all (steppableTerm environment)
+          | none =>
+              -- A nullary constructor is its own tag or its own object literal: no call, no event.
+              match environment.find? name with
+              | some (.ctorInfo constructor) =>
+                  arguments.length == constructor.numParams && constructor.numFields == 0
+              | _ => false
+      | _ => false
+
+/--
+The operand positions of one application that the hoist may reach into, or `none` for an
+application it may not reach into at all.
+
+`&&` and `||` evaluate their right operand only when it decides the answer, so a binding hoisted
+out of it would be evaluated where the source does not evaluate it; their left operand is always
+evaluated, so it is reachable. A conditional's branches are the same case, and its condition is
+read by `decisionNode` rather than as an operand, so an `ite` is not reached into at all. A
+matcher's alternatives are abstractions, which the hoist does not descend into anyway, and its
+discriminant has to stay re-readable for the dispatch, so a matcher is not reached into either.
+-/
+private def strictPositions (environment : Environment) (head : Expr) (count : Nat) :
+    Option (List Nat) :=
+  match head with
+  | .const name _ =>
+      if name == ``Bool.and || name == ``Bool.or || name == ``cond then some [0]
+      else if name == ``ite || name == ``dite
+          || (Meta.getMatcherInfoCore? environment name).isSome then none
+      else some (List.range count)
+  | _ => some (List.range count)
+
+/-- The argument positions of one application that carry a value the IR keeps, classified by the
+same `binderRole` `applicationArguments` classifies them by. An erased position and a
+function-typed position are both excluded: the first has no statement to move a binding to, and the
+second is eta-expanded by `functionValueNode` rather than read in place. -/
+private partial def valueArgumentPositions (environment : Environment) (telescope : Expr) :
+    List Expr → Nat → List Nat
+  | [], _ => []
+  | argument :: rest, position =>
+      match telescope.consumeMData with
+      | .forallE _ binderType body _ =>
+          let remaining := body.instantiate1 argument
+          let kept :=
+            match binderRole environment binderType with
+            | .value => !binderType.consumeMData.isForall
+            | .typeArgument | .proof | .decidable | .universe => false
+          let deeper := valueArgumentPositions environment remaining rest (position + 1)
+          if kept then position :: deeper else deeper
+      | _ => []
+
+mutual
+
+/--
+One argument-position `let`, lifted out of the expression that held it.
+
+The answer is the binding the hoist introduces and the expression rebuilt without it: the `let`'s
+own body takes its place unchanged, because the body already reads the binding at index `0`, which
+is where the hoist puts it, and every other operand is lifted by one.
+-/
+private partial def hoistOne (environment : Environment) (expression : Expr) :
+    Except String (Option (Name × Expr × Expr × Expr)) := do
+  match expression.consumeMData with
+  | .proj structName index subject =>
+      match ← hoistOne environment subject with
+      | some (binderName, binderType, value, rebuilt) =>
+          pure (some (binderName, binderType, value, .proj structName index rebuilt))
+      | none => pure none
+  | .letE _ _ _ _ _ | .lam _ _ _ _ | .forallE _ _ _ _ | .sort _ | .bvar _ | .fvar _ | .mvar _
+  | .lit _ | .const _ _ => pure none
+  | inner =>
+      let (head, arguments) := appView inner
+      match strictPositions environment head arguments.length with
+      | none => pure none
+      | some strict =>
+          if arguments.isEmpty then pure none
+          else
+            let kept :=
+              match head with
+              | .const name levels =>
+                  match environment.find? name with
+                  | some info =>
+                      valueArgumentPositions environment
+                        (info.instantiateTypeLevelParams levels) arguments 0
+                  | none => []
+              | _ => List.range arguments.length
+            hoistFromArguments environment head arguments (kept.filter strict.contains)
+
+/-- The first hoistable operand of one application, and the application rebuilt around it. Every
+other operand is lifted by the binding, so every other operand has to be one the hoist may step
+over; one that computes is refused by name. -/
+private partial def hoistFromArguments (environment : Environment) (head : Expr)
+    (arguments : List Expr) (positions : List Nat) :
+    Except String (Option (Name × Expr × Expr × Expr)) := do
+  for position in positions do
+    let some argument := arguments[position]?
+      | throw s!"an application exposes no argument at position {position}"
+    let found ←
+      match argument.consumeMData with
+      | .letE binderName binderType value body _ =>
+          pure (some (binderName, binderType, value, body))
+      | _ => hoistOne environment argument
+    match found with
+    | none => pure ()
+    | some (binderName, binderType, value, replacement) =>
+        for other in arguments.zipIdx do
+          if other.2 != position && !steppableTerm environment other.1 then
+            throw "a let inside an argument is hoisted to a const in front of the call, which steps over and lifts every other operand, and this call has an operand that computes; bind the let before the call"
+        let rebuilt := arguments.mapIdx fun index other =>
+          if index == position then replacement else other.liftLooseBVars 0 1
+        return some (binderName, binderType, value,
+          mkAppN (head.liftLooseBVars 0 1) rebuilt.toArray)
+  pure none
+
+/-- Every argument-position `let` of one return-position expression, lifted to a leading `let` run
+in the order the source evaluates them. -/
+private partial def hoistArgumentLets (environment : Environment) (expression : Expr) :
+    Except String Expr := do
+  match ← hoistOne environment expression with
+  | none => pure expression
+  | some (binderName, binderType, value, rebuilt) =>
+      pure (.letE binderName binderType value (← hoistArgumentLets environment rebuilt) false)
+
+end
 
 mutual
 
@@ -1199,11 +1566,15 @@ One admitted Lean term, as the fragment's expression node.
 
 `returnPosition` carries the emitter's own lowering policy: a `let` becomes a `const` statement, so
 it is admitted exactly where the generated function returns — its own body, and the branches of an
-`if` or a `match` in that position. A `let` inside an argument would need an immediately applied
-function to keep its statement shape, so it is refused with the remedy named.
+`if` or a `match` in that position. A `let` inside an argument has no statement to become there, so
+a return-position expression is hoisted first: every argument-position `let` the hoist can reach
+becomes a leading `const`, and one it cannot reach is refused with the remedy named.
 -/
 private partial def expressionNode (context : Context) (returnPosition : Bool) (expression : Expr) :
     Except String Json := do
+  let expression ←
+    if returnPosition then hoistArgumentLets context.environment expression.consumeMData
+    else pure expression
   let expression := expression.consumeMData
   match expression with
   | .bvar index =>
@@ -1653,34 +2024,87 @@ private partial def typedOperationNode (context : Context) (opcode : String) (na
   pure (operationNode opcode typeArguments valueArguments)
 
 /--
-A `match`, read from the elaborated matcher. The discriminant type comes from the motive's own
-binder, so a generic discriminant carries its instantiated type arguments, and every alternative
-has to decide exactly one constructor and bind exactly its fields.
+A `match`, read from the elaborated matcher.
+
+The discriminant types come from the motive's own binders, so a generic discriminant carries its
+instantiated type arguments. One discriminant, no discriminant equations, a motive that does not
+mention the discriminant and a type decided by a tag reach `tagMatchNode`, the one shape the
+statement-form dispatch already lowers. Everything else — a `Nat` pattern, more than one
+discriminant, a match binding its discriminant equations — reaches `matchNestNode`, which expands
+it into nested decisions of exactly that same shape.
 -/
 private partial def matchNode (context : Context) (returnPosition : Bool) (name : Name)
     (matcherInfo : Meta.MatcherInfo) (arguments : List Expr) : Except String Json := do
   unless declaredInModules context.environment context.targetModules name do
     throw s!"matcher {name} is outside the frozen target module closure"
-  unless matcherInfo.numDiscrs = 1 do
-    throw "a match on more than one discriminant is outside this fragment version; nest the matches"
-  unless matcherInfo.getNumDiscrEqs = 0 do
-    throw "a match binding discriminant equations is outside the checked fragment"
   unless arguments.length = matcherInfo.arity do
     throw s!"matcher {name} received an unsupported elaborated shape"
   let some motive := arguments[matcherInfo.getMotivePos]?
     | throw s!"matcher {name} received no motive"
-  let .lam _ discriminantType motiveBody _ := motive.consumeMData
-    | throw s!"matcher {name} motive is not a discriminant abstraction"
-  if motiveBody.hasLooseBVar 0 then
-    throw "a match whose result type depends on the discriminant is outside the checked fragment"
+  -- The discriminant types, read off the motive's own binders. A later binder whose type mentions
+  -- an earlier discriminant is a genuinely dependent telescope, and is refused rather than read
+  -- against a scope the IR does not have.
+  let mut motiveBody := motive.consumeMData
+  let mut discriminantTypes : List Expr := []
+  for depth in [0 : matcherInfo.numDiscrs] do
+    match motiveBody.consumeMData with
+    | .lam _ binderType inner _ =>
+        for earlier in [0 : depth] do
+          if binderType.hasLooseBVar earlier then
+            throw s!"matcher {name} takes a discriminant whose type depends on an earlier discriminant, which is outside the checked fragment"
+        discriminantTypes := binderType.lowerLooseBVars depth depth :: discriminantTypes
+        motiveBody := inner
+    | _ => throw s!"matcher {name} motive is not a discriminant abstraction"
+  let orderedTypes := discriminantTypes.reverse
+  let mut discriminants : List Expr := []
+  for offset in [0 : matcherInfo.numDiscrs] do
+    let some discriminant := arguments[matcherInfo.getFirstDiscrPos + offset]?
+      | throw s!"matcher {name} received no discriminant {offset}"
+    discriminants := discriminant :: discriminants
+  let orderedDiscriminants := discriminants.reverse
+  -- A motive mentioning a discriminant is a dependent match. It is admitted exactly when the
+  -- motive erases to one result type, which is decided by erasing it: `typeNode` maps a value
+  -- only where erasure drops it — inside a subtype's predicate — and refuses it in every position
+  -- an admitted type form could read, so a motive that survives the walk is one whose image does
+  -- not depend on the discriminant. `Erasure.bool_casesOn_constant_motive` and
+  -- `Erasure.nat_casesOn_constant_motive` state why that makes the dependent eliminator the
+  -- ordinary case analysis.
+  let dependentMotive := (List.range matcherInfo.numDiscrs).any motiveBody.hasLooseBVar
+  if dependentMotive then
+    let mut instantiated := motive.consumeMData
+    for discriminant in orderedDiscriminants do
+      match instantiated.consumeMData with
+      | .lam _ _ inner _ => instantiated := inner.instantiate1 discriminant
+      | _ => throw s!"matcher {name} motive is not a discriminant abstraction"
+    match typeNode context instantiated with
+    | .ok _ => pure ()
+    | .error reason =>
+        throw s!"a match whose result type depends on the discriminant is admitted only when the motive erases to one result type; this motive does not erase: {reason}"
+  let some firstType := orderedTypes[0]?
+    | throw s!"matcher {name} decides no discriminant"
+  let firstName ← discriminantTypeName context firstType
+  if matcherInfo.numDiscrs = 1 && matcherInfo.getNumDiscrEqs = 0 && !dependentMotive
+      && firstName != ``Nat then
+    let some discriminant := orderedDiscriminants[0]?
+      | throw s!"matcher {name} received no discriminant"
+    tagMatchNode context returnPosition name matcherInfo arguments firstType firstName discriminant
+  else
+    matchNestNode' context returnPosition name matcherInfo arguments orderedTypes
+      orderedDiscriminants
+
+/--
+The one-discriminant tag dispatch, unchanged: every alternative decides exactly one constructor and
+binds exactly its fields, and the emitted `if` chain reads each arm's payload positionally out of
+the declaration.
+-/
+private partial def tagMatchNode (context : Context) (returnPosition : Bool) (name : Name)
+    (matcherInfo : Meta.MatcherInfo) (arguments : List Expr) (discriminantType : Expr)
+    (dataName : Name) (discriminant : Expr) : Except String Json := do
   let scrutineeType ← typeNode context discriminantType
-  let dataName ← discriminantTypeName context discriminantType
   let constructors ← discriminantConstructors context dataName
   let alternatives ← matcherAlternativeConstructors context.environment name matcherInfo
   unless alternatives.length = constructors.length do
     throw s!"a match on {dataName} does not decide every constructor exactly once"
-  let some discriminant := arguments[matcherInfo.getFirstDiscrPos]?
-    | throw s!"matcher {name} received no discriminant"
   let mut cases := []
   for constructorName in constructors do
     let some alternativeIndex := alternatives.findIdx? (· == constructorName)
@@ -1722,6 +2146,151 @@ private partial def matchNode (context : Context) (returnPosition : Bool) (name 
     ("cases", array cases.reverse)
   ])
 
+/--
+The levels of a nested decision, and the expansion itself.
+
+Every discriminant has to be re-readable, because a `_` position binds the whole discriminant and
+the expansion supplies that binding by reading the discriminant again, and because the `Nat`
+decision reads its own discriminant twice — once for the zero test and once for the predecessor.
+`MatchForms.steppable_of_readableScrutinee` is why reading it again is unobservable.
+
+The expansion is bounded. A nest over the declared constructors of every discriminant has one leaf
+per combination, and a wildcard row is the leaf of every combination it accepts, so an unbounded
+product would emit an unbounded tree. Beyond the bound the match is refused with the count, rather
+than emitted at whatever size it came to.
+-/
+private partial def matchNestNode' (context : Context) (returnPosition : Bool) (name : Name)
+    (matcherInfo : Meta.MatcherInfo) (arguments : List Expr)
+    (discriminantTypes discriminants : List Expr) : Except String Json := do
+  let mut levels : List MatchLevel := []
+  for (discriminantType, discriminant) in discriminantTypes.zip discriminants do
+    unless readableTerm context.environment discriminant do
+      throw "a nested decision reads each of its discriminants more than once, so a computed discriminant is outside this fragment version; bind it with a let before the match"
+    let dataName ← discriminantTypeName context discriminantType
+    if dataName == ``Nat then
+      levels :=
+        MatchLevel.mk dataName (node "nat") [``Nat.zero, ``Nat.succ] discriminant true :: levels
+    else
+      unless tagDispatched context.environment dataName do
+        throw s!"a nested decision on {dataName} is outside this fragment version: its values are decided by a length test or by field reads rather than by a tag, so the nest has no dispatch for it"
+      let constructors ← discriminantConstructors context dataName
+      let encodedType ← typeNode context discriminantType
+      levels := MatchLevel.mk dataName encodedType constructors discriminant false :: levels
+  let orderedLevels := levels.reverse
+  unless orderedLevels.length = matcherInfo.numDiscrs do
+    throw s!"matcher {name} decides {matcherInfo.numDiscrs} discriminants but exposes {orderedLevels.length}"
+  let combinations :=
+    orderedLevels.foldl (fun total level => total * level.constructors.length) 1
+  if combinations > nestedDecisionBound then
+    throw s!"the nested decision for matcher {name} expands to {combinations} combinations, beyond the {nestedDecisionBound} this fragment version admits; nest the matches in the source instead"
+  let rows ← matcherAlternativeRows context.environment name matcherInfo
+  unless rows.length = matcherInfo.numAlts do
+    throw s!"matcher {name} declares {matcherInfo.numAlts} alternatives but exposes {rows.length}"
+  let mut alternatives : List Expr := []
+  for index in [0 : matcherInfo.numAlts] do
+    let some alternative := arguments[matcherInfo.getFirstAltPos + index]?
+      | throw s!"matcher {name} received no alternative {index}"
+    alternatives := alternative :: alternatives
+  matchNestArms context returnPosition name rows alternatives.reverse orderedLevels orderedLevels
+    [] [] 0
+
+/--
+One level of the expansion, then the levels beneath it.
+
+`slots` records, per level already decided, the absolute position each of that level's fields was
+bound at, counted from the enclosing scope upward; `bound` is how many positions the nest has bound
+so far. `MatchForms.nest_leaf_scope` states the layout those two track: a level binds its payload
+innermost-field-last on top of the levels above it, so a leaf's scope is the per-level payloads
+concatenated, which is exactly the scope one alternative of the matcher abstracts.
+-/
+private partial def matchNestArms (context : Context) (returnPosition : Bool) (name : Name)
+    (rows : List MatchRow) (alternatives : List Expr) (allLevels : List MatchLevel) :
+    List MatchLevel → List Name → List (List Nat) → Nat → Except String Json
+  | [], path, slots, bound =>
+      matchLeafNode context returnPosition name rows alternatives allLevels path slots bound
+  | level :: rest, path, slots, bound => do
+      let scrutinee ← expressionNode (context.push bound) false
+        (level.discriminant.liftLooseBVars 0 bound)
+      if level.natural then
+        unless returnPosition do
+          throw "a match on a Nat binds its predecessor with a statement, and an argument position has none; bind the match with a let first"
+        let zeroArm ← matchNestArms context returnPosition name rows alternatives allLevels
+          rest (path ++ [``Nat.zero]) (slots ++ [[]]) bound
+        let succArm ← matchNestArms context returnPosition name rows alternatives allLevels
+          rest (path ++ [``Nat.succ]) (slots ++ [[bound]]) (bound + 1)
+        pure (node "if" [
+          ("condition", operationNode "nat.equals" [] [scrutinee, natLiteralNode 0]),
+          ("consequent", zeroArm),
+          ("alternate", node "let" [
+            ("name", .str "predecessor"),
+            ("value", operationNode "nat.subtract" [] [scrutinee, natLiteralNode 1]),
+            ("body", succArm)
+          ])
+        ])
+      else
+        let mut cases := []
+        for constructorName in level.constructors do
+          let some (.ctorInfo constructorInfo) := context.environment.find? constructorName
+            | throw s!"constructor {constructorName} is absent from the elaborated environment"
+          let fields := (List.range constructorInfo.numFields).map (bound + ·)
+          let arm ← matchNestArms context returnPosition name rows alternatives allLevels
+            rest (path ++ [constructorName]) (slots ++ [fields])
+            (bound + constructorInfo.numFields)
+          ensureAsciiIdentifier constructorName.getString! "constructor name"
+          cases := object [
+            ("constructor", .str constructorName.getString!),
+            ("value", arm)
+          ] :: cases
+        pure (node "match" [
+          ("type", level.encodedType),
+          ("scrutinee", scrutinee),
+          ("cases", array cases.reverse)
+        ])
+
+/--
+One leaf of the expansion: the alternative the combination selects, with the nest's own bindings
+substituted for its pattern variables.
+
+Selection is the matcher's: the first alternative whose recorded pattern tuple accepts the
+combination, in the matcher's own alternative order. A combination no alternative accepts is
+refused, naming the combination, rather than given a leaf the elaborated match never decided.
+
+A binder the selected alternative abstracts and the nest did not bind is a discriminant equation or
+the `Unit` thunk of a nullary alternative. Neither has a runtime image, so each is dropped when the
+alternative does not read it and refused by name when it does.
+-/
+private partial def matchLeafNode (context : Context) (returnPosition : Bool) (name : Name)
+    (rows : List MatchRow) (alternatives : List Expr) (levels : List MatchLevel) (path : List Name)
+    (slots : List (List Nat)) (bound : Nat) : Except String Json := do
+  let some index := selectRow rows path
+    | throw s!"matcher {name} places no alternative on the combination {path}, so the expansion refuses it rather than deciding a case the elaborated match did not"
+  let some row := rows[index]?
+    | throw s!"matcher {name} has no alternative {index}"
+  let some alternative := alternatives[index]?
+    | throw s!"matcher {name} received no alternative {index}"
+  let mut assignment : List (Nat × Expr) := []
+  for ((pattern, level), levelSlots) in (row.patterns.zip levels).zip slots do
+    match pattern with
+    | .wildcard binder =>
+        assignment := (binder, level.discriminant.liftLooseBVars 0 bound) :: assignment
+    | .constructor _ fields =>
+        unless fields.length = levelSlots.length do
+          throw s!"matcher {name} alternative {index} binds {fields.length} fields where the constructor declares {levelSlots.length}"
+        for (binder, slot) in fields.zip levelSlots do
+          assignment := (binder, .bvar (bound - 1 - slot)) :: assignment
+  let mut body := alternative.liftLooseBVars 0 bound
+  for position in [0 : row.binders] do
+    match body.consumeMData with
+    | .lam _ _ inner _ =>
+        match assignment.find? (·.1 == position) with
+        | some (_, value) => body := inner.instantiate1 value
+        | none =>
+            if inner.hasLooseBVar 0 then
+              throw s!"matcher {name} alternative {index} reads the binder at position {position}, which carries a discriminant equation or a unit thunk and has no runtime image, so the emitted arm has nothing to read it from"
+            body := inner.lowerLooseBVars 1 1
+    | _ => throw s!"matcher {name} alternative {index} does not abstract its own binders"
+  expressionNode (context.push bound) returnPosition body
+
 /-- The head constant of a discriminant type, which is the data type the match decides. -/
 private partial def discriminantTypeName (_context : Context) (discriminantType : Expr) :
     Except String Name := do
@@ -1738,11 +2307,20 @@ form fixes.
 A type form with no constructors is refused by name. `int`, `char`, `array`, `bytes` and the two
 map forms are decided with opcodes rather than destructured, so there is no case analysis for a
 match to be total over.
+
+`Nat` is the one entry here that no caller can reach: `matchNode` routes a `Nat` discriminant to the
+ordered decision before asking for constructors, and `matchNestNode'` builds its `Nat` level without
+asking either. The clause stays as a guard on the function's own contract — it answers *which
+constructors a tag dispatch decides*, and `Nat` has none that a tag dispatch decides, because the
+`0` pattern is an `OfNat` literal rather than a constructor — and it is labelled unreachable so it
+is not read as a live refusal. `ir.ts` carries the live one: the IR never carries a `match` on
+`nat` after the lowering, and its decoder refuses one, which
+`tests/lean-to-typescript-ir.test.ts` exercises.
 -/
 private partial def discriminantConstructors (context : Context) (name : Name) :
     Except String (List Name) := do
   if name == ``Nat then
-    throw "a match on Nat is outside this fragment version; decide it with a comparison"
+    throw "a match on Nat reached the tag-dispatch constructor reader; matchNode lowers a Nat pattern to the ordered decision instead, so this is an internal guard rather than a fragment refusal"
   if name == ``Int || name == ``Char || name == ``Array || name == ``ByteArray
       || name == ``Std.HashMap || name == ``Std.TreeMap then
     throw s!"a match on {name} is outside the surface: its type form carries no constructors, because its values are decided with opcodes rather than destructured"
@@ -1890,6 +2468,13 @@ private partial def constantApplicationNode (context : Context) (name : Name) (l
   | .defnInfo _ =>
       unless declaredInModules context.environment context.targetModules name do
         throw s!"function {name} is outside the frozen target module closure"
+      -- Universe erasure exports one instance of a universe-polymorphic definition: its level-zero
+      -- one. A call at other levels is a call to a different instance, and the emitted module has
+      -- no name for it, so it is refused here rather than erased into the instance that was
+      -- exported. Every admitted type form lives in `Type 0`, so a reachable call is at zero
+      -- levels; one that is not says the caller needs data above `Type 0`.
+      unless groundLevels levels do
+        throw s!"{name} is called at a universe above Type 0, and universe erasure exports its level-zero instance alone, so the emitted module carries no declaration for this one"
       let (typeArguments, valueArguments) ←
         applicationArguments context (info.instantiateTypeLevelParams levels) arguments
       pure (node "call" [
@@ -1953,7 +2538,7 @@ private def constructorFields (context : Context) (constructorName : Name) :
     | throw s!"constructor {constructorName} is absent from the elaborated environment"
   unless constructor.numParams = context.typeParameters do
     throw s!"constructor {constructorName} does not expose its data type's parameters"
-  let mut telescope := constructor.type
+  let mut telescope := groundLevelType constructor.levelParams constructor.type
   for _ in [0 : constructor.numParams] do
     match telescope.consumeMData with
     | .forallE _ _ body _ => telescope := body
@@ -2194,8 +2779,13 @@ private def definitionShape (environment : Environment) (targetModules : NameSet
   | .safe => pure ()
   | .partial => throw "partial definitions are outside the checked fragment"
   | .unsafe => throw "unsafe definitions are outside the checked fragment"
-  unless declaration.levelParams.isEmpty do
-    throw "universe polymorphic definitions are outside the checked fragment"
+  -- Universe erasure: the exported declaration is this definition's own level-zero instance, both
+  -- in its signature and in its body, because TypeScript has no universes to carry a level to and
+  -- every admitted type form lives in `Type 0`.
+  let declaration :=
+    { declaration with
+      type := groundLevelType declaration.levelParams declaration.type,
+      value := groundLevelType declaration.levelParams declaration.value }
   let signature ← declarationSignature environment targetModules declaration.type
   let typeParameterCount := signature.typeParameterNames.length
   let binderCount := typeParameterCount + signature.binders.length

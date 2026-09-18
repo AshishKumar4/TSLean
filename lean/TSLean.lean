@@ -133,6 +133,9 @@ import TSLean.Examples.KernelSurface
 import TSLean.Examples.KernelSurfaceGaps
 import TSLean.Examples.KernelSurfaceHost
 
+-- Match and binding forms: one compiled example per form the v6 fragment used to refuse
+import TSLean.Examples.MatchForms
+
 -- Specification & Tests
 import TSLean.Specification
 import TSLean.Tests

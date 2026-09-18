@@ -241,5 +241,22 @@
     ],
     "behaviourProfile": "outside",
     "behaviourReason": "one constructor meets both erasures, and the observation driver cannot build its value: the driver elaborates a structure literal against the original Lean module, where the dropped Prop field is still declared and still has to be discharged; tracked as shape.field-erasure-projection"
+  },
+  {
+    "name": "Decisions",
+    "module": "TSLean.Examples.Roundtrip.Decisions",
+    "source": "lean/TSLean/Examples/Roundtrip/Decisions.lean",
+    "declarations": [
+      "TSLean.Examples.Roundtrip.Decisions.admits",
+      "TSLean.Examples.Roundtrip.Decisions.decide",
+      "TSLean.Examples.Roundtrip.Decisions.hoisted",
+      "TSLean.Examples.Roundtrip.Decisions.weight"
+    ],
+    "outDir": "examples/lean-to-typescript/roundtrip/Decisions/generated",
+    "forms": [
+      "shape.scrutinee-const",
+      "shape.payload-field-bind",
+      "shape.conditional-chain"
+    ]
   }
 ]

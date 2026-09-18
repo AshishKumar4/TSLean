@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.Vote
  * Generated module: TSLean/Examples/Roundtrip/Vote.ts
  * Package entry module: TSLean.Examples.Roundtrip.Vote
- * Semantic identity: sha256:7dac3eb0d6480b793d591ba43be8f7b1f6068ea3025f562b4bd32acabf18e76f
- * Input closure: sha256:7229e9e8e8dd781b3663fe4919f5e01754588cd9f9e89677194813893a7c2bf3
+ * Semantic identity: sha256:cecf366f5d144d90257d6e4c716beb00c85c5063001232870443d64791548af7
+ * Input closure: sha256:da839ea0c345ac5e3f8b2d58edfabc2d3ee75fa6bff94f2be4c3eb04d6058c1d
  * Semantic IR: sha256:bdef9fdea3b4dca16f24a013ca3a7fb17a50e42ee96f7ffb77c7b30370280109
  * Generated module body: sha256:29ac8fbb2389e5b6af3bcee738b30d26376fd5d3e74db93dd61a33bcacfe61c7
  * Generated package body: sha256:961d61f07bcda8fca718df85c9d6700fb490f1f3f373636bbe870af22a9fcbd9

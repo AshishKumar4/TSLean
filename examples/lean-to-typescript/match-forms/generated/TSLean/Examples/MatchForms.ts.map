@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "file": "MatchForms.ts",
+  "sourceRoot": "",
+  "sources": [
+    "../../../../../../lean/TSLean/Examples/MatchForms.lean"
+  ],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;AAoCA;;;;;AALA;;;;;AAsBA;;;;;;;;;;;;;;;;;AAkEA;;;;;;;;;;;;AA3CA;;;;;;;;;AARA;;;;;;;;;;;;;;;;;;;;;;;;;;;;AArBA;;;;;;;;;;;AAsDA;;;;;;;;;;;;;;;;;AAcA;;;;;;;;AA7BA;;;;;;;;;;AAwCA;;;;;;;;;;AAjEA;;;;;;;;;;;;;;;;;AAoCA;;;;;;;;AAxDA"
+}

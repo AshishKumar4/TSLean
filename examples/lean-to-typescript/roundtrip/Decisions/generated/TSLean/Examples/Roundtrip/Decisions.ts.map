@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "file": "Decisions.ts",
+  "sourceRoot": "",
+  "sources": [
+    "../../../../../../../../lean/TSLean/Examples/Roundtrip/Decisions.lean"
+  ],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;AAQA;;;;;AANA;;;;;AAYA;;;;;;;;AAMA;;;;;;;;;;;;;;;;;AAUA;;;;;;;;;;;;;;;;;;;;AAQA;;;;;;;;;AAUA"
+}

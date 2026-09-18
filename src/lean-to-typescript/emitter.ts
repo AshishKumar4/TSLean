@@ -4802,15 +4802,30 @@ function readonlyProperty(field: string, type: ts.TypeNode): ts.PropertySignatur
 }
 
 /**
- * The emitted type of a value the IR states the type of. A constructed value, a record and a match
- * each carry their own Lean type, so a binding over one is annotated rather than inferred: a bare
+ * The emitted type of a value the IR states the type of. A constructed value and a record each
+ * carry the Lean type they build, so a binding over one is annotated rather than inferred: a bare
  * array literal of tag strings would otherwise widen its elements to `string` and stop being the
  * union its own declaration spells. Every other value is emitted from something already annotated —
  * a parameter, a declared function's result, an opcode's form — so its inferred type is exact and
  * an annotation would restate it.
+ *
+ * A `match` is deliberately not among them. Its `type` is the type it *scrutinises*, not the type
+ * it produces, so annotating a binding with it declares the wrong type for every match that maps
+ * one type to another — which is what an argument-position `let` hoisted in front of a call binds.
+ * TypeScript infers the arms' union, which is at least as precise as any annotation the IR could
+ * supply, because the IR records no arm type.
+ *
+ * Do not put `match` back without changing the IR first. The correct annotation is the match's
+ * *produced* type, and the `match` node does not carry it: `ir.ts`'s `LeanExpression` records the
+ * scrutinee type alone, because that is what the dispatch needs. The follow-on fix is for
+ * `Export.lean` to write the motive's erased result alongside it and for `ir.ts` to decode it, at
+ * which point this guard can annotate a match binding with the type it actually produces.
+ * `tests/lean-to-typescript-language-coverage.test.ts` type-checks a generated package whose
+ * `const` is bound to a match that maps one type to another, which is the regression this guard
+ * carries.
  */
 function declaredExpressionType(expression: LeanExpression, context: EmitContext): ts.TypeNode | undefined {
-  if (expression.kind !== 'variant' && expression.kind !== 'record' && expression.kind !== 'match') return undefined;
+  if (expression.kind !== 'variant' && expression.kind !== 'record') return undefined;
   return emitType(expression.type, context);
 }
 

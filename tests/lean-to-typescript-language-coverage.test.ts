@@ -563,17 +563,6 @@ describe('constructs with no deterministic representation fail before publicatio
     ['an instance parameter', 'Adversarial.withInstance', /instance parameters/u],
     ['an effectful definition', 'Adversarial.effectful', /outside the (?:checked fragment|frozen target)/u],
     ['a Float', 'Adversarial.usesFloat', /Float is outside the surface: no type form carries an IEEE double/u],
-    ['a match on Nat', 'Adversarial.natMatched', /a match on Nat is outside this fragment version/u],
-    [
-      'a match on more than one discriminant',
-      'Adversarial.twoDiscriminants',
-      /a match on more than one discriminant is outside this fragment version/u,
-    ],
-    [
-      'a let inside an argument',
-      'Adversarial.letInArgument',
-      /a let inside an argument is outside the checked fragment/u,
-    ],
     ['a proof as a root', 'Adversarial.proved', /root is not a function/u],
     ['a polymorphic root', 'Adversarial.polymorphicRoot', /a root's boundary is monomorphic/u],
     // The shapes that neighbour proof-field erasure and are NOT it. Each names the declaration and
@@ -625,6 +614,28 @@ describe('constructs with no deterministic representation fail before publicatio
       'export function stringLength(value: string): bigint {',
       'return BigInt([...value].length);',
     ],
+    // The three match and binding forms the surface gained next, from the same fixture. Each one
+    // lowers into IR the fragment already carried, so each has an exact emitted shape rather than a
+    // dispatch of its own; `tests/lean-to-typescript-match-forms.test.ts` pins every shape and
+    // every remaining refusal.
+    [
+      'a match on Nat',
+      'Adversarial.natMatched',
+      'export function natMatched(value: bigint): boolean {',
+      'if (value === 0n) {',
+    ],
+    [
+      'a match on more than one discriminant',
+      'Adversarial.twoDiscriminants',
+      'export function twoDiscriminants(left: Colour, right: Colour): boolean {',
+      'if (left === "red") {',
+    ],
+    [
+      'a let inside an argument',
+      'Adversarial.letInArgument',
+      'export function letInArgument(condition: boolean): boolean {',
+      'const inner = condition;',
+    ],
   ])(
     'admits %s, which v6 carries with an exact image',
     (_label, declaration, signature, body) => {
@@ -664,12 +675,12 @@ describe('constructs with no deterministic representation fail before publicatio
   test('attributes every refusal to the declaration it was reading', () => {
     let thrown: unknown;
     try {
-      compile('Adversarial.natMatched');
+      compile('Adversarial.usesFloat');
     } catch (error: unknown) {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(UnsupportedLeanFragmentError);
-    expect((thrown as UnsupportedLeanFragmentError).declaration).toBe('Adversarial.natMatched');
+    expect((thrown as UnsupportedLeanFragmentError).declaration).toBe('Adversarial.usesFloat');
     expect((thrown as UnsupportedLeanFragmentError).code).toBe('UNSUPPORTED_LEAN_FRAGMENT');
   }, 300_000);
 });

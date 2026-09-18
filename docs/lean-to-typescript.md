@@ -109,6 +109,16 @@ These families are admitted:
   skipped exactly as a `theorem` is, and recorded in the closure as `proposition`. Refusing one
   would stop every declaration in its module closure, because a library that proves anything
   declares propositions beside the definitions that keep them.
+- Match and binding forms that lower to nested decisions. A `Nat` pattern becomes an ordered
+  decision on the `bigint` image — the `nat.equals` row tests zero and the `nat.subtract` row binds
+  the predecessor explicitly — so it spends registry rows rather than a dispatch of its own. A match
+  on more than one discriminant becomes a lexicographic nest of single-discriminant decisions in
+  Lean's own arm order, one level per discriminant, each level deciding its declared constructors in
+  declaration order. A `let` inside an argument is hoisted to a `const` in front of the expression
+  that held it. A universe-polymorphic declaration is admitted as its own level-zero instance,
+  because TypeScript has no universes to carry a level to. A dependent match is admitted when its
+  discriminant is decided by the emitted tag comparison or the `Nat` zero test and its motive erases
+  to one result type — which is what makes the dependent eliminator the ordinary case analysis.
 
 Method ownership comes from elaborated evidence. The exporter resolves a receiver against the
 environment and records which parameter carries it; the compiler reads that record and never the
@@ -134,12 +144,37 @@ Differential agreement finds counterexamples. It is not a proof.
 
 A construct with no deterministic representation fails before publication, with a typed diagnostic
 that names the declaration it was reading. The refused set includes `Float`, the sized integer
-types, `Nat` division, `String` positions and ordering, matching on a `Nat`, a `String` compared
-against Lean's code-point order, anything that needs an instance dictionary, instance parameters,
-universe-polymorphic declarations, dependent result types, dependent matches, matches on more than
-one discriminant, a `let` inside an argument, `partial`, `unsafe`, `opaque`, `axiom`,
-`noncomputable`, and a declaration whose executable form was replaced inside the target module
-closure.
+types, `Nat` division, `String` positions and ordering, a `String` compared against Lean's
+code-point order, anything that needs an instance dictionary, instance parameters, dependent result
+types, `partial`, `unsafe`, `opaque`, `axiom`, `noncomputable`, and a declaration whose executable
+form was replaced inside the target module closure.
+
+The match and binding forms carry their own refusals, each with its own reason:
+
+- A nested decision whose level is a `List` or a structure. Those values are decided by a length
+  test and by field reads, not by a tag, so the nest has no dispatch for them.
+- A nested decision whose discriminant computes. The expansion reads each discriminant more than
+  once — a `_` position binds the whole discriminant, and the `Nat` decision tests zero and then
+  takes a predecessor — so a computed discriminant has to be bound with a `let` first.
+- A nested decision beyond 64 combinations. A wildcard arm is the leaf of every combination it
+  accepts, so the tree grows with the product of the discriminants' constructor counts; past the
+  bound the match is refused with the count rather than emitted at whatever size it came to.
+- A `Nat` pattern in argument position. The predecessor is bound by a statement, and an argument
+  position has none.
+- A `Nat` literal pattern other than `0`. The equation compiler leaves it as an `OfNat` literal
+  rather than a constructor, and a decision on one would be a comparison the registry carries no
+  pattern rule for.
+- A `let` inside an argument whose sibling operands compute. The hoist steps over the operands to
+  its left and lifts every other operand, so both are sound only when reading those operands
+  produces no trace event — the same re-readability condition the tag chain requires of a
+  scrutinee. A general shift lemma is false for this semantics, because a source closure and a
+  target function object both capture their scope.
+- A dependent match whose motive does not erase to one result type, and one whose alternative reads
+  its discriminant equation or its unit thunk. A proof has no runtime image, so a binder that
+  carries one is dropped when nothing reads it and refused by name when something does.
+- A call to a universe-polymorphic declaration at levels other than zero. Erasure exports the
+  level-zero instance, so a call at another level is a call to a declaration the emitted module does
+  not carry.
 
 Two audits run over the whole reachable closure. A declaration that rests on an axiom outside
 `propext`, `Classical.choice` and `Quot.sound` is refused, and so is one whose unfolding proof

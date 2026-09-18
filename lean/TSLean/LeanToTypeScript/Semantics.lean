@@ -13,3 +13,4 @@ import TSLean.LeanToTypeScript.Semantics.Closure
 import TSLean.LeanToTypeScript.Semantics.Erasure
 import TSLean.LeanToTypeScript.Semantics.ProofErasure
 import TSLean.LeanToTypeScript.Semantics.Effect
+import TSLean.LeanToTypeScript.Semantics.MatchForms

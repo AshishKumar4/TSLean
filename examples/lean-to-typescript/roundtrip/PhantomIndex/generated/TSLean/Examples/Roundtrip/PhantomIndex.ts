@@ -4,8 +4,8 @@
  * Lean module: TSLean.Examples.Roundtrip.PhantomIndex
  * Generated module: TSLean/Examples/Roundtrip/PhantomIndex.ts
  * Package entry module: TSLean.Examples.Roundtrip.PhantomIndex
- * Semantic identity: sha256:158bc8a2745764e1675f06a33d5dc46c1fb623b46eb7537994331327283570de
- * Input closure: sha256:7f7e4dea2e433a5d3f2a60607389fbc79f6994f77f575580a217e5db9862cd1b
+ * Semantic identity: sha256:beefd4cefd3a76b747ed6796b87f62161a2027bb09eeacc21d7be62da8c6fe29
+ * Input closure: sha256:4ef9859ba227109e7cc2de69186cf28102651db4bfc5a2b07d395eda676b10e3
  * Semantic IR: sha256:b465e5f4f15fdac4dae0e03524bf347eed5ea03f3ef53f4a320f02f413ccecf0
  * Generated module body: sha256:4ed5102bb3f827210a2a517f203028fa025701de3f78517df512cf150e7dbff5
  * Generated package body: sha256:4817da9bbbb3ec16e22a543d06025b55a6037dbdd2db96e2bc2c9955f43e0ee6

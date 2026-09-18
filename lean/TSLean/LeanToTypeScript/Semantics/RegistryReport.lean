@@ -1,5 +1,6 @@
 import Lean
 import TSLean.LeanToTypeScript.Semantics.Tests.Registry
+import TSLean.LeanToTypeScript.Semantics.MatchForms
 
 /-!
 # The registry report
@@ -23,6 +24,16 @@ private def kindEntry (constructor kind : String) : Json :=
 private def opcodeNamespace : String := "TSLean.LeanToTypeScript.Semantics.Opcode"
 
 private def modelNamespace : String := "TSLean.LeanToTypeScript.Semantics.Runtime"
+
+private def matchFormsNamespace : String := "TSLean.LeanToTypeScript.Semantics.MatchForms"
+
+private def sourceFormEntry (form : MatchForms.SourceForm) : Json :=
+  Json.mkObj [
+    ("form", .str form.kind),
+    ("constructor", .str (toString (repr form))),
+    ("theorem", .str (matchFormsNamespace ++ "." ++ form.theoremName)),
+    ("discharge", .str form.discharge)
+  ]
 
 private def opcodeEntry (code : Ir.Opcode) : Json :=
   Json.mkObj [
@@ -67,7 +78,8 @@ def registryReport : Json :=
       kindEntry (toString (repr form)) form.kind).toArray)),
     ("opcodes", .arr ((Ir.Opcode.all.map opcodeEntry).toArray)),
     ("hostOpcodes", .arr ((Ir.HostOp.all.map hostEntry).toArray)),
-    ("assumptions", .arr ((Id.all.map assumptionEntry).toArray))
+    ("assumptions", .arr ((Id.all.map assumptionEntry).toArray)),
+    ("sourceForms", .arr ((MatchForms.SourceForm.all.map sourceFormEntry).toArray))
   ]
 
 end TSLean.LeanToTypeScript.Semantics

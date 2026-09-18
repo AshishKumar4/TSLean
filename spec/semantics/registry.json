@@ -1236,6 +1236,38 @@
     }
   ],
   "schemaVersion": 1,
+  "sourceForms": [
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.MatchForms.SourceForm.natPattern",
+      "discharge": "theorem",
+      "form": "match.nat",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.MatchForms.natDecision_eval"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.MatchForms.SourceForm.tupleMatch",
+      "discharge": "enumeration",
+      "form": "match.tuple",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.MatchForms.nest_leaf_scope"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.MatchForms.SourceForm.argumentLet",
+      "discharge": "enumeration",
+      "form": "let.argument",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.MatchForms.hoist_eval"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.MatchForms.SourceForm.universeErasure",
+      "discharge": "enumeration",
+      "form": "universe.erasure",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.MatchForms.universe_is_unobservable"
+    },
+    {
+      "constructor": "TSLean.LeanToTypeScript.Semantics.MatchForms.SourceForm.dependentMatch",
+      "discharge": "enumeration",
+      "form": "match.dependent",
+      "theorem": "TSLean.LeanToTypeScript.Semantics.MatchForms.dependent_motive_is_ordinary"
+    }
+  ],
   "typeForms": [
     {
       "constructor": "TSLean.LeanToTypeScript.Semantics.Ir.TyKind.boolean",

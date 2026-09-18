@@ -869,6 +869,42 @@ export function joinRegistries(registry, kinds, emitted, groups) {
   };
 }
 
+/**
+ * Each admitted source form names a theorem `MatchForms.lean` declares, and names how its
+ * correspondence is discharged.
+ *
+ * A source form is a Lean shape the fragment admits by lowering it into IR the fragment already
+ * carries — a `Nat` pattern, a match on more than one discriminant, a `let` in argument position, a
+ * universe-polymorphic declaration, a dependent match whose motive erases. Those add no opcode, so
+ * nothing in the opcode join would notice one admitted with no theorem behind it. This is that
+ * check: the form's theorem has to be declared, and its discharge has to be one of the two the
+ * project accepts. `sampling` is deliberately not one of them.
+ */
+export function joinSourceForms(registry, source) {
+  const rows = registry.sourceForms;
+  if (!Array.isArray(rows) || rows.length === 0) fail('the registry reports no source forms');
+  const qualifier = 'TSLean.LeanToTypeScript.Semantics.MatchForms.';
+  const discharges = new Set(['theorem', 'enumeration']);
+  const seen = new Set();
+  for (const row of rows) {
+    if (seen.has(row.form)) fail(`source form ${row.form} is reported twice`);
+    seen.add(row.form);
+    if (!discharges.has(row.discharge)) {
+      fail(
+        `source form ${row.form} is discharged by ${row.discharge}; a form rests on a theorem or on exhaustive enumeration, never on sampling`,
+      );
+    }
+    if (!row.theorem.startsWith(qualifier)) {
+      fail(`source form ${row.form} names an unqualified theorem ${row.theorem}`);
+    }
+    const local = row.theorem.slice(qualifier.length);
+    if (!new RegExp(`^theorem ${local}\\b`, 'm').test(source)) {
+      fail(`source form ${row.form} names theorem ${row.theorem}, which MatchForms.lean does not declare`);
+    }
+  }
+  return rows.length;
+}
+
 /** Each opcode's recorded theorem is declared, and is the one the registry pairs it with. */
 function checkTheoremNames(registry) {
   const source = readFileSync(join(semanticsDirectory, 'Opcode.lean'), 'utf8');
@@ -1028,6 +1064,20 @@ export function compareWithLocked(registry, locked) {
 function expectJoinFailure(label, registry, kinds, emitted, scenarios, expected) {
   try {
     joinRegistries(registry, kinds, emitted, scenarios);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes(expected)) return;
+    throw error;
+  }
+  fail(`${label} was accepted`);
+}
+
+/** The namespace every source form's theorem is qualified by. */
+const qualifiedMatchForms = 'TSLean.LeanToTypeScript.Semantics.MatchForms.';
+
+/** A source-form registry that has to be refused, and the reason it has to be refused for. */
+function expectSourceFormFailure(label, registry, source, expected) {
+  try {
+    joinSourceForms(cloneJson(registry), source);
   } catch (error) {
     if (error instanceof Error && error.message.includes(expected)) return;
     throw error;
@@ -1584,10 +1634,51 @@ function selfTest() {
     nestedDispatch.replaceAll('switch (kind) {', 'switch (value.kind) {'),
     'runs no switch on kind',
   );
+  // The source-form join. A form admitted with no theorem behind it, a form discharged by
+  // sampling, and a form reported twice are all refusals; each is provoked here from a registry
+  // and a `MatchForms.lean` text that carry no file behind them.
+  const sourceFormRegistry = {
+    sourceForms: [
+      {
+        form: 'match.nat',
+        theorem: 'TSLean.LeanToTypeScript.Semantics.MatchForms.natDecision_eval',
+        discharge: 'theorem',
+      },
+    ],
+  };
+  const sourceFormText = 'theorem natDecision_eval {program : Ir.Program}\n';
+  if (joinSourceForms(cloneJson(sourceFormRegistry), sourceFormText) !== 1) {
+    fail('the source-form join did not accept a form whose theorem is declared');
+  }
+  expectSourceFormFailure(
+    'a form whose theorem is absent',
+    { sourceForms: [{ ...sourceFormRegistry.sourceForms[0], theorem: `${qualifiedMatchForms}absent_theorem` }] },
+    sourceFormText,
+    'which MatchForms.lean does not declare',
+  );
+  expectSourceFormFailure(
+    'a form discharged by sampling',
+    { sourceForms: [{ ...sourceFormRegistry.sourceForms[0], discharge: 'sampling' }] },
+    sourceFormText,
+    'never on sampling',
+  );
+  expectSourceFormFailure(
+    'a form reported twice',
+    { sourceForms: [sourceFormRegistry.sourceForms[0], sourceFormRegistry.sourceForms[0]] },
+    sourceFormText,
+    'is reported twice',
+  );
+  expectSourceFormFailure(
+    'a registry with no source forms at all',
+    { sourceForms: [] },
+    sourceFormText,
+    'reports no source forms',
+  );
   stdout.write(
     'semantics registry self-test passed: 11 join fixtures, 4 opcode-join fixtures, ' +
       '2 opcode-reader fixtures, 4 inline-form fixtures, 3 helper-body fixtures, ' +
       '3 host-opcode fixtures, 3 certificate-coverage fixtures, 7 dispatch-reader fixtures, ' +
+      '4 source-form fixtures, ' +
       '4 frozen-source fixtures, 1 lock fixture, 1 probe fixture, ' +
       '11 Lean fixtures, 2 token scans\n',
   );
@@ -1625,12 +1716,14 @@ async function main() {
   const joinedHelpers = joinHelperForms(registry, forms.helpers);
   const joinedHosts = joinHostOpcodes(registry, declaredHostOpcodes());
   const certified = joinCertificateCoverage(registry, declaredOpcodes());
+  const sourceForms = joinSourceForms(registry, readFileSync(join(semanticsDirectory, 'MatchForms.lean'), 'utf8'));
   stdout.write(
     `Semantics registry gate passed: ${counts.expressions} expression operations, ` +
       `${counts.declarations} declaration families, ${counts.types} type forms, ` +
       `${counts.opcodes} opcodes paired with ${paired} theorems and joined to ${joinedOpcodes} ir.ts rows, ` +
       `${joinedForms} inline forms and ${joinedHelpers} helper bodies printed by emitter.ts and ` +
       `compared byte for byte, ${joinedHosts} host opcodes joined, ${certified} certificates covered, ` +
+      `${sourceForms} source forms joined to their theorems, ` +
       `${counts.assumptions} assumptions ` +
       `measured by ${probes.total} executed probes in ${probes.groups.size} groups, ` +
       `${audited} audited declarations\n`,

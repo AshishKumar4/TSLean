@@ -8,6 +8,7 @@ import TSLean.Examples.Roundtrip.Bits
 import TSLean.Examples.Roundtrip.Choice
 import TSLean.Examples.Roundtrip.ComputedIndex
 import TSLean.Examples.Roundtrip.Consent
+import TSLean.Examples.Roundtrip.Decisions
 import TSLean.Examples.Roundtrip.DependentField
 import TSLean.Examples.Roundtrip.Direction
 import TSLean.Examples.Roundtrip.Flags
