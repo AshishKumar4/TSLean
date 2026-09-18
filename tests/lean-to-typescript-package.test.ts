@@ -1,4 +1,4 @@
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -118,7 +118,7 @@ describe('published Lean to TypeScript API', () => {
 
   test(
     'rejects a manifest aliased to a generated module without modifying existing bytes',
-    () => {
+    async () => {
       const fixture = createLeanProjectFixture(
         ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
       );
@@ -129,7 +129,7 @@ describe('published Lean to TypeScript API', () => {
       const original = Buffer.from('preserve this artifact\n');
       writeFileSync(destinationPath, original);
       try {
-        const result = runSourceCompiler(
+        const result = await runSourceCompiler(
           destinationRoot,
           fixture.projectRoot,
           fixture.sourcePath,
@@ -150,7 +150,7 @@ describe('published Lean to TypeScript API', () => {
 
   test.each(['symlink-parent', 'hardlink', 'dangling-symlink'] as const)(
     'rejects %s aliases between generated artifact destinations',
-    (aliasKind) => {
+    async (aliasKind) => {
       const fixture = createLeanProjectFixture(
         ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
       );
@@ -173,7 +173,7 @@ describe('published Lean to TypeScript API', () => {
       }
       const original = existsSync(modulePath) ? readFileSync(modulePath) : undefined;
       try {
-        const result = runSourceCompiler(
+        const result = await runSourceCompiler(
           destinationRoot,
           fixture.projectRoot,
           fixture.sourcePath,
@@ -211,7 +211,7 @@ describe('published Lean to TypeScript API', () => {
     ],
   ] as const)(
     'rejects a generated tree whose %s destination would contain the other artifact',
-    (_ancestor, manifestRelativePath, diagnostic) => {
+    async (_ancestor, manifestRelativePath, diagnostic) => {
       const fixture = createLeanProjectFixture(
         ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
       );
@@ -222,7 +222,7 @@ describe('published Lean to TypeScript API', () => {
       const outputDirectory = join(destinationRoot, 'generated');
       const manifestPath = join(destinationRoot, manifestRelativePath);
       try {
-        const result = runSourceCompiler(
+        const result = await runSourceCompiler(
           destinationRoot,
           fixture.projectRoot,
           fixture.sourcePath,
@@ -261,7 +261,7 @@ describe('published Lean to TypeScript API', () => {
     ],
   ] as const)(
     'rejects %s without publishing the generated tree',
-    (_label, kind, diagnostic) => {
+    async (_label, kind, diagnostic) => {
       const fixture = createLeanProjectFixture(
         ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
       );
@@ -285,7 +285,7 @@ describe('published Lean to TypeScript API', () => {
       }
       const manifestPath = join(outputDirectory, 'tslean.manifest.json');
       try {
-        const result = runSourceCompiler(
+        const result = await runSourceCompiler(
           destinationRoot,
           fixture.projectRoot,
           fixture.sourcePath,
@@ -311,7 +311,7 @@ describe('published Lean to TypeScript API', () => {
 
   test(
     'refuses an output root reached through a symbolic-link ancestor before compilation mutates it',
-    () => {
+    async () => {
       const fixture = createLeanProjectFixture(
         ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
       );
@@ -323,7 +323,7 @@ describe('published Lean to TypeScript API', () => {
       const outputDirectory = join(alias, 'generated');
       const manifestPath = join(outputDirectory, 'tslean.manifest.json');
       try {
-        const result = runSourceCompiler(
+        const result = await runSourceCompiler(
           destinationRoot,
           fixture.projectRoot,
           fixture.sourcePath,
@@ -344,7 +344,7 @@ describe('published Lean to TypeScript API', () => {
 
   test(
     'refuses an unowned TypeScript sibling instead of deleting it during generation',
-    () => {
+    async () => {
       const fixture = createLeanProjectFixture(
         ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
       );
@@ -355,7 +355,7 @@ describe('published Lean to TypeScript API', () => {
       mkdirSync(outputDirectory);
       writeFileSync(keepPath, 'export const keep = true;\n');
       try {
-        const result = runSourceCompiler(
+        const result = await runSourceCompiler(
           destinationRoot,
           fixture.projectRoot,
           fixture.sourcePath,
@@ -376,7 +376,7 @@ describe('published Lean to TypeScript API', () => {
 
   test(
     'refuses a generated child path that resolves through a symbolic link outside the output root',
-    () => {
+    async () => {
       const fixture = createLeanProjectFixture(
         ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
       );
@@ -388,7 +388,7 @@ describe('published Lean to TypeScript API', () => {
       writeFileSync(escapedPath, 'export const outside = true;\n');
       symlinkSync(escapedPath, join(outputDirectory, 'Fixture.ts'), 'file');
       try {
-        const result = runSourceCompiler(
+        const result = await runSourceCompiler(
           destinationRoot,
           fixture.projectRoot,
           fixture.sourcePath,
@@ -409,7 +409,7 @@ describe('published Lean to TypeScript API', () => {
 
   test(
     'refuses an in-root manifest symlink that targets an external file',
-    () => {
+    async () => {
       const fixture = createLeanProjectFixture(
         ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
       );
@@ -421,7 +421,7 @@ describe('published Lean to TypeScript API', () => {
       writeFileSync(externalManifest, '{"external":true}\n');
       symlinkSync(externalManifest, manifestPath, 'file');
       try {
-        const result = runSourceCompiler(
+        const result = await runSourceCompiler(
           destinationRoot,
           fixture.projectRoot,
           fixture.sourcePath,
@@ -490,7 +490,7 @@ describe('published Lean to TypeScript API', () => {
     }
   });
 
-  test('rejects an existing directory as --manifest before compilation without creating generated files', () => {
+  test('rejects an existing directory as --manifest before compilation without creating generated files', async () => {
     const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-cli-directory-destination-'));
     const outputDirectory = join(temporaryRoot, 'generated');
     const directoryPath = join(outputDirectory, 'manifest');
@@ -499,7 +499,7 @@ describe('published Lean to TypeScript API', () => {
     mkdirSync(directoryPath, { recursive: true });
     writeFileSync(preservedInDirectoryPath, directoryOriginal);
     try {
-      const result = runSourceCompiler(
+      const result = await runSourceCompiler(
         temporaryRoot,
         join(temporaryRoot, 'missing-project'),
         join(temporaryRoot, 'missing-project', 'Fixture.lean'),
@@ -518,7 +518,7 @@ describe('published Lean to TypeScript API', () => {
 
   test(
     'preserves every preexisting artifact when one destination cannot be staged',
-    () => {
+    async () => {
       const fixture = createLeanProjectFixture(
         ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
       );
@@ -529,7 +529,7 @@ describe('published Lean to TypeScript API', () => {
       writeFileSync(outputPath, original);
       const manifestPath = `/sys/tslean-${process.pid}-manifest.json`;
       try {
-        const result = runSourceCompiler(
+        const result = await runSourceCompiler(
           fixture.projectRoot,
           fixture.projectRoot,
           fixture.sourcePath,
@@ -575,7 +575,7 @@ describe('published Lean to TypeScript API', () => {
       chmodSync(wrapperPath, 0o755);
       try {
         const child = spawn(
-          'bun',
+          CLI_RUNTIME,
           compilerArguments(fixture.projectRoot, fixture.sourcePath, publicationRoot, manifestPath),
           {
             cwd: fixture.projectRoot,
@@ -1736,7 +1736,7 @@ describe('published Lean to TypeScript API', () => {
     }
   });
 
-  test('rejects --manifest beneath an existing non-directory before compilation', () => {
+  test('rejects --manifest beneath an existing non-directory before compilation', async () => {
     const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-cli-nondirectory-ancestor-'));
     const outputDirectory = join(temporaryRoot, 'generated');
     const ancestorPath = join(outputDirectory, 'existing-file');
@@ -1745,7 +1745,7 @@ describe('published Lean to TypeScript API', () => {
     writeFileSync(ancestorPath, ancestorOriginal);
     const descendantPath = join(ancestorPath, 'generated-artifact');
     try {
-      const result = runSourceCompiler(
+      const result = await runSourceCompiler(
         temporaryRoot,
         join(temporaryRoot, 'missing-project'),
         join(temporaryRoot, 'missing-project', 'Fixture.lean'),
@@ -1765,7 +1765,7 @@ describe('published Lean to TypeScript API', () => {
 
   test.each(['symlink-parent', 'hardlink'] as const)(
     'rejects a %s --manifest alias of the explicit Lean source before compilation',
-    (aliasKind) => {
+    async (aliasKind) => {
       const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-cli-source-alias-'));
       const projectRoot = join(temporaryRoot, 'project');
       mkdirSync(projectRoot);
@@ -1784,7 +1784,7 @@ describe('published Lean to TypeScript API', () => {
         linkSync(sourcePath, aliasedPath);
       }
       try {
-        const result = runSourceCompiler(temporaryRoot, projectRoot, sourcePath, outputDirectory, aliasedPath);
+        const result = await runSourceCompiler(temporaryRoot, projectRoot, sourcePath, outputDirectory, aliasedPath);
 
         expect(result.status).not.toBe(0);
         expect(result.stderr).toContain(
@@ -1803,7 +1803,7 @@ describe('published Lean to TypeScript API', () => {
 
   test.each(['direct', 'hardlink'] as const)(
     'rejects a %s-path manifest outside the owned output root before compilation',
-    (sourcePathKind) => {
+    async (sourcePathKind) => {
       const temporaryRoot = mkdtempSync(join(tmpdir(), 'tslean-cli-source-descendant-'));
       const projectRoot = join(temporaryRoot, 'project');
       mkdirSync(projectRoot);
@@ -1815,7 +1815,7 @@ describe('published Lean to TypeScript API', () => {
       const descendantPath = join(destinationAncestor, 'generated-artifact');
       const outputDirectory = join(temporaryRoot, 'generated');
       try {
-        const result = runSourceCompiler(temporaryRoot, projectRoot, sourcePath, outputDirectory, descendantPath);
+        const result = await runSourceCompiler(temporaryRoot, projectRoot, sourcePath, outputDirectory, descendantPath);
 
         expect(result.status).not.toBe(0);
         expect(result.stderr).toContain('--manifest must be a file inside --out-dir');
@@ -1830,7 +1830,7 @@ describe('published Lean to TypeScript API', () => {
 
   test(
     'rejects --manifest when it aliases a captured compiler input without modifying either artifact',
-    () => {
+    async () => {
       const fixture = createLeanProjectFixture(
         ['namespace Fixture', 'def decide (value : Bool) : Bool := value', 'end Fixture', ''].join('\n'),
       );
@@ -1842,7 +1842,7 @@ describe('published Lean to TypeScript API', () => {
       mkdirSync(outputDirectory);
       linkSync(toolchainPath, manifestPath);
       try {
-        const result = runSourceCompiler(
+        const result = await runSourceCompiler(
           destinationRoot,
           fixture.projectRoot,
           fixture.sourcePath,
@@ -2571,18 +2571,95 @@ function transactionFiles(root: string): readonly string[] {
     .sort(compareCodePoints);
 }
 
-function runSourceCompiler(
+/** What one spawned source-compiler run reports back. */
+interface CompilerRun {
+  readonly status: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/**
+ * How long a spawned source compiler may take before the run itself is the failure.
+ *
+ * This is not a second copy of vitest's per-test timeout; it is what makes vitest's own timeout
+ * reachable. The compiler used to be spawned synchronously, so a child that never exited blocked
+ * the worker thread, no timer above it could fire, and one deadlocked child hung the whole suite
+ * instead of failing it in a minute. The spawn is therefore asynchronous, the deadline kills the
+ * child's process group rather than only the child — an orphaned grandchild holding the pipe is
+ * exactly how the deadlock survived — and expiry reports which child and which limit.
+ */
+const CLI_DEADLINE_MS = 120_000;
+
+async function runSourceCompiler(
   cwd: string,
   projectRoot: string,
   sourcePath: string,
   outputDirectory: string,
   manifestPath: string,
-): ReturnType<typeof spawnSync> {
-  return spawnSync('bun', compilerArguments(projectRoot, sourcePath, outputDirectory, manifestPath), {
-    cwd,
-    encoding: 'utf8',
-  });
+): Promise<CompilerRun> {
+  const args = compilerArguments(projectRoot, sourcePath, outputDirectory, manifestPath);
+  const child = spawn(CLI_RUNTIME, args, { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  return await boundedRun(child, `${CLI_RUNTIME} ${args.join(' ')}`);
 }
+
+/**
+ * One child's output and exit, or a failure naming the child once the deadline passes.
+ *
+ * The exit is awaited rather than the streams closing, because a grandchild that inherited the
+ * pipe keeps it open after its parent is gone; whatever arrived by then is what the run reports.
+ */
+async function boundedRun(child: ChildProcess, description: string): Promise<CompilerRun> {
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.setEncoding('utf8').on('data', (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
+    stderr += chunk;
+  });
+  let expire: NodeJS.Timeout | undefined;
+  try {
+    const exit = await new Promise<CompilerRun | 'expired'>((settle, rejectPromise) => {
+      child.once('error', rejectPromise);
+      child.once('exit', (status, signal) => settle({ signal, status, stderr, stdout }));
+      expire = setTimeout(() => settle('expired'), CLI_DEADLINE_MS);
+    });
+    if (exit !== 'expired') return exit;
+  } finally {
+    clearTimeout(expire);
+  }
+  killTree(child);
+  throw new Error(
+    `${description} did not exit within ${String(CLI_DEADLINE_MS)}ms; its process group was killed.` +
+      `${stderr === '' ? '' : `\nIts output so far:\n${stderr}`}`,
+  );
+}
+
+/** Kills a detached child's whole process group, so nothing it spawned outlives it. */
+function killTree(child: ChildProcess): void {
+  const { pid } = child;
+  if (pid === undefined) return;
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    child.kill('SIGKILL');
+  }
+}
+
+/**
+ * The runtime the source compiler is spawned under, and not `bun`.
+ *
+ * typescript@7.0.2's compiler-session client reads `stdout._handle.fd` and `stdin._handle.fd` off
+ * the server process it spawns (`typescript/dist/api/syncChannel.js:131`), and Bun's child streams
+ * carry no `_handle`, so opening a project throws. Worse, the server child is spawned before that
+ * read and never reaped, so the Bun parent never exits: a synchronous spawn of it blocks forever.
+ * `js:trust` runs on Node for the same reason.
+ *
+ * It is `tsx`'s own launcher rather than `node --import tsx` because the compiler is spawned with
+ * its working directory inside a scratch tree, where `tsx` does not resolve as a bare specifier.
+ */
+const CLI_RUNTIME = join(repositoryRoot, 'node_modules', '.bin', 'tsx');
 
 function compilerArguments(
   projectRoot: string,

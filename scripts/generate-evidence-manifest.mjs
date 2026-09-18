@@ -539,7 +539,7 @@ const manifest = {
     typescript: textCommand(localBin('tsc'), ['--version']).replace(/^Version /, ''),
     vitest: textCommand(localBin('vitest'), ['--version']),
     prettier: textCommand(localBin('prettier'), ['--version']),
-    eslint: textCommand(localBin('eslint'), ['--version']),
+    oxlint: textCommand(localBin('oxlint'), ['--version']).replace(/^Version: /, ''),
     lean: textCommand('lean', ['--version'], join(root, 'lean')),
     lake: textCommand('lake', ['--version'], join(root, 'lean')),
   },
