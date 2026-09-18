@@ -2,12 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import ts from 'typescript';
+import { emitted as ts } from '../src/typescript-api/emitted-syntax.js';
 import {
   compileLeanToTypeScript,
   UnsupportedLeanFragmentError,
   type LeanToTypeScriptPackage,
 } from '../src/lean-to-typescript/index.js';
+import { openProject, renderDiagnostic } from '../src/typescript-api/session.js';
 import { createLeanLibraryFixture, type LeanLibraryFixture } from './helpers/lean-library-fixture.js';
 import { createLeanProjectFixture, type LeanProjectFixture } from './helpers/lean-project-fixture.js';
 
@@ -155,7 +156,14 @@ const ROOTS = [
 let library: LeanLibraryFixture;
 let emitted: LeanToTypeScriptPackage;
 
-/** The generated module's exports, transpiled and evaluated, so a decoder can be run against it. */
+/**
+ * The generated module's exports, transpiled and evaluated, so a decoder can be run against it.
+ *
+ * Lowering TypeScript to JavaScript is an emit, and the compiler that emits here is the one
+ * {@link module:typescript-api/emitted-syntax} holds: TypeScript 7 publishes no in-process
+ * transpiler — `typescript/unstable/sync` is a client to a compiler server whose only emit is
+ * `printNode` — and the package's own entry point carries the version and nothing else.
+ */
 function evaluateGeneratedModuleExports(code: string): Record<string, unknown> {
   const javascript = ts.transpileModule(code, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -407,19 +415,27 @@ describe('generated structure comes from elaborated evidence, never from a name'
         writeFileSync(path, module.code, 'utf8');
         return path;
       });
-      const program = ts.createProgram(paths, {
-        module: ts.ModuleKind.NodeNext,
-        moduleResolution: ts.ModuleResolutionKind.NodeNext,
-        noEmit: true,
-        noUnusedLocals: true,
-        lib: ['lib.es2022.d.ts'],
-        strict: true,
-        target: ts.ScriptTarget.ES2022,
+      // The session spells options the way a `tsconfig.json` writes them, because TypeScript 7
+      // builds a program only from a configuration file and parses what it is handed as
+      // configuration text; `lib: ['lib.es2022.d.ts']` is the resolved spelling and is refused.
+      const project = openProject({
+        files: paths,
+        settings: {
+          module: 'nodenext',
+          moduleResolution: 'nodenext',
+          noEmit: true,
+          noUnusedLocals: true,
+          lib: ['es2022'],
+          strict: true,
+          target: 'es2022',
+        },
       });
-      const diagnostics = ts
-        .getPreEmitDiagnostics(program)
-        .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
-      expect(diagnostics).toEqual([]);
+      try {
+        const diagnostics = project.diagnostics().map((diagnostic) => renderDiagnostic(diagnostic));
+        expect(diagnostics).toEqual([]);
+      } finally {
+        project.close();
+      }
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
