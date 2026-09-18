@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { argv, stdout } from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { API } from 'typescript/unstable/sync';
@@ -66,6 +66,44 @@ function runLake(args, { allowFailure = false } = {}) {
     fail(`lake ${args.join(' ')} exited with ${result.status}:\n${result.stderr}${result.stdout}`);
   }
   return result;
+}
+
+/**
+ * Every module of this project that a Lean file imports, read from the file rather than listed.
+ *
+ * Comments are stripped first, so a commented-out import is not built, and an import with no
+ * source under `lean/` is left alone, which is how `Lean` and `Std` stay out of the target set.
+ */
+function importedProjectModules(source) {
+  const modules = new Set();
+  for (const line of stripLeanComments(source).split('\n')) {
+    const match = /^\s*import\s+([A-Za-z_][\w.']*)\s*$/u.exec(line);
+    if (match === null) continue;
+    const [, name] = match;
+    if (existsSync(join(leanDirectory, `${name.split('.').join(sep)}.lean`))) modules.add(name);
+  }
+  return [...modules].sort();
+}
+
+/**
+ * Run a Lean file through the project's toolchain, having first built exactly what it imports.
+ *
+ * Nothing else here builds what these files elaborate against. The only build this gate performs
+ * is `leanRegistry`'s, scoped to `LeanToTypeScriptSemantics` and `semantics-registry`. That
+ * happens to cover every module the negative fixtures import, and does not cover
+ * `TSLean.JS.AxiomAuditMeta`, which the axiom audit imports -- so the audit elaborated against
+ * whatever build ran before this script: absent on a checkout where no bare `lake build` has run,
+ * and STALE where a `.lake` was warmed by copying another checkout, in which case it reports that
+ * other tree's axiom dependencies while the build looks green. Being reachable from
+ * `defaultTargets` does not help, because this gate never invokes them. Reading the target set
+ * from each file's own imports makes the verdict a property of the tree, holds the fixtures by
+ * construction instead of by that coincidence, and covers a module added to either later without
+ * editing this script.
+ */
+function runLeanFile(path, options = {}) {
+  const modules = importedProjectModules(readFileSync(join(leanDirectory, path), 'utf8'));
+  if (modules.length > 0) runLake(['build', ...modules, '--quiet', '--no-ansi']);
+  return runLake(['env', 'lean', path], options);
 }
 
 /** The registry as Lean reports it. */
@@ -910,7 +948,7 @@ function semanticsSources() {
 
 /** The axiom dependencies of every authored declaration of the semantics. */
 function auditAxioms() {
-  const result = runLake(['env', 'lean', 'audit/LeanToTypeScriptSemantics.lean']);
+  const result = runLeanFile('audit/LeanToTypeScriptSemantics.lean');
   const records = new Map();
   for (const line of result.stdout.split('\n')) {
     const marker = line.indexOf('JS_AUDIT\t');
@@ -971,7 +1009,7 @@ export function checkFrozenSource(registry, read = (path) => readFileSync(join(r
 
 /** A Lean file that has to be refused, and the reason it has to be refused for. */
 function expectLeanFailure(fixture, expected) {
-  const result = runLake(['env', 'lean', join('..', 'tests/lean-fixtures', fixture)], { allowFailure: true });
+  const result = runLeanFile(join('..', 'tests/lean-fixtures', fixture), { allowFailure: true });
   if (result.status === 0) fail(`negative fixture ${fixture} was accepted`);
   const output = `${result.stdout}${result.stderr}`;
   if (!output.includes(expected)) {
