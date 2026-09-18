@@ -491,6 +491,15 @@ function checkCompiledArtifacts() {
     .sort();
   if (orphans.length > 0) fail(`orphaned Lean build artifacts have no source module: ${orphans.join(', ')}`);
   const modules = libraryModules();
+  // The gate owns its prerequisites rather than inheriting whatever a `.lake` happens to hold.
+  // `lake build` with no target builds `defaultTargets`, and nothing under those reaches an
+  // exporter, an example or an executable root -- so a module this gate requires an artifact for
+  // can legitimately have none. Worse, a `.lake` warmed by copying another checkout carries a
+  // STALE artifact, and then every audit below reports that other tree's behaviour while the build
+  // looks green. The required set is read from the sources here, never listed, so neither the
+  // contents of `defaultTargets` nor the state of anyone's build directory decides what this gate
+  // verified; a stale artifact is recompiled and a missing one is built.
+  ensureLeanBuildCurrent('lake', [...modules].filter((name) => !unbuiltSourceAllowlist.has(name)).sort());
   const unbuilt = [...modules]
     .filter((name) => !unbuiltSourceAllowlist.has(name) && !existsSync(compiledArtifactFile(name)))
     .sort();
