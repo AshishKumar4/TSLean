@@ -65,6 +65,8 @@ ctors (4):
 implemented_by (0):
 safe=false (0):
 over-applications (0):
+erased lets (0):
+partial ctors (0):
 refusals (0):
 round-trip: 5 raw and 5 canonical declarations
 digest GoldenProbe.total: 638d6bc885a69c0818ca92ff08bff2a4f8c5afaf889cdb7b88c20a3f44efd76c
@@ -115,6 +117,8 @@ ctors (6):
 implemented_by (0):
 safe=false (0):
 over-applications (0):
+erased lets (0):
+partial ctors (0):
 refusals (0):
 round-trip: 4 raw and 4 canonical declarations
 digest GoldenStep.step: 92565db6cb6b9350b6b59b1df4b3afe449f3fe0c05061eec31574a1899781675
@@ -185,6 +189,8 @@ implemented_by (1):
 safe=false (1):
   Array.foldrMUnsafe.fold._lcnf_70dcc3772ef0e84f
 over-applications (0):
+erased lets (0):
+partial ctors (0):
 refusals (1):
   lcnf.extract.requires-primitive-table-entry: String.hash is a pure opaque extern and requires a primitive-table entry
 round-trip: 13 raw and 13 canonical declarations
@@ -213,6 +219,8 @@ ctors (5):
 implemented_by (0):
 safe=false (0):
 over-applications (0):
+erased lets (0):
+partial ctors (0):
 refusals (0):
 round-trip: 2 raw and 2 canonical declarations
 digest TSLean.Examples.Roundtrip.Traffic.next: 6c06fd16b48c01c6c0fb1fe83f68b1d2328c64783c2c26b1ab51caab2c357f9d
@@ -233,6 +241,8 @@ ctors (2):
 implemented_by (0):
 safe=false (0):
 over-applications (0):
+erased lets (0):
+partial ctors (0):
 refusals (0):
 round-trip: 1 raw and 1 canonical declarations
 digest TSLean.Examples.Roundtrip.Priority.before: 333ec1a36462f1317f0cdbaa4ba418623dbda16950c6b3a13d690fbc48db7468
@@ -268,6 +278,8 @@ ctors (6):
 implemented_by (0):
 safe=false (0):
 over-applications (0):
+erased lets (0):
+partial ctors (0):
 refusals (0):
 round-trip: 10 raw and 10 canonical declarations
 digest TSLean.Examples.Roundtrip.Invariant.build: 0bbc4656e4d03debdc4020b67db6ef93f9234a66db29be856e00fca7a8c6830d
@@ -314,6 +326,8 @@ implemented_by (1):
 safe=false (1):
   Array.mapMUnsafe.map._lcnf_c52100d05bbeed36
 over-applications (0):
+erased lets (0):
+partial ctors (0):
 refusals (0):
 round-trip: 2 raw and 2 canonical declarations
 digest GoldenImpl.incAll: ae5f43428660d707d4fe13e3868cf2b05ed5e9edd109d40a791c2d2742e7b5b1
@@ -334,6 +348,8 @@ implemented_by (1):
   GoldenImpl.refSide -> GoldenImpl.implSide via GoldenImpl.implSide
 safe=false (0):
 over-applications (0):
+erased lets (0):
+partial ctors (0):
 refusals (0):
 round-trip: 2 raw and 2 canonical declarations
 digest GoldenImpl.useRef: 76b260479f7168308e171d5898f576fa076f1360089850935476651c7cc93ea4
@@ -359,6 +375,8 @@ ctors (1):
 implemented_by (0):
 safe=false (0):
 over-applications (0):
+erased lets (0):
+partial ctors (0):
 refusals (3):
   lcnf.extract.world-token: GoldenIO.nowMs mentions the world token lcVoid; effects are data at the root
   lcnf.extract.world-token: GoldenIO.nowMs mentions the world token EST.Out; effects are data at the root
@@ -411,6 +429,8 @@ ctors (2):
 implemented_by (0):
 safe=false (0):
 over-applications (0):
+erased lets (0):
+partial ctors (0):
 refusals (0):
 round-trip: 5 raw and 5 canonical declarations
 digest GoldenClosures.fns: 21da8f2877b44f39129d5e6711ee2bf7fc7189f28b12a2f20a80de8e9df8d830
@@ -436,6 +456,8 @@ ctors (2):
 implemented_by (0):
 safe=false (0):
 over-applications (0):
+erased lets (0):
+partial ctors (0):
 refusals (0):
 round-trip: 3 raw and 3 canonical declarations
 digest GoldenClosures.boxes: db3993169464c027903576ddcf15d7bd256458632543f4525edf7f9b8441c560
@@ -456,6 +478,8 @@ implemented_by (0):
 safe=false (0):
 over-applications (1):
   GoldenClosures.constOver: GoldenClosures.konst._lcnf_5a04ff138329a080 takes 1, applied to 3
+erased lets (0):
+partial ctors (0):
 refusals (0):
 round-trip: 2 raw and 2 canonical declarations
 digest GoldenClosures.constOver: 5eedcfaae171b58990ae25af9c722bc4279ff9c00d8ef57b01d9aa94e538e8db
@@ -478,12 +502,59 @@ GoldenClosures.constOver: 1 carried Exprs contain mdata, e.g. (some ([mdata borr
     let md := es.filter fun e => (e.find? (·.isMData)).isSome
     IO.println s!"{root}: {md.size} carried Exprs contain mdata, e.g. {md[0]?}"
 
+/-! ## Erased lets and partial constructor applications, from real stdlib declarations
+
+The census of imported mono found 124 erased lets and 20 partial constructor applications. Both
+goldens below are declarations the census found. `boolToProp` is `let _x.1 : lcErased := ◾`.
+`instNatCastInt` is `Int.ofNat` taken as a closure. -/
+
+/--
+info: roots: boolToProp
+code decls (1):
+  boolToProp
+externs (0):
+opaque externs (0):
+ctors (0):
+implemented_by (0):
+safe=false (0):
+over-applications (0):
+erased lets (1):
+  boolToProp: let _x.1
+partial ctors (0):
+refusals (0):
+round-trip: 1 raw and 1 canonical declarations
+digest boolToProp: 7c56ecf4e1bf20c310ebc32cc9a6482dd5329c1ebafa0879fc49d6cf16cecd9f
+-/
+#guard_msgs in
+#eval golden #[``boolToProp]
+
+/--
+info: roots: instNatCastInt
+code decls (1):
+  instNatCastInt
+externs (1):
+  Int.ofNat/1 [standard all lean_nat_to_int]
+opaque externs (0):
+ctors (0):
+implemented_by (0):
+safe=false (0):
+over-applications (0):
+erased lets (0):
+partial ctors (1):
+  instNatCastInt: Int.ofNat takes 1, applied to 0
+refusals (0):
+round-trip: 1 raw and 1 canonical declarations
+digest instNatCastInt: 5d818ae8e6eb84127ebb216bb298b9b1a146f6e055faf77e1659988106ff096a
+-/
+#guard_msgs in
+#eval golden #[``instNatCastInt]
+
 /-! ## Refusal controls: unsupported forms, planted as mono declarations
 
 User code does not produce these forms, so each is planted: a hand-built declaration saved into
 the mono extension, or a base-phase body (which has `fun` and `proj`) saved as mono. The planted
-declaration also contains an over-application of a code declaration (`Nat.add x x x`), which is
-admitted and listed. -/
+declaration also contains three admitted forms, which are listed: an over-application of a code
+declaration (`Nat.add x x x`), an erased let and a partial constructor application. -/
 
 namespace GoldenPlant
 def fv (i : Nat) : FVarId := ⟨.num `_plant i⟩
@@ -514,8 +585,10 @@ def hiddenDecl : Decl .pure :=
 end GoldenPlant
 
 /--
-info: #[GoldenPlant.forms]: #[lcnf.extract.unsupported-form: GoldenPlant.forms contains `fun` (local function f), a form the pipeline does not lower, lcnf.extract.unsupported-form: GoldenPlant.forms contains `erased` (let b), a form the pipeline does not lower, lcnf.extract.unsupported-form: GoldenPlant.forms contains `fvar-alias` (let c), a form the pipeline does not lower, lcnf.extract.unsupported-form: GoldenPlant.forms contains `partial-ctor` (List.cons takes 3, applied to 1), a form the pipeline does not lower, lcnf.extract.unsupported-form: GoldenPlant.forms contains `ctor-over-application` (List.nil takes 1, applied to 2), a form the pipeline does not lower]
+info: #[GoldenPlant.forms]: #[lcnf.extract.unsupported-form: GoldenPlant.forms contains `fun` (local function f), a form the pipeline does not lower, lcnf.extract.unsupported-form: GoldenPlant.forms contains `fvar-alias` (let c), a form the pipeline does not lower, lcnf.extract.unsupported-form: GoldenPlant.forms contains `ctor-over-application` (List.nil takes 1, applied to 2), a form the pipeline does not lower]
   admitted over-application in GoldenPlant.forms: Nat.add takes 2, applied to 3
+  admitted erased let in GoldenPlant.forms: let b
+  admitted partial ctor in GoldenPlant.forms: List.cons takes 3, applied to 1
 #[GoldenPlant.hidden]: #[lcnf.extract.extern-opaque: GoldenPlant.hidden is `extern [opaque]`; its mono body is not available at this olean level]
 #[GoldenPlant.baseFirstBig]: #[lcnf.extract.unsupported-form: GoldenPlant.baseFirstBig contains `proj` (GoldenProbe.Order.0), a form the pipeline does not lower]
 #[Nat.rec]: #[lcnf.extract.no-mono-decl: Nat.rec (recursor) has no mono declaration and is not a constructor]
@@ -533,3 +606,6 @@ info: #[GoldenPlant.forms]: #[lcnf.extract.unsupported-form: GoldenPlant.forms c
     IO.println s!"{roots}: {c.refusals.map (·.message)}"
     for o in c.overApplications do
       IO.println s!"  admitted over-application in {o.decl}: {o.callee} takes {o.arity}, applied to {o.args}"
+    for e in c.erasedLets do IO.println s!"  admitted erased let in {e.decl}: let {e.binder}"
+    for p in c.partialCtors do
+      IO.println s!"  admitted partial ctor in {p.decl}: {p.ctor} takes {p.arity}, applied to {p.args}"

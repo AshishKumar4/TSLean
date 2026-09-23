@@ -20,8 +20,9 @@ Classification of a reached constant `n`, in this order:
      primitive table (M3) alone;
    * otherwise an `extern` leaf, which has a reference body.
 2. A mono declaration with code: walked. Its body is checked for world-token types and for the forms
-   the pipeline does not lower (`unsupported-form`). Over-application of a constant is admitted and
-   recorded (see `OverApplication`).
+   the pipeline does not lower (`unsupported-form`). Three forms are admitted and recorded instead:
+   over-application of a constant (`OverApplication`), erased lets (`ErasedLet`) and partial
+   constructor applications (`PartialCtor`).
 3. A mono declaration whose value is `extern [opaque]` without the attribute: the body was hidden by
    the olean level (p8). Refused (`extern-opaque`). The walk also asserts the private level up
    front, so this is a second line.
@@ -81,6 +82,28 @@ structure OverApplication where
   args : Nat
   deriving BEq
 
+/-- `let x : lcErased := ◾`. Stdlib mono has 124 of these, all in instances of `Sort`/`Prop`-valued
+classes (`boolToProp`, `instInhabitedSort`, …). Lean's own IR lowers an erased value to `box(0)`, an
+irrelevant value that no computation can inspect. A consumer can only pass it along, so any runtime
+value is sound. M2 lowers it to a single `erased` constant. Admitted and kept in the IR unchanged. -/
+structure ErasedLet where
+  decl : Name
+  binder : Name
+  deriving BEq
+
+/-- A constructor applied to fewer arguments than its parameters plus fields: a closure over the
+constructor. Stdlib mono has 20, all `Int.ofNat` or `UIntN.ofBitVec`/`USize.ofBitVec` taken as a
+function (`instNatCastInt`). How it is lowered depends on the representation, so the extractor only
+records it. For a builtin-represented type the constructor is a primitive conversion from the
+primitive table (M3), wrapped as a closure. For a user type it is a closure over the constructor,
+built on the ordinary `pap` path. Admitted and kept in the IR unchanged. -/
+structure PartialCtor where
+  decl : Name
+  ctor : Name
+  arity : Nat
+  args : Nat
+  deriving BEq
+
 inductive Refusal where
   /-- An `extern [opaque]` value: either the attribute says so or the olean level hid the body. -/
   | externOpaque (name : Name)
@@ -90,11 +113,10 @@ inductive Refusal where
   | requiresPrimitiveTableEntry (name : Name)
   /-- A code declaration whose types mention a world token. -/
   | worldToken (decl : Name) (token : Name)
-  /-- A form the pipeline does not lower. Census over the 284,081 imported mono declarations at
-  the private level (`import Lean`, v4.33.1): `proj`, `fun`, `fvar` aliases and constructor
-  over-application occur 0 times. `erased` lets occur 124 times, all in instances of `Sort`/`Prop`-
-  valued classes, and partial constructor applications occur 20 times, all `Int.ofNat` or
-  `UIntN.ofBitVec` as a closure. Neither has been provoked from ordinary user code. -/
+  /-- A form the pipeline does not lower: `proj`, `fun`, `fvar` aliases, constructor
+  over-application. In a census of the 284,081 imported mono declarations at the private level
+  (`import Lean`, v4.33.1), each occurs 0 times, and targeted user programs did not provoke any of
+  them. -/
   | unsupportedForm (decl : Name) (form : String) (detail : String)
   /-- A referenced constant with neither a mono declaration nor a constructor. -/
   | noMonoDecl (name : Name) (kind : String)
@@ -133,6 +155,10 @@ structure Closure where
   unsafeDecls : Array Name
   /-- Admitted over-applications of constants, in walk order. -/
   overApplications : Array OverApplication
+  /-- Admitted erased lets, in walk order. -/
+  erasedLets : Array ErasedLet
+  /-- Admitted partial constructor applications, in walk order. -/
+  partialCtors : Array PartialCtor
   refusals : Array Refusal
 
 def Closure.admitted (c : Closure) : Bool := c.refusals.isEmpty
@@ -160,6 +186,9 @@ def Closure.render (c : Closure) (rename : Name → Name := id) : String :=
     block "safe=false" (c.unsafeDecls.map (toString <| rename ·)) ++
     block "over-applications" (c.overApplications.map fun o =>
       s!"{rename o.decl}: {rename o.callee} takes {o.arity}, applied to {o.args}") ++
+    block "erased lets" (c.erasedLets.map fun e => s!"{rename e.decl}: let {e.binder}") ++
+    block "partial ctors" (c.partialCtors.map fun p =>
+      s!"{rename p.decl}: {p.ctor} takes {p.arity}, applied to {p.args}") ++
     block "refusals" (c.refusals.map (·.message))
 
 /-! ## The olean level -/
@@ -234,16 +263,24 @@ def arity? (n : Name) : CoreM (Option Nat) := do
   | some (.ctorInfo ci) => return some (ci.numParams + ci.numFields)
   | _ => return none
 
-/-- Refusals for the forms the pipeline does not lower, and the admitted over-applications. -/
-partial def checkForms (decl : Name) (c : Code .pure) :
-    StateT (Array Refusal × Array OverApplication) CoreM Unit := do
-  let refuse (f x : String) : StateT (Array Refusal × Array OverApplication) CoreM Unit :=
-    modify fun (rs, os) => (rs.push (.unsupportedForm decl f x), os)
+/-- What `checkForms` finds in one body: refusals, and the admitted forms it records. -/
+structure FormReport where
+  refusals : Array Refusal := #[]
+  overApplications : Array OverApplication := #[]
+  erasedLets : Array ErasedLet := #[]
+  partialCtors : Array PartialCtor := #[]
+
+/-- Refusals for the forms the pipeline does not lower, and records of the admitted ones. -/
+partial def checkForms (decl : Name) (c : Code .pure) : StateT FormReport CoreM Unit := do
+  let refuse (f x : String) : StateT FormReport CoreM Unit :=
+    modify fun r => { r with refusals := r.refusals.push (.unsupportedForm decl f x) }
   match c with
   | .let d k =>
     match d.value with
     | .proj t i _ _ => refuse "proj" s!"{t}.{i}"
-    | .erased => refuse "erased" s!"let {d.binderName}"
+    | .erased =>
+      let e : ErasedLet := { decl := decl, binder := d.binderName }
+      modify fun r => { r with erasedLets := r.erasedLets.push e }
     | .fvar _ as => if as.isEmpty then refuse "fvar-alias" s!"let {d.binderName}"
     | .const n _ as _ =>
       let isCtor := (← getEnv).find? n matches some (.ctorInfo _)
@@ -251,10 +288,12 @@ partial def checkForms (decl : Name) (c : Code .pure) :
       | some a =>
         if as.size > a then
           if isCtor then refuse "ctor-over-application" s!"{n} takes {a}, applied to {as.size}"
-          else modify fun (rs, os) =>
-            (rs, os.push { decl, callee := n, arity := a, args := as.size })
+          else
+            let o : OverApplication := { decl := decl, callee := n, arity := a, args := as.size }
+            modify fun r => { r with overApplications := r.overApplications.push o }
         else if as.size < a && isCtor then
-          refuse "partial-ctor" s!"{n} takes {a}, applied to {as.size}"
+          let p : PartialCtor := { decl := decl, ctor := n, arity := a, args := as.size }
+          modify fun r => { r with partialCtors := r.partialCtors.push p }
       | none => pure ()  -- reported as `no-mono-decl` when the walk reaches `n`
     | .lit _ => pure ()
     checkForms decl k
@@ -287,7 +326,8 @@ def closure (roots : Array Name) : CoreM Closure := do
   let mut seen : NameSet := roots.foldl (·.insert ·) {}
   let mut out : Closure :=
     { roots := roots, decls := #[], externs := #[], opaqueExterns := #[], ctors := #[], implementedBy := #[],
-      unsafeDecls := #[], overApplications := #[], refusals := #[] }
+      unsafeDecls := #[], overApplications := #[], erasedLets := #[], partialCtors := #[],
+      refusals := #[] }
   let mut pairsSeen : NameSet := {}
   while h : head < queue.size do
     let n := queue[head]
@@ -337,9 +377,11 @@ def closure (roots : Array Name) : CoreM Closure := do
           let tokens := (Serialize.declExprs d).filterMap worldTokenIn?
           for t in worldTokens do
             if tokens.contains t then out := { out with refusals := out.refusals.push (.worldToken n t) }
-          let ((), (rs, os)) ← (checkForms n body).run (#[], #[])
-          out := { out with refusals := out.refusals ++ rs,
-                            overApplications := out.overApplications ++ os }
+          let ((), f) ← (checkForms n body).run {}
+          out := { out with refusals := out.refusals ++ f.refusals,
+                            overApplications := out.overApplications ++ f.overApplications,
+                            erasedLets := out.erasedLets ++ f.erasedLets,
+                            partialCtors := out.partialCtors ++ f.partialCtors }
           next := next ++ refs body #[]
         | .extern _ => out := { out with refusals := out.refusals.push (.externOpaque n) }
       | none =>
