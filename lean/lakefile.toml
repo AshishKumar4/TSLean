@@ -1,6 +1,6 @@
 name = "TSLean"
 version = "0.1.0"
-defaultTargets = ["TSLean", "AgentCore", "LeanToTypeScriptSemantics"]
+defaultTargets = ["TSLean", "AgentCore", "LeanToTypeScriptSemantics", "LcnfExtract"]
 
 [[lean_lib]]
 name = "TSLean"
@@ -15,6 +15,12 @@ roots = ["AgentCore"]
 [[lean_lib]]
 name = "LeanToTypeScriptSemantics"
 roots = ["TSLean.LeanToTypeScript.Semantics"]
+
+# The mono-LCNF extractor (M1 of LCNF-COMPILER-PLAN.md) and its goldens. The goldens are
+# non-module drivers: the extractor asserts the private olean level.
+[[lean_lib]]
+name = "LcnfExtract"
+globs = ["TSLean.Lcnf.Serialize", "TSLean.Lcnf.Extract", "TSLean.Lcnf.Canon", "TSLean.Lcnf.Tests.Extract.+"]
 
 [[lean_exe]]
 name = "semantics-registry"
