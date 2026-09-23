@@ -11,7 +11,17 @@ is its wire format: a faithful JSON encoding of every pure `Code`, `LetValue`, `
 
 The encoder is faithful rather than selective. It encodes forms the extractor refuses (`proj`,
 `fun`, `erased`), because refusal is the extractor's decision and not the wire format's. It
-refuses only what has no meaning outside one elaboration session: metavariables and `mdata`.
+refuses only what has no meaning outside one elaboration session: metavariables and syntax-valued
+metadata.
+
+**`Expr.mdata` is carried, not stripped.** Mono types carry it: a let-bound partial application of
+an extern whose parameters are `@&` has the type `([mdata borrowed:1 Nat]) -> …` (`Nat.add` in a
+list of closures). Metadata is semantically transparent (the kernel and `Expr.consumeMData` ignore
+it), so stripping it would also be sound. But stripping is a transformation, and it would put an
+"equal modulo mdata" argument into the trusted base. Carrying it keeps the round-trip check at
+plain equality, with no exception anywhere. The `borrowed` key is also ownership information that
+Lean's own later passes read. Consumers that do not care call `consumeMData`. Every data value
+except `ofSyntax` is encoded.
 
 `roundTrip` checks `deserialize (serialize d) == d` with Lean's own `BEq (Decl .pure)` and checks that
 re-serializing the decoded value yields the same bytes. When that check passes on every declaration
@@ -26,7 +36,7 @@ namespace TSLean.Lcnf.Serialize
 
 /-- The format tag of an IR document. Bump it whenever the encoding changes. -/
 def formatName : String := "tslean-lcnf-ir"
-def formatVersion : Nat := 1
+def formatVersion : Nat := 2
 
 abbrev DecodeM := Except String
 
@@ -61,6 +71,17 @@ def encLiteral : Literal → Json
   | .natVal n => tagged "natLit" [jnat n]
   | .strVal s => tagged "strLit" [.str s]
 
+def encDataValue : DataValue → Except String Json
+  | .ofString v => pure (tagged "string" [.str v])
+  | .ofBool v => pure (tagged "bool" [.bool v])
+  | .ofName v => pure (tagged "name" [encName v])
+  | .ofNat v => pure (tagged "nat" [jnat v])
+  | .ofInt v => pure (tagged "int" [.num (JsonNumber.fromInt v)])
+  | .ofSyntax _ => throw "lcnf.serialize.mdata-syntax: syntax-valued metadata is not part of the IR"
+
+def encKVMap (m : KVMap) : Except String Json :=
+  return .arr (← m.entries.toArray.mapM fun (k, v) => return .arr #[encName k, ← encDataValue v])
+
 def encExpr : Expr → Except String Json
   | .bvar i => pure (tagged "bvar" [jnat i])
   | .fvar id => pure (tagged "fvar" [encName id.name])
@@ -72,7 +93,7 @@ def encExpr : Expr → Except String Json
   | .forallE n t b bi => return tagged "pi" [encName n, ← encExpr t, ← encExpr b, encBinderInfo bi]
   | .letE n t v b nd => return tagged "let" [encName n, ← encExpr t, ← encExpr v, ← encExpr b, .bool nd]
   | .lit l => pure (encLiteral l)
-  | .mdata _ _ => throw "lcnf.serialize.expr-mdata: metadata is not part of the IR"
+  | .mdata m e => return tagged "mdata" [← encKVMap m, ← encExpr e]
   | .proj s i e => return tagged "proj" [encName s, jnat i, ← encExpr e]
 
 def encLitValue : LitValue → Json
@@ -218,6 +239,25 @@ def decBinderInfo (j : Json) : DecodeM BinderInfo := do
   | "instImplicit" => pure .instImplicit
   | s => throw s!"lcnf.deserialize: unknown binder info `{s}`"
 
+def decDataValue (j : Json) : DecodeM DataValue := do
+  match ← untag j "data value" with
+  | ("string", #[v]) => return .ofString (← str v "string data")
+  | ("bool", #[v]) => return .ofBool (← bool v "bool data")
+  | ("name", #[v]) => return .ofName (← decName v)
+  | ("nat", #[v]) => return .ofNat (← nat v "nat data")
+  | ("int", #[v]) =>
+    match v.getInt? with
+    | .ok i => return .ofInt i
+    | .error _ => throw s!"lcnf.deserialize: expected an integer for int data, got {v.compress}"
+  | (t, xs) => badShape "data value" t xs
+
+def decKVMap (j : Json) : DecodeM KVMap := do
+  let entries ← (← arr j "mdata").mapM fun e => do
+    match ← arr e "mdata entry" with
+    | #[k, v] => return (← decName k, ← decDataValue v)
+    | xs => throw s!"lcnf.deserialize: an mdata entry has 2 fields, got {xs.size}"
+  return { entries := entries.toList }
+
 partial def decExpr (j : Json) : DecodeM Expr := do
   match ← untag j "expr" with
   | ("bvar", #[i]) => return .bvar (← nat i "bvar")
@@ -234,6 +274,7 @@ partial def decExpr (j : Json) : DecodeM Expr := do
   | ("natLit", #[n]) => return .lit (.natVal (← nat n "nat literal"))
   | ("strLit", #[s]) => return .lit (.strVal (← str s "string literal"))
   | ("proj", #[s, i, e]) => return .proj (← decName s) (← nat i "proj index") (← decExpr e)
+  | ("mdata", #[m, e]) => return .mdata (← decKVMap m) (← decExpr e)
   | (t, xs) => badShape "expr" t xs
 
 def boundedNat (j : Json) (what : String) (bound : Nat) : DecodeM Nat := do

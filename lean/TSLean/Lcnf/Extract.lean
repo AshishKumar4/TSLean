@@ -20,8 +20,8 @@ Classification of a reached constant `n`, in this order:
      primitive table (M3) alone;
    * otherwise an `extern` leaf, which has a reference body.
 2. A mono declaration with code: walked. Its body is checked for world-token types and for the forms
-   never observed in mono (`proj`, `fun`, `erased` lets, `fvar` aliases, over-application, partial
-   constructor application).
+   the pipeline does not lower (`unsupported-form`). Over-application of a constant is admitted and
+   recorded (see `OverApplication`).
 3. A mono declaration whose value is `extern [opaque]` without the attribute: the body was hidden by
    the olean level (p8). Refused (`extern-opaque`). The walk also asserts the private level up
    front, so this is a second line.
@@ -70,6 +70,17 @@ structure ImplementedByPair where
   via : Name
   deriving BEq
 
+/-- A let value that applies a constant to more arguments than its mono arity. This is real mono
+code (`konst._redArg f x y` with arity 1). Its meaning is Lean's own: call the constant at its
+arity, then apply the resulting closure to the remaining arguments. It is admitted and kept in
+the IR unchanged. -/
+structure OverApplication where
+  decl : Name
+  callee : Name
+  arity : Nat
+  args : Nat
+  deriving BEq
+
 inductive Refusal where
   /-- An `extern [opaque]` value: either the attribute says so or the olean level hid the body. -/
   | externOpaque (name : Name)
@@ -79,8 +90,12 @@ inductive Refusal where
   | requiresPrimitiveTableEntry (name : Name)
   /-- A code declaration whose types mention a world token. -/
   | worldToken (decl : Name) (token : Name)
-  /-- A form never observed in mono, so no lowering exists for it. -/
-  | unobservedForm (decl : Name) (form : String) (detail : String)
+  /-- A form the pipeline does not lower. Census over the 284,081 imported mono declarations at
+  the private level (`import Lean`, v4.33.1): `proj`, `fun`, `fvar` aliases and constructor
+  over-application occur 0 times. `erased` lets occur 124 times, all in instances of `Sort`/`Prop`-
+  valued classes, and partial constructor applications occur 20 times, all `Int.ofNat` or
+  `UIntN.ofBitVec` as a closure. Neither has been provoked from ordinary user code. -/
+  | unsupportedForm (decl : Name) (form : String) (detail : String)
   /-- A referenced constant with neither a mono declaration nor a constructor. -/
   | noMonoDecl (name : Name) (kind : String)
   deriving BEq
@@ -90,7 +105,7 @@ def Refusal.code : Refusal → String
   | .effectfulExtern .. => "lcnf.extract.effectful-extern"
   | .requiresPrimitiveTableEntry .. => "lcnf.extract.requires-primitive-table-entry"
   | .worldToken .. => "lcnf.extract.world-token"
-  | .unobservedForm .. => "lcnf.extract.unobserved-form"
+  | .unsupportedForm .. => "lcnf.extract.unsupported-form"
   | .noMonoDecl .. => "lcnf.extract.no-mono-decl"
 
 def Refusal.message : Refusal → String
@@ -101,7 +116,7 @@ def Refusal.message : Refusal → String
   | r@(.requiresPrimitiveTableEntry n) =>
     s!"{r.code}: {n} is a pure opaque extern and requires a primitive-table entry"
   | r@(.worldToken d t) => s!"{r.code}: {d} mentions the world token {t}; effects are data at the root"
-  | r@(.unobservedForm d f x) => s!"{r.code}: {d} contains `{f}` ({x}), a form never observed in mono"
+  | r@(.unsupportedForm d f x) => s!"{r.code}: {d} contains `{f}` ({x}), a form the pipeline does not lower"
   | r@(.noMonoDecl n k) => s!"{r.code}: {n} ({k}) has no mono declaration and is not a constructor"
 
 instance : ToString Refusal := ⟨Refusal.message⟩
@@ -116,6 +131,8 @@ structure Closure where
   implementedBy : Array ImplementedByPair
   /-- Code declarations with `safe = false` (`partial` or `unsafe`). -/
   unsafeDecls : Array Name
+  /-- Admitted over-applications of constants, in walk order. -/
+  overApplications : Array OverApplication
   refusals : Array Refusal
 
 def Closure.admitted (c : Closure) : Bool := c.refusals.isEmpty
@@ -141,6 +158,8 @@ def Closure.render (c : Closure) (rename : Name → Name := id) : String :=
     block "ctors" (c.ctors.map fun l => s!"{l.name} ({l.induct} #{l.cidx}, {l.numParams}+{l.numFields})") ++
     block "implemented_by" (c.implementedBy.map fun p => s!"{p.ref} -> {p.impl} via {rename p.via}") ++
     block "safe=false" (c.unsafeDecls.map (toString <| rename ·)) ++
+    block "over-applications" (c.overApplications.map fun o =>
+      s!"{rename o.decl}: {rename o.callee} takes {o.arity}, applied to {o.args}") ++
     block "refusals" (c.refusals.map (·.message))
 
 /-! ## The olean level -/
@@ -215,10 +234,11 @@ def arity? (n : Name) : CoreM (Option Nat) := do
   | some (.ctorInfo ci) => return some (ci.numParams + ci.numFields)
   | _ => return none
 
-/-- Refusals for the forms never observed in mono. -/
-partial def checkForms (decl : Name) (c : Code .pure) : StateT (Array Refusal) CoreM Unit := do
-  let refuse (f x : String) : StateT (Array Refusal) CoreM Unit :=
-    modify (·.push (.unobservedForm decl f x))
+/-- Refusals for the forms the pipeline does not lower, and the admitted over-applications. -/
+partial def checkForms (decl : Name) (c : Code .pure) :
+    StateT (Array Refusal × Array OverApplication) CoreM Unit := do
+  let refuse (f x : String) : StateT (Array Refusal × Array OverApplication) CoreM Unit :=
+    modify fun (rs, os) => (rs.push (.unsupportedForm decl f x), os)
   match c with
   | .let d k =>
     match d.value with
@@ -226,10 +246,14 @@ partial def checkForms (decl : Name) (c : Code .pure) : StateT (Array Refusal) C
     | .erased => refuse "erased" s!"let {d.binderName}"
     | .fvar _ as => if as.isEmpty then refuse "fvar-alias" s!"let {d.binderName}"
     | .const n _ as _ =>
+      let isCtor := (← getEnv).find? n matches some (.ctorInfo _)
       match ← arity? n with
       | some a =>
-        if as.size > a then refuse "over-application" s!"{n} takes {a}, applied to {as.size}"
-        else if as.size < a && ((← getEnv).find? n matches some (.ctorInfo _)) then
+        if as.size > a then
+          if isCtor then refuse "ctor-over-application" s!"{n} takes {a}, applied to {as.size}"
+          else modify fun (rs, os) =>
+            (rs, os.push { decl, callee := n, arity := a, args := as.size })
+        else if as.size < a && isCtor then
           refuse "partial-ctor" s!"{n} takes {a}, applied to {as.size}"
       | none => pure ()  -- reported as `no-mono-decl` when the walk reaches `n`
     | .lit _ => pure ()
@@ -263,7 +287,7 @@ def closure (roots : Array Name) : CoreM Closure := do
   let mut seen : NameSet := roots.foldl (·.insert ·) {}
   let mut out : Closure :=
     { roots := roots, decls := #[], externs := #[], opaqueExterns := #[], ctors := #[], implementedBy := #[],
-      unsafeDecls := #[], refusals := #[] }
+      unsafeDecls := #[], overApplications := #[], refusals := #[] }
   let mut pairsSeen : NameSet := {}
   while h : head < queue.size do
     let n := queue[head]
@@ -313,8 +337,9 @@ def closure (roots : Array Name) : CoreM Closure := do
           let tokens := (Serialize.declExprs d).filterMap worldTokenIn?
           for t in worldTokens do
             if tokens.contains t then out := { out with refusals := out.refusals.push (.worldToken n t) }
-          let ((), rs) ← (checkForms n body).run #[]
-          out := { out with refusals := out.refusals ++ rs }
+          let ((), (rs, os)) ← (checkForms n body).run (#[], #[])
+          out := { out with refusals := out.refusals ++ rs,
+                            overApplications := out.overApplications ++ os }
           next := next ++ refs body #[]
         | .extern _ => out := { out with refusals := out.refusals.push (.externOpaque n) }
       | none =>

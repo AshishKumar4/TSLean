@@ -64,6 +64,7 @@ ctors (4):
   Option.some (Option #1, 1+1)
 implemented_by (0):
 safe=false (0):
+over-applications (0):
 refusals (0):
 round-trip: 5 raw and 5 canonical declarations
 digest GoldenProbe.total: 638d6bc885a69c0818ca92ff08bff2a4f8c5afaf889cdb7b88c20a3f44efd76c
@@ -113,6 +114,7 @@ ctors (6):
   GoldenStep.Command.storagePut (GoldenStep.Command #1, 0+2)
 implemented_by (0):
 safe=false (0):
+over-applications (0):
 refusals (0):
 round-trip: 4 raw and 4 canonical declarations
 digest GoldenStep.step: 92565db6cb6b9350b6b59b1df4b3afe449f3fe0c05061eec31574a1899781675
@@ -182,6 +184,7 @@ implemented_by (1):
   Array.foldrM -> Array.foldrMUnsafe via Array.foldrMUnsafe.fold._lcnf_70dcc3772ef0e84f
 safe=false (1):
   Array.foldrMUnsafe.fold._lcnf_70dcc3772ef0e84f
+over-applications (0):
 refusals (1):
   lcnf.extract.requires-primitive-table-entry: String.hash is a pure opaque extern and requires a primitive-table entry
 round-trip: 13 raw and 13 canonical declarations
@@ -209,6 +212,7 @@ ctors (5):
   Bool.false (Bool #0, 0+0)
 implemented_by (0):
 safe=false (0):
+over-applications (0):
 refusals (0):
 round-trip: 2 raw and 2 canonical declarations
 digest TSLean.Examples.Roundtrip.Traffic.next: 6c06fd16b48c01c6c0fb1fe83f68b1d2328c64783c2c26b1ab51caab2c357f9d
@@ -228,6 +232,7 @@ ctors (2):
   Bool.true (Bool #1, 0+0)
 implemented_by (0):
 safe=false (0):
+over-applications (0):
 refusals (0):
 round-trip: 1 raw and 1 canonical declarations
 digest TSLean.Examples.Roundtrip.Priority.before: 333ec1a36462f1317f0cdbaa4ba418623dbda16950c6b3a13d690fbc48db7468
@@ -262,6 +267,7 @@ ctors (6):
   TSLean.Examples.Roundtrip.Invariant.Gate.mk (TSLean.Examples.Roundtrip.Invariant.Gate #0, 0+3)
 implemented_by (0):
 safe=false (0):
+over-applications (0):
 refusals (0):
 round-trip: 10 raw and 10 canonical declarations
 digest TSLean.Examples.Roundtrip.Invariant.build: 0bbc4656e4d03debdc4020b67db6ef93f9234a66db29be856e00fca7a8c6830d
@@ -307,6 +313,7 @@ implemented_by (1):
   Array.mapM -> Array.mapMUnsafe via Array.mapMUnsafe.map._lcnf_c52100d05bbeed36
 safe=false (1):
   Array.mapMUnsafe.map._lcnf_c52100d05bbeed36
+over-applications (0):
 refusals (0):
 round-trip: 2 raw and 2 canonical declarations
 digest GoldenImpl.incAll: ae5f43428660d707d4fe13e3868cf2b05ed5e9edd109d40a791c2d2742e7b5b1
@@ -326,6 +333,7 @@ ctors (0):
 implemented_by (1):
   GoldenImpl.refSide -> GoldenImpl.implSide via GoldenImpl.implSide
 safe=false (0):
+over-applications (0):
 refusals (0):
 round-trip: 2 raw and 2 canonical declarations
 digest GoldenImpl.useRef: 76b260479f7168308e171d5898f576fa076f1360089850935476651c7cc93ea4
@@ -350,6 +358,7 @@ ctors (1):
   EST.Out.ok (EST.Out #0, 3+2)
 implemented_by (0):
 safe=false (0):
+over-applications (0):
 refusals (3):
   lcnf.extract.world-token: GoldenIO.nowMs mentions the world token lcVoid; effects are data at the root
   lcnf.extract.world-token: GoldenIO.nowMs mentions the world token EST.Out; effects are data at the root
@@ -360,24 +369,137 @@ digest GoldenIO.nowMs: f3b22e7ae066e58bd7a0f866ddfabb5840f45352c17e43ff634423163
 #guard_msgs in
 #eval golden #[``GoldenIO.nowMs]
 
-/-! ## Refusal controls: forms never observed in mono, planted as mono declarations
+/-! ## Closures: `borrowed` metadata in mono types, and over-application of a constant
 
-Mono never contains these forms, so each is planted: a hand-built declaration saved into the
-mono extension, or a base-phase body (which has `fun` and `proj`) saved as mono. -/
+A let-bound partial application of an `@&` extern (`Nat.add`, `Nat.mul`) has a mono type that
+carries `[mdata borrowed:1 Nat]`. The codec carries that metadata, so both declarations round-trip
+at plain equality. `konst Nat.mul 0 x y` is `konst._redArg _x.1 x y` in mono: arity 1, three
+arguments. It is admitted and listed under `over-applications`. -/
+
+namespace GoldenClosures
+def curry3 (a b c : Nat) : Nat := a * 100 + b * 10 + c
+
+@[noinline] def konst {α : Type} (a : α) (_n : Nat) : α := a
+
+@[noinline] def fns (k : Nat) : List (Nat → Nat → Nat → Nat) :=
+  [konst Nat.add, konst (curry3 k), curry3, fun a b c => a + b + c + k]
+
+structure Box where
+  f : Nat → Nat → Nat
+
+@[noinline] def boxes (k : Nat) : List Box :=
+  [⟨Nat.add⟩, ⟨Nat.mul⟩, ⟨curry3 k⟩, ⟨fun a b => if a == 0 then 100 - b else a + b⟩]
+
+def constOver (x y : Nat) : Nat := konst Nat.mul 0 x y
+end GoldenClosures
+
+/--
+info: roots: GoldenClosures.fns
+code decls (5):
+  GoldenClosures.fns
+  GoldenClosures.fns._lcnf_944b7ea2a70dadce
+  GoldenClosures.konst
+  GoldenClosures.curry3
+  GoldenClosures.konst._lcnf_5a04ff138329a080
+externs (2):
+  Nat.add/2 [standard all lean_nat_add]
+  Nat.mul/2 [standard all lean_nat_mul]
+opaque externs (0):
+ctors (2):
+  List.nil (List #0, 1+0)
+  List.cons (List #1, 1+2)
+implemented_by (0):
+safe=false (0):
+over-applications (0):
+refusals (0):
+round-trip: 5 raw and 5 canonical declarations
+digest GoldenClosures.fns: 21da8f2877b44f39129d5e6711ee2bf7fc7189f28b12a2f20a80de8e9df8d830
+-/
+#guard_msgs in
+#eval golden #[``GoldenClosures.fns]
+
+/--
+info: roots: GoldenClosures.boxes
+code decls (3):
+  GoldenClosures.boxes
+  GoldenClosures.boxes._lcnf_bb5e8afb45fad2d3
+  GoldenClosures.curry3
+externs (4):
+  Nat.add/2 [standard all lean_nat_add]
+  Nat.mul/2 [standard all lean_nat_mul]
+  Nat.decEq/2 [standard all lean_nat_dec_eq]
+  Nat.sub/2 [standard all lean_nat_sub]
+opaque externs (0):
+ctors (2):
+  List.nil (List #0, 1+0)
+  List.cons (List #1, 1+2)
+implemented_by (0):
+safe=false (0):
+over-applications (0):
+refusals (0):
+round-trip: 3 raw and 3 canonical declarations
+digest GoldenClosures.boxes: db3993169464c027903576ddcf15d7bd256458632543f4525edf7f9b8441c560
+-/
+#guard_msgs in
+#eval golden #[``GoldenClosures.boxes]
+
+/--
+info: roots: GoldenClosures.constOver
+code decls (2):
+  GoldenClosures.constOver
+  GoldenClosures.konst._lcnf_5a04ff138329a080
+externs (1):
+  Nat.mul/2 [standard all lean_nat_mul]
+opaque externs (0):
+ctors (0):
+implemented_by (0):
+safe=false (0):
+over-applications (1):
+  GoldenClosures.constOver: GoldenClosures.konst._lcnf_5a04ff138329a080 takes 1, applied to 3
+refusals (0):
+round-trip: 2 raw and 2 canonical declarations
+digest GoldenClosures.constOver: 5eedcfaae171b58990ae25af9c722bc4279ff9c00d8ef57b01d9aa94e538e8db
+-/
+#guard_msgs in
+#eval golden #[``GoldenClosures.constOver]
+
+/- Reached, not just present: the closures above really carry `mdata` in their mono types. If Lean
+stops emitting it, this count changes and the goldens above no longer test the codec's mdata path. -/
+/--
+info: GoldenClosures.fns: 1 carried Exprs contain mdata, e.g. (some ([mdata borrowed:1 Nat]) -> ([mdata borrowed:1 Nat]) -> Nat)
+GoldenClosures.boxes: 2 carried Exprs contain mdata, e.g. (some ([mdata borrowed:1 Nat]) -> ([mdata borrowed:1 Nat]) -> Nat)
+GoldenClosures.constOver: 1 carried Exprs contain mdata, e.g. (some ([mdata borrowed:1 Nat]) -> ([mdata borrowed:1 Nat]) -> Nat)
+-/
+#guard_msgs in
+#eval show CommandElabM Unit from liftCoreM do
+  for root in #[``GoldenClosures.fns, ``GoldenClosures.boxes, ``GoldenClosures.constOver] do
+    let c ← Extract.closure #[root]
+    let es := c.decls.flatMap Serialize.declExprs
+    let md := es.filter fun e => (e.find? (·.isMData)).isSome
+    IO.println s!"{root}: {md.size} carried Exprs contain mdata, e.g. {md[0]?}"
+
+/-! ## Refusal controls: unsupported forms, planted as mono declarations
+
+User code does not produce these forms, so each is planted: a hand-built declaration saved into
+the mono extension, or a base-phase body (which has `fun` and `proj`) saved as mono. The planted
+declaration also contains an over-application of a code declaration (`Nat.add x x x`), which is
+admitted and listed. -/
 
 namespace GoldenPlant
 def fv (i : Nat) : FVarId := ⟨.num `_plant i⟩
 def natTy : Expr := .const ``Nat []
 
 /-- `x ↦ fun f y := return y; let a := Nat.add x x x; let b := ◾; let c := x; let d := List.cons ◾;
-return a` -/
+let e := List.nil ◾ x; return a` -/
 def formsDecl : Decl .pure :=
   let lets : List (LetDecl .pure) := [
     { fvarId := fv 1, binderName := `a, type := natTy,
       value := .const ``Nat.add [] #[.fvar (fv 0), .fvar (fv 0), .fvar (fv 0)] },
     { fvarId := fv 2, binderName := `b, type := natTy, value := .erased },
     { fvarId := fv 3, binderName := `c, type := natTy, value := .fvar (fv 0) #[] },
-    { fvarId := fv 4, binderName := `d, type := natTy, value := .const ``List.cons [.zero] #[.erased] }]
+    { fvarId := fv 4, binderName := `d, type := natTy, value := .const ``List.cons [.zero] #[.erased] },
+    { fvarId := fv 7, binderName := `e, type := natTy,
+      value := .const ``List.nil [.zero] #[.erased, .fvar (fv 0)] }]
   { name := `GoldenPlant.forms, levelParams := [], type := natTy,
     params := #[{ fvarId := fv 0, binderName := `x, type := natTy, borrow := false }],
     value := .code (.fun (.mk (fv 5) `f #[{ fvarId := fv 6, binderName := `y, type := natTy, borrow := false }]
@@ -392,9 +514,10 @@ def hiddenDecl : Decl .pure :=
 end GoldenPlant
 
 /--
-info: #[GoldenPlant.forms]: #[lcnf.extract.unobserved-form: GoldenPlant.forms contains `fun` (local function f), a form never observed in mono, lcnf.extract.unobserved-form: GoldenPlant.forms contains `over-application` (Nat.add takes 2, applied to 3), a form never observed in mono, lcnf.extract.unobserved-form: GoldenPlant.forms contains `erased` (let b), a form never observed in mono, lcnf.extract.unobserved-form: GoldenPlant.forms contains `fvar-alias` (let c), a form never observed in mono, lcnf.extract.unobserved-form: GoldenPlant.forms contains `partial-ctor` (List.cons takes 3, applied to 1), a form never observed in mono]
+info: #[GoldenPlant.forms]: #[lcnf.extract.unsupported-form: GoldenPlant.forms contains `fun` (local function f), a form the pipeline does not lower, lcnf.extract.unsupported-form: GoldenPlant.forms contains `erased` (let b), a form the pipeline does not lower, lcnf.extract.unsupported-form: GoldenPlant.forms contains `fvar-alias` (let c), a form the pipeline does not lower, lcnf.extract.unsupported-form: GoldenPlant.forms contains `partial-ctor` (List.cons takes 3, applied to 1), a form the pipeline does not lower, lcnf.extract.unsupported-form: GoldenPlant.forms contains `ctor-over-application` (List.nil takes 1, applied to 2), a form the pipeline does not lower]
+  admitted over-application in GoldenPlant.forms: Nat.add takes 2, applied to 3
 #[GoldenPlant.hidden]: #[lcnf.extract.extern-opaque: GoldenPlant.hidden is `extern [opaque]`; its mono body is not available at this olean level]
-#[GoldenPlant.baseFirstBig]: #[lcnf.extract.unobserved-form: GoldenPlant.baseFirstBig contains `proj` (GoldenProbe.Order.0), a form never observed in mono]
+#[GoldenPlant.baseFirstBig]: #[lcnf.extract.unsupported-form: GoldenPlant.baseFirstBig contains `proj` (GoldenProbe.Order.0), a form the pipeline does not lower]
 #[Nat.rec]: #[lcnf.extract.no-mono-decl: Nat.rec (recursor) has no mono declaration and is not a constructor]
 -/
 #guard_msgs in
@@ -408,3 +531,5 @@ info: #[GoldenPlant.forms]: #[lcnf.extract.unobserved-form: GoldenPlant.forms co
                  #[``Nat.rec]] do
     let c ← liftCoreM (Extract.closure roots)
     IO.println s!"{roots}: {c.refusals.map (·.message)}"
+    for o in c.overApplications do
+      IO.println s!"  admitted over-application in {o.decl}: {o.callee} takes {o.arity}, applied to {o.args}"
