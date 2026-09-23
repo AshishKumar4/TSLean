@@ -1,0 +1,12 @@
+--- a/lean/TSLean/Lcnf/Lower.lean
++++ b/lean/TSLean/Lcnf/Lower.lean
+@@ -613,7 +613,8 @@
+     acc ++ (sites arity #[] body #[]).map ({ · with member := d.name })
+   let first := members[0]!.1
+   let base : Ctx := { info, fns, self := first.name, mode := .plain, members := idx, resumes := {} }
+-  if allSites.isEmpty then
++  -- PLANT no-explicit-stack: a component with a non-tail call is lowered to plain recursion.
++  if allSites.isEmpty || allSites.any (!·.tail) then
+     return ← members.toList.mapM fun (d, body) => lowerPlain base used d body
+   let width := members.foldl (fun w (d, _) => max w d.params.size) 0
+   let publicName (d : Decl .pure) := (fns.getD d.name ("", 0)).1

@@ -1,6 +1,6 @@
 name = "TSLean"
 version = "0.1.0"
-defaultTargets = ["TSLean", "AgentCore", "LeanToTypeScriptSemantics", "LcnfExtract"]
+defaultTargets = ["TSLean", "AgentCore", "LeanToTypeScriptSemantics", "LcnfExtract", "LcnfLower"]
 
 [[lean_lib]]
 name = "TSLean"
@@ -21,6 +21,12 @@ roots = ["TSLean.LeanToTypeScript.Semantics"]
 [[lean_lib]]
 name = "LcnfExtract"
 globs = ["TSLean.Lcnf.Serialize", "TSLean.Lcnf.Extract", "TSLean.Lcnf.Canon", "TSLean.Lcnf.Tests.Extract.+"]
+
+# The LCNF → TypeScript lowering (M2 of LCNF-COMPILER-PLAN.md): the LCNF big-step semantics, the
+# JS-subset target, the lowering, the printer and the differential-test driver.
+[[lean_lib]]
+name = "LcnfLower"
+roots = ["TSLean.Lcnf.Semantics", "TSLean.Lcnf.Target", "TSLean.Lcnf.Lower", "TSLean.Lcnf.Print", "TSLean.Lcnf.Driver"]
 
 [[lean_exe]]
 name = "semantics-registry"

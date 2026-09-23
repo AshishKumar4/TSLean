@@ -1,0 +1,12 @@
+--- a/lean/TSLean/Lcnf/Lower.lean
++++ b/lean/TSLean/Lcnf/Lower.lean
+@@ -446,7 +446,8 @@
+       pure (.call fn args)
+     else
+       -- Over-application: a call at the declared arity, then the result applied to the rest.
+-      pure (rtCall "apply" [.call fn (args.take arity), .arr (args.drop arity)])
++      -- PLANT over-application-drops-args: the arguments past the arity are dropped.
++      pure (.call fn (args.take arity))
+ 
+ /-- Assign the argument slots and dispatch to member `callee`. -/
+ def jumpTo (ctx : Ctx) (callee : Name) (as : Array (Arg .pure)) : M (List Stmt) := do

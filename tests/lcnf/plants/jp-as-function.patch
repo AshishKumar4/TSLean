@@ -1,0 +1,52 @@
+--- a/lean/TSLean/Lcnf/Target.lean
++++ b/lean/TSLean/Lcnf/Target.lean
+@@ -72,6 +72,8 @@
+   | ite (c : Expr) (thn els : List Stmt)
+   | ret (e : Expr)
+   | throw (e : Expr)
++  /-- PLANT jp-as-function: `const name = (params) => { body };` -/
++  | localFn (name : Ident) (params : List Ident) (body : List Stmt)
+   deriving Inhabited, Repr, BEq
+ 
+ structure Fn where
+--- a/lean/TSLean/Lcnf/Print.lean
++++ b/lean/TSLean/Lcnf/Print.lean
+@@ -85,6 +85,9 @@
+     stmts (d + 1) e ++ indent d ++ "}\n"
+   | .ret e => indent d ++ "return " ++ expr e ++ ";\n"
+   | .throw e => indent d ++ "throw " ++ expr e ++ ";\n"
++  | .localFn n ps b =>
++    indent d ++ "const " ++ n ++ " = (" ++ ", ".intercalate (ps.map (· ++ ": rt.Value")) ++
++      "): rt.Value => {\n" ++ stmts (d + 1) b ++ indent d ++ "};\n"
+ def stmts (d : Nat) : List Stmt → String
+   | [] => ""
+   | s :: ss => stmt d s ++ stmts d ss
+--- a/lean/TSLean/Lcnf/Lower.lean
++++ b/lean/TSLean/Lcnf/Lower.lean
+@@ -510,18 +510,20 @@
+         | _ => refuse ctx "impure let value"
+       pure ([.const x valueTy e] ++ (← lowerCode ctx k))
+   | .jp d@(.mk _ _ ps _ v) k => do
+-    let lets ← ps.toList.mapM fun p => do
+-      pure (Stmt.let (← nameOf p.fvarId p.binderName) valueTy .undef)
++    -- PLANT jp-as-function: the join point is a local function, its body lowered as a plain
++    -- function body (a self tail call inside it is an ordinary call), and `jmp` calls it.
++    let xs ← ps.toList.mapM fun p => nameOf p.fvarId p.binderName
+     let l ← labelOf d
++    let bodyS ← lowerCode { ctx with mode := .plain } v
+     let kS ← lowerCode { ctx with jps := ctx.jps.push d } k
+-    let bodyS ← lowerCode ctx v
+-    pure (lets ++ [.block l kS] ++ bodyS)
++    pure ([.localFn l xs bodyS] ++ kS)
+   | .jmp j as => do
+     let some d := ctx.jps.find? (·.fvarId == j) | refuse ctx s!"jump to unknown join point {j.name}"
+     let l ← labelOf d
+     let args ← argsE ctx as
+-    let ps ← d.params.toList.mapM fun p => nameOf p.fvarId p.binderName
+-    pure ((ps.zip args).map (fun (p, e) => Stmt.assign p e) ++ [.break l])
++    match ctx.mode with
++    | .stack => pure [.assign "$ret" (.call (.var l) args), .break "$body"]
++    | _ => pure [.ret (.call (.var l) args)]
+   | .cases (.mk t _ discr ⟨alts⟩) => do
+     let some tr := ctx.info.types[t]? | refuse ctx s!"cases on {t}, which has no representation"
+     let dE ← ref ctx discr

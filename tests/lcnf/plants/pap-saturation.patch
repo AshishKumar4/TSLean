@@ -1,0 +1,12 @@
+--- a/src/lcnf-runtime/index.ts
++++ b/src/lcnf-runtime/index.ts
+@@ -144,7 +144,8 @@
+   let rest = args;
+   for (;;) {
+     const have = c.args.length + rest.length;
+-    if (have < c.arity) return new Closure(c.fn, c.arity, [...c.args, ...rest]);
++    // PLANT pap-saturation: an exactly saturated closure stays a closure.
++    if (have <= c.arity) return new Closure(c.fn, c.arity, [...c.args, ...rest]);
+     const need = c.arity - c.args.length;
+     const r = c.fn(...c.args, ...rest.slice(0, need));
+     if (have === c.arity) return r;
